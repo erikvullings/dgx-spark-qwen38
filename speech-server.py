@@ -112,7 +112,8 @@ def pieces(pcm, rate=RATE, piece_s=PIECE_S, search_s=SEARCH_S):
     """16-bit mono samples cut into pieces of at most piece_s seconds, each cut in the middle
     of the quietest tenth of a second of its last search_s seconds. Nothing is dropped."""
     samples = array.array("h", pcm[:len(pcm) // 2 * 2])
-    step, limit, search = max(1, rate // 10), int(piece_s * rate), int(search_s * rate)
+    step, limit = max(1, rate // 10), max(2 * max(1, rate // 10), int(piece_s * rate))
+    search = min(int(search_s * rate), limit - step)   # every cut lands past the piece's start
     out, start = [], 0
     while len(samples) - start > limit:
         best, best_energy = start + limit, None
@@ -235,8 +236,13 @@ def make_handler(tts, asr_url, default_voice, asr_name, tts_name="kokoro-82m", a
             self._json(code, {"error": {"message": message, "type": kind}})
 
         def _body(self, cap):
-            n = int(self.headers.get("Content-Length") or 0)
-            if n > cap:
+            """The body, b"" without one, or None when it is over cap or its length is not a
+            length (a negative one would read until the client hangs up)."""
+            try:
+                n = int(self.headers.get("Content-Length") or 0)
+            except ValueError:
+                n = -1
+            if n > cap or n < 0:
                 self.close_connection = True
                 return None
             return self.rfile.read(n) if n else b""
@@ -275,7 +281,7 @@ def make_handler(tts, asr_url, default_voice, asr_name, tts_name="kokoro-82m", a
         def _speech(self):
             raw = self._body(MAX_BODY)
             if raw is None:
-                return self._err(413, f"the request body is over {MAX_BODY} bytes")
+                return self._err(413, f"the request body is over {MAX_BODY} bytes, or has no valid length")
             try:
                 req = json.loads(raw or b"{}")
                 if not isinstance(req, dict):
@@ -317,7 +323,7 @@ def make_handler(tts, asr_url, default_voice, asr_name, tts_name="kokoro-82m", a
         def _transcribe(self):
             raw = self._body(MAX_UPLOAD)
             if raw is None:
-                return self._err(413, f"the upload is over {MAX_UPLOAD // (1024 * 1024)} MB")
+                return self._err(413, f"the upload is over {MAX_UPLOAD // (1024 * 1024)} MB, or has no valid length")
             try:
                 form = parse_multipart(self.headers.get("Content-Type", ""), raw)
             except ValueError as e:

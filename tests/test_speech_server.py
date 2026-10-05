@@ -165,6 +165,15 @@ class Routes(unittest.TestCase):
         code, _, _ = self.call("/v1/audio/speech", json.dumps({"input": "x" * (ss.MAX_BODY + 10)}).encode())
         self.assertEqual(code, 413)
 
+    def test_a_length_that_is_not_one_is_refused_at_once(self):
+        import socket
+        port = self.front.server_address[1]
+        for length in ("-1", "lots"):
+            with self.subTest(length=length), socket.create_connection(("127.0.0.1", port), timeout=5) as s:
+                s.sendall(f"POST /v1/audio/speech HTTP/1.1\r\nHost: x\r\nContent-Type: application/json\r\n"
+                          f"Content-Length: {length}\r\n\r\n".encode())
+                self.assertIn(b" 413 ", s.recv(4096).split(b"\r\n")[0] + b" ")
+
     # ── transcriptions ────────────────────────────────────────────────────────
     def test_the_models_prefix_is_taken_off(self):
         code, _, body = self.call("/v1/audio/transcriptions", *reversed(form({"language": "fr"})))
@@ -369,6 +378,12 @@ class Helpers(unittest.TestCase):
         self.assertEqual(len(parts), 4)
         self.assertEqual(ss.pieces(pcm[:3200], 16000, 1.5, 0.4), [pcm[:3200]])
         self.assertEqual(ss.pieces(b"", 16000, 1.5, 0.4), [b""])
+        # a search as long as the piece, or longer, still moves forward and loses nothing
+        for search in (1.5, 9.0):
+            with self.subTest(search=search):
+                parts = ss.pieces(pcm, 16000, 1.5, search)
+                self.assertEqual(b"".join(parts), pcm)
+                self.assertTrue(all(0 < len(p) <= 2 * int(1.5 * 16000) for p in parts))
 
     def test_join_pieces_spaces_words_not_chinese(self):
         self.assertEqual(ss.join_pieces(["Hello there.", "", "General Kenobi."]), "Hello there. General Kenobi.")
