@@ -97,7 +97,7 @@ rm_cmd() {
 }
 
 echo "── Inventory (everything any version of this repo may have left here) ──"
-for u in qwen38-sglang.service qwen38-flash.service qwen38-keepalive.service qwen38-dashboard.service qwen38-image.service qwen38-video.service qwen38-kolibri.service opencode-web.service; do
+for u in qwen38-sglang.service qwen38-flash.service qwen38-keepalive.service qwen38-dashboard.service qwen38-image.service qwen38-video.service qwen38-kolibri.service qwen38-speech.service opencode-web.service; do
   if [ -f "$SYSTEMD_DIR/$u" ]; then
     STATE="$(systemctl is-enabled "$u" 2>/dev/null || true)/$(systemctl is-active "$u" 2>/dev/null || true)"
     echo "  unit      $SYSTEMD_DIR/$u ($STATE)"
@@ -118,6 +118,14 @@ IMAGE_LANE_DIR="${IMAGE_LANE_DIR:-$HOME/.local/share/qwen38-image}"
 VIDEO_LANE_DIR="${VIDEO_LANE_DIR:-$({ grep -m1 -E '^WorkingDirectory=' "$SYSTEMD_DIR/qwen38-video.service" 2>/dev/null || true; } | cut -d= -f2-)}"
 VIDEO_LANE_DIR="${VIDEO_LANE_DIR:-$HOME/.local/share/qwen38-video}"
 [ -d "$VIDEO_LANE_DIR" ] && echo "  runtime   $VIDEO_LANE_DIR ($(dir_size "$VIDEO_LANE_DIR"), video lane venv + pinned SGLang checkout)"
+# The speech lane (install-speech.sh, SPEECH_LANE_DIR) keeps its models in its own folder,
+# not in the HF cache: listed apart, since they stay like every other checkpoint.
+SPEECH_LANE_DIR="${SPEECH_LANE_DIR:-$({ grep -m1 -E '^WorkingDirectory=' "$SYSTEMD_DIR/qwen38-speech.service" 2>/dev/null || true; } | cut -d= -f2-)}"
+SPEECH_LANE_DIR="${SPEECH_LANE_DIR:-$HOME/.local/share/qwen38-speech}"
+if [ -d "$SPEECH_LANE_DIR/venv" ] || [ -d "$SPEECH_LANE_DIR/llama.cpp" ]; then
+  echo "  runtime   $SPEECH_LANE_DIR (speech lane venv + llama.cpp CPU build)"
+fi
+[ -d "$SPEECH_LANE_DIR/models" ] && echo "  weights   $SPEECH_LANE_DIR/models ($(dir_size "$SPEECH_LANE_DIR/models"), speech lane: Qwen3-ASR and Kokoro)"
 for f in "$CONFIG_DIR"/*.bak-preupdate; do
   [ -f "$f" ] && echo "  backup    $f (pre-update unit backup)"
 done
@@ -172,7 +180,8 @@ fi
 PRIV=0
 for f in "$SYSTEMD_DIR/qwen38-sglang.service" "$SYSTEMD_DIR/qwen38-flash.service" \
          "$SYSTEMD_DIR/qwen38-keepalive.service" "$SYSTEMD_DIR/qwen38-dashboard.service" \
-         "$SYSTEMD_DIR/qwen38-image.service" "$SYSTEMD_DIR/qwen38-video.service" "$SYSTEMD_DIR/qwen38-kolibri.service" "$SYSTEMD_DIR/opencode-web.service" \
+         "$SYSTEMD_DIR/qwen38-image.service" "$SYSTEMD_DIR/qwen38-video.service" "$SYSTEMD_DIR/qwen38-kolibri.service" \
+         "$SYSTEMD_DIR/qwen38-speech.service" "$SYSTEMD_DIR/opencode-web.service" \
          "$SYSTEMD_DIR/qwen38-sglang.service.d" "$SYSTEMD_DIR/qwen38-dashboard.service.d" \
          "$SYSTEMD_DIR/qwen38-keepalive.service.d" "$SUDOERS_FILE" "$PYSPY_WRAPPER"; do
   [ -e "$f" ] && PRIV=1
@@ -185,11 +194,11 @@ done
 PRIV_DONE=0
 if [ "$PRIV" -eq 1 ]; then
   if sudo -v; then
-    for u in qwen38-sglang qwen38-flash qwen38-keepalive qwen38-dashboard qwen38-image qwen38-video qwen38-kolibri opencode-web; do
+    for u in qwen38-sglang qwen38-flash qwen38-keepalive qwen38-dashboard qwen38-image qwen38-video qwen38-kolibri qwen38-speech opencode-web; do
       sudo systemctl disable --now "$u.service" 2>/dev/null || true
     done
     docker rm -f qwen38-sglang qwen38-sglang-run qwen38-flash qwen38-kolibri 2>/dev/null || true
-    sudo rm -f "$SYSTEMD_DIR/qwen38-sglang.service" "$SYSTEMD_DIR/qwen38-flash.service" "$SYSTEMD_DIR/qwen38-keepalive.service" "$SYSTEMD_DIR/qwen38-dashboard.service" "$SYSTEMD_DIR/qwen38-image.service" "$SYSTEMD_DIR/qwen38-video.service" "$SYSTEMD_DIR/qwen38-kolibri.service" "$SYSTEMD_DIR/opencode-web.service"
+    sudo rm -f "$SYSTEMD_DIR/qwen38-sglang.service" "$SYSTEMD_DIR/qwen38-flash.service" "$SYSTEMD_DIR/qwen38-keepalive.service" "$SYSTEMD_DIR/qwen38-dashboard.service" "$SYSTEMD_DIR/qwen38-image.service" "$SYSTEMD_DIR/qwen38-video.service" "$SYSTEMD_DIR/qwen38-kolibri.service" "$SYSTEMD_DIR/qwen38-speech.service" "$SYSTEMD_DIR/opencode-web.service"
     sudo rm -rf "$SYSTEMD_DIR/qwen38-sglang.service.d" "$SYSTEMD_DIR/qwen38-dashboard.service.d" "$SYSTEMD_DIR/qwen38-keepalive.service.d"
     # The cockpit's privileged surface goes with it: a NOPASSWD allowlist left behind
     # after an uninstall is the one leftover that is not merely clutter.
@@ -218,6 +227,14 @@ fi
 if [ -d "$VIDEO_LANE_DIR" ] && { [ "$PRIV" -eq 0 ] || [ "$PRIV_DONE" -eq 1 ]; }; then
   rm -rf "$VIDEO_LANE_DIR/venv" "$VIDEO_LANE_DIR/sglang" "$VIDEO_LANE_DIR/sglang-wheel" "$VIDEO_LANE_DIR/sglang-source"
   rmdir "$VIDEO_LANE_DIR" 2>/dev/null || echo "kept $VIDEO_LANE_DIR: it holds files the video lane did not put there"
+fi
+# The speech lane's runtime, under the same rule: venv/, llama.cpp/ and the routes' script.
+# Its models/ stay, with a reclaim command below, as every other checkpoint does.
+if [ -d "$SPEECH_LANE_DIR" ] && { [ "$PRIV" -eq 0 ] || [ "$PRIV_DONE" -eq 1 ]; }; then
+  rm -rf "$SPEECH_LANE_DIR/venv" "$SPEECH_LANE_DIR/llama.cpp"
+  rm -f "$SPEECH_LANE_DIR/speech-server.py"
+  [ -d "$SPEECH_LANE_DIR/models" ] || rmdir "$SPEECH_LANE_DIR" 2>/dev/null \
+    || echo "kept $SPEECH_LANE_DIR: it holds files the speech lane did not put there"
 fi
 # The oc launcher, only if it is ours (never a foreign oc binary)
 if grep -q 'dgx-spark-qwen38' "$HOME/.local/bin/oc" 2>/dev/null; then
@@ -291,6 +308,9 @@ while IFS= read -r cache; do
     if [ -d "$d" ]; then echo "  $(rm_cmd "$d") '$d'    # $(dir_size "$d")"; fi
   done
 done <<< "$HF_CACHES"
+if [ -d "$SPEECH_LANE_DIR/models" ]; then
+  echo "  rm -rf '$SPEECH_LANE_DIR/models'    # $(dir_size "$SPEECH_LANE_DIR/models"), speech lane models"
+fi
 while IFS= read -r p; do
   # an if, not an && list: as the last command of the script, a false test made the whole
   # uninstall exit 1 on a box without a PLE folder

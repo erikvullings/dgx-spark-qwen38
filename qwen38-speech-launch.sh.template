@@ -1,0 +1,31 @@
+#!/bin/bash
+# The speech lane's two processes, started by qwen38-speech.service. Rendered by
+# install-speech.sh from qwen38-speech-launch.sh.template: edit the template, not this file.
+set -u
+# Hidden before anything starts: llama.cpp's CUDA backend would otherwise create a context
+# even at -ngl 0, and beside the flash lane that alone can fail for want of GPU memory.
+export CUDA_VISIBLE_DEVICES=
+# The recognizer: Qwen3-ASR in llama-server, on loopback, its own cores, one request at a
+# time (two on the same cores only slow each other down), no web page. Its context holds
+# about seven minutes of speech; the routes send it pieces of 30 s. No prompt cache
+# in host memory: llama-server keeps one of up to 8 GiB by default, which no recording
+# ever hits twice, and it took the lane from 1.6 to 4 GiB in one afternoon (2026-10-05).
+taskset -c __ASR_CPUS__ __LLAMA_SERVER__ \
+  -m __ASR_MODEL__ --mmproj __ASR_MMPROJ__ \
+  --host 127.0.0.1 --port __ASR_PORT__ \
+  -ngl 0 -t __ASR_THREADS__ -np 1 -c __ASR_CTX__ --cache-ram 0 --no-webui &
+ASR=$!
+# The voice and the routes: Kokoro-82M in the lane's venv, on the other cores.
+taskset -c __TTS_CPUS__ __SPEECH_VENV__/bin/python __SPEECH_LANE_DIR__/speech-server.py \
+  --host __SPEECH_BIND__ --port __SPEECH_PORT__ \
+  --asr-url http://127.0.0.1:__ASR_PORT__ --asr-name __ASR_NAME__ --asr-ctx __ASR_CTX__ \
+  --model __KOKORO_MODEL__ --voices __KOKORO_VOICES__ \
+  --threads __TTS_THREADS__ --default-voice __SPEECH_VOICE__ &
+FRONT=$!
+# Either one ending ends the lane, so that systemd restarts it whole (Restart=on-failure).
+wait -n "$ASR" "$FRONT"
+rc=$?
+kill "$ASR" "$FRONT" 2>/dev/null
+wait
+[ "$rc" -eq 0 ] && rc=1
+exit "$rc"

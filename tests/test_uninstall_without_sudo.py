@@ -89,6 +89,44 @@ class WithoutSudo(unittest.TestCase):
         self.assertIn("services removed.", out)
 
 
+class TheSpeechLane(unittest.TestCase):
+    """install-speech.sh keeps its models in its own folder, not in the HF cache: the
+    runtime goes with the unit, the models stay with a command that reclaims them."""
+
+    def box(self, sudo_ok):
+        box = Box(units=("qwen38-speech.service",), sudo_ok=sudo_ok)
+        lane = box.d / "speech"
+        for sub in ("venv/bin", "llama.cpp/build/bin", "models"):
+            (lane / sub).mkdir(parents=True)
+        (lane / "speech-server.py").write_text("routes")
+        (lane / "models/Qwen3-ASR-0.6B-Q8_0.gguf").write_text("weights")
+        (box.etc / "qwen38-speech.service").write_text(f"[Service]\nWorkingDirectory={lane}\n")
+        return box, lane
+
+    def test_the_runtime_goes_and_the_models_stay_with_their_command(self):
+        box, lane = self.box(sudo_ok=True)
+        rc, out, calls = box.run("--yes")
+        self.assertEqual(rc, 0, out)
+        self.assertIn("systemctl disable --now qwen38-speech.service", calls)
+        self.assertIn(f"{box.etc}/qwen38-speech.service", calls)
+        self.assertEqual(sorted(p.name for p in lane.iterdir()), ["models"])
+        self.assertIn(f"rm -rf '{lane}/models'", out)
+
+    def test_refused_sudo_leaves_the_speech_lane_whole(self):
+        box, lane = self.box(sudo_ok=False)
+        rc, out, _ = box.run("--yes")
+        self.assertEqual(rc, 0, out)
+        self.assertTrue((lane / "venv").exists(), "the speech lane's runtime went while it may run")
+
+    def test_the_inventory_names_it(self):
+        box, lane = self.box(sudo_ok=True)
+        rc, out, _ = box.run("--list")
+        self.assertEqual(rc, 0, out)
+        self.assertIn(f"unit      {box.etc}/qwen38-speech.service", out)
+        self.assertIn(f"runtime   {lane} (speech lane", out)
+        self.assertIn(f"weights   {lane}/models", out)
+
+
 class EveryCacheTheLanesUse(unittest.TestCase):
     def test_weights_on_a_mounted_cache_are_listed(self):
         cache = pathlib.Path(tempfile.mkdtemp(prefix="uninst-hf-"))

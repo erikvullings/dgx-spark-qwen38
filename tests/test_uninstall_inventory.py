@@ -100,8 +100,11 @@ class UninstallKnowsEveryResidue(unittest.TestCase):
 
     def test_every_unit_any_installer_writes_is_listed_and_removed(self):
         written = set()
+        # The lane installers too: the speech lane's unit is written by install-speech.sh
+        # alone, which nothing else names.
         for f in ("install.sh", "dashboard/install-dashboard.sh",
-                  "dashboard/install-agent.sh", "switch-model.sh"):
+                  "dashboard/install-agent.sh", "switch-model.sh",
+                  "install-image.sh", "install-video.sh", "install-speech.sh"):
             written |= _literals(f, r"qwen38-[a-z-]+\.service|opencode-web\.service")
         # Mentioning is not writing: the switch's rollback guard names the llama.cpp
         # unit only to DISABLE it before a lane boots (reviews, 2026-09-28), and by

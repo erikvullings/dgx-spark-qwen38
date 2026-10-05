@@ -1,0 +1,40 @@
+[Unit]
+Description=Speech lane (Qwen3-ASR in llama.cpp, Kokoro-82M), CPU only, OpenAI audio API :__SPEECH_PORT__
+Wants=network-online.target
+After=network-online.target
+# No Conflicts=, unlike the image and video lanes: this one never touches the GPU (the
+# launcher hides it before anything starts), so it runs beside whichever lane serves,
+# flash included. Measured on the reference box on 2026-10-05: with both of its engines
+# busy on the small cores, the flash lane's decode stayed at 47.5 tok/s; a speech load on
+# the GPU took 45% of it, and beside flash a new CUDA context could fail to start at all
+# (docs/speech-lane.md).
+
+[Service]
+Type=simple
+User=__USER__
+Group=__GROUP__
+WorkingDirectory=__SPEECH_LANE_DIR__
+Environment=PYTHONUNBUFFERED=1
+Environment=CUDA_VISIBLE_DEVICES=
+# A /tmp of its own, emptied at every stop: the uploads ffmpeg reads are written there, and
+# the phonemizer copies espeak-ng's library into a new directory there for every language
+# it speaks, which a stopped lane would otherwise leave behind (sixteen on 2026-10-05).
+PrivateTmp=yes
+# The small cores only: the text engines' busy threads run on the big ones (the CPU-pinning
+# A/B of discussion #11), and the launcher splits these between the recognizer and the
+# voice so that neither waits on the other's threads. Nice keeps the engines first when
+# the box is short of CPU.
+CPUAffinity=__SPEECH_CPUS__
+Nice=5
+# Unlike CUDA allocations, this lane's memory is ordinary host memory, so the cgroup sees
+# it and can hold it: the models, the recognizer's context and the voice's runtime come to
+# __SPEECH_MEM_NOTE__, and a runaway is stopped here rather than at the box's memory edge.
+MemoryHigh=__SPEECH_MEM_HIGH__
+MemoryMax=__SPEECH_MEM_MAX__
+ExecStart=/bin/bash __HOME__/.config/qwen38/launch-speech.sh
+Restart=on-failure
+RestartSec=10
+TimeoutStopSec=20
+
+[Install]
+WantedBy=multi-user.target
