@@ -32,8 +32,9 @@ transient allocations in it, and a pool pushed to zero freezes the box until a p
   91/100, every number with its method in [BENCHMARKS.md](BENCHMARKS.md).
 
 Also on the box: Aleph Alpha's **Kolibri-1** for German and English (48 tok/s, 166 at 8
-streams), **MiniMax-H3** video with sound, and a **System One** endpoint that answers with
-calibrated probabilities instead of text.
+streams), **MiniMax-H3** video with sound, opt-in **speech** on the CPU (Qwen3-ASR hears 30
+languages, Kokoro speaks seven), and a **System One** endpoint that answers with calibrated
+probabilities instead of text.
 
 Used and cited by others: [Kevin Welter's write-up](https://kevinwelter.com/en/blog/qwen-3-8-lokal)
 of running Qwen3.8 on a DGX Spark follows this recipe,
@@ -95,6 +96,7 @@ The README is the entry point. Everything longer lives next to it, one subject p
 | Why `--mem-fraction-static` decides whether this box stays alive | [docs/gb10-memory.md](docs/gb10-memory.md) |
 | Where each lane stands against upstream SGLang, re-checked in the images | [docs/upstream.md](docs/upstream.md) |
 | Typed decisions in full: the contract, the four levers, the refusals, the load | [docs/systemone.md](docs/systemone.md) |
+| The speech lane: install, use, the languages, the long recordings, what it was measured with | [docs/speech-lane.md](docs/speech-lane.md) |
 | The `lean` reasoning level: method, numbers, negative results | [LEAN.md](LEAN.md) |
 | What changed in every release, with the measurement behind each change | [CHANGELOG.md](CHANGELOG.md) |
 | The layout, the state files, the invariants CI holds | [ARCHITECTURE.md](ARCHITECTURE.md) |
@@ -421,6 +423,22 @@ from a terminal, `./switch-model.sh kolibri`. Two checkpoints, measured here:
 | `kolibri-nvfp4`: its experts in NVFP4 | 52.9 / 248.2 / 377.2 tok/s | 42.8 GiB | English and German level; French about 4 % of perplexity weaker |
 
 Every number, the builds tried and why this one: **[docs/kolibri-lane.md](docs/kolibri-lane.md)**.
+
+## Speech: Qwen3-ASR and Kokoro, on the CPU, beside any lane
+
+Opt-in, and not in the one command yet: speech recognition in 30 languages (Qwen3-ASR) and
+41 voices in seven languages (Kokoro-82M), behind OpenAI-compatible audio routes on
+`127.0.0.1:30024`. It runs on the CPU alone, five small cores for each engine and no GPU
+memory, so it sits beside whichever lane serves: with both engines busy, the flash lane's
+decode did not move (47.5 tok/s).
+
+```bash
+./install-speech.sh    # from a clone, after ./install.sh: about 3 minutes, proved before it ends
+```
+
+It reads any audio ffmpeg reads (a phone's m4a, a browser's webm), cuts long recordings
+into pieces of 30 s at their quiet moments, and answers the official OpenAI SDK as it
+is. The languages, every number and the limits: **[docs/speech-lane.md](docs/speech-lane.md)**.
 
 ## The 1M context mode
 

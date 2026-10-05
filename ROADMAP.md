@@ -175,16 +175,13 @@ the cockpit drift panel says so, per lane, until it is.
   on every text lane: the panel's own canary stays the source of truth for
   "is this lane alive", the metrics join as history, not as a second
   opinion about life.
-- **A speech lane, on the CPU: Qwen3-ASR, and Kokoro or Qwen3-TTS** (asked for in
-  [discussion #38](https://github.com/hasso5703/dgx-spark-qwen38/discussions/38); measured
-  in [docs/speech-lane.md](docs/speech-lane.md)). On the reference box, Qwen3-ASR 0.6B in
-  `llama-server` on the CPU alone transcribed French at 1.6 times real time on five small
-  cores while the flash lane served, Kokoro-82M spoke at 2.4 times real time on five
-  others, and the flash lane's decode did not move (47.5 tok/s with both busy). No GPU
-  memory, so it fits beside every lane, flash included, where a GPU speech load took 45% of
-  the decode and a new CUDA context could fail to start. Qwen3-TTS waits for llama.cpp's
-  server endpoint and a path faster than real time. Before it is built: the voices heard, a
-  cockpit view, Load and proof like the other lanes', and long recordings measured.
+- **The speech lane, next steps** (asked for in
+  [discussion #38](https://github.com/hasso5703/dgx-spark-qwen38/discussions/38)). It is
+  built, opt-in: `./install-speech.sh` serves Qwen3-ASR and Kokoro-82M on the CPU, beside
+  any lane, behind OpenAI's audio routes ([docs/speech-lane.md](docs/speech-lane.md)). Next:
+  a cockpit view (record and play in the browser, Load and proof like the other lanes'),
+  the lane in the one command, and Qwen3-TTS as a second voice once llama.cpp's server
+  endpoint lands and runs faster than real time.
 
 ## Considered (and why not yet)
 

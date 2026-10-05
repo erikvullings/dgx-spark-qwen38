@@ -73,8 +73,10 @@ launcher in `~/.local/bin`, and the two weight trees (HF cache, PLE dir).
    gain one; flash recipes keep the radix cache and the api-key.
 6. The proxy's outcome vocabulary is a closed set: adding an outcome fails
    CI until it names what it means.
-7. Python is stdlib only, everywhere, forever; `node --check` holds the one
-   JS plugin; no em or en dashes anywhere tracked.
+7. Python is stdlib only, everywhere, forever; what an engine needs lives in its
+   lane's venv (SGLang for images and video, Kokoro for speech, which `speech-server.py`
+   imports only where it speaks); `node --check` holds the one JS plugin; no em or en
+   dashes anywhere tracked.
 8. Tests are counted: what `unittest` reports versus what the files declare,
    per file and in aggregate, because a suite that ran nothing once passed.
 9. The offline suite cannot touch the box: witness HOME hashed either side,

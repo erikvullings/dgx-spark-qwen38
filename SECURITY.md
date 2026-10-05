@@ -133,7 +133,9 @@ sudo. Every pinned byte is hash-verified: images by digest, checkpoints by
 pinned revision, the opencode release by its sha256. The image and video lanes
 (`--with-image`, `--with-video`) are the parts with unpinned bytes: their SGLang wheel, source
 commit and checkpoint revision are pinned, but pip resolves the wheel's dependency tree
-from PyPI at install time, with no hash checked. The engine enforces its key, read from a file created
+from PyPI at install time, with no hash checked. The speech lane (`./install-speech.sh`,
+opt-in) pins llama.cpp's commit, its models by sha256, and every package of its venv by
+exact version, wheels only, also without hashes. The engine enforces its key, read from a file created
 0600 and handed to it through SGLang's `--config`, so it is in no process's command line and the chat template and launcher are regenerated from the
 repo on every install.
 
@@ -174,6 +176,11 @@ discussion, not a disclosure.
   existing trust model (a trusted network by design, see the plain HTTP edge
   above); the metrics endpoint adds counters to it, not a new surface to
   authenticate against. The image and video lanes export no metrics.
+- **The speech lane's routes take no key.** Like the image and video lanes, the speech
+  lane (opt-in, `:30024`) serves its routes with no key on loopback, and the cockpit is
+  the door. `SPEECH_BIND` puts them on another address, and the installer says what that
+  costs: anyone who reaches it can transcribe and speak with the box's CPU. Its recognizer
+  (`:30025`) binds loopback whatever is set.
 - **Each engine opens its own coordination port on every interface.** The API of a
   lane binds where it is told (loopback by default), but the engine process also runs
   PyTorch's distributed store, and torch binds that listener to all interfaces with no
