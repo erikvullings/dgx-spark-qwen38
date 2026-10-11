@@ -1544,6 +1544,10 @@ jobs:
           # C.UTF-8, and first proves on a real em dash that it can see one.
           printf 'a\xe2\x80\x94b\n' | LC_ALL=C.UTF-8 grep -qP '[\x{2014}\x{2013}\x{2212}]' \
             || { echo "grep -P cannot see an em dash here: the check would read everything as clean"; exit 1; }
-          if git ls-files -z | LC_ALL=C.UTF-8 xargs -0 grep -nP '[\x{2014}\x{2013}\x{2212}]' 2>/dev/null; then
+          # -I: the check reads text files, as its name says. A PNG carries arbitrary compressed
+          # bytes, and three of them spelled an en dash inside the 2026-10-11 cockpit capture,
+          # which failed the v1.27.1 CI. No text file is spared: grep -I only skips what grep
+          # itself refuses to call text.
+          if git ls-files -z | LC_ALL=C.UTF-8 xargs -0 grep -InP '[\x{2014}\x{2013}\x{2212}]' 2>/dev/null; then
             echo "em/en dash found (house style forbids them)"; exit 1
           fi
