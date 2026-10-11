@@ -1,5 +1,35 @@
 # Changelog
 
+## v1.26.2 (2026-10-11): the Agent tab's terminal works when the cockpit is opened by its tailnet address
+
+**A terminal with no shell.** opencode gives its terminal only to a page whose `Origin` names
+the host the request was sent to, or a loopback page: it refuses the terminal's connect ticket
+to any other (in its source since 1.18.20 at least, the pinned 1.18.35 included), and 1.19.0
+refuses the WebSocket itself the same way. The Agent tab's relay forwarded the browser's
+`Origin`, `http://<tailnet address>:30091`, with `Host` set to opencode's loopback address. So
+with the cockpit opened the documented way, by its tailnet address, the terminal panel showed a
+tab and no shell: the interface asked for its ticket, got 403, tried once more on a new
+terminal, got 403 again, and opened no WebSocket. Opened on the box by 127.0.0.1, it worked,
+loopback pages being allowed. Measured in a headless Chrome on 2026-10-11, through a cockpit
+and relay of their own bound to the tailnet address, in front of a sandbox opencode 1.18.35
+and 1.19.0: the same 403 twice and no WebSocket on both; with this release, the ticket 200, the
+WebSocket 101 and a command typed into the terminal answered by the shell, on both. The
+reference box's own cockpit (v1.26.0, opencode 1.18.35) showed the same 403 twice and no
+WebSocket the same day.
+
+**What changed.** The relay already refuses any `Origin` but its own host before it forwards
+anything. It now shows opencode the origin of opencode's own page in place of the browser's,
+and a request that names no origin still names none. Nothing else in what it forwards changed.
+
+**Tests.** A fake opencode now applies opencode's own rule to its terminal: a page on the
+tailnet address gets its ticket and its WebSocket through the relay, a foreign page is still
+refused by the relay before opencode sees anything, and a request with no `Origin` is given
+none. The first two fail on v1.26.1 (403 from opencode). Three mutants of the change (an origin
+added where none was sent, the browser's forwarded as before, none at all) each fail a test.
+
+**What an update does.** An update restarts the cockpit, where the relay runs; opencode's
+server and the engines keep running.
+
 ## v1.26.1 (2026-10-11): the cockpit's canary waits for a client that just started, and /ready stays open at the proxy as at the engine
 
 **The canary behind a client's prompt.** The cockpit sends its two-token canary only when no

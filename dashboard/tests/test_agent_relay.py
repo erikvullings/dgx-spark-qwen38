@@ -15,6 +15,7 @@ import threading
 import time
 import unittest
 import urllib.error
+import urllib.parse
 import urllib.request
 from pathlib import Path
 
@@ -26,6 +27,18 @@ SPA_DOC = b"<!doctype html><html><head><title>Oc</title></head><body><div id=roo
 WS_GUID = b"258EAFA5-E914-47DA-95CA-C5AB0DC85B11"
 RELEASE = threading.Event()          # lets the SSE handler send its second event
 SEEN: list = []                       # requests as the upstream saw them
+
+
+def opencode_origin_ok(origin, host) -> bool:
+    """opencode's rule for its terminal (isAllowedRequestOrigin, packages/server/src/cors.ts,
+    1.19.0, no --cors list): no Origin, an Origin naming the Host the request was sent to, or
+    a loopback page. Any other origin is refused, both for the connect ticket and, from
+    1.19.0, for the WebSocket itself."""
+    if not origin:
+        return True
+    if host and urllib.parse.urlsplit(origin).netloc == host:
+        return True
+    return origin.startswith(("http://localhost:", "http://127.0.0.1:"))
 
 
 class FakeOpencode(http.server.BaseHTTPRequestHandler):
@@ -154,10 +167,23 @@ class FakeOpencode(http.server.BaseHTTPRequestHandler):
         SEEN.append({"method": "POST", "path": self.path, "headers": dict(self.headers.items()), "len": length})
         if not self._auth():
             return
+        path = self.path.split("?", 1)[0]
+        if path.startswith("/pty/") and path.endswith("/connect-token"):
+            if (self.headers.get("x-opencode-ticket") != "1"
+                    or not opencode_origin_ok(self.headers.get("Origin"), self.headers.get("Host"))):
+                return self._json({"_tag": "PtyForbiddenError"}, 403)
+            return self._json({"ticket": "t"})
         self._json({"len": len(body), "sha256": hashlib.sha256(body).hexdigest(),
                     "ctype": self.headers.get("Content-Type")})
 
     def websocket(self):
+        if self.path.startswith("/pty/") and not opencode_origin_ok(self.headers.get("Origin"),
+                                                                   self.headers.get("Host")):
+            self.send_response(403)
+            self.send_header("Content-Length", "0")
+            self.end_headers()
+            self.close_connection = True
+            return
         key = self.headers["Sec-WebSocket-Key"].encode()
         accept = base64.b64encode(hashlib.sha1(key + WS_GUID).digest()).decode()
         self.wfile.write(b"HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\n"
@@ -530,6 +556,46 @@ class RelayTests(unittest.TestCase):
         self.assertNotIn("cookie", h)
         self.assertEqual(h["upgrade"], "websocket")
 
+    # ---- the terminal, opened from another machine (the tailnet address) ----
+    def test_a_remote_browser_gets_its_terminal_ticket(self):
+        remote = f"100.64.0.1:{self.port}"
+        code, _, body = self.get("/pty/1/connect-token", method="POST", data=b"", headers={
+            "Host": remote, "Origin": f"http://{remote}", "x-opencode-ticket": "1"})
+        self.assertEqual((code, json.loads(body)), (200, {"ticket": "t"}))
+        h = {k.lower(): v for k, v in SEEN[-1]["headers"].items()}
+        self.assertEqual(h["origin"], f"http://127.0.0.1:{self.up.server_port}",
+                         "opencode is shown its own page's origin, the one it serves to")
+
+    def test_a_remote_browser_opens_the_terminal(self):
+        remote = f"100.64.0.1:{self.port}"
+        s = socket.create_connection(("127.0.0.1", self.port), timeout=10)
+        s.sendall((f"GET /pty/1/connect?ticket=t HTTP/1.1\r\nHost: {remote}\r\n"
+                   f"Origin: http://{remote}\r\nCookie: cockpit=good\r\n"
+                   "Upgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Key: eA==\r\n"
+                   "Sec-WebSocket-Version: 13\r\n\r\n").encode())
+        fp = s.makefile("rb")
+        head = b""
+        while not head.endswith(b"\r\n\r\n"):
+            line = fp.readline()
+            if not line:
+                break
+            head += line
+        if head.startswith(b"HTTP/1.1 101"):
+            s.sendall(ws_frame(b"", opcode=8, mask=True))
+            self.assertEqual(ws_read(fp)[0], 8)
+        fp.close()
+        s.close()
+        self.assertTrue(head.startswith(b"HTTP/1.1 101"), head[:40])
+        h = {k.lower(): v for k, v in SEEN[-1]["headers"].items()}
+        self.assertEqual(h["origin"], f"http://127.0.0.1:{self.up.server_port}")
+
+    def test_a_foreign_page_still_gets_no_terminal(self):
+        remote = f"100.64.0.1:{self.port}"
+        code, _, _ = self.get("/pty/1/connect-token", method="POST", data=b"", headers={
+            "Host": remote, "Origin": "http://evil.example", "x-opencode-ticket": "1"})
+        self.assertEqual(code, 403)
+        self.assertEqual(SEEN, [], "refused by the relay, before opencode")
+
     def test_websocket_without_session_is_refused_before_upstream(self):
         s = socket.create_connection(("127.0.0.1", self.port), timeout=10)
         s.sendall((f"GET /pty/1/connect HTTP/1.1\r\nHost: 127.0.0.1:{self.port}\r\n"
@@ -606,6 +672,10 @@ class PureHelpers(unittest.TestCase):
             self.assertNotIn(gone, out)
         ws = dict(ar.forward_request_headers([], "u:1", "Basic x", websocket=True))
         self.assertEqual((ws["Connection"], ws["Upgrade"]), ("Upgrade", "websocket"))
+        self.assertNotIn("Origin", out, "no origin is made up for a request that named none")
+        remote = ar.forward_request_headers([("Origin", "http://100.64.0.1:30091"), ("origin", "http://x")],
+                                            "127.0.0.1:4096", "Basic x")
+        self.assertEqual([v for k, v in remote if k.lower() == "origin"], ["http://127.0.0.1:4096"])
 
     def test_frame_policy_and_upstream_split(self):
         self.assertEqual(ar.frame_policy("100.64.0.1:30091", 30090), "frame-ancestors 'self' http://100.64.0.1:30090")

@@ -36,9 +36,9 @@ RELAY_VERSION = "1.1"
 HOP_BY_HOP = {"connection", "keep-alive", "proxy-authenticate", "proxy-authorization",
               "te", "trailer", "transfer-encoding", "upgrade"}
 # Request headers the relay never forwards: the cockpit session must not reach
-# opencode, the client's own Authorization is replaced by ours, Host names the
-# upstream, lengths are re-set, and the referrer says nothing about the cockpit.
-REQUEST_DROP = HOP_BY_HOP | {"host", "cookie", "authorization", "content-length", "referer"}
+# opencode, the client's own Authorization is replaced by ours, Host and Origin name
+# the upstream, lengths are re-set, and the referrer says nothing about the cockpit.
+REQUEST_DROP = HOP_BY_HOP | {"host", "origin", "cookie", "authorization", "content-length", "referer"}
 # Response headers the relay owns (Date and Server come from this server).
 RESPONSE_DROP = HOP_BY_HOP | {"content-length", "date", "server"}
 SESSION_COOKIE = "cockpit"
@@ -142,8 +142,18 @@ def read_credentials(path: Path) -> tuple[str, str] | None:
 
 def forward_request_headers(items, upstream_host: str, auth: str,
                             websocket: bool = False) -> list[tuple[str, str]]:
+    items = list(items)
     out = [(k, v) for k, v in items if k.lower() not in REQUEST_DROP]
     out.append(("Host", upstream_host))
+    if any(k.lower() == "origin" for k, _ in items):
+        # The browser's origin was held to this relay's own host before anything was
+        # forwarded (origin_allowed), so opencode is shown the origin of the page it
+        # serves itself. It refuses its terminal to any origin but its own host and
+        # loopback: the connect ticket in every version this repo has pinned, and the
+        # WebSocket itself from 1.19.0 on, so the Agent tab opened by the tailnet
+        # address had a terminal with no shell (in Chrome, 2026-10-11: the ticket
+        # refused with 403 on 1.18.35 and 1.19.0, and no WebSocket opened).
+        out.append(("Origin", f"http://{upstream_host}"))
     out.append(("Authorization", auth))
     if websocket:
         out.append(("Connection", "Upgrade"))

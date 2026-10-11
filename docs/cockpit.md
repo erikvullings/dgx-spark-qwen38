@@ -268,10 +268,12 @@ Two pieces land, and the shape is the security model:
   is on loopback, and the cockpit's own address otherwise, so a cockpit bound to a
   LAN address puts the relay on the LAN too; `AGENT_BIND=` sets any other.
   It answers a request only with a valid cockpit session cookie, refuses any
-  foreign `Origin`, strips the cookie before forwarding, adds the credentials,
-  and streams everything back: plain answers, the event stream, the WebSocket of
-  the terminal panel. Its responses carry `frame-ancestors` naming the cockpit,
-  so no other page can frame the interface.
+  foreign `Origin` and shows opencode its own in place of the browser's (opencode
+  gives its terminal only to a page of its own host or of loopback), strips the
+  cookie before forwarding, adds the credentials, and streams everything back:
+  plain answers, the event stream, the WebSocket of the terminal panel. Its
+  responses carry `frame-ancestors` naming the cockpit, so no other page can frame
+  the interface.
 
 The browser therefore sees one host for the cockpit and the relay (cookies ignore
 ports): the Agent view frames the interface with no second login and no Basic-auth
