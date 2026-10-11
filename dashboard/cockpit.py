@@ -657,6 +657,16 @@ def collect_canary():
     why = ("this cockpit is a dry run" if DRY_RUN else "no text engine is ready" if not ready
            else "an action is running" if JOB_LOCK.locked() else "requests are running" if busy
            else "a client was active in the last minute" if recent else "")
+    if not why:
+        # the load above is the fast collector's last read, seconds old: a client that started
+        # since then had the probe queue behind it and time out, a failure the wedge rule counts
+        # (2026-10-11 00:23, behind an 80,000-token prefill). The engine is asked again right
+        # before the probe; a read that fails leaves the probe to find out, as before.
+        try:
+            if any(int(r.get("num_reqs") or 0) > 0 for r in engine_load(timeout=3.0) or []):
+                why = "requests are running"
+        except Exception:  # noqa: BLE001 (an engine that will not answer is the probe's to judge)
+            pass
     if why:
         # never queue a probe behind a user's request: a scheduler at its cap would make
         # the probe wait for it, and the canary would read a busy engine as a wedged one

@@ -977,6 +977,38 @@ class TheCockpitsOwnProbeIsNotAClient(Base):
             self.cp.CANARY.clear(); self.cp.CANARY.update(saved[2])
         self.assertFalse(out.get("skipped"), "it was attempted, not skipped as 'engine busy'")
 
+    def canary_with(self, load):
+        """The canary against a closed port (a probe sent fails fast), the fast collector's
+        last read saying idle, and the engine asked again answering `load` (a callable)."""
+        saved = (self.cp.DRY_RUN, self.cp.ENGINE_BASE, self.cp.engine_load, dict(self.cp.CANARY))
+        with self.cp.LIFE_LOCK:
+            self.cp.LIFE["states"] = {"qwen38-sglang.service": "ready"}
+        with self.cp.STATE_LOCK:
+            self.cp.STATE["engine_fast"] = {"data": {"load": [{"num_reqs": 0, "num_waiting_reqs": 0}]}}
+        self.cp.DRY_RUN, self.cp.ENGINE_BASE, self.cp.engine_load = False, "http://127.0.0.1:9", load
+        self.cp.CANARY.update(fails=0, last_err="")
+        try:
+            return self.cp.collect_canary(), dict(self.cp.CANARY)
+        finally:
+            self.cp.DRY_RUN, self.cp.ENGINE_BASE, self.cp.engine_load = saved[0], saved[1], saved[2]
+            self.cp.CANARY.clear(); self.cp.CANARY.update(saved[3])
+
+    def test_a_client_that_started_since_the_last_load_read_keeps_the_canary_out(self):
+        # 2026-10-11 00:23: the last read said idle, a client's 80,000-token prompt had just
+        # started, and the probe queued behind it until it timed out, a failure the wedge
+        # rule counts; the engine asked again right before the probe says it is busy
+        out, canary = self.canary_with(lambda timeout=3.0: [{"num_reqs": 1, "num_waiting_reqs": 0}])
+        self.assertTrue(out.get("skipped"), out)
+        self.assertEqual(out.get("why"), "requests are running")
+        self.assertEqual(canary["fails"], 0, "no probe was sent, so none failed")
+
+    def test_a_load_read_that_fails_leaves_the_probe_to_judge_the_engine(self):
+        def down(timeout=3.0):
+            raise OSError("connection refused")
+        out, canary = self.canary_with(down)
+        self.assertFalse(out.get("skipped"), "an engine that will not answer is the probe's to judge")
+        self.assertEqual(canary["fails"], 1, "the probe went to the closed port and failed there")
+
 
 class AnOrphanContainerHoldsTheBox(Base):
     """The same stop timeout with the container still up: systemd killed the docker client,

@@ -1,5 +1,30 @@
 # Changelog
 
+## v1.26.1 (2026-10-11): the cockpit's canary waits for a client that just started, and /ready stays open at the proxy as at the engine
+
+**The canary behind a client's prompt.** The cockpit sends its two-token canary only when no
+request runs, judged from the engine load its fast collector last read, a few seconds old. On
+the reference box (2026-10-11) a client's 77,887-token prompt started in that gap: the canary
+queued behind its 58-second prefill, timed out after 25 s and counted as a failed generation
+probe (the wedge rule calls an idle engine wedged after three in a row), and the Traffic view
+counted its abort. The cockpit now asks the engine for its load again right before the probe
+and stays out when a request runs; when that read fails, the probe goes as before, since an
+engine that will not answer is the probe's to judge.
+
+**/ready at the proxy's door.** The engine's own auth rule leaves the paths under `/health`,
+`/ready` and `/metrics` open; the proxy's door, which applies that rule before it reads a body
+(v1.22.13), had `/health` and `/metrics` only, so a readiness probe got 401 through the proxy
+and 200 from the engine. Measured on the reference box: `/ready` 200 with no key, `/ready_check`,
+`/readyz` and `/ready/x` let through to a 404, `/readiness` (not under `/ready`) 401. The door
+now leaves `/ready` open the same way (proxy v6.36); SECURITY.md and docs/clients.md say so.
+
+**Tests.** A client that started since the last load read keeps the canary out, and a load read
+that fails leaves the probe to run; `/ready` passes the door without a key, and `/readiness`
+still needs it. The first and the third fail on v1.26.0 (the probe went out; 401).
+
+**What an update does.** An update restarts the proxy once (v6.36) and the cockpit; the engines
+keep running.
+
 ## v1.26.0 (2026-10-11): the Traffic view says the prefill speed too, the queue, the idleness, and the peaks
 
 The **Last 5 minutes** box fills in what was missing, from the same reads of the engine's

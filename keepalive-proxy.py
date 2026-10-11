@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Keepalive proxy in front of SGLang (v6.35). No content logging, and the only
+"""Keepalive proxy in front of SGLang (v6.36). No content logging, and the only
 rewriting is the tool-schema guard (role 4); one route, POST /v1/systemone, is answered
 here instead of relayed (role 5).
 
@@ -40,6 +40,9 @@ Six roles, nothing else:
    PROXY_HOLD_MAX_S, instead of failing at once. A streamed one hears from the proxy at
    once (200, then the keepalives of role 1); see "Holding a request" below.
 
+v6.36: a path under /ready passes the door without a key, as the engine leaves it open (its
+auth rule opens /health, /ready and /metrics; the door had /health and /metrics only, so a
+readiness probe got 401 here and 200 from the engine, found 2026-10-11).
 v6.35: a lane switch is followed at once, request or not. The pool, the window and the names
 read from the engine were kept 600 s and dropped only by a request that found the engine
 gone, so after a switch made while no request came, a lane that boots in less than 600 s
@@ -602,13 +605,15 @@ SERVER_INFO_ROUTES = frozenset({"/server_info", "/get_server_info"})
 # Without the identity wall, the engine's key is this port's one gate (README), and since
 # v6.34 the proxy applies it before reading a body. The rule is the engine's own, from
 # SGLang's srt/utils/auth.py (decide_request_auth, _check_bearer_token; the same in both
-# pinned images) and measured on the live engine on 2026-10-08: a path under /health or
-# /metrics needs no key (/health, /health_generate and /metrics answered 200 with no
-# header); any other needs an Authorization header that, without the whitespace around it,
+# pinned images) and measured on the live engine on 2026-10-08: a path under /health,
+# /ready or /metrics needs no key (/health, /health_generate and /metrics answered 200 with
+# no header; /ready followed on 2026-10-11: 200, and /ready_check, /readyz and /ready/x
+# passed to a 404, while /readiness, not under /ready, was 401); any other needs an
+# Authorization header that, without the whitespace around it,
 # is a scheme spelled "bearer" in any case, one space, and the key exactly. "bearer KEY"
 # and "Bearer KEY " were admitted; "Bearer  KEY", "Bearer<TAB>KEY", "Token KEY", the key
 # alone and no header were 401.
-ENGINE_OPEN_PREFIXES = ("/health", "/metrics")
+ENGINE_OPEN_PREFIXES = ("/health", "/ready", "/metrics")
 # The engine's own refusal, byte for byte, so a client gets the answer it always got.
 ENGINE_401_BODY = b'{"error":"Unauthorized"}'
 
@@ -3977,7 +3982,7 @@ if __name__ == "__main__":
     holds = (f"holds requests up to {HOLD_MAX_S:.0f}s while {' or '.join(HOLD_UNITS)} comes back"
              if HOLD_UNITS and HOLD_MAX_S > 0 else "holds nothing")
     # one f-string: the cockpit's tests render this line from the source
-    log(f"v6.35 on {BIND}:{port} -> {UPSTREAM} (keepalive {KEEPALIVE_S:.0f}s, max silence {MAX_SILENCE_S:.0f}s, {holds})")
+    log(f"v6.36 on {BIND}:{port} -> {UPSTREAM} (keepalive {KEEPALIVE_S:.0f}s, max silence {MAX_SILENCE_S:.0f}s, {holds})")
     if FLASH_PROMPT_CEILING_TOKENS > 0:
         log(f"one-prompt ceiling {FLASH_PROMPT_CEILING_TOKENS} tokens while the flash lane serves"
             + (f", {PROMPT_CEILING_TOKENS} on any lane" if PROMPT_CEILING_TOKENS > 0 else ""))

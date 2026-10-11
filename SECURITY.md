@@ -99,7 +99,8 @@ proxy applies it itself, with the engine's own rule and the engine's own 401,
 before it reads a byte of the body. Until then a caller with no key, or a wrong
 one, had its body read whole (up to `MAX_BODY_BYTES`) and, when it was large,
 counted by the engine on the proxy's own key before the engine refused it. Paths
-under `/health` and `/metrics` stay open, as the engine keeps them.
+under `/health`, `/ready` and `/metrics` stay open, as the engine keeps them (`/ready`
+since v1.26.1).
 
 **The cockpit (`dashboard/`, :30090)** runs as the user who installed the box,
 and that user is already root-equivalent: `install.sh` requires it to be in the

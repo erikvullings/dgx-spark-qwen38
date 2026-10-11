@@ -246,13 +246,23 @@ class TheDoor(unittest.TestCase):
         self.assertEqual(Engine.seen, [])
 
     def test_the_routes_the_engine_leaves_open_need_no_key(self):
-        for path in ("/health", "/health_generate", "/metrics"):
+        # the engine opens /health, /ready and /metrics by prefix (srt/utils/auth.py); /ready
+        # answered 200 with no key on the reference box and the door said 401 (2026-10-11)
+        for path in ("/health", "/health_generate", "/metrics", "/ready"):
             with self.subTest(path=path):
                 with Engine.lock:
                     Engine.seen = []
                 status, _ = self.request("GET", path)
                 self.assertEqual(status, 200)
                 self.assertIn(("GET", path), [s[:2] for s in Engine.seen])
+
+    def test_a_path_that_only_looks_like_ready_needs_the_key(self):
+        # "/readiness" is not under "/ready" (r-e-a-d-i): the engine answered it 401 with no key
+        with Engine.lock:
+            Engine.seen = []
+        status, raw = self.request("GET", "/readiness")
+        self.assertEqual(status, 401, raw[:200])
+        self.assertEqual(Engine.seen, [])
 
     def test_a_read_without_the_key_is_refused_too(self):
         for path in ("/v1/models", "/server_info", "/get_model_info"):
