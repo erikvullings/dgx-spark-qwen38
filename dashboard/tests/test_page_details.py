@@ -207,7 +207,7 @@ class ANewLaneIsNotNamedAfterTheOldCheckpoint(unittest.TestCase):
               info: {served_model_name: 'qwen3.8-27b', max_total_num_tokens: 800000, context_length: 1048576}},
               lifecycle: life({'qwen38-sglang.service': eng('ready')})});
         feed({lifecycle: life({'qwen38-sglang.service': eng('stopped'), 'qwen38-flash.service': eng('ready', {target: 'flash-uncensored'})})});
-        report({label: laneLabel('qwen38-flash.service'), spine: txt('serving-name'), sel: LCARDS.get('qwen38-flash.service').tsel.value});
+        report({label: laneLabel('qwen38-flash.service'), spine: txt('serving-name'), sel: LCARDS.get('qwen38-flash.service').target});
         """)
         self.assertEqual(r["label"], "flash 176B uncensored")
         self.assertIn("flash 176B uncensored", r["spine"])

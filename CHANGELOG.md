@@ -1,5 +1,41 @@
 # Changelog
 
+## v1.27.1 (2026-10-11): the backdrop is drawn under reduced motion, and the review's last fixes
+
+**A black ground under reduced motion.** v1.27.0 draws its backdrop once for a system that asks
+for reduced motion (Reduce Motion on iOS and macOS, the animation setting of Windows). That one
+frame went through the gate of 8 frames a second: when the browser's first frame came earlier
+than 125 ms after the page started, it was skipped and never asked for again, and the canvas
+stayed black under the panels. Measured in a headless Chrome on 2026-10-11: 3 loads in 4 left
+black under reduced motion, none with motion. The still frame is now always drawn, under the
+Agent's fullscreen too: 4 loads in 4 drew it.
+
+**No blur under the panels.** The panels, the pool, the vitals and the bays blurred what was
+behind them: two smooth halos, where a blur changes nothing a reader sees (the same page with
+and without, on one still frame: 0.15/255 of mean difference on Lanes and on a phone), for a new
+blur of every panel at each frame of the halos. They have none now; the head and the job dock
+keep theirs, since the page scrolls under them. Measured again on Now and Lanes, desktop and
+phone: no text under WCAG AA, the minimum 4.94:1 on the desktop and 4.79:1 on the phone.
+
+**The versions without a hidden select.** Since v1.27.0 the Lanes card kept the chosen version in
+a select hidden behind its buttons; it is the card's own value now, and the tests that drove the
+select click the buttons. The names and the lines of the versions sit beside the other target
+tables in js/base.js, where a target is declared.
+
+**The Agent check runs again.** dashboard/tests/agent-check.mjs, the browser check of the Agent
+tab against a live cockpit, still looked for the tab and the ids of the cockpit before its
+rebuild of 2026-09-30 and failed 13 of its 31 checks on every box. It reads the current view:
+31 of 31 on the reference box.
+
+**Fonts.** fonts.css, inter.woff2 and plexmono-700.woff2, loaded by nothing since 2026-09-30, are
+gone, and the licence of IBM Plex Mono (SIL OFL 1.1) now ships beside it.
+
+**Tests.** Two new page tests: under reduced motion the backdrop draws its one frame, under the
+Agent's fullscreen too. Both fail on v1.27.0 (no frame drawn). All 1002 cockpit tests pass.
+
+**What an update does.** An update restarts the cockpit; the engines, the proxy and opencode keep
+running. A tab left open shows the old page until it is reloaded.
+
 ## v1.27.0 (2026-10-11): the cockpit in deep indigo, each lane with its maker's mark and its colour, every version in sight
 
 **What was wrong.** The cockpit worked, and it looked like a settings page: graphite and

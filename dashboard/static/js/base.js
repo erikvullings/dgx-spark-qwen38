@@ -117,6 +117,15 @@ const LANE_TARGETS = {[U27]: ['stock', 'uncensored', 'fp8', 'uncensored-fp8'], [
 const TARGET_NAME = {stock: '27B stock, NVFP4', uncensored: '27B uncensored, NVFP4', fp8: '27B FP8, Qwen official',
                      'uncensored-fp8': '27B FP8 uncensored', flash: 'flash 176B, NVFP4', 'flash-uncensored': 'flash 176B uncensored',
                      'flash-nvda': 'flash 176B, NVIDIA export', image: 'Qwen-Image 2.1', 'image-turbo': 'Qwen-Image 2.1 Turbo', video: 'MiniMax-H3'};
+// A version's name on its button in Lanes, and the line that tells it apart once chosen. A
+// target is declared in the tables of this block: a page test fails when one lacks a name or a line.
+const TARGET_SHORT_NAME = {stock: 'Stock', uncensored: 'Uncensored', fp8: 'FP8', 'uncensored-fp8': 'FP8 uncensored',
+  flash: 'Standard', 'flash-uncensored': 'Uncensored', 'flash-nvda': 'NVIDIA export', image: 'Base', 'image-turbo': 'Turbo', video: 'H3'};
+const TARGET_LINE = {
+  stock: 'The default: smallest and fastest', uncensored: 'Refusals removed, same size and speed',
+  fp8: "Qwen's own weights: the most faithful, and heavier", 'uncensored-fp8': 'Refusals removed, and heavier',
+  flash: 'The default', 'flash-uncensored': 'Refusals removed', 'flash-nvda': "NVIDIA's own export",
+  image: '40 steps, the most detail', 'image-turbo': '8 steps, about 4.5 times faster', video: 'The one version'};
 const TARGET_NOTE = {
   stock: 'The NVFP4 quantization this repo pins by default: smallest and fastest of the 27B targets.',
   uncensored: 'The abliterated NVFP4 checkpoint: same size and speed as stock, refusals removed.',

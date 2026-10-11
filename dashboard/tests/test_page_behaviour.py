@@ -179,13 +179,13 @@ class TheCheckpointSelectorFollowsTheLaneAgain(unittest.TestCase):
     def test_a_cancelled_choice_gives_the_selector_back(self):
         r = run(self, self.SERVE + r"""
         serve('qwen38-sglang.service', 'stock');
-        const c = LCARDS.get('qwen38-sglang.service'), sel = c.tsel;
-        sel.value = 'fp8'; sel.dispatchEvent({type: 'change'});
+        const c = LCARDS.get('qwen38-sglang.service');
+        c.opts.find(b => b.dataset.target === 'fp8').click();
         c.load.click();
         const asked = !$('scrim').hidden;
         $('sh-cancel').click();
         serve('qwen38-sglang.service', 'stock');
-        report({asked, value: sel.value});
+        report({asked, value: c.target});
         """)
         self.assertTrue(r["asked"], "Load opens the journey")
         self.assertEqual(r["value"], "stock")
@@ -193,13 +193,13 @@ class TheCheckpointSelectorFollowsTheLaneAgain(unittest.TestCase):
     def test_once_the_choice_is_served_it_follows_again(self):
         r = run(self, self.SERVE + r"""
         serve('qwen38-sglang.service', 'stock');
-        const sel = LCARDS.get('qwen38-sglang.service').tsel;
-        sel.value = 'fp8'; sel.dispatchEvent({type: 'change'});
+        const c = LCARDS.get('qwen38-sglang.service');
+        c.opts.find(b => b.dataset.target === 'fp8').click();
         serve('qwen38-sglang.service', 'stock');
-        const kept = sel.value;                       // chosen, not served yet: kept
+        const kept = c.target;                        // chosen, not served yet: kept
         serve('qwen38-sglang.service', 'fp8');        // the switch, then a restart
         serve('qwen38-sglang.service', 'uncensored'); // later, another checkpoint
-        report({kept, value: sel.value});
+        report({kept, value: c.target});
         """)
         self.assertEqual(r["kept"], "fp8")
         self.assertEqual(r["value"], "uncensored")
@@ -1283,8 +1283,8 @@ class TheLastFiveMinutesSayTheEnginesCounters(unittest.TestCase):
 
 class EveryVersionOfALaneIsInSight(unittest.TestCase):
     """A lane's versions sat behind a select that read as one line, and nobody could tell
-    there was a choice (2026-10-11). They are one button each now, a radio group whose value
-    is still the hidden select's, so everything that read the select reads the same value."""
+    there was a choice (2026-10-11). They are one button each now, a radio group, and the
+    choice is the card's own value: no select stays behind them (v1.27.1)."""
 
     SERVE = TheCheckpointSelectorFollowsTheLaneAgain.SERVE
 
@@ -1294,7 +1294,7 @@ class EveryVersionOfALaneIsInSight(unittest.TestCase):
         const c = LCARDS.get('qwen38-sglang.service'), opt = t => c.opts.find(b => b.dataset.target === t);
         const seen = () => ({checked: c.opts.filter(b => b.getAttribute('aria-checked') === 'true').map(b => b.dataset.target),
                              tabbable: c.opts.filter(b => b.tabIndex === 0).map(b => b.dataset.target),
-                             value: c.tsel.value, line: c.pickLine.textContent, load: c.load.hidden ? null : c.load.textContent});
+                             value: c.target, line: c.pickLine.textContent, load: c.load.hidden ? null : c.load.textContent});
         const before = seen(); opt('fp8').click(); const after = seen();
         // a lane that does not serve says which version its Load loads, when it has more than one
         const loads = ['qwen38-flash.service', 'qwen38-video.service'].map(u => LCARDS.get(u).load.textContent);
@@ -1302,12 +1302,12 @@ class EveryVersionOfALaneIsInSight(unittest.TestCase):
         const held = seen();
         report({before, after, loads, held, names: c.opts.map(b => b.textContent), group: c.pickBox.querySelector('.pick').getAttribute('role'),
                 roles: c.opts.map(b => b.getAttribute('role')), label: c.pickBox.querySelector('.pick-label').textContent,
-                selectHidden: c.tsel.hidden});
+                selects: c.root.querySelectorAll('select').length});
         """)
         self.assertEqual(r["names"], ["Stock", "Uncensored", "FP8", "FP8 uncensored"])
         self.assertEqual(r["label"], "Version (4)")
         self.assertEqual((r["group"], set(r["roles"])), ("radiogroup", {"radio"}))
-        self.assertTrue(r["selectHidden"], "the select holds the value, out of sight")
+        self.assertEqual(r["selects"], 0, "the buttons are the control: no select behind them")
         self.assertEqual((r["before"]["checked"], r["before"]["tabbable"], r["before"]["value"]), (["stock"], ["stock"], "stock"))
         self.assertTrue(r["before"]["line"].endswith("Serving now."), r["before"]["line"])
         self.assertIsNone(r["before"]["load"], "the version that serves is not offered again")
@@ -1325,11 +1325,11 @@ class EveryVersionOfALaneIsInSight(unittest.TestCase):
                              {type: 'keydown', key: k, bubbles: true, preventDefault(){ held = true; }}); return held; };
         c.opts[0].focus();
         const steps = ['ArrowRight', 'ArrowRight', 'ArrowLeft', 'ArrowLeft', 'ArrowUp', 'ArrowDown'].map(k => {
-          const held = key(k); return [c.tsel.value, document.activeElement.dataset.target, held]; });
+          const held = key(k); return [c.target, document.activeElement.dataset.target, held]; });
         const modified = ['altKey', 'ctrlKey', 'metaKey'].map(m => { let held = false;
           document.activeElement.dispatchEvent({type: 'keydown', key: 'ArrowLeft', [m]: true, bubbles: true, preventDefault(){ held = true; }});
-          return [held, c.tsel.value]; });
-        report({steps, other: key('a'), after: c.tsel.value, modified});
+          return [held, c.target]; });
+        report({steps, other: key('a'), after: c.target, modified});
         """)
         self.assertEqual([s[:2] for s in r["steps"]],
                          [["uncensored", "uncensored"], ["fp8", "fp8"], ["uncensored", "uncensored"],
@@ -1443,6 +1443,40 @@ class TheBackdropStepsAsideWhereItCannotDraw(unittest.TestCase):
         self.assertEqual(r, {"canvas": False, "contexts": 0})
         hidden = {s.strip() for s, media, d in css_rules() if any("forced-colors" in m for m in media) and "display:none" in d.replace(" ", "")}
         self.assertTrue({"#backdrop", "body::before"} <= {x.strip() for s in hidden for x in s.split(",")}, hidden)
+
+
+class TheStillBackdropIsAlwaysDrawn(unittest.TestCase):
+    """Under reduced motion the backdrop draws one frame. That frame went through the 8 fps
+    gate, so a first frame earlier than 125 ms after the page started was skipped and never
+    asked for again: the ground stayed black (3 loads in 4 in a browser, v1.27.0)."""
+
+    GL = r"""
+    window.__draws = 0;
+    window.performance = window.performance || {now: () => 0};
+    const cv = document.getElementById('backdrop');
+    cv.getContext = () => new Proxy({}, {get: (t, k) => k === 'drawArrays' ? () => { window.__draws++; }
+      : (k === 'getShaderParameter' || k === 'getProgramParameter') ? () => true : () => ({})});
+    // a first frame 16 ms into the page, as a browser gives it
+    window.requestAnimationFrame = cb => setTimeout(() => cb(16), 16);
+    window.cancelAnimationFrame = id => clearTimeout(id);
+    """
+
+    def test_reduced_motion_draws_its_one_frame(self):
+        r = run(self, r"""
+        await __advance(1000);
+        report({draws: window.__draws, lit: document.documentElement.classList.contains('has-backdrop')});
+        """, setup=self.GL, opts={"media": {"(prefers-reduced-motion: reduce)": True}})
+        self.assertEqual(r, {"draws": 1, "lit": True})
+
+    def test_reduced_motion_draws_it_under_the_agents_fullscreen_too(self):
+        # the Agent opens fullscreen on a phone: covered or not, the one frame is drawn, or the
+        # ground is black when the fullscreen is left
+        r = run(self, r"""
+        document.body.classList.add('agentmax');
+        await __advance(1000);
+        report(window.__draws);
+        """, setup=self.GL, opts={"media": {"(prefers-reduced-motion: reduce)": True}})
+        self.assertEqual(r, 1)
 
 
 class TheStylesheetKeepsWordsAndContrast(unittest.TestCase):

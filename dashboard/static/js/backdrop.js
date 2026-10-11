@@ -48,7 +48,7 @@ void main(){
 
   const still = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)');
   const SCALE = () => (Math.min(window.innerWidth, window.innerHeight) < 700 ? 0.2 : 0.25);
-  let w = 0, h = 0, raf = 0, last = 0, t0 = performance.now(), dead = false;
+  let w = 0, h = 0, raf = 0, last = -Infinity, t0 = performance.now(), dead = false;
   function size(){
     const k = SCALE();
     w = Math.max(160, Math.round(window.innerWidth * k)); h = Math.max(120, Math.round(window.innerHeight * k));
@@ -62,11 +62,15 @@ void main(){
     gl.drawArrays(gl.TRIANGLES, 0, 3);
   }
   const covered = () => document.body && document.body.classList.contains('agentmax');
+  // Under reduced motion the one still frame is always drawn, covered or not: it is the only
+  // one. It went through the 8 fps gate, and a first frame earlier than 125 ms after the page
+  // started was skipped and never asked for again, the ground left black (3 loads in 4, v1.27.0).
   function frame(now){
     raf = 0;
     if (document.hidden) return;
-    if (now - last >= 1000 / 8 && !covered()){ last = now; draw(now); }
-    if (!(still && still.matches)) raf = requestAnimationFrame(frame);
+    const once = !!(still && still.matches);
+    if (once || (now - last >= 1000 / 8 && !covered())){ last = now; draw(now); }
+    if (!once) raf = requestAnimationFrame(frame);
   }
   function start(){ if (dead) return; size(); if (!raf) raf = requestAnimationFrame(frame); }
   // a new size clears the canvas: it is drawn again at once, not at the next frame's turn

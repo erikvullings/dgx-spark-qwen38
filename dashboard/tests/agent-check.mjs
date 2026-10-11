@@ -69,17 +69,17 @@ const evalJs = async (expr) => (await send('Runtime.evaluate', { returnByValue: 
 await send('Page.navigate', { url: `${BASE}/#agent` }, sessionId);
 await sleep(12000);
 const tab = await evalJs(`JSON.stringify({
-  active: document.querySelector('#tab-agent').classList.contains('active'),
-  chip: document.getElementById('agchip').textContent,
-  line: document.getElementById('agline').textContent,
-  iframe: !!document.getElementById('agiframe'),
-  src: document.getElementById('agiframe')?.src || null,
-  msgHidden: document.getElementById('agmsg').hidden,
-  noteHidden: document.getElementById('agnote').hidden,
-  frameH: document.getElementById('agframe').getBoundingClientRect().height,
+  active: document.body.dataset.view === 'agent' && document.getElementById('view-agent').classList.contains('active'),
+  chip: document.getElementById('ag-cap').textContent.trim(),
+  line: document.getElementById('ag-line').textContent,
+  iframe: !!document.getElementById('ag-iframe'),
+  src: document.getElementById('ag-iframe')?.src || null,
+  msgHidden: document.getElementById('ag-msg').hidden,
+  noteHidden: document.getElementById('ag-note').hidden,
+  frameH: document.getElementById('ag-frame').getBoundingClientRect().height,
   railBadge: document.getElementById('bdg-agent').textContent })`);
 const t = JSON.parse(tab || '{}');
-ok('tab: #agent is the active tab', t.active, tab);
+ok('tab: Agent is the active view', t.active, tab);
 ok('tab: chip says ready', t.chip === 'ready', t.chip);
 ok('tab: the frame exists and points at the relay on this host', t.iframe && t.src === `${RELAY}/`, t.src);
 ok('tab: the placeholder message is hidden', t.msgHidden);
@@ -93,9 +93,9 @@ ok('tab: no 4xx/5xx from the relay', !frameNet.some(n => n.status >= 400), frame
 await shot('/tmp/cockpit-agent-tab.png');
 
 // 1b. fullscreen: the frame covers the window, Escape and the corner button bring the cockpit back
-await evalJs(`document.getElementById('agmax').click()`); await sleep(400);
-const mx = JSON.parse(await evalJs(`JSON.stringify({ on: document.body.classList.contains('agentmax'), r: document.getElementById('agframe').getBoundingClientRect().toJSON(),
-  exitVisible: getComputedStyle(document.getElementById('agexit')).display !== 'none', label: document.getElementById('agmax').textContent,
+await evalJs(`document.getElementById('ag-max').click()`); await sleep(400);
+const mx = JSON.parse(await evalJs(`JSON.stringify({ on: document.body.classList.contains('agentmax'), r: document.getElementById('ag-frame').getBoundingClientRect().toJSON(),
+  exitVisible: getComputedStyle(document.getElementById('ag-exit')).display !== 'none', label: document.getElementById('ag-max').textContent,
   stored: (() => { try { return localStorage.getItem('cockpit.agent.max'); } catch { return null; } })(), w: innerWidth, h: innerHeight })`) || '{}');
 ok('fullscreen: the body carries the mode', mx.on);
 ok('fullscreen: the frame covers the window', mx.r && Math.round(mx.r.width) === mx.w && Math.round(mx.r.height) === mx.h && mx.r.top === 0 && mx.r.left === 0, JSON.stringify(mx.r));
@@ -106,9 +106,9 @@ await send('Input.dispatchKeyEvent', { type: 'keyDown', key: 'Escape', code: 'Es
 await send('Input.dispatchKeyEvent', { type: 'keyUp', key: 'Escape', code: 'Escape', windowsVirtualKeyCode: 27 }, sessionId);
 await sleep(300);
 ok('fullscreen: Escape brings the cockpit back', (await evalJs(`document.body.classList.contains('agentmax')`)) === false);
-await evalJs(`document.getElementById('agmax').click()`); await sleep(200);
-await evalJs(`document.getElementById('agexit').click()`); await sleep(200);
-const after = JSON.parse(await evalJs(`JSON.stringify({ on: document.body.classList.contains('agentmax'), h: document.getElementById('agframe').getBoundingClientRect().height, stored: localStorage.getItem('cockpit.agent.max'), label: document.getElementById('agmax').textContent })`) || '{}');
+await evalJs(`document.getElementById('ag-max').click()`); await sleep(200);
+await evalJs(`document.getElementById('ag-exit').click()`); await sleep(200);
+const after = JSON.parse(await evalJs(`JSON.stringify({ on: document.body.classList.contains('agentmax'), h: document.getElementById('ag-frame').getBoundingClientRect().height, stored: localStorage.getItem('cockpit.agent.max'), label: document.getElementById('ag-max').textContent })`) || '{}');
 ok('fullscreen: the corner button brings the cockpit back and the frame is embedded again', after.on === false && after.h < 900 && after.label === 'Fullscreen' && after.stored === '0', JSON.stringify(after));
 
 // 1c. The relay note must never shrink the fullscreen frame. This check runs on
@@ -120,16 +120,16 @@ ok('fullscreen: the corner button brings the cockpit back and the frame is embed
 // Shown, measured and hidden again inside one synchronous block: the state tick
 // rewrites the note's hidden flag on this host, and a first attempt measured the
 // frame after that tick had already put it back.
-await evalJs(`document.getElementById('agmax').click()`); await sleep(400);
+await evalJs(`document.getElementById('ag-max').click()`); await sleep(400);
 const noted = JSON.parse(await evalJs(`(() => {
-  const n = document.getElementById('agnote'), f = document.getElementById('agframe');
+  const n = document.getElementById('ag-note'), f = document.getElementById('ag-frame');
   const was = n.hidden; n.hidden = false;
   const out = { on: document.body.classList.contains('agentmax'), note: !n.hidden,
                 h: Math.round(f.getBoundingClientRect().height), vh: window.innerHeight };
   n.hidden = was; return JSON.stringify(out);
 })()`) || '{}');
 ok('fullscreen: a visible relay note does not shrink the frame', noted.on && noted.note && noted.h === noted.vh, JSON.stringify(noted));
-await evalJs(`document.getElementById('agexit').click()`); await sleep(200);
+await evalJs(`document.getElementById('ag-exit').click()`); await sleep(200);
 
 // 2. the relay opened directly (the "Open in a tab" button)
 net.length = 0; consoleErrors.length = 0;

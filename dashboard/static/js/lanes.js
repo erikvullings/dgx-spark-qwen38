@@ -3,14 +3,6 @@
    verb that makes sense now. Loading a lane is a journey (base.js, askJourney); stop and
    start stay single actions for when that is all you want. */
 
-// A version's name on its segment, and what tells it apart, under the control once chosen.
-const TARGET_SHORT_NAME = {stock: 'Stock', uncensored: 'Uncensored', fp8: 'FP8', 'uncensored-fp8': 'FP8 uncensored',
-  flash: 'Standard', 'flash-uncensored': 'Uncensored', 'flash-nvda': 'NVIDIA export', image: 'Base', 'image-turbo': 'Turbo', video: 'H3'};
-const TARGET_LINE = {
-  stock: 'The default: smallest and fastest', uncensored: 'Refusals removed, same size and speed',
-  fp8: "Qwen's own weights: the most faithful, and heavier", 'uncensored-fp8': 'Refusals removed, and heavier',
-  flash: 'The default', 'flash-uncensored': 'Refusals removed', 'flash-nvda': "NVIDIA's own export",
-  image: '40 steps, the most detail', 'image-turbo': '8 steps, about 4.5 times faster', video: 'The one version'};
 const LCARDS = new Map();
 function laneCard(unit){
   let c = LCARDS.get(unit); if (c) return c;
@@ -24,17 +16,15 @@ function laneCard(unit){
   const why = el('p', 'why-off'); why.hidden = true;
   const actions = el('div', 'btn-row');
   // The versions a lane can load, all in sight: one button each, the chosen one lit. A select
-  // hid them behind one line, and nobody could tell there was a choice (2026-10-11). The select
-  // stays, hidden, as the value the rest of this file reads.
-  const tsel = el('select', 'input'); tsel.hidden = true; tsel.setAttribute('aria-hidden', 'true');
-  LANE_TARGETS[unit].forEach(t => { const o = el('option', null, TARGET_NAME[t]); o.value = t; tsel.append(o); });
+  // hid them behind one line, and nobody could tell there was a choice (2026-10-11). The choice
+  // is the card's own value (c.target).
   const pickBox = el('div', 'pickbox');
   const pickLab = el('p', 'pick-label', `Version (${LANE_TARGETS[unit].length})`);
   const pick = el('div', 'pick'); pick.setAttribute('role', 'radiogroup'); pick.setAttribute('aria-label', `Version of ${LANE_NAME[unit]}`);
   const opts = LANE_TARGETS[unit].map(t => {
     const b = el('button', 'opt', TARGET_SHORT_NAME[t] || TARGET_NAME[t]); b.type = 'button'; b.setAttribute('role', 'radio'); b.dataset.target = t;
     b.title = TARGET_NAME[t];
-    b.addEventListener('click', () => { tsel.value = t; c.touched = true; renderLanes(); });
+    b.addEventListener('click', () => { c.target = t; c.touched = true; renderLanes(); });
     return b;
   });
   const pickLine = el('p', 'pick-line');
@@ -51,18 +41,17 @@ function laneCard(unit){
   const stop = el('button', 'btn danger'); stop.type = 'button';
   const start = el('button', 'btn'); start.type = 'button';
   const logs = el('button', 'btn ghost', 'Journal'); logs.type = 'button';
-  actions.append(tsel, load, start, stop, logs);
+  actions.append(load, start, stop, logs);
   if (LANE_TARGETS[unit].length > 1) left.append(desc, pickBox, boot, actions, why);
   else left.append(desc, boot, actions, why);
   const right = el('dl', 'facts');
   grid.append(left, right);
   const hist = el('div'); hist.style.marginTop = 'var(--s-4)';
   root.append(head, grid, hist);
-  c = {root, h, state, desc, boot, why, tsel, pickBox, opts, pickLine, load, stop, start, logs, right, hist, touched: false};
-  tsel.addEventListener('change', () => { c.touched = true; renderLanes(); });
+  c = {root, h, state, desc, boot, why, target: LANE_TARGETS[unit][0], pickBox, opts, pickLine, load, stop, start, logs, right, hist, touched: false};
   // a choice holds the selector until the lane serves it; a journey not gone through
   // gives the selector back to the lane
-  load.addEventListener('click', () => askJourney(c.tsel.value || LANE_TARGETS[unit][0],
+  load.addEventListener('click', () => askJourney(c.target || LANE_TARGETS[unit][0],
     {onClose: () => { if (!(SHEET && SHEET.running)) { c.touched = false; renderLanes(); } }}));
   stop.addEventListener('click', () => {
     const e = engines()[unit] || {};
@@ -102,9 +91,9 @@ function renderLanes(){
     cap(c.state, !has ? 'not installed' : stateLabel(e) || 'unknown', has ? stateKind(st) : '', has ? stateLive(st) : false);
     setText(c.desc, LANE_META[unit].desc + ' ' + LANE_META[unit].kind + '.');
     const served = laneTarget(unit);
-    if (c.touched && served && served === c.tsel.value && (engines()[unit] || {}).state === 'ready') c.touched = false;
-    if (!c.touched && served && c.tsel.value !== served) c.tsel.value = served;
-    const target = c.tsel.value || LANE_TARGETS[unit][0];
+    if (c.touched && served && served === c.target && (engines()[unit] || {}).state === 'ready') c.touched = false;
+    if (!c.touched && served && c.target !== served) c.target = served;
+    const target = c.target || LANE_TARGETS[unit][0];
     // a lane that is not here has no checkpoint to pick: it installs with its default one
     c.pickBox.hidden = !has;
     // the served version is marked once the lane serves for real, as its bay and its card are:

@@ -6,7 +6,9 @@
 
    Material: deep indigo. Two soft halos of violet and blue light breathe slowly behind
    everything (js/backdrop.js), and the panels are translucent indigo laid over them, each
-   edged with a hairline of light. Colour carries meaning and is kept for it: green is ready
+   edged with a hairline of light. No blur under them: the light is smooth and a blur changed
+   nothing a reader sees, for a repaint at every frame of the halos; the head and the dock keep
+   theirs, the page scrolls under them. Colour carries meaning and is kept for it: green is ready
    and serving, amber is on its way (booting, stopping, waiting), red is broken, grey is
    idle, blue is memory and information, violet the brand: the controls and the plain
    events. Each lane has an identity of its own: its maker's mark on its bay and its card,
@@ -237,7 +239,6 @@ img,svg,video,canvas{display:block; max-width:100%}
 /* ── panels: one frame, used when a group needs one ── */
 .panel{position:relative; border:1px solid rgba(255,255,255,.12); border-radius:var(--r-panel);
   background:linear-gradient(180deg, rgba(255,255,255,.075), rgba(255,255,255,.04));
-  backdrop-filter:blur(14px); -webkit-backdrop-filter:blur(14px);
   box-shadow:var(--shadow-1); padding:var(--s-5)}
 .panel > header{display:flex; align-items:baseline; justify-content:space-between; gap:var(--s-3); margin-bottom:var(--s-4)}
 .panel > header h2{font-size:var(--t-17); font-weight:620; letter-spacing:.002em}
@@ -425,7 +426,6 @@ details.why > div{margin-top:var(--s-3); color:var(--fg-2); font-size:var(--t-14
 .pool{position:relative; border-radius:var(--r-hero); padding:var(--s-6) var(--s-6) var(--s-5);
   border:1px solid rgba(255,255,255,.12);
   background:linear-gradient(180deg, rgba(255,255,255,.075), rgba(255,255,255,.04));
-  backdrop-filter:blur(14px); -webkit-backdrop-filter:blur(14px);
   box-shadow:var(--shadow-2)}
 .pool-top{display:grid; grid-template-columns:minmax(0,1fr) auto; align-items:end; gap:var(--s-6); margin-bottom:var(--s-5)}
 .pool-title{min-width:0}
@@ -473,7 +473,6 @@ details.why > div{margin-top:var(--s-3); color:var(--fg-2); font-size:var(--t-14
 .rack{display:grid; grid-template-columns:repeat(4, minmax(0,1fr)); gap:var(--s-3); margin-top:var(--s-5)}
 .bay{position:relative; display:flex; flex-direction:column; gap:var(--s-3); padding:var(--s-4); border-radius:var(--r-panel);
   border:1px solid rgba(255,255,255,.12); background:linear-gradient(180deg, rgba(255,255,255,.075), rgba(255,255,255,.04));
-  backdrop-filter:blur(14px); -webkit-backdrop-filter:blur(14px);
   box-shadow:var(--shadow-1); min-height:190px; text-align:left; color:var(--fg-1);
   transition:border-color .25s, background .25s, box-shadow .25s}
 button.bay:hover{border-color:rgba(255,255,255,.22); background:linear-gradient(180deg, rgba(255,255,255,.10), rgba(255,255,255,.06))}
@@ -538,7 +537,7 @@ button.bay:hover{border-color:rgba(255,255,255,.22); background:linear-gradient(
 .timeline .m small{display:block; color:var(--fg-3); font-size:var(--t-12)}
 .vitals{display:grid; grid-template-columns:repeat(6, minmax(0,1fr)); gap:0; border-radius:var(--r-panel); border:1px solid rgba(255,255,255,.12); overflow:hidden;
   background:linear-gradient(180deg, rgba(255,255,255,.075), rgba(255,255,255,.04));
-  backdrop-filter:blur(14px); -webkit-backdrop-filter:blur(14px); box-shadow:var(--shadow-1)}
+  box-shadow:var(--shadow-1)}
 .vital{padding:var(--s-4); display:flex; flex-direction:column; gap:4px; background:var(--ink-1)}
 .vital + .vital{border-left:1px solid var(--rule-1)}
 .vital .k{font-size:var(--t-12); color:var(--fg-3)}
