@@ -27,6 +27,10 @@ builds on its published config,
 takes its measurements as its DGX Spark reference, and it is listed in
 [awesome-dgx-spark](https://github.com/bidual/awesome-dgx-spark).
 
+![The Spark cockpit's Now view: one pool of unified memory and what holds it, the four lanes in their rack with their makers' marks and the serving one edged in green, and below them the requests and the timeline](docs/img/cockpit-now.png)
+
+*The cockpit, installed by default: one pool of unified memory, four lanes that take turns in it, and the whole box run from a browser, on a laptop or a phone.*
+
 ## In detail
 
 One command installs a boot-persistent, hardened serving stack on a single DGX Spark,
@@ -655,9 +659,9 @@ from a laptop or a phone over a private network, and `127.0.0.1` otherwise. A re
 that. The login is the same API key over plain HTTP, so this belongs on a tailnet or a LAN you
 trust and never on the open internet.
 
-![The cockpit's Now view: the unified memory pool with what holds it, the four lanes in their rack with the serving one lit, the requests running and the timeline of the engine's own state transitions](docs/img/cockpit-now.png)
+![The Lanes view: each lane with its maker's mark, every version it can load in one row of buttons with the one serving marked in green, its Load or Stop button, its facts and its last five boots](docs/img/cockpit-lanes.png)
 
-*Now: one pool of unified memory, four lanes that take turns in it, and which one holds the box. The timeline is the engines' own state transitions, including the kernel's GPU-allocation refusals that precede the memory edge on this hardware.*
+*Lanes: every version of each lane in sight, what its boots took on this box and the KV pool each one won, and one button that loads it: switch, stop, start, each step asking first and showing its command.*
 
 Every panel answers one question about this box, and the view it sits in is the
 question you had when you opened the page.

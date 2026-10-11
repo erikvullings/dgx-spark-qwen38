@@ -52,11 +52,11 @@ that script with `AGENT_BIND=`.
 
 ## What it looks like
 
-![The cockpit's Now view: the unified memory pool with what holds it, the four lanes in their rack with the serving one lit, the requests running and the timeline of the engine's own state transitions](img/cockpit-now.png)
+![The cockpit's Now view: one pool of unified memory and what holds it, the four lanes in their rack with their makers' marks and the serving one edged in green, and below them the requests and the timeline](img/cockpit-now.png)
 
 *Now: one pool of unified memory, four lanes that take turns in it, and which one holds the box. The timeline is the engines' own state transitions, including the kernel's GPU-allocation refusals that precede the memory edge on this hardware.*
 
-![The Lanes view: the 27B and flash lanes, each with its checkpoint selector, its Load or Stop button, its facts, its last five boots and the KV pool its boots won](img/cockpit-lanes.png)
+![The Lanes view: each lane with its maker's mark, every version it can load in one row of buttons with the one serving marked in green, its Load or Stop button, its facts and its last five boots](img/cockpit-lanes.png)
 
 *Lanes: each lane with what it serves, what its boots took on this box and the KV pool each one won, and one button that loads it: switch, stop, start, each step asking first and showing its command.*
 
@@ -64,7 +64,7 @@ that script with `AGENT_BIND=`.
 
 *Traffic: both sides of the wire. The feed is what the proxy relayed; the guard is whether any client walked away from an answer the engine is still generating.*
 
-![The Video view with the flash lane holding the box: the button that loads MiniMax-H3, then the mode, examples, prompt, length, size and quality of a call, beside where the video appears](img/cockpit-video.png)
+![The Video view with the 27B lane holding the box: the button that loads MiniMax-H3, then the mode, examples, prompt, length, size and speed of a call, beside where the video appears](img/cockpit-video.png)
 
 *Video: MiniMax-H3 on this box. While another lane holds the box, the view says which one and loads the video lane with one button; what a call costs here shows before it is made.*
 
