@@ -228,10 +228,10 @@ class ALaneThatIsNotHereSaysWhatInstallsIt(unittest.TestCase):
           'qwen38-flash.service': {active: 'active', enabled: 'enabled'}})};
         feed(Object.assign({}, units, {lifecycle: life({'qwen38-flash.service': eng('ready', {target: 'flash'})})}));
         const c27 = LCARDS.get('qwen38-sglang.service');
-        report({c27: c27.right.textContent, picker: c27.tsel.hidden,
+        report({c27: c27.right.textContent, picker: c27.pickBox.hidden,
                 cimg: LCARDS.get('qwen38-image.service').right.textContent,
                 served: LCARDS.get('qwen38-flash.service').right.textContent,
-                servedPicker: LCARDS.get('qwen38-flash.service').tsel.hidden});
+                servedPicker: LCARDS.get('qwen38-flash.service').pickBox.hidden});
         """)
         self.assertIn("./install.sh --with-27b", r["c27"])
         self.assertTrue(r["picker"], "no checkpoint to pick on a lane that is not here")

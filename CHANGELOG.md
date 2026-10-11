@@ -1,5 +1,78 @@
 # Changelog
 
+## v1.27.0 (2026-10-11): the cockpit in deep indigo, each lane with its maker's mark and its colour, every version in sight
+
+**What was wrong.** The cockpit worked, and it looked like a settings page: graphite and
+champagne, one gold for the brand and for the lane that serves, four lane bays that looked
+alike, and each lane's versions behind a select that read as a single line. A first look from outside the project
+found it plain; on the reference box, nobody could tell that the select held a choice.
+
+**What it looks like now.** A deep indigo ground with two soft halos of violet and blue light
+that drift slowly, drawn by a small WebGL shader at a quarter of the window's width and height,
+at most 8 frames a second, paused in a hidden tab and under the Agent's fullscreen frame, drawn
+once for a system that asks for reduced motion and never under Windows' forced colours; the
+same light in CSS stays where WebGL is missing or its context is lost. The panels
+are translucent with a hairline edge, and what floats over the page (a confirmation, a toast,
+the phone's drawer, and at 94 % the job dock) is solid indigo, so its text never sits over the
+page's. Geist
+(SIL OFL, served by the box) replaces Archivo; IBM Plex Mono stays for commands and logs. The
+main action of a view is its one solid white button, and the state capsules keep the words
+the page writes (no upper case to turn "GiB" into "GIB" or rewrite a model's name).
+
+**Colour says what differs.** Green is ready and serving (the lamps, the bay and the Lanes
+card of the lane that holds the box, the free memory, a lane that came up in the timeline),
+amber is on its way, red is broken, grey is idle, blue is memory and information, and violet
+is the brand: the controls and the plain events. Each lane has its maker's mark (Qwen,
+MiniMax; Lobe Icons, MIT, the marks their owners') on its bay and its card in Lanes, and the
+head's capsule shows the mark of what serves; each has a hue of its own too (27B violet, flash
+sky blue, image pink, video orange) for its share of the pool, the pool's legend and the
+head's gauge.
+
+**Every version in sight.** In Lanes, a lane's versions are one button each in a segmented
+control, a radio group the arrow keys move through, under "Version (4)": the chosen one is
+white, the one that serves carries a green dot, the line under it says what the chosen one
+is, and Load names the version it loads.
+
+**Readable, measured.** Every text of every view was measured on a desktop (1500x1000) and a
+phone (393x852), over the whole height of the page with every disclosure open, at six moments
+spread over the backdrop's four-minute drift (the page's animation clock moved through
+`requestAnimationFrame`): each glyph pixel's contrast is the text's colour composited over that
+pixel's background, as the browser does, against that background, the worst 5 % kept, and an
+element that moved or changed between the two shots of a pair is left out of that pair. In the
+box's state at the time (the 27B serving, the other lanes stopped) the minimum is 4.70:1 on the
+desktop and 4.78:1 on the phone, none under WCAG AA (4.5:1, or 3:1 for large text). The
+measurement and a review of the branch found these under the floor during the work, all fixed:
+the quietest grey of the lane bays (4.14:1, the two quieter text tones are lighter now), the
+small tags of the Library (3.38:1, a dark tinted ground under them now), the green of a ready
+capsule on a phone (4.39:1), the example chips over the brightest of the panels, the danger
+buttons' pink (4.09:1), and the label of a lane's share of the pool while it boots (3.80:1).
+The states the box was not in are held by their colours: amber and red, as words, are lifted
+tints, and every capsule sits on a dark tinted ground.
+
+**Lighter.** Geist's Latin subset is 29 KB where Archivo's was 90 KB; the backdrop's script is
+4.5 KB and the two marks 3.5 KB. Nothing is fetched from elsewhere: fonts, marks and script
+are served by the box, under the same Content-Security-Policy.
+
+**Tests.** Eleven new page tests: a version is chosen by a click or by the arrow keys (with a
+modifier the arrows stay the browser's: Alt+Left is Back), the choice holds, and the card says
+which and what Load loads; the served version is marked once the lane serves and not while it
+boots, on that lane only, and never wears the head capsule's class (it did during the work,
+and stretched across its row on a phone); every version has its name and its line; each lane's
+mark on its bay, its card and the head's capsule, and its hue on its share of the pool and the
+head's gauge; every mark and hue the page names exists; where the backdrop's shader does not
+compile the canvas goes, and under forced colours no context is even asked for; a booting
+lane's share ends on its hue; the capsules keep the page's words; a lane that came up is the
+timeline's green and the other steps of a boot are not. Twenty mutants of the new code each
+fail a test. One test read the select the page now hides; it reads the picker a person sees.
+The relay's property check still counted the Origin the relay sets since v1.26.2 as a caller's,
+and failed whenever its generator named a header "origin" (found by this release's CI): it
+knows that Origin now, and the case found is kept as an example. All 1000 cockpit tests
+pass, and the phone check (four iPhone geometries, eleven views) passes its 236 checks on a
+cockpit of this branch with an Agent relay of its own.
+
+**What an update does.** An update restarts the cockpit; the engines, the proxy and opencode
+keep running. A tab left open shows the old page until it is reloaded.
+
 ## v1.26.2 (2026-10-11): the Agent tab's terminal works when the cockpit is opened by its tailnet address
 
 **A terminal with no shell.** opencode gives its terminal only to a page whose `Origin` names

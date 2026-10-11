@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, interactive-widget=resizes-content">
-<meta name="theme-color" content="#0d0e10">
+<meta name="theme-color" content="#120b36">
 <title>Spark cockpit</title>
 <link rel="icon" href="/static/favicon.svg">
 <link rel="stylesheet" href="/static/css/cockpit.css">
@@ -11,10 +11,11 @@
   body{display:grid; place-items:center; padding:var(--s-5)}
   .gate{position:relative; z-index:1; width:min(420px, 100%); display:flex; flex-direction:column; gap:var(--s-5);
     padding:var(--s-7); border-radius:var(--r-hero); border:1px solid var(--rule-2);
-    background:linear-gradient(180deg, var(--ink-2), var(--ink-1)); box-shadow:0 40px 120px -40px rgba(0,0,0,.95), var(--shadow-1);
+    background:linear-gradient(180deg, rgba(255,255,255,.09), rgba(255,255,255,.05)); backdrop-filter:blur(18px); -webkit-backdrop-filter:blur(18px);
+    box-shadow:0 40px 120px -40px rgba(5,2,20,.9), var(--shadow-1);
     animation:pop .45s var(--ease) both}
   .gate::before{content:''; position:absolute; left:24px; right:24px; top:-1px; height:2px; border-radius:2px;
-    background:linear-gradient(90deg, transparent, var(--gold-hi), transparent)}
+    background:linear-gradient(90deg, transparent, rgba(255,255,255,.55), transparent)}
   .gate .brand{gap:var(--s-3)}
   .gate .brand .mark{width:44px; height:44px}
   .gate .brand .word b{font-size:var(--t-20)}
@@ -24,13 +25,15 @@
 </style>
 </head>
 <body>
+<canvas id="backdrop" aria-hidden="true"></canvas>
   <form class="gate" id="f">
     <span class="brand">
       <svg class="mark" viewBox="0 0 32 32" aria-hidden="true">
-        <defs><linearGradient id="mk" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#f1dcaa"/><stop offset="1" stop-color="#9d7f45"/></linearGradient></defs>
-        <rect x="2.5" y="2.5" width="27" height="27" rx="8" fill="#141518" stroke="#dcb872" stroke-opacity=".6"/>
+        <defs><linearGradient id="mk" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#f4ecff"/><stop offset=".45" stop-color="#a676ff"/><stop offset="1" stop-color="#4a1fa8"/></linearGradient>
+          <linearGradient id="mk-edge" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#e9dbff"/><stop offset="1" stop-color="#6b3fd4"/></linearGradient></defs>
+        <rect x="2.5" y="2.5" width="27" height="27" rx="8" fill="#120a22" stroke="url(#mk-edge)" stroke-width="1.2"/>
         <path d="M6.5 18.6c2.9-2.1 5.4-2.1 8.3 0s5.5 2.1 8.4 0l2.3-1.5v5.4a3.4 3.4 0 0 1-3.4 3.4H9.9a3.4 3.4 0 0 1-3.4-3.4z" fill="url(#mk)"/>
-        <path d="M10 9h12" stroke="#7ac6d6" stroke-width="2" stroke-linecap="round"/>
+        <path d="M10 9h12" stroke="#56d6ff" stroke-width="2" stroke-linecap="round"/>
       </svg>
       <span class="word"><b>Spark cockpit</b><small>the control room of this DGX Spark</small></span>
     </span>
@@ -42,6 +45,7 @@
     <button class="btn primary lg block" type="submit">Enter the cockpit</button>
     <div class="err" id="e" role="alert"></div>
   </form>
+<script src="/static/js/backdrop.js" defer></script>
 <script src="/static/login.js" defer></script>
 </body>
 </html>

@@ -3,31 +3,62 @@
    verb that makes sense now. Loading a lane is a journey (base.js, askJourney); stop and
    start stay single actions for when that is all you want. */
 
+// A version's name on its segment, and what tells it apart, under the control once chosen.
+const TARGET_SHORT_NAME = {stock: 'Stock', uncensored: 'Uncensored', fp8: 'FP8', 'uncensored-fp8': 'FP8 uncensored',
+  flash: 'Standard', 'flash-uncensored': 'Uncensored', 'flash-nvda': 'NVIDIA export', image: 'Base', 'image-turbo': 'Turbo', video: 'H3'};
+const TARGET_LINE = {
+  stock: 'The default: smallest and fastest', uncensored: 'Refusals removed, same size and speed',
+  fp8: "Qwen's own weights: the most faithful, and heavier", 'uncensored-fp8': 'Refusals removed, and heavier',
+  flash: 'The default', 'flash-uncensored': 'Refusals removed', 'flash-nvda': "NVIDIA's own export",
+  image: '40 steps, the most detail', 'image-turbo': '8 steps, about 4.5 times faster', video: 'The one version'};
 const LCARDS = new Map();
 function laneCard(unit){
   let c = LCARDS.get(unit); if (c) return c;
-  const root = el('section', 'panel'); root.dataset.src = 'lifecycle,units';
-  const head = el('header'); const h = el('h2'); const state = el('span', 'cap'); head.append(h, state);
+  const root = el('section', 'panel lane-panel'); root.dataset.src = 'lifecycle,units';
+  const head = el('header'); const h = el('h2'); const state = el('span', 'cap');
+  const who = el('div', 'who'); who.append(makerMark(unit), h); head.append(who, state);
   const grid = el('div', 'grid g-7-5');
   const left = el('div', 'stack'); left.style.gap = 'var(--s-3)';
   const desc = el('p', 'muted');
   const boot = el('div', 'stack'); boot.style.gap = '8px'; boot.hidden = true;
   const why = el('p', 'why-off'); why.hidden = true;
   const actions = el('div', 'btn-row');
-  const tsel = el('select', 'input'); tsel.style.maxWidth = '280px'; tsel.setAttribute('aria-label', 'Checkpoint');
+  // The versions a lane can load, all in sight: one button each, the chosen one lit. A select
+  // hid them behind one line, and nobody could tell there was a choice (2026-10-11). The select
+  // stays, hidden, as the value the rest of this file reads.
+  const tsel = el('select', 'input'); tsel.hidden = true; tsel.setAttribute('aria-hidden', 'true');
   LANE_TARGETS[unit].forEach(t => { const o = el('option', null, TARGET_NAME[t]); o.value = t; tsel.append(o); });
+  const pickBox = el('div', 'pickbox');
+  const pickLab = el('p', 'pick-label', `Version (${LANE_TARGETS[unit].length})`);
+  const pick = el('div', 'pick'); pick.setAttribute('role', 'radiogroup'); pick.setAttribute('aria-label', `Version of ${LANE_NAME[unit]}`);
+  const opts = LANE_TARGETS[unit].map(t => {
+    const b = el('button', 'opt', TARGET_SHORT_NAME[t] || TARGET_NAME[t]); b.type = 'button'; b.setAttribute('role', 'radio'); b.dataset.target = t;
+    b.title = TARGET_NAME[t];
+    b.addEventListener('click', () => { tsel.value = t; c.touched = true; renderLanes(); });
+    return b;
+  });
+  const pickLine = el('p', 'pick-line');
+  pick.append(...opts); pickBox.append(pickLab, pick, pickLine);
+  // the arrow keys move the choice, as in any group of radio buttons
+  pick.addEventListener('keydown', ev => {
+    const step = {ArrowRight: 1, ArrowDown: 1, ArrowLeft: -1, ArrowUp: -1}[ev.key];
+    if (!step || ev.altKey || ev.ctrlKey || ev.metaKey) return;
+    ev.preventDefault();
+    const i = opts.indexOf(document.activeElement), next = opts[(Math.max(0, i) + step + opts.length) % opts.length];
+    next.click(); next.focus();
+  });
   const load = el('button', 'btn primary'); load.type = 'button';
   const stop = el('button', 'btn danger'); stop.type = 'button';
   const start = el('button', 'btn'); start.type = 'button';
   const logs = el('button', 'btn ghost', 'Journal'); logs.type = 'button';
-  if (LANE_TARGETS[unit].length > 1) actions.append(tsel);
-  actions.append(load, start, stop, logs);
-  left.append(desc, boot, actions, why);
+  actions.append(tsel, load, start, stop, logs);
+  if (LANE_TARGETS[unit].length > 1) left.append(desc, pickBox, boot, actions, why);
+  else left.append(desc, boot, actions, why);
   const right = el('dl', 'facts');
   grid.append(left, right);
   const hist = el('div'); hist.style.marginTop = 'var(--s-4)';
   root.append(head, grid, hist);
-  c = {root, h, state, desc, boot, why, tsel, load, stop, start, logs, right, hist, touched: false};
+  c = {root, h, state, desc, boot, why, tsel, pickBox, opts, pickLine, load, stop, start, logs, right, hist, touched: false};
   tsel.addEventListener('change', () => { c.touched = true; renderLanes(); });
   // a choice holds the selector until the lane serves it; a journey not gone through
   // gives the selector back to the lane
@@ -52,7 +83,7 @@ function bootChart(box, e, unit){
   if (!boots.length){ box.append(el('p', 'help', 'No boot of this lane seen by the cockpit yet: estimates use the reference box.')); return; }
   const wrap = el('div'); wrap.style.cssText = 'display:flex; align-items:flex-end; gap:6px; height:54px';
   const mx = Math.max(...boots, READY_DEFAULT[unit] || 0);
-  boots.forEach(b => { const bar = el('span'); bar.title = fmtDur(b); bar.style.cssText = `flex:0 0 18px; border-radius:4px 4px 2px 2px; height:${Math.max(6, 50 * b / mx).toFixed(0)}px; background:linear-gradient(180deg, var(--gold-hi), var(--gold-lo)); opacity:.85`; wrap.append(bar); });
+  boots.forEach(b => { const bar = el('span'); bar.title = fmtDur(b); bar.style.cssText = `flex:0 0 18px; border-radius:4px 4px 2px 2px; height:${Math.max(6, 50 * b / mx).toFixed(0)}px; background:linear-gradient(180deg, var(--brand-hi), var(--brand-lo)); opacity:.85`; wrap.append(bar); });
   const lab = el('p', 'help'); lab.textContent = `Last ${boots.length} boots: ${boots.map(fmtDur).join(', ')}. Median ${fmtDur(bootSeconds(unit))}.`;
   const row = el('div'); row.style.cssText = 'display:flex; gap:var(--s-4); align-items:flex-end; flex-wrap:wrap'; row.append(wrap, lab);
   box.append(row);
@@ -75,12 +106,21 @@ function renderLanes(){
     if (!c.touched && served && c.tsel.value !== served) c.tsel.value = served;
     const target = c.tsel.value || LANE_TARGETS[unit][0];
     // a lane that is not here has no checkpoint to pick: it installs with its default one
-    c.tsel.hidden = !has;
+    c.pickBox.hidden = !has;
+    // the served version is marked once the lane serves for real, as its bay and its card are:
+    // a boot, a stop or a wedge is not serving
+    const live = seated && (st === 'ready' || st === 'degraded');
+    c.opts.forEach(b => {
+      const t = b.dataset.target;
+      b.setAttribute('aria-checked', String(t === target)); b.tabIndex = t === target ? 0 : -1;
+      b.classList.toggle('served', live && t === served);
+    });
+    setText(c.pickLine, `${TARGET_NAME[target]}.` + (TARGET_LINE[target] ? ` ${TARGET_LINE[target]}.` : '') + (live && target === served ? ' Serving now.' : ''));
     const on = !!e && (!UNIT_DOWN.has(st) || !!e.restarting);
     const sameTarget = !laneTarget(unit) || laneTarget(unit) === target;
     // the verbs that make sense now
     c.load.hidden = !has || (seated && sameTarget);
-    setText(c.load, seated ? `Load ${TARGET_NAME[target]}` : `Load ${LANE_NAME[unit]}`);
+    setText(c.load, seated || LANE_TARGETS[unit].length > 1 ? `Load ${TARGET_NAME[target]}` : `Load ${LANE_NAME[unit]}`);
     c.start.hidden = !has || on || !!(s && s[0] !== unit);
     setText(c.start, `Start ${LANE_NAME[unit]} as installed`);
     c.stop.hidden = !has || !on;
@@ -125,7 +165,7 @@ function renderLanes(){
       ['Up for', seated && e && e.elapsed && (st === 'ready' || st === 'degraded') ? fmtDur(e.elapsed) : null],
       ['Install', !has ? LANE_INSTALL[unit] : null, 'code']]);
     c.root.classList.toggle('seated-card', seated);
-    c.root.style.borderColor = seated && (st === 'ready' || st === 'degraded') ? 'color-mix(in srgb, var(--gold) 45%, transparent)' : '';
+    c.root.style.borderColor = seated && (st === 'ready' || st === 'degraded') ? 'color-mix(in srgb, var(--ok) 45%, transparent)' : '';
     if (e) bootChart(c.hist, e, unit); else clear(c.hist);
   });
 }

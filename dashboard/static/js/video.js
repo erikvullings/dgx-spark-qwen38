@@ -195,7 +195,7 @@ function ringInto(sc){
   const ring = el('div', 'ring');
   const NS = 'http://www.w3.org/2000/svg', svg = document.createElementNS(NS, 'svg'); svg.setAttribute('viewBox', '0 0 100 100');
   const defs = document.createElementNS(NS, 'defs'), g = document.createElementNS(NS, 'linearGradient'); g.setAttribute('id', 'ringg');
-  [['0', '#f1dcaa'], ['1', '#9d7f45']].forEach(([o, c]) => { const st = document.createElementNS(NS, 'stop'); st.setAttribute('offset', o); st.setAttribute('stop-color', c); g.append(st); });
+  [['0', cssVar('--brand-hi')], ['1', cssVar('--brand')]].forEach(([o, c]) => { const st = document.createElementNS(NS, 'stop'); st.setAttribute('offset', o); st.setAttribute('stop-color', c); g.append(st); });
   defs.append(g); svg.append(defs);
   ['track', 'fill'].forEach(k => { const c = document.createElementNS(NS, 'circle'); c.setAttribute('cx', '50'); c.setAttribute('cy', '50'); c.setAttribute('r', '44');
     c.setAttribute('class', k); c.setAttribute('pathLength', '100'); if (k === 'fill'){ c.setAttribute('stroke-dasharray', '100'); c.setAttribute('stroke-dashoffset', '100'); } svg.append(c); });

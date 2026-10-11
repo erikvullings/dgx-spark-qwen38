@@ -11,7 +11,7 @@ on('engine_fast', d => {
   setText('tr-wait', none ? 'none' : String(waitingReqs(l)));
   setText('tr-tok', none ? 'none' : fmtN(physTokens(l)));
   if (none){ SERIES.req = []; } else push('req', runningReqs(l));
-  drawSpark($('tr-spark'), 'req', cssVar('--gold'), Math.max(4, F.maxRun || 4), {empty: none ? 'no text engine' : 'quiet so far'});
+  drawSpark($('tr-spark'), 'req', cssVar('--brand'), Math.max(4, F.maxRun || 4), {empty: none ? 'no text engine' : 'quiet so far'});
 });
 // said after the whole payload: which lane serves is the lifecycle's, read after this one
 afterApply(() => {
@@ -133,17 +133,17 @@ on('machine', d => {
     cap('mm-cap', fmtGiB(m.MemAvailable) + ' available', kind);
     setText('mm-used', fmtGiB(used) + ' of ' + fmtGiB(m.MemTotal)); setText('mm-avail', fmtGiB(m.MemAvailable));
     setText('mm-cache', fmtGiB(m.Cached)); setText('mm-swap', fmtGiB((m.SwapTotal || 0) - (m.SwapFree || 0)));
-    push('mem', used / GIB); drawSpark($('mm-spark'), 'mem', cssVar('--gold'), m.MemTotal / GIB);
+    push('mem', used / GIB); drawSpark($('mm-spark'), 'mem', cssVar('--brand'), m.MemTotal / GIB);
     badge('machine', m.MemAvailable < 4 * GIB ? fmtGiB(m.MemAvailable, 0) : '', m.MemAvailable < 4 * GIB ? 'err' : '');
   }
   const cpu = d.cpu_pct || {};
   cap('cpu-cap', (cpu.cpu ?? 0).toFixed(0) + ' %', (cpu.cpu || 0) > 85 ? 'warn' : 'ok');
-  push('cpu', cpu.cpu || 0); drawSpark($('cpu-spark'), 'cpu', cssVar('--cool'), 100);
+  push('cpu', cpu.cpu || 0); drawSpark($('cpu-spark'), 'cpu', cssVar('--mem'), 100);
   const cores = Object.keys(cpu).filter(k => k !== 'cpu').sort((a, b) => Number(a.slice(3)) - Number(b.slice(3)));
   setText('cpu-n', String(cores.length)); setText('cpu-load', (d.load || []).map(x => x.toFixed(2)).join(', '));
   const box = $('cpu-cores');
   if (box.children.length !== cores.length){ clear(box); cores.forEach(() => { const c = el('span'); c.style.cssText = 'height:26px; border-radius:5px; background:var(--ink-3); transition:background .6s'; box.append(c); }); }
-  cores.forEach((k, i) => { const v = Math.min(100, cpu[k] || 0); box.children[i].style.background = `color-mix(in srgb, var(--cool) ${Math.round(v)}%, var(--ink-3))`; box.children[i].title = `${k}: ${v.toFixed(0)} %`; });
+  cores.forEach((k, i) => { const v = Math.min(100, cpu[k] || 0); box.children[i].style.background = `color-mix(in srgb, var(--mem) ${Math.round(v)}%, var(--ink-3))`; box.children[i].title = `${k}: ${v.toFixed(0)} %`; });
   const dk = d.disks || {};
   setText('dk-home', dk.home ? fmtGiB(dk.home.free) + ' free of ' + fmtGiB(dk.home.total) : 'n/a');
   setText('dk-docker', dk.docker ? fmtGiB(dk.docker.free) + ' free of ' + fmtGiB(dk.docker.total) : 'n/a');
@@ -164,7 +164,7 @@ on('gpu', d => {
   setText('gpu-temp', t != null ? t.toFixed(0) + ' °C' : 'n/a');
   cap('gpu-cap', t != null ? t.toFixed(0) + ' °C' : 'n/a', t == null ? '' : t > 85 ? 'err' : t > 75 ? 'warn' : 'ok');
   if (d.power_w != null) push('pow', d.power_w);
-  drawSpark($('gpu-spark'), 'pow', cssVar('--ember'), undefined, {empty: d.power_w == null ? 'no reading' : 'collecting…'});
+  drawSpark($('gpu-spark'), 'pow', cssVar('--warn'), undefined, {empty: d.power_w == null ? 'no reading' : 'collecting…'});
   const tb = $('gpu-procs').tBodies[0]; clear(tb);
   (d.procs || []).slice(0, 6).forEach(p => { const tr = tb.insertRow(); tr.insertCell().textContent = p.name || '?';
     const a = tr.insertCell(); a.className = 'r num'; a.textContent = p.pid; const b = tr.insertCell(); b.className = 'r num'; b.textContent = p.mem; });

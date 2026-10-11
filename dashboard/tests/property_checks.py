@@ -342,6 +342,7 @@ class RelayBoundaryIsClosed(unittest.TestCase):
     @given(st.lists(st.tuples(st.text(max_size=20), st.text(max_size=30)), max_size=12),
            st.text(min_size=1, max_size=20), st.booleans())
     @example(items=[("Host", "0")], upstream="0", ws=False)
+    @example(items=[("ORIGIN", "")], upstream="0", ws=False)
     def test_no_caller_header_survives_that_the_relay_sets_itself(self, items, upstream, ws):
         """Whatever the caller sends, the forwarded set contains the relay's own
         Host, Authorization and connection headers and nothing of the caller's
@@ -349,18 +350,24 @@ class RelayBoundaryIsClosed(unittest.TestCase):
         upstream or replaying someone else's credentials. The relay's copy is told
         from a caller's by its value, not by the pair: a caller may send the very
         value the relay sets (Host "0" with an upstream named "0", found by the
-        v1.25.0 CI), and that pair is then the relay's own."""
+        v1.25.0 CI), and that pair is then the relay's own. A caller's Origin is
+        replaced by the upstream's own since v1.26.2, and only when there was one:
+        this property still counted it as dropped, and failed whenever the
+        generator named a header "origin" (ORIGIN, found by the v1.27.0 CI)."""
         out = ar.forward_request_headers(items, upstream, "Basic x", websocket=ws)
         names = [k.lower() for k, _ in out]
         # everything the relay drops is gone unless the relay re-adds it below
-        relay_adds = {"host", "authorization", "connection"} | ({"upgrade"} if ws else set())
+        sent_origin = any(k.lower() == "origin" for k, _ in items)
+        relay_adds = ({"host", "authorization", "connection"} | ({"upgrade"} if ws else set())
+                      | ({"origin"} if sent_origin else set()))
         for dropped in ar.REQUEST_DROP:
             d = dropped.lower()
             self.assertEqual(names.count(d), 1 if d in relay_adds else 0, dropped)
         # and the caller's own copy of a relay-owned header never survives: the one
         # value left under each of those names is the relay's
         own = {"host": upstream, "authorization": "Basic x",
-               "connection": "Upgrade" if ws else "close", "upgrade": "websocket"}
+               "connection": "Upgrade" if ws else "close", "upgrade": "websocket",
+               "origin": f"http://{upstream}"}
         for name, value in out:
             if name.lower() in relay_adds:
                 self.assertEqual(value, own[name.lower()], (name, value))

@@ -93,11 +93,18 @@ const U27 = 'qwen38-sglang.service', UFLASH = 'qwen38-flash.service', IMAGE_UNIT
 const LANE_UNITS = [U27, UFLASH, IMAGE_UNIT, VIDEO_UNIT];
 const LANE_NAME = {[U27]: '27B', [UFLASH]: 'flash 176B', [IMAGE_UNIT]: 'Qwen-Image', [VIDEO_UNIT]: 'MiniMax-H3'};
 // What each lane is, for people: the kind of work it does and the one line that says so.
+// `lane` names the lane's hue in the stylesheet (--lane-<lane>); `maker` its mark in img/logos.
 const LANE_META = {
-  [U27]: {title: 'Qwen3.8 27B', kind: 'Text, up to 1M tokens of context', desc: 'Dense 27B in NVFP4 with a DFlash2 draft. The long-context lane.', view: 'agent'},
-  [UFLASH]: {title: 'Flash 176B', kind: 'Text, 262K tokens of context', desc: 'Mixture of experts, 176B in NVFP4 with its own draft head. The fast lane for agents.', view: 'agent'},
-  [IMAGE_UNIT]: {title: 'Qwen-Image 2.1', kind: 'Images', desc: 'Create, edit with up to ten references, cut out with a real alpha channel.', view: 'image'},
-  [VIDEO_UNIT]: {title: 'MiniMax-H3', kind: 'Video with sound', desc: 'Video and audio made together, from a prompt or from keyframes.', view: 'video'}};
+  [U27]: {title: 'Qwen3.8 27B', kind: 'Text, up to 1M tokens of context', desc: 'Dense 27B in NVFP4 with a DFlash2 draft. The long-context lane.', view: 'agent', lane: '27b', maker: 'qwen'},
+  [UFLASH]: {title: 'Flash 176B', kind: 'Text, 262K tokens of context', desc: 'Mixture of experts, 176B in NVFP4 with its own draft head. The fast lane for agents.', view: 'agent', lane: 'flash', maker: 'qwen'},
+  [IMAGE_UNIT]: {title: 'Qwen-Image 2.1', kind: 'Images', desc: 'Create, edit with up to ten references, cut out with a real alpha channel.', view: 'image', lane: 'image', maker: 'qwen'},
+  [VIDEO_UNIT]: {title: 'MiniMax-H3', kind: 'Video with sound', desc: 'Video and audio made together, from a prompt or from keyframes.', view: 'video', lane: 'video', maker: 'minimax'}};
+// a lane's maker's mark, as an image the stylesheet sizes (the marks belong to their owners, img/logos/NOTICE.md)
+function makerMark(unit, cls = 'mark'){
+  const box = el('span', cls); box.setAttribute('aria-hidden', 'true');
+  const img = el('img'); img.src = `/static/img/logos/${LANE_META[unit].maker}.svg`; img.alt = ''; img.decoding = 'async';
+  box.append(img); return box;
+}
 // How long each lane takes to answer after a start, before the box has seen one of its
 // boots (measured on the reference box). Once a lane booted in front of the cockpit, the
 // median of its own boots replaces these.
@@ -772,7 +779,7 @@ function drawSpark(canvas, name, color, yMax, opts = {}){
   const data = SERIES[name] || [];
   c.strokeStyle = 'rgba(255,255,255,.06)'; c.lineWidth = 1;
   [0.25, 0.5, 0.75].forEach(f => { c.beginPath(); c.moveTo(0, Math.round(h * f) + .5); c.lineTo(w, Math.round(h * f) + .5); c.stroke(); });
-  if (data.length < 2){ c.fillStyle = cssVar('--fg-3'); c.font = '12px Archivo, system-ui'; c.textAlign = 'center'; c.fillText(opts.empty || 'collecting…', w / 2, h / 2 + 4); return; }
+  if (data.length < 2){ c.fillStyle = cssVar('--fg-3'); c.font = '12px Geist, system-ui'; c.textAlign = 'center'; c.fillText(opts.empty || 'collecting…', w / 2, h / 2 + 4); return; }
   const m = yMax || Math.max(...data, 1e-9);
   const at = (v, i) => [i * (w / (data.length - 1)), h - Math.min(v / m, 1) * (h - 8) - 4];
   const g = c.createLinearGradient(0, 0, 0, h); g.addColorStop(0, color); g.addColorStop(1, 'rgba(0,0,0,0)');

@@ -4,12 +4,13 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-content">
 <meta name="description" content="The control room of one DGX Spark: one pool of unified memory, four lanes that take turns in it, and the tools that run on them.">
-<meta name="theme-color" content="#0d0e10">
+<meta name="theme-color" content="#120b36">
 <title>Spark cockpit</title>
 <link rel="icon" href="/static/favicon.svg">
 <link rel="stylesheet" href="/static/css/cockpit.css">
 </head>
 <body>
+<canvas id="backdrop" aria-hidden="true"></canvas>
 <a class="skip" href="#stage">Skip to content</a>
 
 <!-- ── the spine: brand, what serves, the pool at a glance, the job, the line ── -->
@@ -19,23 +20,25 @@
   </button>
   <a class="brand" href="#now" aria-label="Spark cockpit, back to Now">
     <svg class="mark" viewBox="0 0 32 32" aria-hidden="true">
-      <defs><linearGradient id="mk" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#f1dcaa"/><stop offset="1" stop-color="#9d7f45"/></linearGradient></defs>
-      <rect x="2.5" y="2.5" width="27" height="27" rx="8" fill="#141518" stroke="#dcb872" stroke-opacity=".6"/>
+      <defs><linearGradient id="mk" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#f4ecff"/><stop offset=".45" stop-color="#a676ff"/><stop offset="1" stop-color="#4a1fa8"/></linearGradient>
+        <linearGradient id="mk-edge" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#e9dbff"/><stop offset="1" stop-color="#6b3fd4"/></linearGradient></defs>
+      <rect x="2.5" y="2.5" width="27" height="27" rx="8" fill="#120a22" stroke="url(#mk-edge)" stroke-width="1.2"/>
       <path d="M6.5 18.6c2.9-2.1 5.4-2.1 8.3 0s5.5 2.1 8.4 0l2.3-1.5v5.4a3.4 3.4 0 0 1-3.4 3.4H9.9a3.4 3.4 0 0 1-3.4-3.4z" fill="url(#mk)"/>
-      <path d="M10 9h12" stroke="#7ac6d6" stroke-width="2" stroke-linecap="round"/>
+      <path d="M10 9h12" stroke="#56d6ff" stroke-width="2" stroke-linecap="round"/>
     </svg>
     <span class="word"><b>Spark cockpit</b><small id="ver">…</small></span>
   </a>
   <span class="tag warn dry" id="drytag" hidden title="Every action is confirmed, logged and audited, but nothing is executed">Dry run</span>
   <button class="serving" id="serving" type="button" aria-describedby="serving-sub">
     <span class="lamp" id="serving-lamp"></span>
+    <span class="mark" id="serving-mark" aria-hidden="true" hidden><img alt="" decoding="async"></span>
     <span class="what"><b id="serving-name">Reading the box…</b><span id="serving-sub"></span></span>
     <span class="go">Change lane</span>
   </button>
   <div class="spine-right">
     <div class="minipool" id="minipool" title="Unified memory: in use, page cache, free">
       <div class="lab"><span>Pool</span><b id="minipool-v" class="num">…</b></div>
-      <div class="track" aria-hidden="true"><i id="mp-used" style="background:var(--gold)"></i><i id="mp-cache" style="background:var(--steel)"></i><i id="mp-free" style="background:color-mix(in srgb, var(--cool) 55%, transparent)"></i></div>
+      <div class="track" aria-hidden="true"><i id="mp-used" style="background:var(--brand)"></i><i id="mp-cache" style="background:var(--steel)"></i><i id="mp-free" style="background:color-mix(in srgb, var(--ok) 45%, transparent)"></i></div>
     </div>
     <button class="jobpip" id="jobpip" type="button" hidden><span class="lamp warn live" id="jobpip-lamp"></span><b id="jobpip-what">…</b></button>
     <span class="conn" id="conn"><span class="lamp" id="conn-lamp"></span><span class="lbl" id="conn-lbl">connecting</span></span>
@@ -377,7 +380,7 @@
           </div>
           <div class="group">
             <div class="cost" id="img-cost"><span class="v" id="img-cost-v">…</span><span class="k" id="img-cost-k"></span><span class="basis" id="img-cost-b"></span></div>
-            <p class="err" id="img-problem" hidden style="color:#ffb2a9; font-size:var(--t-13)"></p>
+            <p class="err" id="img-problem" hidden style="color:var(--bad-hi); font-size:var(--t-13)"></p>
             <div class="btn-row">
               <button class="btn primary lg" id="img-run" type="button" style="flex:1">Generate</button>
               <button class="btn danger" id="img-cancel" type="button" hidden>Cancel</button>
@@ -455,7 +458,7 @@
           <div class="group">
             <div class="cost" id="vid-cost"><span class="v" id="vid-cost-v">…</span><span class="k" id="vid-cost-k"></span><span class="basis" id="vid-cost-b"></span>
               <div class="meter" id="vid-budget" title="The share of the two hours the cockpit holds a call"><i style="width:0%"></i></div></div>
-            <p class="err" id="vid-problem" hidden style="color:#ffb2a9; font-size:var(--t-13)"></p>
+            <p class="err" id="vid-problem" hidden style="color:var(--bad-hi); font-size:var(--t-13)"></p>
             <div class="btn-row">
               <button class="btn primary lg" id="vid-run" type="button" style="flex:1">Generate video</button>
               <button class="btn ghost" id="vid-reset" type="button">Reset</button>
@@ -673,6 +676,7 @@
 
 <div class="toasts" id="toasts" role="status" aria-live="polite"></div>
 
+<script src="/static/js/backdrop.js" defer></script>
 <script src="/static/js/base.js" defer></script>
 <script src="/static/js/now.js" defer></script>
 <script src="/static/js/lanes.js" defer></script>

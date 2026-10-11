@@ -1280,5 +1280,201 @@ class TheLastFiveMinutesSayTheEnginesCounters(unittest.TestCase):
         self.assertIn("a busy one answers a later read", r["verdict"])
 
 
+
+class EveryVersionOfALaneIsInSight(unittest.TestCase):
+    """A lane's versions sat behind a select that read as one line, and nobody could tell
+    there was a choice (2026-10-11). They are one button each now, a radio group whose value
+    is still the hidden select's, so everything that read the select reads the same value."""
+
+    SERVE = TheCheckpointSelectorFollowsTheLaneAgain.SERVE
+
+    def test_a_click_chooses_and_the_card_says_what(self):
+        r = run(self, self.SERVE + r"""
+        serve('qwen38-sglang.service', 'stock');
+        const c = LCARDS.get('qwen38-sglang.service'), opt = t => c.opts.find(b => b.dataset.target === t);
+        const seen = () => ({checked: c.opts.filter(b => b.getAttribute('aria-checked') === 'true').map(b => b.dataset.target),
+                             tabbable: c.opts.filter(b => b.tabIndex === 0).map(b => b.dataset.target),
+                             value: c.tsel.value, line: c.pickLine.textContent, load: c.load.hidden ? null : c.load.textContent});
+        const before = seen(); opt('fp8').click(); const after = seen();
+        // a lane that does not serve says which version its Load loads, when it has more than one
+        const loads = ['qwen38-flash.service', 'qwen38-video.service'].map(u => LCARDS.get(u).load.textContent);
+        serve('qwen38-sglang.service', 'stock');          // the lane still serves stock: the choice holds
+        const held = seen();
+        report({before, after, loads, held, names: c.opts.map(b => b.textContent), group: c.pickBox.querySelector('.pick').getAttribute('role'),
+                roles: c.opts.map(b => b.getAttribute('role')), label: c.pickBox.querySelector('.pick-label').textContent,
+                selectHidden: c.tsel.hidden});
+        """)
+        self.assertEqual(r["names"], ["Stock", "Uncensored", "FP8", "FP8 uncensored"])
+        self.assertEqual(r["label"], "Version (4)")
+        self.assertEqual((r["group"], set(r["roles"])), ("radiogroup", {"radio"}))
+        self.assertTrue(r["selectHidden"], "the select holds the value, out of sight")
+        self.assertEqual((r["before"]["checked"], r["before"]["tabbable"], r["before"]["value"]), (["stock"], ["stock"], "stock"))
+        self.assertTrue(r["before"]["line"].endswith("Serving now."), r["before"]["line"])
+        self.assertIsNone(r["before"]["load"], "the version that serves is not offered again")
+        self.assertEqual((r["after"]["checked"], r["after"]["tabbable"], r["after"]["value"]), (["fp8"], ["fp8"], "fp8"))
+        self.assertEqual(r["after"]["line"], "27B FP8, Qwen official. Qwen's own weights: the most faithful, and heavier.")
+        self.assertEqual(r["after"]["load"], "Load 27B FP8, Qwen official")
+        self.assertEqual(r["loads"], ["Load flash 176B, NVFP4", "Load MiniMax-H3"])
+        self.assertEqual((r["held"]["checked"], r["held"]["value"]), (["fp8"], "fp8"), "a click holds its choice")
+
+    def test_the_arrow_keys_move_the_choice_and_the_focus(self):
+        r = run(self, self.SERVE + r"""
+        serve('qwen38-sglang.service', 'stock');
+        const c = LCARDS.get('qwen38-sglang.service'), pick = c.pickBox.querySelector('.pick');
+        const key = k => { let held = false; c.opts.find(b => b === document.activeElement).dispatchEvent(
+                             {type: 'keydown', key: k, bubbles: true, preventDefault(){ held = true; }}); return held; };
+        c.opts[0].focus();
+        const steps = ['ArrowRight', 'ArrowRight', 'ArrowLeft', 'ArrowLeft', 'ArrowUp', 'ArrowDown'].map(k => {
+          const held = key(k); return [c.tsel.value, document.activeElement.dataset.target, held]; });
+        const modified = ['altKey', 'ctrlKey', 'metaKey'].map(m => { let held = false;
+          document.activeElement.dispatchEvent({type: 'keydown', key: 'ArrowLeft', [m]: true, bubbles: true, preventDefault(){ held = true; }});
+          return [held, c.tsel.value]; });
+        report({steps, other: key('a'), after: c.tsel.value, modified});
+        """)
+        self.assertEqual([s[:2] for s in r["steps"]],
+                         [["uncensored", "uncensored"], ["fp8", "fp8"], ["uncensored", "uncensored"],
+                          ["stock", "stock"], ["uncensored-fp8", "uncensored-fp8"], ["stock", "stock"]])
+        self.assertTrue(all(s[2] for s in r["steps"]), "an arrow moves the choice, not the page")
+        self.assertFalse(r["other"], "any other key is left to the page")
+        self.assertEqual(r["after"], "stock")
+        # Alt+Left is Back in a browser: with a modifier the arrows are the browser's
+        self.assertEqual(r["modified"], [[False, "stock"]] * 3)
+
+    def test_the_served_version_is_marked_on_the_lane_that_serves_only(self):
+        r = run(self, self.SERVE + r"""
+        serve('qwen38-sglang.service', 'stock');
+        const marked = unit => LCARDS.get(unit).opts.filter(b => b.classList.contains('served')).map(b => b.dataset.target);
+        // the flash lane, stopped, still has a target of its own: it is not served
+        feed({lifecycle: life({'qwen38-sglang.service': eng('ready', {target: 'stock'}), 'qwen38-flash.service': eng('stopped', {target: 'flash'})})});
+        const ready = {c27: marked('qwen38-sglang.service'), line: LCARDS.get('qwen38-sglang.service').pickLine.textContent};
+        // while the lane boots again (and the same for a stop or a wedge) it is not serving yet
+        feed({lifecycle: life({'qwen38-sglang.service': eng('capturing-graphs', {target: 'stock'})})});
+        const booting = {c27: marked('qwen38-sglang.service'), line: LCARDS.get('qwen38-sglang.service').pickLine.textContent};
+        report({c27: ready.c27, line: ready.line, booting, flash: marked('qwen38-flash.service'),
+                capsules: [...document.querySelectorAll('.serving')].map(e => e.id)});
+        """)
+        self.assertEqual(r["c27"], ["stock"])
+        self.assertTrue(r["line"].endswith("Serving now."), r["line"])
+        self.assertEqual(r["booting"]["c27"], [], "a boot is not serving: no green dot")
+        self.assertNotIn("Serving now.", r["booting"]["line"])
+        self.assertEqual(r["flash"], [], "a lane that does not serve marks no version")
+        # .serving is the head's capsule: a version that wore it took the capsule's rules too,
+        # and on a phone the served one stretched across its row (2026-10-11)
+        self.assertEqual(r["capsules"], ["serving"])
+
+
+    def test_every_version_has_its_name_and_its_line(self):
+        missing = run(self, r"""
+        report(LANE_UNITS.flatMap(u => LANE_TARGETS[u]).filter(t => !TARGET_SHORT_NAME[t] || !TARGET_LINE[t] || !TARGET_NAME[t]));
+        """)
+        self.assertEqual(missing, [], "a version declared halfway reads its long name on its segment and '. .' under it")
+
+
+class EachLaneWearsItsMakersMark(unittest.TestCase):
+    """Four bays that looked alike (2026-10-11): each lane carries its maker's mark on its bay
+    and its card in Lanes, the head's capsule shows the mark of what serves, and the lane's
+    own hue colours its share of the pool and the head's gauge."""
+
+    def test_marks_and_hues_follow_the_lane_that_serves(self):
+        r = run(self, r"""
+        const mem = {MemTotal: 121.6 * GIB, MemAvailable: 16 * GIB, Cached: 12 * GIB, SwapTotal: 0, SwapFree: 0};
+        feed({config: CONFIG, units: UNITS, machine: {mem, cpu_pct: {}, disks: {}}, lifecycle: life({})});
+        const logo = img => img.getAttribute('src').replace('/static/img/logos/', '');
+        const now = () => ({mark: $('serving-mark').hidden ? null : logo($('serving-mark').firstChild),
+                            hue: $('seg-lane').style.getPropertyValue('--hue'), gauge: $('mp-used').style.background});
+        const none = now();
+        feed({lifecycle: life({'qwen38-flash.service': eng('ready', {target: 'flash'})})});
+        const flash = now();
+        feed({lifecycle: life({'qwen38-video.service': eng('ready', {target: 'video'})})});
+        const video = now();
+        report({bays: [...document.querySelectorAll('#rack .bay')].map(b => logo(b.querySelector('.mark img'))),
+                cards: [...document.querySelectorAll('#lanes-list .lane-panel')].map(c => logo(c.querySelector('.mark img'))),
+                alts: [...document.querySelectorAll('.mark img')].map(i => i.getAttribute('alt')),
+                hidden: [...document.querySelectorAll('#rack .mark, #lanes-list .mark')].map(m => m.getAttribute('aria-hidden')),
+                none, flash, video});
+        """)
+        lanes = ["qwen.svg", "qwen.svg", "qwen.svg", "minimax.svg"]      # 27B, flash, image, video
+        self.assertEqual(r["bays"], lanes)
+        self.assertEqual(r["cards"], lanes)
+        # the mark is decoration beside the lane's name: no alt text to read twice
+        self.assertEqual(set(r["alts"]), {""})
+        self.assertEqual(set(r["hidden"]), {"true"})
+        self.assertEqual(r["none"], {"mark": None, "hue": "var(--brand)", "gauge": "var(--brand)"})
+        self.assertEqual(r["flash"], {"mark": "qwen.svg", "hue": "var(--lane-flash)", "gauge": "var(--lane-flash)"})
+        self.assertEqual(r["video"], {"mark": "minimax.svg", "hue": "var(--lane-video)", "gauge": "var(--lane-video)"})
+
+    def test_every_mark_and_hue_the_page_names_exists(self):
+        names = set()
+        for f in (pagejs.STATIC / "js").glob("*.js"):
+            names |= set(re.findall(r"maker: '([a-z]+)'", f.read_text()))
+        self.assertEqual(names, {"qwen", "minimax"})
+        for n in names:
+            self.assertTrue((pagejs.STATIC / "img" / "logos" / f"{n}.svg").is_file(), n)
+        css = (pagejs.STATIC / "css" / "cockpit.css").read_text()
+        lanes = set(re.findall(r"lane: '([a-z0-9]+)'", (pagejs.STATIC / "js" / "base.js").read_text()))
+        self.assertEqual(lanes, {"27b", "flash", "image", "video"})
+        for lane in lanes:
+            self.assertRegex(css, r"--lane-%s:#[0-9a-f]{6};" % lane)
+
+
+class TheBackdropStepsAsideWhereItCannotDraw(unittest.TestCase):
+    """The animated ground is decoration: where its shader does not compile (here, a context
+    that draws nothing) the canvas goes and the CSS light under it stays, with no error."""
+
+    COUNT = r"""
+    window.__contexts = 0;
+    const cv = document.getElementById('backdrop'), getContext = cv.getContext.bind(cv);
+    cv.getContext = (...a) => { window.__contexts++; return getContext(...a); };
+    """
+
+    def test_no_shader_no_canvas(self):
+        r = run(self, r"""
+        report({canvas: !!document.getElementById('backdrop'), lit: document.documentElement.classList.contains('has-backdrop'),
+                contexts: window.__contexts});
+        """, setup=self.COUNT)
+        self.assertEqual(r, {"canvas": False, "lit": False, "contexts": 1})
+
+    def test_forced_colours_never_paint_it(self):
+        """Windows' high contrast forces the page's colours, never a canvas's pixels: the
+        indigo stayed under panels gone transparent, their forced edges at 1.9:1."""
+        r = run(self, r"""
+        report({canvas: !!document.getElementById('backdrop'), contexts: window.__contexts});
+        """, setup=self.COUNT, opts={"media": {"(forced-colors: active)": True}})
+        self.assertEqual(r, {"canvas": False, "contexts": 0})
+        hidden = {s.strip() for s, media, d in css_rules() if any("forced-colors" in m for m in media) and "display:none" in d.replace(" ", "")}
+        self.assertTrue({"#backdrop", "body::before"} <= {x.strip() for s in hidden for x in s.split(",")}, hidden)
+
+
+class TheStylesheetKeepsWordsAndContrast(unittest.TestCase):
+    """Two defects of the redesign found in review (2026-10-11), held by the stylesheet."""
+
+    def rule(self, selector):
+        return [d for s, media, d in css_rules() if s.strip() == selector and not media]
+
+    def test_a_booting_lanes_share_ends_on_its_hue(self):
+        # the label sits at the foot of the share: a gradient that darkened the hue there put
+        # "27B 40 GiB" at 3.80:1 while the lane booted
+        (d,) = self.rule(".seg-m.lane.filling")
+        self.assertRegex(d.replace(" ", ""), r"var\(--hue\)\)$")
+
+    def test_capsules_keep_the_words_the_page_writes(self):
+        # upper case read "16.1 GIB AVAILABLE" and "SERVED BY QWEN3.8-27B", an identifier
+        (d,) = self.rule(".cap")
+        self.assertNotIn("uppercase", d)
+
+
+class AReadyLaneIsTheTimelinesGreen(unittest.TestCase):
+    """Green is ready and serving: a lane that came up is the green dot of the timeline, the
+    other steps of a boot are plain news in the brand's colour (they all read green, 2026-10-11)."""
+
+    def test_ready_is_green_and_a_step_is_not(self):
+        r = run(self, r"""
+        report([['state', 'sglang: warming-up to ready'], ['state', 'sglang: loading-weights to loading-draft'],
+                ['state', 'sglang: ready to failed'], ['kernel', 'GPU driver refused 1 allocation at the edge of memory'],
+                ['job', 'fit the opencode limits to this engine: done']].map(([kind, msg]) => evtDot({kind, msg})));
+        """)
+        self.assertEqual(r, ["ok", "gold", "clay", "ember", "cool"])
+
+
 if __name__ == "__main__":
     unittest.main()

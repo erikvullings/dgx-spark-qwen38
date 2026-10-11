@@ -59,6 +59,8 @@ function renderPool(){
     e.title = lab;
   });
   $('seg-lane').classList.toggle('filling', !!(s && TRANSITIONAL.has(s[1].state)));
+  // the lane's share of the pool in the lane's own hue
+  $('seg-lane').style.setProperty('--hue', s ? `var(--lane-${LANE_META[s[0]].lane})` : 'var(--brand)');
   $('floor').style.width = (100 * FLOOR() / p.total).toFixed(2) + '%';
   $('ticks').style.setProperty('--tick', (100 * 16 * GIB / p.total).toFixed(3) + '%');
   const scale = $('pool-scale');
@@ -70,14 +72,15 @@ function renderPool(){
   $('reservoir').setAttribute('aria-label', `Unified memory: ${fmtGiB(p.inUse)} in use of ${fmtGiB(p.total)}, ${fmtGiB(p.avail)} available`);
   const lg = $('pool-legend'); clear(lg);
   const item = (color, label, v) => { const sp = el('span'); const i = el('i'); i.style.background = color; sp.append(i, label + ' '); sp.append(el('b', null, v)); lg.append(sp); };
-  item('var(--gold)', laneName ? `${laneName}, GPU allocations` : 'lane, GPU allocations', fmtGiB(p.lane));
+  item(s ? `var(--lane-${LANE_META[s[0]].lane})` : 'var(--brand)', laneName ? `${laneName}, GPU allocations` : 'lane, GPU allocations', fmtGiB(p.lane));
   item('var(--slate)', 'System and apps', fmtGiB(p.other));
   item('var(--steel)', 'Page cache', fmtGiB(p.cache));
-  item('color-mix(in srgb, var(--cool) 45%, transparent)', 'Free', fmtGiB(p.free));
-  if (p.swap > 0.05 * GIB) item('var(--ember)', 'Swap in use', fmtGiB(p.swap));
+  item('color-mix(in srgb, var(--ok) 45%, transparent)', 'Free', fmtGiB(p.free));
+  if (p.swap > 0.05 * GIB) item('var(--warn)', 'Swap in use', fmtGiB(p.swap));
   // the spine's gauge
   setText('minipool-v', `${(p.avail / GIB).toFixed(1)} GiB free`);
   $('mp-used').style.width = (100 * p.inUse / p.total).toFixed(1) + '%';
+  $('mp-used').style.background = s ? `var(--lane-${LANE_META[s[0]].lane})` : 'var(--brand)';
   $('mp-cache').style.width = (100 * p.cache / p.total).toFixed(1) + '%';
   $('mp-free').style.width = (100 * p.free / p.total).toFixed(1) + '%';
 }
@@ -87,15 +90,15 @@ const BAYS = new Map();
 function bay(unit){
   let b = BAYS.get(unit); if (b) return b;
   const root = el('button', 'bay'); root.type = 'button'; root.setAttribute('role', 'listitem');
-  const top = el('div', 'top'); const state = el('span', 'cap'); const kind = el('span', 'kind', LANE_META[unit].kind);
-  top.append(kind, state);
+  const top = el('div', 'top'); const state = el('span', 'cap'); const kind = el('p', 'kind', LANE_META[unit].kind);
+  top.append(makerMark(unit), state);
   const h = el('h3', null, LANE_META[unit].title);
   const desc = el('p', 'desc', LANE_META[unit].desc);
   const boot = el('div', 'bootbar'); boot.hidden = true;
   const line = el('div', 'facts-line');
   const foot = el('div', 'foot'); const act = el('span', 'act'); const note = el('span', 'faint'); note.style.fontSize = '12px';
   foot.append(note, act);
-  root.append(top, h, desc, boot, line, foot);
+  root.append(top, h, kind, desc, boot, line, foot);
   b = {root, state, h, desc, boot, line, act, note, sig: ''};
   root.addEventListener('click', () => {
     const e = engines()[unit];
@@ -150,6 +153,7 @@ function renderServing(){
   const s = servingEngine();
   if (!s){
     $('serving-lamp').className = 'lamp';
+    $('serving-mark').hidden = true;
     setText('serving-name', 'Nothing is serving');
     const u = bootUnit();
     setText('serving-sub', !F.units || !Object.keys(F.units).length ? '' : u ? `${LANE_NAME[u]} starts at boot; load a lane from Lanes`
@@ -160,6 +164,10 @@ function renderServing(){
   }
   const [unit, e] = s, st = e.state;
   $('serving-lamp').className = 'lamp ' + (stateKind(st) || '') + (stateLive(st) === 'live' ? ' live' : '');
+  // the maker's mark of what serves
+  const mark = $('serving-mark'), src = `/static/img/logos/${LANE_META[unit].maker}.svg`;
+  if (mark.firstChild.getAttribute('src') !== src) mark.firstChild.setAttribute('src', src);
+  mark.hidden = false;
   setText('serving-name', `${laneLabel(unit)}, ${stateLabel(e)}`);
   let sub = '';
   const l = F.load || {};
@@ -213,7 +221,7 @@ function renderActivity(){
     facts(fx, [['Left, about', r.left_s != null ? fmtDur(r.left_s + (r.phase === 'denoise' ? 25 : 0)) : null], ['Up', e.elapsed ? fmtDur(e.elapsed) : null],
                ['Listens on', `127.0.0.1:${VID_NOW.port || 30022}, behind this cockpit`]]);
     if (r.phase === 'denoise' && r.steps) push('act', 100 * r.step / r.steps, 120);
-    drawSpark($('act-spark'), 'act', cssVar('--gold'), 100, {empty: 'no video yet in this window'});
+    drawSpark($('act-spark'), 'act', cssVar('--brand'), 100, {empty: 'no video yet in this window'});
     return;
   }
   if (unit === IMAGE_UNIT){
@@ -224,7 +232,7 @@ function renderActivity(){
   // a text lane
   const n = runningReqs(l), w = waitingReqs(l);
   setText('act-title', 'Requests'); setText('act-v', String(n)); setText('act-k', (n ? 'running' : 'nothing running') + (n || w ? `, ${w} waiting` : ''));
-  push('act', n, 180); drawSpark($('act-spark'), 'act', cssVar('--gold'), Math.max(4, F.maxRun || 4), {empty: 'quiet so far'});
+  push('act', n, 180); drawSpark($('act-spark'), 'act', cssVar('--brand'), Math.max(4, F.maxRun || 4), {empty: 'quiet so far'});
   const held = physTokens(l);
   facts(fx, [['KV pool held', F.pool ? `${fmtN(held)} of ${fmtN(F.pool)} tokens` : 'waiting for the engine'],
              ['One prompt, at most', singleLimit() ? `about ${fmtK(singleLimit())} tokens` : null],
@@ -244,7 +252,7 @@ on('canary', d => {
 const EVT_KIND = {state: 'gold', job: 'cool', kernel: 'ember', guard: 'ember', belt: 'clay', error: 'clay'};
 function evtDot(ev){
   if (/failed|wedged|crash|killed/.test(ev.msg)) return 'clay';
-  if (/→ ready|ready$/.test(ev.msg)) return 'gold';
+  if (/→ ready|ready$/.test(ev.msg)) return 'ok';
   return EVT_KIND[ev.kind] || '';
 }
 // Consecutive refusals of the GPU driver are one story, told once with their count and
