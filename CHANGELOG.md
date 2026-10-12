@@ -1,5 +1,45 @@
 # Changelog
 
+## v1.28.0 (2026-10-12): the flash lane moves to nightly-cu134-20261011-53295c6, measured equal or better
+
+**A newer engine for the flash lane.** The lane served `nightly-cu134-20260928-6caf0ff`
+since v1.19; upstream published thirteen days of main-branch work on top of it, among them
+two QSA kernel fusions on this lane's exact draft tier (NEXTN, 3 steps, top-k 1, 4 draft
+tokens), an optional fp8 QSA indexer cache, and a rebase of the CUDA 13.4 image with newer
+DeepGEMM, DeepEP and sgl-kernel. None of it is taken on trust: the candidate
+(`lmsysorg/sglang@sha256:3e79541d`, pulled by digest, 15.3 GB) went through the full
+adoption cycle on the reference box before the pin moved.
+
+**Measured, not assumed.** Static first, with no lane touched: the digest matches the Hub
+index, torch, cuBLAS and triton are identical inside, transformers moves 5.12 to 5.19, all
+30 of the lane's flags are still accepted (one unused option retired upstream, nine added,
+each default neutral, verified in the sources), `auth.py` is identical so the proxy copies
+nothing new, and the four upstream PRs on this lane's path were read, not just titled
+(QSA fusions #41173 with NEXTN parity measured by its author on B200, and #40972; fp8
+indexer #39614, default off; the PP-only recurrent-state fix #40001, which leaves the open
+NEXTN decay #37326 untouched). Then the A/B campaign on the box, same target
+(`flash-nvda`), same tier, same probes in the same order: logprobs bit-identical on 30
+fixed texts (NLL 1.6229 both), GSM8K 247 against 248 of 250, needle exact at 120,196 and
+200,054 prompt tokens with identical replies, greedy decode median 46.6/49.6 against
+44.3/46.9 tok/s, the official serving bench at concurrency 4 output 61.0 against 58.0
+tok/s with a tighter p99, pool +1.9% (boot noise), zero Tracebacks and zero restarts on
+both sides, every client green (SDK, Node, Bun, LiteLLM, Claude Code, opencode, Hermes,
+pi). One Hermes answer came back truncated on the candidate ("7" for "7351"); rebooting
+the candidate and asking three more times answered 7351 every time, with the full quartet
+green behind it, so it reads as a one-off, not a regression. The only systematic gap is
+prefix-cache agreement, lower on the candidate as on the 2026-10-10 campaign, on the
+decode side while prefill is bit-identical; it is noted, not blocking.
+
+**What an update does.** A box that serves the flash lane pulls the new image (about
+15.3 GB to download, more on disk, layers shared with the previous pin), rewrites the
+flash unit and restarts the engine once (about 14 minutes to ready on the reference
+box); a box that serves the 27B pulls it too, since the flash lane is installed beside
+it, and rewrites the flash unit without starting it. The previous image is untagged at
+once on a box that served the flash lane, so `docker image prune` reclaims it; both
+digests stay known to `uninstall.sh`. To stay on the previous image, pass it on every
+run (`FLASH_IMAGE` is not remembered):
+`FLASH_IMAGE=lmsysorg/sglang@sha256:cb6ed363800a5bea98ac90b4c6447e9ba66cef7db881ac1f108046b6622d22b8 ./install.sh`.
+
 ## v1.27.1 (2026-10-11): the backdrop is drawn under reduced motion, and the review's last fixes
 
 **A black ground under reduced motion.** v1.27.0 draws its backdrop once for a system that asks
