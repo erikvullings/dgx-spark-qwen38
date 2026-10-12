@@ -1,5 +1,26 @@
 # Changelog
 
+## v1.28.1 (2026-10-13): an opencode config keeps its ten newest backups, and two tests stop leaving folders in /tmp
+
+**Backups that piled up.** Every install and every lane switch edits `~/.config/opencode/opencode.json` and the
+cockpit's copy, `~/.config/qwen38/opencode.json`, and each edit leaves a `.bak-<date>-<time>` beside the file. None
+was ever removed: on the reference box, 98 and 91 of them after three weeks (2026-10-12), each holding the API key.
+`oc-merge-limits.py` now keeps the ten newest backups of a file and removes the older ones each time it writes a new
+one. Only the names it gives are counted: a copy made by hand under another name is never touched. Ten covers an
+install's edits (up to five within a second) and the runs before it; the copy `uninstall.sh` makes of a config it
+removes is the newest, so it stays.
+
+**Two tests that left folders behind.** `tests/test_install_pin_tags.py` and `tests/test_uninstall_images.py` made a
+folder per run in /tmp and never removed it: 30 and 50 of them after a day of CI on the reference box. They remove it
+now.
+
+**Tested.** `tests/test_oc_backups_kept_few.py` fails on v1.28.0 (eighteen backups stay where ten should) and passes
+now; a mutant that skips the pruning fails it; a backup made by hand and the backups of another file are left alone.
+The two tests now run without leaving anything in /tmp (six folders per run of both before).
+
+**What an update does.** Nothing restarts. The next install or lane switch that edits an opencode config writes its
+backup and leaves the ten newest of that file. The engines, the proxy and the cockpit keep running.
+
 ## v1.28.0 (2026-10-12): the flash lane moves to nightly-cu134-20261011-53295c6, measured equal or better
 
 **A newer engine for the flash lane.** The lane served `nightly-cu134-20260928-6caf0ff`
