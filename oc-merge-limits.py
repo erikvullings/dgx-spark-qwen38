@@ -262,11 +262,37 @@ def remove_member(text: str, path) -> str:
     return text[:span[0]] + text[span[1]:]
 
 
+# Backups kept per file: an install's edits (up to five) and the runs before it. Every install
+# and lane switch made one or two and none was ever removed: 98 beside opencode.json and 91 beside
+# the cockpit's copy on the reference box after three weeks, each holding the API key (2026-10-12).
+BACKUPS_KEPT = 10
+_STAMPED = re.compile(r"\.bak-(\d{8}-\d{6})(?:-(\d+))?$")
+
+
+def prune_backups(path: str) -> None:
+    """Remove the backups of path beyond the BACKUPS_KEPT newest. Only the names backup() gives
+    are counted: a copy someone made by hand under another name is never touched."""
+    folder, base = os.path.split(os.path.abspath(path))
+    stamped = []
+    try:
+        for entry in os.scandir(folder):
+            m = _STAMPED.match(entry.name[len(base):]) if entry.name.startswith(base + ".bak-") else None
+            if m and entry.is_file(follow_symlinks=False):
+                stamped.append(((m.group(1), int(m.group(2) or 0)), entry.path))
+    except OSError:
+        return
+    for _, old in sorted(stamped, reverse=True)[BACKUPS_KEPT:]:
+        try:
+            os.unlink(old)
+        except OSError:
+            pass
+
+
 def backup(path: str) -> str:
     """A copy of path under a name no earlier backup has. install.sh edits one config up to
     five times within a second, and with a name to the second each backup replaced the one
     before: the last edit's was the only one left, and it no longer held the original
-    (found in review, 2026-09-24)."""
+    (found in review, 2026-09-24). Older backups beyond BACKUPS_KEPT go."""
     base = f"{path}.bak-{time.strftime('%Y%m%d-%H%M%S')}"
     for n in range(1000):
         name = base if n == 0 else f"{base}-{n}"
@@ -277,6 +303,7 @@ def backup(path: str) -> str:
         with os.fdopen(fd, "wb") as dst, open(path, "rb") as src:
             shutil.copyfileobj(src, dst)
         shutil.copystat(path, name)
+        prune_backups(path)
         return name
     raise OSError(f"no free backup name next to {path}")
 
