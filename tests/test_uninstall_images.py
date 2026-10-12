@@ -8,6 +8,7 @@ its digest reference too, so the reclaim command has to name both, or it only un
 the prune warning is for an image that really has no tag. These run the uninstaller's own
 functions, as written, against a fake docker."""
 import pathlib
+import shutil
 import subprocess
 import tempfile
 import unittest
@@ -63,15 +64,19 @@ def run(tagged, old=False):
     # up to the weights, which are read per cache since v1.18.7 (a loop over the caches)
     tail = text[tail_start:text.index("while IFS= read -r cache; do", tail_start)]
     t = pathlib.Path(tempfile.mkdtemp(prefix="un-img-"))
-    (t / "docker").write_text(FAKE_DOCKER)
-    (t / "docker").chmod(0o755)
-    script = ("set -euo pipefail\nFOUND_IMAGES=()\n" + local + "\n" + base + "\n" + head
-              + "inventory_images\n" + tail)
-    r = subprocess.run(["bash", "-c", script], capture_output=True, text=True, timeout=30,
-                       env={"PATH": f"{t}:/usr/bin:/bin", "FAKE_TAGGED": "1" if tagged else "0",
-                            "FAKE_OLD": "1" if old else "0"})
-    assert r.returncode == 0, r.stdout + r.stderr
-    return r.stdout
+    try:
+        (t / "docker").write_text(FAKE_DOCKER)
+        (t / "docker").chmod(0o755)
+        script = ("set -euo pipefail\nFOUND_IMAGES=()\n" + local + "\n" + base + "\n" + head
+                  + "inventory_images\n" + tail)
+        r = subprocess.run(["bash", "-c", script], capture_output=True, text=True, timeout=30,
+                           env={"PATH": f"{t}:/usr/bin:/bin", "FAKE_TAGGED": "1" if tagged else "0",
+                                "FAKE_OLD": "1" if old else "0"})
+        assert r.returncode == 0, r.stdout + r.stderr
+        return r.stdout
+    finally:
+        # each run left its folder in /tmp: 50 after a day of CI on the reference box (2026-10-12)
+        shutil.rmtree(t, ignore_errors=True)
 
 
 class TheReclaimCommandReallyReclaims(unittest.TestCase):

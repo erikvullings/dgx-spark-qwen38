@@ -6,6 +6,7 @@ serving image. The tag of a pin a later release replaced was never removed, and 
 retired image out of every prune: 30 to 39 GB per bumped pin (found in review,
 2026-09-24). This runs install.sh's own function against a stub docker."""
 import pathlib
+import shutil
 import subprocess
 import tempfile
 import unittest
@@ -28,16 +29,20 @@ esac
 
 def run(tags, used=(), current="lmsysorg/sglang@sha256:new"):
     d = pathlib.Path(tempfile.mkdtemp(prefix="pin-tags-"))
-    (d / "docker").write_text(DOCKER)
-    (d / "docker").chmod(0o755)
-    (d / "refs").write_text("lmsysorg/sglang@sha256:new sha256:NEW\n")
-    (d / "tags").write_text("".join(f"{t} {i}\n" for t, i in tags))
-    (d / "used").write_text("".join(f"{u}\n" for u in used))
-    script = f"set -euo pipefail\n{FUNC}\nunpin_stale 27b '{current}' || true\necho END\n"
-    r = subprocess.run(["bash", "-c", script], capture_output=True, text=True, timeout=30,
-                       env={"PATH": f"{d}:/usr/bin:/bin"})
-    removed = (d / "removed").read_text().split() if (d / "removed").exists() else []
-    return r.stdout + r.stderr, removed
+    try:
+        (d / "docker").write_text(DOCKER)
+        (d / "docker").chmod(0o755)
+        (d / "refs").write_text("lmsysorg/sglang@sha256:new sha256:NEW\n")
+        (d / "tags").write_text("".join(f"{t} {i}\n" for t, i in tags))
+        (d / "used").write_text("".join(f"{u}\n" for u in used))
+        script = f"set -euo pipefail\n{FUNC}\nunpin_stale 27b '{current}' || true\necho END\n"
+        r = subprocess.run(["bash", "-c", script], capture_output=True, text=True, timeout=30,
+                           env={"PATH": f"{d}:/usr/bin:/bin"})
+        removed = (d / "removed").read_text().split() if (d / "removed").exists() else []
+        return r.stdout + r.stderr, removed
+    finally:
+        # each run left its folder in /tmp: 30 after a day of CI on the reference box (2026-10-12)
+        shutil.rmtree(d, ignore_errors=True)
 
 
 class RetiredPinsAreUntagged(unittest.TestCase):
