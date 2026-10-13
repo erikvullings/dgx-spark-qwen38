@@ -130,7 +130,7 @@ class TheMergesReadWhatOpencodeReads(Case):
             rc, out = run(MERGE, self.path, *args)
             self.assertEqual(rc, 0, f"{args}: {out}")
         doc = jsonc(self.text())
-        self.assertEqual(doc["compaction"], {"preserve_recent_tokens": 170000, "prune": True})
+        self.assertEqual(doc["compaction"], {"preserve_recent_tokens": 170000, "prune": False})
         self.assertEqual(doc["autoupdate"], "notify")
         self.assertEqual(doc["provider"]["qwen38"]["models"]["qwen3.8-27b"]["variants"]["lean"],
                          {"chat_template_kwargs": {"reasoning_effort": "lean"}})
@@ -186,14 +186,14 @@ class TheEditLandsWhereTheKeyIs(Case):
         self.write('{\n  // "compaction": {"preserve_recent_tokens": 1},\n'
                    '  "agent": {"a": {"compaction": {"preserve_recent_tokens": 2}}},\n'
                    '  /* "provider": {"qwen38": {"models": {"qwen3.8-27b": {"limit": {"context": 9}}}}}, */\n'
-                   '  "compaction": {"preserve_recent_tokens": 3, "prune": false},\n'
+                   '  "compaction": {"preserve_recent_tokens": 3, "prune": true},\n'
                    '  "provider": {"qwen38": {"models": {"qwen3.8-27b": {"limit": {"context": 4}}}}}\n}\n')
         self.assertEqual(run(MERGE, self.path, "--compaction", 50000)[0], 0)
         rc, out = run(MERGE, self.path, "qwen38", "qwen3.8-27b", 7, 8)
         self.assertEqual(rc, 0, out)
         doc = jsonc(self.text())
         self.assertEqual(doc["agent"]["a"]["compaction"], {"preserve_recent_tokens": 2})
-        self.assertEqual(doc["compaction"], {"preserve_recent_tokens": 50000, "prune": True})
+        self.assertEqual(doc["compaction"], {"preserve_recent_tokens": 50000, "prune": False})
         self.assertEqual(doc["provider"]["qwen38"]["models"]["qwen3.8-27b"]["limit"],
                          {"context": 7, "input": 7, "output": 8})
         self.assertIn('// "compaction": {"preserve_recent_tokens": 1}', self.text())

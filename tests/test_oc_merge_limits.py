@@ -116,24 +116,35 @@ def main() -> None:
     rc, out = compact(p, 50000)
     assert rc == 0 and "preserve_recent_tokens=50000" in out, out
     d = doc_of(p)
-    assert d["compaction"] == {"preserve_recent_tokens": 50000, "prune": True}, d.get("compaction")
+    assert d["compaction"] == {"preserve_recent_tokens": 50000, "prune": False}, d.get("compaction")
     assert "user comment kept" in open(p).read(), "the JSONC comment was dropped"
     assert d["provider"]["other"]["models"]["x"]["limit"] == {"context": 1, "input": 1, "output": 1}
     rc, out = compact(p, 50000)
     assert rc == 0 and "unchanged" in out, out
     rc, out = compact(p, 60000)                       # an existing block is rewritten in place
     assert rc == 0 and doc_of(p)["compaction"]["preserve_recent_tokens"] == 60000
-    assert doc_of(p)["compaction"]["prune"] is True
+    assert doc_of(p)["compaction"]["prune"] is False
 
-    # A block that already exists with other keys keeps them, and prune is turned on.
-    body = ('{\n  "compaction": {"auto": true, "preserve_recent_tokens": 9, "prune": false},\n'
+    # A block that already exists with other keys keeps them, and prune is turned off.
+    body = ('{\n  "compaction": {"auto": true, "preserve_recent_tokens": 9, "prune": true},\n'
             '  "provider": {"qwen38": {"models": {"qwen3.8-27b": {"limit": '
             '{"context": 1, "input": 1, "output": 1}}}}}\n}\n')
     p = write(tmp, body)
     rc, out = compact(p, 50000)
     assert rc == 0, out
     d = doc_of(p)["compaction"]
-    assert d == {"auto": True, "preserve_recent_tokens": 50000, "prune": True}, d
+    assert d == {"auto": True, "preserve_recent_tokens": 50000, "prune": False}, d
+
+    # The update every box made by v1.28.1 or earlier goes through: the same number kept, prune
+    # on. Not "unchanged": prune is turned off, and the user's comment stays.
+    body = ('{\n  // mine\n  "compaction": {"preserve_recent_tokens": 50000, "prune": true},\n'
+            '  "provider": {"qwen38": {"models": {"qwen3.8-27b": {"limit": '
+            '{"context": 1, "input": 1, "output": 1}}}}}\n}\n')
+    p = write(tmp, body)
+    rc, out = compact(p, 50000)
+    assert rc == 0 and "unchanged" not in out and "prune=false" in out, out
+    assert doc_of(p)["compaction"] == {"preserve_recent_tokens": 50000, "prune": False}, doc_of(p)["compaction"]
+    assert "// mine" in open(p).read(), "the JSONC comment was dropped"
 
     # And the verifier refuses a block that does not carry what was asked.
     assert m._verify_compaction(p, 50000) == ""

@@ -992,7 +992,7 @@ jobs:
           assert c["model"] == "qwen38/qwen3.8-27b"
           # the compaction block is sized from the installed target, never left to
           # opencode's 15,000 default (which would summarise most of this window)
-          assert c["compaction"] == {"preserve_recent_tokens": 38000, "prune": True}, c["compaction"]
+          assert c["compaction"] == {"preserve_recent_tokens": 38000, "prune": False}, c["compaction"]
           PY
           gen flash 0 1 110000 32000 native
           python3 - "$scratch/octest/opencode.json" <<'PY'

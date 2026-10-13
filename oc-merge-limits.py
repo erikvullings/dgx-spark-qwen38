@@ -27,10 +27,13 @@ per-model, which is why it has its own mode: `preserve_recent_tokens` is how muc
 of the recent conversation survives a compaction verbatim, and opencode's own
 default clamps it at 15,000 tokens whatever the window. On a 262K lane that
 throws away the window the moment compaction fires, so the installed value comes
-from this repo's table instead. `prune` goes with it: opencode then clears stale
-tool output (beyond the most recent 40,000 tokens of it, and never in the last
-two turns) instead of summarising the whole conversation, which is the cheaper
-way to stay under the ceiling.
+from this repo's table instead. `prune` stays off: opencode's pruning swaps old
+tool output for a placeholder (past the most recent 40,000 tokens of it), and
+each swap changes the history the engine already cached, so the next turn
+recomputes everything after the first cleared output. Seen 2026-10-13 on a
+410K-token agent session: 232 of 527 tool parts cleared. Leaving stale tool
+output in place keeps the cached prefix whole; room is made by compaction
+instead.
 
 --autoupdate writes the top-level "autoupdate" key. Left unset, opencode installs its
 own patch releases (read out of its 1.18.27 binary: only `false`, `"notify"` or a
@@ -396,8 +399,8 @@ def _verify_compaction(path: str, keep: int) -> str:
         return "compaction block missing"
     if c.get("preserve_recent_tokens") != keep:
         return f"preserve_recent_tokens is {c.get('preserve_recent_tokens')!r}, expected {keep}"
-    if c.get("prune") is not True:
-        return f"prune is {c.get('prune')!r}, expected true"
+    if c.get("prune") is not False:
+        return f"prune is {c.get('prune')!r}, expected false"
     return ""
 
 
@@ -417,24 +420,24 @@ def merge_compaction(path: str, keep: int) -> int:
         return 1
     text, doc = opened
     cur = doc.get("compaction")
-    if isinstance(cur, dict) and cur.get("preserve_recent_tokens") == keep and cur.get("prune") is True:
-        print(f"compaction already preserve_recent_tokens={keep}, prune=true: unchanged")
+    if isinstance(cur, dict) and cur.get("preserve_recent_tokens") == keep and cur.get("prune") is False:
+        print(f"compaction already preserve_recent_tokens={keep}, prune=false: unchanged")
         return 0
     want = copy.deepcopy(doc)
     if isinstance(cur, dict):
-        want["compaction"] = dict(cur, preserve_recent_tokens=keep, prune=True)
-        new_text = set_member(text, ["compaction"], "prune", "true")
+        want["compaction"] = dict(cur, preserve_recent_tokens=keep, prune=False)
+        new_text = set_member(text, ["compaction"], "prune", "false")
         new_text = set_member(new_text, ["compaction"], "preserve_recent_tokens", str(keep))
     else:
-        want["compaction"] = {"preserve_recent_tokens": keep, "prune": True}
-        new_text = set_member(text, [], "compaction", f'{{"preserve_recent_tokens": {keep}, "prune": true}}')
+        want["compaction"] = {"preserve_recent_tokens": keep, "prune": False}
+        new_text = set_member(text, [], "compaction", f'{{"preserve_recent_tokens": {keep}, "prune": false}}')
     saved, bad = commit(path, new_text, want)
     if bad:
         print(f"{path}: refused, {bad}; unchanged.")
         return 1
     if not _landed(path, saved, _verify_compaction(path, keep), "the compaction block"):
         return 1
-    print(f"compaction: preserve_recent_tokens={keep}, prune=true (backup {saved})")
+    print(f"compaction: preserve_recent_tokens={keep}, prune=false (backup {saved})")
     return 0
 
 

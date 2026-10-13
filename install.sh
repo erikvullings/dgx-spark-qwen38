@@ -1885,12 +1885,13 @@ default = "flashnext/qwen3.8-flash-next" if lane == "flash" else "qwen38/qwen3.8
 # switch. preserve_recent_tokens exists because opencode's own default clamps it
 # at 15,000 whatever the window: on a 262K lane a compaction at 205,000 tokens
 # would keep 15,000 and summarise the other 190,000, which is not using the
-# window, it is refilling it from scratch. prune lets opencode clear stale tool
-# output (never the last two turns, never the most recent 40,000 tokens of it)
-# instead of summarising everything, which is the cheaper way to stay under the
-# ceiling on an agent lane that reads a lot of files.
+# window, it is refilling it from scratch. prune stays off: opencode's pruning
+# swaps old tool output for a placeholder (past the most recent 40,000 tokens of
+# it), which changes the history the engine cached, so the next turn recomputes
+# everything after the first cleared output (2026-10-13: 232 of 527 tool parts
+# cleared in a 410K-token session). Room is made by compaction instead.
 doc = {"$schema": "https://opencode.ai/config.json", "provider": providers,
-       "compaction": {"preserve_recent_tokens": int(os.environ["OC_KEEP"]), "prune": True},
+       "compaction": {"preserve_recent_tokens": int(os.environ["OC_KEEP"]), "prune": False},
        "model": default, "small_model": default}
 # With the version pinned, opencode announces a release instead of installing it itself
 # (unset, it installs its own patch releases; see the OPENCODE_VERSION pin).
