@@ -19,6 +19,13 @@ const LOG = process.env.AC_LOG || process.env.HOME + "/.config/qwen38/auto-conti
 const THROTTLE_MS = num(process.env.AC_THROTTLE_MS, 5000);   // minimum between two relaunches of one session
 const IDLE_DELAY_MS = num(process.env.AC_IDLE_DELAY_MS, 1500); // breather after idle before relaunching
 const MAX_CONSECUTIVE = num(process.env.AC_MAX_CONSECUTIVE, 25); // relaunches in a row without any progress
+// A request refused as sent (an API error opencode itself will not retry: isRetryable false, a
+// 400) that comes back the same this many times in a row will not go away: on the reference box a
+// tool schema the provider refused came back 91 times in 28 minutes over 12 sessions, nearly always
+// within a second of its relaunch, one session up to the cap of 25 (2026-10-13). A retryable error
+// (an engine restarting or unreachable, a 429, a provider timeout) keeps the whole budget: there one
+// session got the same "engine restarted" answer 9 times in a row before the engine served it again.
+const SAME_REFUSAL_MAX = num(process.env.AC_SAME_REFUSAL_MAX, 3);
 // never relaunch on these: a deliberate user action, or a problem that will
 // not fix itself
 const EXCLUDE = ["abort", "interrupt", "permission", "unauthorized", "auth", "payment", "quota",
@@ -39,7 +46,8 @@ const state = new Map(); // sessionID -> {errPending, compactPending, lastPrompt
 function getState(id) {
   let s = state.get(id);
   if (!s) {
-    s = { errPending: false, compactPending: false, lastPrompt: 0, consecutive: 0 };
+    s = { errPending: false, compactPending: false, lastPrompt: 0, consecutive: 0, erred: false,
+          lastRefusal: "", sameRefusal: 0 };
     state.set(id, s);
   }
   return s;
@@ -88,9 +96,15 @@ async function relaunch(client, sessionID, s, text, tag) {
 
 async function onIdle(client, sessionID, s) {
   // nothing pending: a clean idle far from the last relaunch means real
-  // progress (duplicate idles right after a relaunch do not count)
+  // progress (duplicate idles right after a relaunch do not count, nor the idle
+  // of a turn that ended on an error, one no longer relaunched included)
+  const erred = s.erred;
+  s.erred = false;
   if (!s.errPending && !s.compactPending) {
-    if (Date.now() - s.lastPrompt > THROTTLE_MS) s.consecutive = 0;
+    if (!erred && Date.now() - s.lastPrompt > THROTTLE_MS) {
+      s.consecutive = 0;
+      s.sameRefusal = 0;
+    }
     return;
   }
   const wait = THROTTLE_MS - (Date.now() - s.lastPrompt);
@@ -144,7 +158,18 @@ const plugin = async ({ client }) => {
             await log(`error EXCLUDED (${sessionID.slice(0, 12)}): ${txt.slice(0, 120)}`);
             return;
           }
-          getState(sessionID).errPending = true;
+          const s = getState(sessionID);
+          s.erred = true;
+          // a count or an id that changes in the message still makes the same refusal
+          const refusal = error?.data?.isRetryable === false ? txt.replace(/\d+/g, "#") : "";
+          s.sameRefusal = !refusal ? 0 : refusal === s.lastRefusal ? s.sameRefusal + 1 : 1;
+          s.lastRefusal = refusal;
+          if (s.sameRefusal >= SAME_REFUSAL_MAX) {
+            s.errPending = false;
+            await log(`STOP (${sessionID.slice(0, 12)}): the same refusal ${s.sameRefusal} times in a row: ${txt.slice(0, 120)}`);
+            return;
+          }
+          s.errPending = true;
           await log(`error retained (${sessionID.slice(0, 12)}): ${txt.slice(0, 120)}`);
           return;
         }

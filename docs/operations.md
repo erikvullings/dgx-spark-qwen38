@@ -56,7 +56,10 @@ install because they touch things beyond the serving stack:
 session interrupted by a transient technical error (tool-call delta without id, timeout,
 network reset) or left stuck right after a context compaction, so a one-off incident no
 longer freezes an overnight run. It never resumes after a deliberate abort, a permission
-prompt, or an auth/quota problem, and stops after 25 relaunches without progress. Install:
+prompt, or an auth/quota problem, and stops after 25 relaunches without progress, or sooner when
+the request is refused as sent: an API error opencode itself does not retry (a 400) that comes
+back the same a third time in a row. A retryable one (an engine restarting, a timeout) keeps the
+25. Install:
 
 ```bash
 mkdir -p ~/.config/opencode/plugins && cp extras/opencode/auto-continue.js ~/.config/opencode/plugins/
@@ -64,7 +67,7 @@ mkdir -p ~/.config/opencode/plugins && cp extras/opencode/auto-continue.js ~/.co
 
 Plugins load when opencode starts (a running session never picks it up). Log at
 `~/.config/qwen38/auto-continue.log`; tune with `AC_THROTTLE_MS`, `AC_IDLE_DELAY_MS`,
-`AC_MAX_CONSECUTIVE`, `AC_LOG`.
+`AC_MAX_CONSECUTIVE`, `AC_SAME_REFUSAL_MAX` (3), `AC_LOG`.
 
 **`extras/gguf/`**: a note, not a lane. What llama.cpp measured on this box against the
 SGLang path (25.6 tok/s on code against 32-40, prose 17.7-18.2 against 17-22, prefill

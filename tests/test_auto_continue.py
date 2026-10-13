@@ -103,6 +103,13 @@ SID = "ses_test0000002"
 ERROR = {"type": "session.error", "properties": {"sessionID": SID, "error": {
     "name": "APIError", "data": {"message": "keepalive-proxy: upstream http://127.0.0.1:30000 unreachable"}}}}
 IDLE = {"type": "session.idle", "properties": {"sessionID": SID}}
+
+
+def error_event(message, retryable=None):
+    data = {"message": message}
+    if retryable is not None:
+        data["isRetryable"] = retryable
+    return {"type": "session.error", "properties": {"sessionID": SID, "error": {"name": "APIError", "data": data}}}
 BUSY = {"type": "session.status", "properties": {"sessionID": SID, "status": {"type": "busy"}}}
 
 
@@ -131,6 +138,34 @@ class AThrottledRelaunch(unittest.TestCase):
     def test_a_session_that_went_busy_meanwhile_is_left_to_its_next_idle(self):
         self.assertEqual(self.sent([ERROR, IDLE, ERROR, IDLE, BUSY, {"wait": 900}]), 1)
         self.assertEqual(self.sent([ERROR, IDLE, ERROR, IDLE, BUSY, {"wait": 900}, IDLE]), 2)
+
+    # A request refused as sent (isRetryable false, as opencode marks a 400) the same a third time
+    # in a row will not go away (2026-10-13: a tool schema the provider refused, back within a second
+    # of every relaunch); numbers in the message do not make it a new one. The idle that ends a turn
+    # on that refusal is no progress, however long after the relaunch: the count goes on.
+    def test_the_same_refusal_a_third_time_in_a_row_stops_the_relaunches(self):
+        steps = []
+        for i in range(5):
+            steps += [error_event("JSON schema exceeds the maximum nesting depth of 10 levels (request 1%d)" % i,
+                                  retryable=False), IDLE, {"wait": 450}]
+        self.assertEqual(self.sent(steps), 2)
+
+    # A retryable error keeps the whole budget, however often it comes back the same: on the reference
+    # box an engine restarting answered "not measured yet" 9 times in a row before it served again.
+    def test_a_retryable_error_that_repeats_keeps_relaunching(self):
+        warming = error_event("keepalive-proxy: the engine restarted and its KV pool is not measured yet; "
+                              "retry in a few seconds", retryable=True)
+        self.assertEqual(self.sent([warming, IDLE, {"wait": 450}] * 5), 5)
+        glitch = error_event("tool call delta without id")   # no isRetryable: not a refusal either
+        self.assertEqual(self.sent([glitch, IDLE, {"wait": 450}] * 4), 4)
+
+    def test_refusals_that_differ_or_progress_between_them_keep_relaunching(self):
+        a = error_event("JSON schema exceeds the maximum nesting depth of 10 levels", retryable=False)
+        b = error_event("Invalid tool name", retryable=False)
+        self.assertEqual(self.sent([a, IDLE, {"wait": 450}, b, IDLE, {"wait": 450}, a, IDLE, {"wait": 450}]), 3)
+        # a clean idle far from the relaunch is progress: the count starts again
+        self.assertEqual(self.sent([a, IDLE, {"wait": 450}, IDLE, a, IDLE, {"wait": 450},
+                                    a, IDLE, {"wait": 450}]), 3)
 
 
 if __name__ == "__main__":
