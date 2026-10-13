@@ -465,6 +465,10 @@ function closeViewer(){ $('viewer').hidden = true; giveBack('viewer'); }
 const loadRunning = () => !!(SHEET && SHEET.running && SHEET.mode === 'journey');
 const loadAway = () => loadRunning() && !!SHEET.hidden;
 const LOAD_RUNNING = 'A load is still running: the job button brings its window back.';
+// A window a failure brought back keeps its first second: the Escape or the click the person aimed at what
+// it covered (the viewer, the page) must not dismiss why the load failed. Its Cancel closes it at once.
+const BACK_GUARD_MS = 1000;
+const justBack = () => !!(SHEET && SHEET.backAt && Date.now() - SHEET.backAt < BACK_GUARD_MS);
 // The reason a lane's own work (an image, a video, a decision) waits, shown under its button.
 const laneWorkWaits = () => loadRunning() ? `A load is running (${TARGET_NAME[SHEET.target]}): its steps stop and start lanes. Wait for it to finish.` : '';
 function closeSheet(){
@@ -625,8 +629,9 @@ async function runJourney(){
   const S = SHEET; S.running = true;
   $('sh-go').disabled = true; setText($('sh-cancel'), 'Hide'); journeyChanged();
   // A step that fails stops the chain, said in one place: the window comes back over whatever was open
-  // (the menu, the image viewer), with the focus on its status line, never on a button: a key the person
-  // was pressing elsewhere can neither run the step again nor dismiss why it failed.
+  // (the menu, the image viewer), with the focus on its status line, never on a button, and deaf to Escape
+  // and to a click outside it for a second (justBack): a key or a click the person aimed elsewhere can
+  // neither run the step again nor dismiss why it failed.
   let fail = null;
   try {
     for (let i = S.idx; i < S.steps.length; i++){
@@ -667,7 +672,7 @@ async function runJourney(){
     $('sh-go').disabled = false; setText($('sh-cancel'), 'Cancel'); setText($('sh-go'), 'Retry from here');
     if (S.hidden && SHEET === S){
       closeMenu(); if (!$('viewer').hidden) closeViewer();
-      S.hidden = false; openSheet('sh-status');
+      S.hidden = false; S.backAt = Date.now(); openSheet('sh-status');
     }
     journeyChanged(); return;
   }
@@ -934,7 +939,7 @@ function wireShell(){
   // the sheet
   $('sh-cancel').addEventListener('click', () => closeSheet());
   $('sh-go').addEventListener('click', sheetGo);
-  $('scrim').addEventListener('click', e => { if (e.target === $('scrim')) closeSheet(); });
+  $('scrim').addEventListener('click', e => { if (e.target === $('scrim') && !justBack()) closeSheet(); });
   $('viewer-close').addEventListener('click', closeViewer);
   $('viewer-actual').addEventListener('click', viewerActual);
   // the picture says its own size once decoded: the label, and the 100 % width, follow it
@@ -953,7 +958,7 @@ function wireShell(){
       return;
     }
     if (!$('scrim').hidden){
-      if (e.key === 'Escape') closeSheet();
+      if (e.key === 'Escape' && !justBack()) closeSheet();
       if (e.key === 'Tab'){   // focus stays inside the sheet
         const f = [...$('sheet').querySelectorAll('button')].filter(b => !b.disabled);
         if (!f.length) return;

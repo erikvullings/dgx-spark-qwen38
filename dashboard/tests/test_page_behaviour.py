@@ -1364,6 +1364,22 @@ class TheLoadWindowCanBeHiddenWhileItsStepsRun(unittest.TestCase):
         self.assertEqual(r["go"], "Retry from here")
         self.assertTrue(r["pip"], "nothing runs and nothing waits: no job button")
 
+    def test_a_failure_brought_back_keeps_its_first_second(self):
+        r = run(self, self.BODY + self.HIDE + r"""
+        $('viewer').hidden = false;
+        job(null, [{id: 'j1', action: 'switch', status: 'failed', rc: 1, elapsed: 31}]);
+        for (let k = 0; k < 80 && $('scrim').hidden; k++) await __advance(50);
+        const back = !$('scrim').hidden;
+        const esc = () => document.dispatchEvent({type: 'keydown', key: 'Escape'});
+        esc(); $('scrim').click(); await __settle();
+        const kept = !$('scrim').hidden && txt('sh-go') === 'Retry from here';
+        await __advance(1000); esc(); await __settle();
+        report({back, kept, closed: $('scrim').hidden});
+        """)
+        self.assertTrue(r["back"])
+        self.assertTrue(r["kept"], "the Escape or the click aimed at what the window covered leaves the failure on screen")
+        self.assertTrue(r["closed"], "a second later Escape closes it as any window")
+
     def test_another_job_on_the_button_opens_the_dock_not_the_load(self):
         r = run(self, self.BODY + self.HIDE + r"""
         job({id: 'auto1', action: 'unit', params: {verb: 'restart', unit: 'qwen38-keepalive.service'}, elapsed: 2, lines: []});
