@@ -1,5 +1,29 @@
 # Changelog
 
+## v1.28.2 (2026-10-13): a load window can be put away while its steps run
+
+**A window that held the page.** Loading a lane runs its steps one after the other (point the boot
+at a checkpoint, which can download it, then stop and start the lanes), and the window that runs
+them could not be closed while a step ran: Cancel was disabled, and a click outside the window or
+Escape did nothing. A 20-minute download held the whole page; reloading it to do anything else also
+stopped the chain after the running step (Hasan, 2026-10-12).
+
+**Hide.** While the steps run, Cancel reads Hide: the window goes away, the steps go on, the dock
+follows the running one, and the job button at the top brings the window back, between two steps
+too, where it reads "Load ...: between steps". A step that fails brings the window back on its own,
+with why and Retry from here. A load that ends while put away leaves the page on the view the person
+went to and says so in a toast, where a shown window still moves to Now. Nothing else starts while a
+load runs, shown or put away: the page says the load is still running.
+
+**Tested.** Seven checks in `dashboard/tests/test_page_behaviour.py`, run on the page's own scripts:
+six fail on v1.28.1 (the seventh pins that the job button goes once the load has ended), and six
+mutants of the new guards fail them. The 1009 page and server tests and the four browser checks
+(resilience, click storm, touch, update banner) pass; seen in a headless Chrome on a dry-run cockpit
+whose steps each took 6 s.
+
+**What an update does.** An update restarts the cockpit; the engines, the proxy and opencode keep
+running. A page left open loads the new script on its next reload.
+
 ## v1.28.1 (2026-10-13): an opencode config keeps its ten newest backups, and two tests stop leaving folders in /tmp
 
 **Backups that piled up.** Every install and every lane switch edits `~/.config/opencode/opencode.json` and the
