@@ -10,16 +10,29 @@ stopped the chain after the running step (Hasan, 2026-10-12).
 
 **Hide.** While the steps run, Cancel reads Hide: the window goes away, the steps go on, the dock
 follows the running one, and the job button at the top brings the window back, between two steps
-too, where it reads "Load ...: between steps". A step that fails brings the window back on its own,
-with why and Retry from here. A load that ends while put away leaves the page on the view the person
-went to and says so in a toast, where a shown window still moves to Now. Nothing else starts while a
-load runs, shown or put away: the page says the load is still running.
+too, where it reads "Load ...: between steps". It shows on a phone as well, where the head hides the
+plain job button, and takes at most a quarter of the screen there. A load that ends while put away
+leaves the page on the view the person went to and says so in a toast, where a shown window still
+moves to Now.
 
-**Tested.** Seven checks in `dashboard/tests/test_page_behaviour.py`, run on the page's own scripts:
-six fail on v1.28.1 (the seventh pins that the job button goes once the load has ended), and six
-mutants of the new guards fail them. The 1009 page and server tests and the four browser checks
-(resilience, click storm, touch, update banner) pass; seen in a headless Chrome on a dry-run cockpit
-whose steps each took 6 s.
+**A failure while it is away.** A step that fails brings the window back with why and Retry from
+here, the focus on Cancel: a key pressed for something else cannot run the step again. Under the
+menu or the image viewer it stays put away instead, a toast says what failed, and the job button
+reads "Load ...: a step failed" and opens it.
+
+**Nothing else starts while a load runs.** Every control waits and says why, and an image, a video
+or a decision refuses to start, since the next step could stop the lane it would run on (one engine
+at a time). Closing or reloading the page while a load is put away asks first: it would stop the
+chain after the running step (not in a dry run). A check that throws while a step waits for a lane
+to stop counts as not yet: it can no longer leave a load running for good.
+
+**Tested.** Seventeen checks in `dashboard/tests/test_page_behaviour.py`, run on the page's own
+scripts: sixteen fail on v1.28.1 (the seventeenth pins that the job button goes once the load has
+ended), and the mutants of the new guards fail them. `dashboard/tests/touch-check.mjs` puts a load
+away on three phones, reads that the way back is on screen and taps it: without the quarter-screen
+cap the button ran to 404 px on 375 and 393 px screens. The 1019 page and server tests and the
+four browser checks (resilience, click storm, touch, update banner) pass; seen in a headless Chrome
+on a dry-run cockpit whose steps each took 6 s, desktop and phone.
 
 **What an update does.** An update restarts the cockpit; the engines, the proxy and opencode keep
 running. A page left open loads the new script on its next reload.
