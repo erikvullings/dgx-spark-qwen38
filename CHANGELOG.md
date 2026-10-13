@@ -1,6 +1,6 @@
 # Changelog
 
-## v1.28.2 (2026-10-13): a load window can be put away while its steps run
+## v1.28.2 (2026-10-13): a load window can be put away while its steps run, and long opencode sessions keep their cache
 
 **A window that held the page.** Loading a lane runs its steps one after the other (point the boot
 at a checkpoint, which can download it, then stop and start the lanes), and the window that runs
@@ -15,27 +15,55 @@ plain job button, and takes at most a quarter of the screen there. A load that e
 leaves the page on the view the person went to and says so in a toast, where a shown window still
 moves to Now.
 
-**A failure while it is away.** A step that fails brings the window back with why and Retry from
-here, the focus on Cancel: a key pressed for something else cannot run the step again. Under the
-menu or the image viewer it stays put away instead, a toast says what failed, and the job button
-reads "Load ...: a step failed" and opens it.
+**A failure while it is away.** A step that fails brings the window back over whatever was open
+(the menu and the image viewer close first), with why and Retry from here. The focus goes to its
+status line, not to a button, and for its first second Escape and a click outside it do nothing: a
+key or a click aimed at what the window covered can neither run the step again nor dismiss why it
+failed. Brought back by the job button while the steps run, the focus is on Hide.
 
 **Nothing else starts while a load runs.** Every control waits and says why, and an image, a video
-or a decision refuses to start, since the next step could stop the lane it would run on (one engine
-at a time). Closing or reloading the page while a load is put away asks first: it would stop the
-chain after the running step (not in a dry run). A check that throws while a step waits for a lane
-to stop counts as not yet: it can no longer leave a load running for good.
+or a decision refuses to start and says so under its button, since the next step could stop the
+lane it would run on (one engine at a time). Closing or reloading the page while a load is put away
+asks first: it would stop the chain after the running step (not in a dry run, and not when the page
+goes to the login because the session ended). A check that throws while a step waits for a lane to
+stop counts as not yet: it can no longer leave a load running for good.
 
-**Tested.** Seventeen checks in `dashboard/tests/test_page_behaviour.py`, run on the page's own
-scripts: sixteen fail on v1.28.1 (the seventeenth pins that the job button goes once the load has
-ended), and the mutants of the new guards fail them. `dashboard/tests/touch-check.mjs` puts a load
-away on three phones, reads that the way back is on screen and taps it: without the quarter-screen
-cap the button ran to 404 px on 375 and 393 px screens. The 1019 page and server tests and the
-four browser checks (resilience, click storm, touch, update banner) pass; seen in a headless Chrome
-on a dry-run cockpit whose steps each took 6 s, desktop and phone.
+**Tested.** Nineteen checks in `dashboard/tests/test_page_behaviour.py`, run on the page's own
+scripts: seventeen fail on v1.28.1 (the other two pin the wording of a refused step and that the job
+button goes once a load has ended), and every mutant tried on the new guards fails them.
+`dashboard/tests/touch-check.mjs` puts a load away on five touch screens and a 1100 px window, reads
+that the way back is on screen and a 44 px target under a finger, and taps it: without the
+quarter-screen cap the button ran to 404 px on 375 and 393 px screens. The 1021 page and server tests
+and the four browser checks (resilience, click storm, touch, update banner) pass. Seen in a headless
+Chrome on a dry-run cockpit, desktop and phone: a step that fails under the image viewer brings the
+window back over it, a real Escape pressed at once leaves it there, one 1.5 s later closes it.
 
-**What an update does.** An update restarts the cockpit; the engines, the proxy and opencode keep
-running. A page left open loads the new script on its next reload.
+**opencode's prune stays off.** The installer turned on opencode's pruning, which swaps old tool
+output for a placeholder past the most recent 40,000 tokens of it. Each swap changes the history
+the engine cached, so the next turn recomputes everything after the first cleared output: on the
+reference box, 232 of the 527 tool parts of a 410K-token session had been cleared (2026-10-13). The
+installer now writes `"prune": false`; compaction still makes the room. `tests/test_oc_merge_limits.py`
+and `tests/test_oc_jsonc_edits.py` pin it, the update every box makes included (the same number
+kept, prune on): on v1.28.1 the merge script and two of the config-edit tests fail, and so does the
+CI's check of a fresh config.
+
+**auto-continue stops on a request refused as sent.** The opt-in plugin relaunched a session up to
+25 times in a row, whatever the error. On the reference box a tool schema the provider refused (an
+HTTP 400, which opencode itself marks as not worth retrying) came back 91 times in 28 minutes over 12
+sessions, nearly always within a second of its relaunch, one session up to the cap (2026-10-13). The
+same refusal a third time in a row now stops it: numbers in the message do not make a new one, and
+the idle that ends such a turn is not progress. A retryable error keeps the whole budget: one
+session there got the same "engine restarted" answer 9 times in a row before the engine served it
+again, and others got "unreachable" 8 times and a provider timeout up to 18 times; stopping those
+would freeze the overnight runs the plugin exists for (found in review). `AC_SAME_REFUSAL_MAX` sets
+the count. `tests/test_auto_continue.py` pins both sides (the refusal one fails on v1.28.1), and five
+mutants of the rule fail it. A copy installed by hand under `~/.config/opencode/plugins/` takes the
+change when copied again.
+
+**What an update does.** An update restarts the cockpit; the engines and the proxy keep running. The
+opencode configs the installer manages get `"prune": false`, so opencode-web restarts once to read
+them: a turn the Agent view is in the middle of ends there, so let it finish first. A page left open
+loads the new script on its next reload.
 
 ## v1.28.1 (2026-10-13): an opencode config keeps its ten newest backups, and two tests stop leaving folders in /tmp
 
