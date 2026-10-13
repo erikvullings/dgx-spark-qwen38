@@ -776,8 +776,8 @@ body.agentmax .view{animation:none}
   .serving{padding:5px 6px 5px 12px}
   .serving .go{display:none}
   .serving .mark{display:none}
-  /* .spine-right never shrinks: at 260 px the way back to a load widened a phone's page to 490 px
-     (measured 2026-10-13, 320 to 430 px screens); a quarter of the screen fits them all */
+  /* .spine-right never shrinks: at 260 px the way back to a load ran off the screen of 375 and 393 px
+     phones (measured 2026-10-13 from 320 to 430 px); a quarter of the screen fits them all */
   .jobpip.away{max-width:25vw}
   .vhead h1{font-size:var(--t-24)}
   .pool{padding:var(--s-5) var(--s-4) var(--s-4)}
@@ -834,7 +834,7 @@ body.agentmax .view{animation:none}
 /* a finger, not a mouse: every target at least 44 px (Apple's HIG), and text entry at
    16 px, under which iOS Safari zooms the whole page on focus and never zooms back */
 @media (pointer:coarse){
-  .btn, .btn.sm, .icon-btn, .nav, .menu-btn, .serving .go{min-height:44px}
+  .btn, .btn.sm, .icon-btn, .nav, .menu-btn, .serving .go, .jobpip{min-height:44px}
   .icon-btn, .menu-btn, .dock .close{width:44px; height:44px}
   .btn.sm{padding:0 var(--s-4)}
   .examples button, .seg button, .pick .opt, .rail .collapse{min-height:44px}

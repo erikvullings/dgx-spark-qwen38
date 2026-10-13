@@ -113,7 +113,7 @@ function imgSync(){
   [['img-steps', 1, 100], ['img-n', 1, 10]].forEach(([id, a, b]) => { const v = id === 'img-steps' ? imgSteps() : Number($(id).value); $(id).style.setProperty('--pct', (100 * (v - a) / (b - a)).toFixed(1) + '%'); });
   const problem = imgProblem();
   show('img-problem', !!problem && (IS.touched || !!imgVal('img-prompt'))); setText('img-problem', problem);
-  const why = !IS.available ? imgLaneWhy() : IS.inflight ? 'Your image is being made.' : IS.busy ? 'Someone else’s image is being made: one at a time on this lane.' : !imgVal('img-prompt') ? 'Write a prompt first.' : problem;
+  const why = laneWorkWaits() || (!IS.available ? imgLaneWhy() : IS.inflight ? 'Your image is being made.' : IS.busy ? 'Someone else’s image is being made: one at a time on this lane.' : !imgVal('img-prompt') ? 'Write a prompt first.' : problem);
   $('img-run').disabled = !!why;
   show('img-why', !!why && why !== problem); setText('img-why', why);
   show('img-cancel', !!(IS.inflight || IS.busy));
@@ -281,7 +281,7 @@ function imgRenderLane(){
 }
 async function imgRun(){
   IS.touched = true;
-  if (loadRunning()) return toast(LOAD_RUNNING, 'warn');   // its next step could stop this lane
+  const wait = laneWorkWaits(); if (wait) return toast(wait, 'warn');
   const problem = imgProblem(); if (problem) return toast(problem, 'warn');
   if (!imgVal('img-prompt')) return toast('Write a prompt first.', 'warn');
   const editing = imgEditing(), t0 = Date.now();
@@ -318,7 +318,7 @@ function imgCancel(){
 // The sample is a generation like any other: the same frame, the same bar, the same lock.
 // Its subject is the cookbook's own edit example, so "Local edit" describes what is in it.
 async function imgSample(){
-  if (loadRunning()) return toast(LOAD_RUNNING, 'warn');
+  const wait = laneWorkWaits(); if (wait) return toast(wait, 'warn');
   if (IS.refs.length >= 10) return toast('Ten references is the maximum.', 'warn');
   if (IS.inflight || IS.busy) return toast('The lane is already making an image; one at a time.', 'warn');
   const t0 = Date.now(); IS.inflight = t0; IS.run = {w: 1024, h: 1024, steps: imgTurbo() ? IMG_TURBO_STEPS : 20, n: 1, editing: false};
@@ -353,4 +353,5 @@ function wireImage(){
   imgReset(); imgLoadExample(Object.keys(IMG_EXAMPLES)[0]);
 }
 onShow('image', imgLane);
+onLoadChange(imgSync);
 afterApply(() => { imgRenderLane(); });

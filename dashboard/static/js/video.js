@@ -121,7 +121,7 @@ function vidSync(){
   show('vid-problem', !!p && touched && !(p.startsWith('Write a prompt') && !VS.touched)); setText('vid-problem', p);
   $('vid-seed').setAttribute('aria-invalid', String(!!vidVal('vid-seed') && /seed/i.test(p)));
   // the button, and the reason when it cannot run
-  const why = !VS.available ? vidLaneWhy() : VS.inflight ? 'Your video is being made.' : VS.busy ? 'Someone else’s video is being made: one at a time on this lane.' : p;
+  const why = laneWorkWaits() || (!VS.available ? vidLaneWhy() : VS.inflight ? 'Your video is being made.' : VS.busy ? 'Someone else’s video is being made: one at a time on this lane.' : p);
   $('vid-run').disabled = !!why;
   show('vid-why', !!why && why !== p); setText('vid-why', why);
   setText('vid-curl-note', 'Run it on the box: the lane listens on loopback and checks no key. Keyframes must first be saved at the file:// paths shown.');
@@ -337,7 +337,7 @@ function vidErr(out, status){
 }
 async function vidRun(){
   VS.touched = true; vidSync();
-  if (loadRunning()) return toast(LOAD_RUNNING, 'warn');   // its next step could stop this lane
+  const wait = laneWorkWaits(); if (wait) return toast(wait, 'warn');
   if (VS.inflight || VS.busy) return toast('The lane is already making a video; one at a time.', 'warn');
   const p = vidProblem(); if (p) return toast(p, 'warn');
   if (!VS.available) return toast(vidLaneWhy(), 'warn');
@@ -430,6 +430,7 @@ afterApply(() => { vidRenderLane(); if (activeView === 'video') vidSync(); });
 // The Now view and the spine read the lane's run too, whatever view is open: while the
 // video lane serves, the page asks at most every 10 s (the Video view asks every 5 s).
 let vidAskedAt = 0;
+onLoadChange(vidSync);
 afterApply(() => {
   if (!videoServing() || VS.inflight || VS.watching || document.hidden) return;
   if (Date.now() - vidAskedAt < 10000) return;

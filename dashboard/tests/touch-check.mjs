@@ -337,21 +337,23 @@ try {
     ok('phone: every stacked line carries its column name', rc.unlabelled === 0, JSON.stringify(rc));
   }
 
-  // ── a load put away: its way back fits the head of every phone and answers a finger ──
+  // ── a load put away: its way back fits the head of every screen and answers a finger ──
   // The head hides the job button under 1100 px and its right side never shrinks: the way back to a
-  // load put away was out of sight there, then, shown, widened a phone's page to 490 px (2026-10-13).
-  for (const d of PHONES.slice(0, 3)) {
-    await device(d, true);
+  // load put away was out of sight there, then, shown at 260 px, ran off a 375 or 393 px phone (2026-10-13).
+  for (const d of [...PHONES, { name: 'window of 1100 px', w: 1100, h: 800, dpr: 1, desk: true }]) {
+    const touch = !d.desk;
+    await device(d, touch);
     await evalJs("(showView('library'), 1)"); await sleep(200);
     const pa = await evalJs(`(() => { SHEET = {mode: 'journey', target: 'uncensored', steps: [], idx: 0, running: true, hidden: true}; renderPip();
       const vw = innerWidth, e = document.getElementById('jobpip'), r = e.getBoundingClientRect();
       return JSON.stringify({ overflow: document.documentElement.scrollWidth - vw, left: Math.round(r.left), right: Math.round(r.right),
-        shown: getComputedStyle(e).display !== 'none' && r.width > 0 }); })()`).then(JSON.parse);
+        h: Math.round(r.height), shown: getComputedStyle(e).display !== 'none' && r.width > 0 }); })()`).then(JSON.parse);
     ok(`${d.name}: a load put away keeps its way back in the head, on screen`, pa.shown && pa.overflow <= 1 && pa.left >= 0 && pa.right <= d.w + 1, JSON.stringify(pa));
+    if (touch) ok(`${d.name}: the way back is a 44 px target under a finger`, pa.h >= 44, JSON.stringify(pa));
     const at = await aim('#jobpip');
-    if (at && at.self) await tapXY(at.x, at.y);
+    if (at && at.self) { if (touch) await tapXY(at.x, at.y); else await clickXY(at.x, at.y); }
     await sleep(300);
-    ok(`${d.name}: a finger on it brings the load window back`, !!(at && at.self) && await evalJs("!document.getElementById('scrim').hidden"), JSON.stringify(at));
+    ok(`${d.name}: ${touch ? 'a finger' : 'a click'} on it brings the load window back`, !!(at && at.self) && await evalJs("!document.getElementById('scrim').hidden"), JSON.stringify(at));
     await evalJs("(SHEET && (SHEET.running = false), closeSheet(), 1)"); await sleep(100);
   }
 

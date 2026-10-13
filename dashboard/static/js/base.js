@@ -266,7 +266,7 @@ function freshness(){
 
 // ── the transport: SSE, polling behind it, an offline watch ───────────────────
 let es = null, pollTimer = null, sseUp = false, lastSseTry = 0;
-function login(){ location.href = '/login'; }
+function login(){ leavingForLogin = true; location.href = '/login'; }
 function setConn(onl, label){
   const l = $('conn-lamp'); if (l) l.className = 'lamp' + (onl ? ' ok live' : offline ? ' err' : ' warn');
   setText('conn-lbl', label);
@@ -459,41 +459,47 @@ function closeViewer(){ $('viewer').hidden = true; giveBack('viewer'); }
 // A load whose steps are running is put away, not closed: its steps go on, the dock follows the step that
 // runs, and the job button brings the window back. The window held the whole page through a 20-minute
 // download, and reloading the page to get it back stopped the chain (Hasan, 2026-10-12).
-// Nothing else starts while a load runs, its window shown or put away: the next step could stop the lane
-// a generation runs on (one engine at a time), and two chains would race on the same lanes.
+// Nothing else starts while a load runs, its window shown or put away: its next step could stop the lane
+// that work would run on (one engine at a time), and two chains would race on the same lanes. A window is
+// put away only while its steps run: a step that fails always brings it back.
 const loadRunning = () => !!(SHEET && SHEET.running && SHEET.mode === 'journey');
-const loadAway = () => !!(SHEET && SHEET.mode === 'journey' && SHEET.hidden);
+const loadAway = () => loadRunning() && !!SHEET.hidden;
 const LOAD_RUNNING = 'A load is still running: the job button brings its window back.';
+// The reason a lane's own work (an image, a video, a decision) waits, shown under its button.
+const laneWorkWaits = () => loadRunning() ? `A load is running (${TARGET_NAME[SHEET.target]}): its steps stop and start lanes. Wait for it to finish.` : '';
 function closeSheet(){
-  if (loadRunning()){ SHEET.hidden = true; }      // put away: its steps go on
+  if (loadRunning()) SHEET.hidden = true;           // put away: its steps go on
   else if (SHEET && SHEET.running) return;         // one action closes its window once the job is accepted
   else { const s = SHEET; SHEET = null; if (s && s.onClose) s.onClose(); }
   $('scrim').hidden = true; giveBack('sheet'); journeyChanged();
 }
-// While the steps run the Go button is disabled: the focus goes to Hide. A window brought back by a failure
-// puts it on Cancel, never on Retry, so a key the person was pressing elsewhere cannot run the step again.
+// Brought back by the job button while the steps run: the focus goes to Hide (Go is disabled then).
 function reopenJourney(){
   if (!loadAway()) return false;
   SHEET.hidden = false; openSheet('sh-cancel'); journeyChanged(); return true;
 }
 // The job button: the job that runs, or a load put away while it waits between two steps (a stopped lane
-// reading down can take 90 s) or after a step failed, so the window always has a way back. It shows on a
-// narrow screen too (.away), where the head has no room for the plain job button.
+// reading down can take 90 s), so the window always has a way back. It shows on a narrow screen too
+// (.away), where the head has no room for the plain job button.
 function renderPip(){
   const pip = $('jobpip'); if (!pip) return;
   const cur = (F.job || {}).current, away = loadAway();
   pip.hidden = !(cur || away); pip.classList.toggle('away', away);
-  const what = cur ? describeJob(cur) : away ? `Load ${TARGET_NAME[SHEET.target]}: ${SHEET.running ? 'between steps' : 'a step failed'}` : '';
+  const what = cur ? describeJob(cur) : away ? `Load ${TARGET_NAME[SHEET.target]}: between steps` : '';
   setText('jobpip-what', what || '…'); pip.title = what;   // cut short on a phone: the whole of it on hover
 }
 function journeyChanged(){ renderPip(); applyBusy(); }
+// fn runs when a load starts or ends, not at every tick of a job: the views whose own work waits for a
+// load (image, video, decide) say so under their button then.
+function onLoadChange(fn){ let seen = false; on('busy', () => { const k = loadRunning(); if (k !== seen){ seen = k; fn(); } }); }
 // A page closed or reloaded stops the chain after the step that runs; with the window put away nothing on
-// screen says so, so the browser asks first. Not in a dry run, whose loads are a walk-through.
-const leaveWarning = () => loadRunning() && SHEET.hidden && !F.config.dry_run;
+// screen says so, so the browser asks first. Not in a dry run, whose loads are a walk-through, and not
+// when the page itself goes to the login (a session that ended cannot run the chain anyway).
+let leavingForLogin = false;
+const leaveWarning = () => loadAway() && !F.config.dry_run && !leavingForLogin;
 function askAction(name, params, warns, opts = {}){
   if (offline) return toast('The cockpit is unreachable right now: nothing can be started.', 'err');
   if (loadRunning()) return toast(LOAD_RUNNING, 'warn');
-  if (loadAway()) closeSheet();                    // a failed load put away: this window replaces it
   if (NEEDS_ENGINE.has(name) && !textReady()) return toast(noEngineWhy(), 'warn');
   if (F.job && F.job.current) return toast(busyWhy(), 'warn');
   if (!$('scrim').hidden) return;
@@ -572,7 +578,6 @@ function laneJourneySteps(target){
 function askJourney(target, opts = {}){
   if (offline) return toast('The cockpit is unreachable right now: nothing can be started.', 'err');
   if (loadRunning()) return toast(LOAD_RUNNING, 'warn');
-  if (loadAway()) closeSheet();                    // a failed load put away: this window replaces it
   if (F.job && F.job.current) return toast(busyWhy(), 'warn');
   if (!$('scrim').hidden) return;
   const unit = TARGET_UNIT(target);
@@ -619,57 +624,52 @@ const jobLast = cur => String((cur.lines || []).slice(-1)[0] || '').replace(/\x1
 async function runJourney(){
   const S = SHEET; S.running = true;
   $('sh-go').disabled = true; setText($('sh-cancel'), 'Hide'); journeyChanged();
-  // a step that fails says why in its window: brought back if it was put away, unless the menu or the
-  // image viewer is open over the page (the window would come back under them): then a toast says it,
-  // and the job button keeps the window
-  const stopped = () => {
+  // A step that fails stops the chain, said in one place: the window comes back over whatever was open
+  // (the menu, the image viewer), with the focus on its status line, never on a button: a key the person
+  // was pressing elsewhere can neither run the step again nor dismiss why it failed.
+  let fail = null;
+  try {
+    for (let i = S.idx; i < S.steps.length; i++){
+      S.at = i;
+      const st = S.steps[i]; jStep(i, 'run');
+      setText('sh-status', `Step ${i + 1} of ${S.steps.length}: ${st.title}…`);
+      let r;
+      try { r = await runAction(st.name, st.params); } catch(e){ r = {ok: false, status: 0, out: {error: e.message}}; }
+      if (!r.ok){
+        const why = r.out.reasons ? r.out.reasons.join('; ') : r.out.error || r.out.message || 'HTTP ' + r.status;
+        fail = {i, text: `Step ${i + 1} refused: ` + why + (F.config.dry_run && r.out.reasons ? ' (dry run: the steps above changed nothing on the box, so the gate still reads the state as it was)' : '')};
+        break;
+      }
+      const id = r.out.job || r.out.id; S.jobId = id;
+      const res = await waitJob(id, cur => { const last = jobLast(cur); jLive(i, fmtDur(cur.elapsed) + ' so far' + (last ? ': ' + last : '')); });
+      S.jobId = null;
+      if (!res.ok){
+        fail = {i, text: `Step ${i + 1} ${res.why}. ` + (res.lost ? 'The Now view and Logs say where the lane is before anything is retried.' : 'Its log is in the dock.')};
+        break;
+      }
+      jLive(i, null);
+      jStep(i, 'done');
+      if (st.name === 'unit' && st.params.verb !== 'start'){
+        if (st.params.unit === IMAGE_UNIT) IMG_INTERRUPTED_AT.t = Date.now();
+        if (st.params.unit === VIDEO_UNIT) VID_INTERRUPTED_AT.t = Date.now();
+        // the next start is refused until the stopped lane reads down: wait for it.
+        // A dry run never moves the engine state, so the wait would burn its whole
+        // budget on every stop step and read as a stuck journey.
+        if (!F.config.dry_run) await waitFor(() => { const e = engines()[st.params.unit]; return !e || UNIT_DOWN.has(e.state); }, 90000);
+      }
+    }
+  } catch (e) {   // an error in the page itself: the chain stops where it was, said like a failed step
+    fail = {i: S.at || 0, text: `Step ${(S.at || 0) + 1} stopped on an error in the page (${e && e.message ? e.message : e}). The Now view and Logs say where the lane is before anything is retried.`};
+  }
+  if (fail){
+    jStep(fail.i, 'fail'); S.running = false; S.idx = fail.i; S.jobId = null;
+    $('sh-status').className = 'status err'; setText('sh-status', fail.text);
     $('sh-go').disabled = false; setText($('sh-cancel'), 'Cancel'); setText($('sh-go'), 'Retry from here');
     if (S.hidden && SHEET === S){
-      if ($('menu').hidden && $('viewer').hidden) reopenJourney();
-      else toast(`Load ${TARGET_NAME[S.target]}: ${$('sh-status').textContent} The job button opens its window.`, 'err', 9000);
+      closeMenu(); if (!$('viewer').hidden) closeViewer();
+      S.hidden = false; openSheet('sh-status');
     }
-    journeyChanged();
-  };
-  try {
-  for (let i = S.idx; i < S.steps.length; i++){
-    S.at = i;
-    const st = S.steps[i]; jStep(i, 'run');
-    setText('sh-status', `Step ${i + 1} of ${S.steps.length}: ${st.title}…`);
-    let r;
-    try { r = await runAction(st.name, st.params); } catch(e){ r = {ok: false, status: 0, out: {error: e.message}}; }
-    if (!r.ok){
-      jStep(i, 'fail'); S.running = false; S.idx = i;
-      $('sh-status').className = 'status err';
-      const why = r.out.reasons ? r.out.reasons.join('; ') : r.out.error || r.out.message || 'HTTP ' + r.status;
-      setText('sh-status', `Step ${i + 1} refused: ` + why + (F.config.dry_run && r.out.reasons ? ' (dry run: the steps above changed nothing on the box, so the gate still reads the state as it was)' : ''));
-      stopped(); return;
-    }
-    const id = r.out.job || r.out.id; S.jobId = id;
-    const res = await waitJob(id, cur => { const last = jobLast(cur); jLive(i, fmtDur(cur.elapsed) + ' so far' + (last ? ': ' + last : '')); });
-    S.jobId = null;
-    if (!res.ok){
-      jStep(i, 'fail'); S.running = false; S.idx = i;
-      $('sh-status').className = 'status err';
-      setText('sh-status', `Step ${i + 1} ${res.why}. ` + (res.lost ? 'The Now view and Logs say where the lane is before anything is retried.' : 'Its log is in the dock.'));
-      stopped(); return;
-    }
-    jLive(i, null);
-    jStep(i, 'done');
-    if (st.name === 'unit' && st.params.verb !== 'start'){
-      if (st.params.unit === IMAGE_UNIT) IMG_INTERRUPTED_AT.t = Date.now();
-      if (st.params.unit === VIDEO_UNIT) VID_INTERRUPTED_AT.t = Date.now();
-      // the next start is refused until the stopped lane reads down: wait for it.
-      // A dry run never moves the engine state, so the wait would burn its whole
-      // budget on every stop step and read as a stuck journey.
-      if (!F.config.dry_run) await waitFor(() => { const e = engines()[st.params.unit]; return !e || UNIT_DOWN.has(e.state); }, 90000);
-    }
-  }
-  } catch (e) {   // an error in the page itself: the chain stops where it was, said like a failed step
-    const i = S.at || 0;
-    jStep(i, 'fail'); S.running = false; S.idx = i; S.jobId = null;
-    $('sh-status').className = 'status err';
-    setText('sh-status', `Step ${i + 1} stopped on an error in the page (${e && e.message ? e.message : e}). The Now view and Logs say where the lane is before anything is retried.`);
-    stopped(); return;
+    journeyChanged(); return;
   }
   S.running = false; setText($('sh-cancel'), 'Cancel');
   setText('sh-status', 'Done. The lane is booting: the Now view and the dock follow it.');

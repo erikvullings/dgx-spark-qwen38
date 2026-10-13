@@ -106,8 +106,9 @@ function s1Problem(){
 }
 function s1Sync(){
   const b = $('s1-run'); if (!b) return;
-  const why = s1Available === false ? 'System One is not served right now: it needs a text lane.' : s1Running ? '' : s1Problem();
-  b.disabled = s1Available === false || s1Running || !!s1Problem();
+  const wait = laneWorkWaits();
+  const why = wait || (s1Available === false ? 'System One is not served right now: it needs a text lane.' : s1Running ? '' : s1Problem());
+  b.disabled = !!wait || s1Available === false || s1Running || !!s1Problem();
   show('s1-why', !!why && !s1Running); setText('s1-why', why);
 }
 function s1Load(name){
@@ -135,7 +136,7 @@ function s1Answer(id, ans){
   return wrap;
 }
 async function s1Run(){
-  if (loadRunning()) return toast(LOAD_RUNNING, 'warn');   // its next step could stop the text lane
+  const wait = laneWorkWaits(); if (wait) return toast(wait, 'warn');
   const problem = s1Problem(); if (problem) return toast(problem, 'warn');
   s1Running = true; s1Sync(); setText($('s1-run'), 'Asking…');
   const box = $('s1-answers'); clear(box); clear($('s1-meta')); setText('s1-time', '');
@@ -180,6 +181,7 @@ on('lifecycle', () => {
   if (k !== s1LaneKey){ s1LaneKey = k; if (activeView === 'decide') s1Probe(); }
 });
 onShow('decide', s1Probe);
+onLoadChange(s1Sync);
 function wireDecide(){
   Object.keys(S1_EXAMPLES).forEach(name => { const b = el('button', null, name); b.type = 'button'; b.setAttribute('aria-pressed', 'false'); b.addEventListener('click', () => s1Load(name)); $('s1-examples').append(b); });
   document.querySelectorAll('[data-addq]').forEach(b => b.addEventListener('click', () => {

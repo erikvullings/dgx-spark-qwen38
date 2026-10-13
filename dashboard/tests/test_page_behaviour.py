@@ -1312,13 +1312,18 @@ class TheLoadWindowCanBeHiddenWhileItsStepsRun(unittest.TestCase):
 
     def test_no_generation_starts_while_a_load_runs(self):
         r = run(self, self.BODY + self.HIDE + r"""
+        const buttons = {img: [$('img-run').disabled, txt('img-why')], vid: [$('vid-run').disabled, txt('vid-why')],
+                         s1: [$('s1-run').disabled, txt('s1-why')]};
         const toasts = [];
         for (const f of [imgRun, imgSample, vidRun, s1Run]){ clear($('toasts')); await f(); await __settle(); toasts.push(toastText()); }
-        report({toasts, posts: __fetches.map(x => x.url).filter(u => /generate|systemone/.test(u))});
+        report({buttons, toasts, posts: __fetches.map(x => x.url).filter(u => /generate|systemone/.test(u))});
         """)
         self.assertEqual(r["posts"], [], "nothing was sent to a lane")
+        for name, (disabled, why) in r["buttons"].items():
+            self.assertTrue(disabled, name)
+            self.assertIn("A load is running (27B uncensored, NVFP4)", why, name)
         for t in r["toasts"]:
-            self.assertIn("is still running", t)
+            self.assertIn("A load is running", t)
 
     def test_every_control_says_it_waits_for_the_load(self):
         r = run(self, self.BODY + self.HIDE + r"""
@@ -1328,14 +1333,14 @@ class TheLoadWindowCanBeHiddenWhileItsStepsRun(unittest.TestCase):
         self.assertTrue(r["disabled"])
         self.assertIn("A load is running (27B uncensored, NVFP4)", r["title"])
 
-    def test_a_failure_brings_the_window_back_with_the_focus_on_cancel(self):
+    def test_a_failure_brings_the_window_back_with_the_focus_on_its_status(self):
         r = run(self, self.BODY + self.HIDE + r"""
         job(null, [{id: 'j1', action: 'switch', status: 'failed', rc: 1, elapsed: 31}]);
         await __advance(2000); await __settle(); await __advance(10);
         report({back: !$('scrim').hidden, focus: document.activeElement && document.activeElement.id});
         """)
         self.assertTrue(r["back"])
-        self.assertEqual(r["focus"], "sh-cancel", "never Retry: a key pressed elsewhere must not run the step again")
+        self.assertEqual(r["focus"], "sh-status", "on no button: a key pressed elsewhere neither runs the step again nor dismisses why")
 
     def test_brought_back_while_it_runs_the_focus_is_on_hide(self):
         r = run(self, self.BODY + self.HIDE + r"""
@@ -1344,20 +1349,20 @@ class TheLoadWindowCanBeHiddenWhileItsStepsRun(unittest.TestCase):
         """)
         self.assertEqual(r, {"focus": "sh-cancel", "label": "Hide"})
 
-    def test_a_failure_under_the_menu_stays_away_and_says_so(self):
+    def test_a_failure_comes_back_over_the_menu_and_the_viewer(self):
         r = run(self, self.BODY + self.HIDE + r"""
-        $('menu').hidden = false;
+        $('menu').hidden = false; $('viewer').hidden = false;
         job(null, [{id: 'j1', action: 'switch', status: 'failed', rc: 1, elapsed: 31}]);
         await __advance(2000); await __settle();
-        const under = {scrim: $('scrim').hidden, toast: toastText(), pip: txt('jobpip-what')};
-        $('menu').hidden = true; $('jobpip').click(); await __settle();
-        report({under, back: !$('scrim').hidden, go: txt('sh-go')});
+        report({menu: $('menu').hidden, viewer: $('viewer').hidden, back: !$('scrim').hidden, away: loadAway(),
+                status: txt('sh-status'), go: txt('sh-go'), pip: $('jobpip').hidden});
         """)
-        self.assertTrue(r["under"]["scrim"], "the window does not come back under the menu")
-        self.assertIn("Step 1 failed with exit code 1", r["under"]["toast"])
-        self.assertEqual(r["under"]["pip"], "Load 27B uncensored, NVFP4: a step failed")
+        self.assertTrue(r["menu"] and r["viewer"], "what was open over the page is closed first")
         self.assertTrue(r["back"])
+        self.assertFalse(r["away"], "a load is put away only while its steps run")
+        self.assertIn("Step 1 failed with exit code 1", r["status"])
         self.assertEqual(r["go"], "Retry from here")
+        self.assertTrue(r["pip"], "nothing runs and nothing waits: no job button")
 
     def test_another_job_on_the_button_opens_the_dock_not_the_load(self):
         r = run(self, self.BODY + self.HIDE + r"""
@@ -1389,15 +1394,27 @@ class TheLoadWindowCanBeHiddenWhileItsStepsRun(unittest.TestCase):
         """)
         self.assertTrue(r["done"], "a predicate that threw twice, then held, ended the wait")
 
-    def test_a_new_action_closes_a_failed_load_put_away(self):
-        r = run(self, self.BODY + self.HIDE + r"""
-        $('menu').hidden = false;
-        job(null, [{id: 'j1', action: 'switch', status: 'failed', rc: 1, elapsed: 31}]);
-        await __advance(2000); await __settle(); $('menu').hidden = true;
-        askAction('diag_bundle', {});                   // needs no engine
-        report({mode: SHEET && SHEET.mode, scrim: !$('scrim').hidden, pip: $('jobpip').hidden});
+    def test_a_refused_step_says_the_refusal_not_an_error(self):
+        r = run(self, self.BODY + r"""
+        // step 1 was posted by the body already: the next action, step 2, is refused by a gate
+        __fetch = async url => url === '/api/csrf' ? __response(200, {token: 't'})
+          : url === '/api/action' ? __response(409, {reasons: ['the gate says no']})
+          : new Promise(() => {});
+        """ + self.HIDE + r"""
+        job(null, [done('j1', 'switch')]); await __advance(2000); await __settle(); await __advance(1000);
+        report({status: txt('sh-status'), back: !$('scrim').hidden});
         """)
-        self.assertEqual(r, {"mode": "one", "scrim": True, "pip": True})
+        self.assertEqual(r["status"], "Step 2 refused: the gate says no", r)
+        self.assertTrue(r["back"])
+
+    def test_going_to_the_login_does_not_ask(self):
+        r = run(self, self.BODY + self.HIDE + r"""
+        const leave = () => { const ev = {prevented: false, preventDefault(){ this.prevented = true; }};
+                              (window._listeners.beforeunload || []).forEach(f => f(ev)); return ev.prevented; };
+        const before = leave(); login(); const after = leave();
+        report({before, after});
+        """)
+        self.assertEqual(r, {"before": True, "after": False}, "a session that ended cannot run the chain: no prompt on the way to the login")
 
     def test_the_job_button_brings_a_hidden_load_back(self):
         r = run(self, self.BODY + r"""
