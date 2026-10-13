@@ -746,6 +746,7 @@ body.agentmax .view{animation:none}
   .studio{grid-template-columns:minmax(0,1fr)}
   .g-7-5, .g-5-7, .g3{grid-template-columns:minmax(0,1fr)}
   .jobpip{display:none}
+  .jobpip.away{display:flex}   /* the way back to a load put away: shown however narrow the head */
 }
 @media (max-width:980px){
   :root{--spine:60px}
@@ -775,6 +776,9 @@ body.agentmax .view{animation:none}
   .serving{padding:5px 6px 5px 12px}
   .serving .go{display:none}
   .serving .mark{display:none}
+  /* .spine-right never shrinks: at 260 px the way back to a load widened a phone's page to 490 px
+     (measured 2026-10-13, 320 to 430 px screens); a quarter of the screen fits them all */
+  .jobpip.away{max-width:25vw}
   .vhead h1{font-size:var(--t-24)}
   .pool{padding:var(--s-5) var(--s-4) var(--s-4)}
   .pool-big .v{font-size:var(--t-48)}

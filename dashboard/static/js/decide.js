@@ -135,6 +135,7 @@ function s1Answer(id, ans){
   return wrap;
 }
 async function s1Run(){
+  if (loadRunning()) return toast(LOAD_RUNNING, 'warn');   // its next step could stop the text lane
   const problem = s1Problem(); if (problem) return toast(problem, 'warn');
   s1Running = true; s1Sync(); setText($('s1-run'), 'Asking…');
   const box = $('s1-answers'); clear(box); clear($('s1-meta')); setText('s1-time', '');

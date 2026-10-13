@@ -281,6 +281,7 @@ function imgRenderLane(){
 }
 async function imgRun(){
   IS.touched = true;
+  if (loadRunning()) return toast(LOAD_RUNNING, 'warn');   // its next step could stop this lane
   const problem = imgProblem(); if (problem) return toast(problem, 'warn');
   if (!imgVal('img-prompt')) return toast('Write a prompt first.', 'warn');
   const editing = imgEditing(), t0 = Date.now();
@@ -317,6 +318,7 @@ function imgCancel(){
 // The sample is a generation like any other: the same frame, the same bar, the same lock.
 // Its subject is the cookbook's own edit example, so "Local edit" describes what is in it.
 async function imgSample(){
+  if (loadRunning()) return toast(LOAD_RUNNING, 'warn');
   if (IS.refs.length >= 10) return toast('Ten references is the maximum.', 'warn');
   if (IS.inflight || IS.busy) return toast('The lane is already making an image; one at a time.', 'warn');
   const t0 = Date.now(); IS.inflight = t0; IS.run = {w: 1024, h: 1024, steps: imgTurbo() ? IMG_TURBO_STEPS : 20, n: 1, editing: false};

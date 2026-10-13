@@ -390,6 +390,7 @@ function noEngineWhy(){
 }
 function busyWhy(){
   if (offline) return 'The cockpit is unreachable: actions wait until the connection is back.';
+  if (loadRunning()) return `A load is running (${TARGET_NAME[SHEET.target]}). Wait for it to finish, or bring its window back with the job button.`;
   if (F.job && F.job.current) return `Another action is running (${actionPhrase(F.job.current.action, F.job.current.params)}). Wait for it to finish.`;
   return '';
 }
@@ -425,9 +426,9 @@ let SHEET = null;   // {mode: 'one'|'journey', ...}
 // keyboard had to start again from the top of the page.
 const OPENER = {sheet: null, menu: null, viewer: null};
 const giveBack = k => { const e = OPENER[k]; OPENER[k] = null; if (e && e.isConnected && typeof e.focus === 'function') e.focus(); };
-function openSheet(){
+function openSheet(focusId = 'sh-go'){
   const a = document.activeElement; OPENER.sheet = a && !a.closest('#scrim') ? a : OPENER.sheet;
-  $('scrim').hidden = false; setTimeout(() => $('sh-go').focus(), 0);
+  $('scrim').hidden = false; setTimeout(() => $(focusId).focus(), 0);
 }
 // A result's screen takes the shape of what it shows: its own proportions, as wide as the
 // column allows and no taller than most of the window (78vh, through a max-width derived
@@ -458,32 +459,41 @@ function closeViewer(){ $('viewer').hidden = true; giveBack('viewer'); }
 // A load whose steps are running is put away, not closed: its steps go on, the dock follows the step that
 // runs, and the job button brings the window back. The window held the whole page through a 20-minute
 // download, and reloading the page to get it back stopped the chain (Hasan, 2026-10-12).
+// Nothing else starts while a load runs, its window shown or put away: the next step could stop the lane
+// a generation runs on (one engine at a time), and two chains would race on the same lanes.
+const loadRunning = () => !!(SHEET && SHEET.running && SHEET.mode === 'journey');
+const loadAway = () => !!(SHEET && SHEET.mode === 'journey' && SHEET.hidden);
+const LOAD_RUNNING = 'A load is still running: the job button brings its window back.';
 function closeSheet(){
-  if (SHEET && SHEET.running){
-    if (SHEET.mode !== 'journey') return;          // one action closes its window once the job is accepted
-    SHEET.hidden = true; $('scrim').hidden = true; giveBack('sheet'); renderPip(); return;
-  }
-  $('scrim').hidden = true; const s = SHEET; SHEET = null; if (s && s.onClose) s.onClose(); giveBack('sheet'); renderPip();
+  if (loadRunning()){ SHEET.hidden = true; }      // put away: its steps go on
+  else if (SHEET && SHEET.running) return;         // one action closes its window once the job is accepted
+  else { const s = SHEET; SHEET = null; if (s && s.onClose) s.onClose(); }
+  $('scrim').hidden = true; giveBack('sheet'); journeyChanged();
 }
+// While the steps run the Go button is disabled: the focus goes to Hide. A window brought back by a failure
+// puts it on Cancel, never on Retry, so a key the person was pressing elsewhere cannot run the step again.
 function reopenJourney(){
-  if (!(SHEET && SHEET.mode === 'journey' && SHEET.hidden)) return false;
-  SHEET.hidden = false; openSheet(); renderPip(); return true;
+  if (!loadAway()) return false;
+  SHEET.hidden = false; openSheet('sh-cancel'); journeyChanged(); return true;
 }
 // The job button: the job that runs, or a load put away while it waits between two steps (a stopped lane
-// reading down can take 90 s), so the window always has a way back while its steps go on.
+// reading down can take 90 s) or after a step failed, so the window always has a way back. It shows on a
+// narrow screen too (.away), where the head has no room for the plain job button.
 function renderPip(){
   const pip = $('jobpip'); if (!pip) return;
-  const cur = (F.job || {}).current, away = SHEET && SHEET.mode === 'journey' && SHEET.running && SHEET.hidden;
-  pip.hidden = !(cur || away);
-  if (cur) setText('jobpip-what', describeJob(cur));
-  else if (away) setText('jobpip-what', `Load ${TARGET_NAME[SHEET.target]}: between steps`);
+  const cur = (F.job || {}).current, away = loadAway();
+  pip.hidden = !(cur || away); pip.classList.toggle('away', away);
+  const what = cur ? describeJob(cur) : away ? `Load ${TARGET_NAME[SHEET.target]}: ${SHEET.running ? 'between steps' : 'a step failed'}` : '';
+  setText('jobpip-what', what || '…'); pip.title = what;   // cut short on a phone: the whole of it on hover
 }
-// Nothing else starts while a load runs, its window shown or put away.
-const loadRunning = () => !!(SHEET && SHEET.running && SHEET.mode === 'journey');
-const LOAD_RUNNING = 'A load is still running: the job button brings its window back.';
+function journeyChanged(){ renderPip(); applyBusy(); }
+// A page closed or reloaded stops the chain after the step that runs; with the window put away nothing on
+// screen says so, so the browser asks first. Not in a dry run, whose loads are a walk-through.
+const leaveWarning = () => loadRunning() && SHEET.hidden && !F.config.dry_run;
 function askAction(name, params, warns, opts = {}){
   if (offline) return toast('The cockpit is unreachable right now: nothing can be started.', 'err');
   if (loadRunning()) return toast(LOAD_RUNNING, 'warn');
+  if (loadAway()) closeSheet();                    // a failed load put away: this window replaces it
   if (NEEDS_ENGINE.has(name) && !textReady()) return toast(noEngineWhy(), 'warn');
   if (F.job && F.job.current) return toast(busyWhy(), 'warn');
   if (!$('scrim').hidden) return;
@@ -562,6 +572,7 @@ function laneJourneySteps(target){
 function askJourney(target, opts = {}){
   if (offline) return toast('The cockpit is unreachable right now: nothing can be started.', 'err');
   if (loadRunning()) return toast(LOAD_RUNNING, 'warn');
+  if (loadAway()) closeSheet();                    // a failed load put away: this window replaces it
   if (F.job && F.job.current) return toast(busyWhy(), 'warn');
   if (!$('scrim').hidden) return;
   const unit = TARGET_UNIT(target);
@@ -607,14 +618,21 @@ function jLive(i, text){
 const jobLast = cur => String((cur.lines || []).slice(-1)[0] || '').replace(/\x1b\[[0-9;]*[A-Za-z]/g, '').trim();
 async function runJourney(){
   const S = SHEET; S.running = true;
-  $('sh-go').disabled = true; setText($('sh-cancel'), 'Hide');
-  // a step that fails says why in the window, brought back if it was put away
+  $('sh-go').disabled = true; setText($('sh-cancel'), 'Hide'); journeyChanged();
+  // a step that fails says why in its window: brought back if it was put away, unless the menu or the
+  // image viewer is open over the page (the window would come back under them): then a toast says it,
+  // and the job button keeps the window
   const stopped = () => {
     $('sh-go').disabled = false; setText($('sh-cancel'), 'Cancel'); setText($('sh-go'), 'Retry from here');
-    if (S.hidden && SHEET === S){ S.hidden = false; openSheet(); }
-    renderPip();
+    if (S.hidden && SHEET === S){
+      if ($('menu').hidden && $('viewer').hidden) reopenJourney();
+      else toast(`Load ${TARGET_NAME[S.target]}: ${$('sh-status').textContent} The job button opens its window.`, 'err', 9000);
+    }
+    journeyChanged();
   };
+  try {
   for (let i = S.idx; i < S.steps.length; i++){
+    S.at = i;
     const st = S.steps[i]; jStep(i, 'run');
     setText('sh-status', `Step ${i + 1} of ${S.steps.length}: ${st.title}…`);
     let r;
@@ -626,8 +644,9 @@ async function runJourney(){
       setText('sh-status', `Step ${i + 1} refused: ` + why + (F.config.dry_run && r.out.reasons ? ' (dry run: the steps above changed nothing on the box, so the gate still reads the state as it was)' : ''));
       stopped(); return;
     }
-    const id = r.out.job || r.out.id;
+    const id = r.out.job || r.out.id; S.jobId = id;
     const res = await waitJob(id, cur => { const last = jobLast(cur); jLive(i, fmtDur(cur.elapsed) + ' so far' + (last ? ': ' + last : '')); });
+    S.jobId = null;
     if (!res.ok){
       jStep(i, 'fail'); S.running = false; S.idx = i;
       $('sh-status').className = 'status err';
@@ -645,10 +664,17 @@ async function runJourney(){
       if (!F.config.dry_run) await waitFor(() => { const e = engines()[st.params.unit]; return !e || UNIT_DOWN.has(e.state); }, 90000);
     }
   }
+  } catch (e) {   // an error in the page itself: the chain stops where it was, said like a failed step
+    const i = S.at || 0;
+    jStep(i, 'fail'); S.running = false; S.idx = i; S.jobId = null;
+    $('sh-status').className = 'status err';
+    setText('sh-status', `Step ${i + 1} stopped on an error in the page (${e && e.message ? e.message : e}). The Now view and Logs say where the lane is before anything is retried.`);
+    stopped(); return;
+  }
   S.running = false; setText($('sh-cancel'), 'Cancel');
   setText('sh-status', 'Done. The lane is booting: the Now view and the dock follow it.');
   if (S.hidden){   // put away: the page stays where the person went, a toast says it ended
-    if (SHEET === S) closeSheet();
+    if (SHEET === S) closeSheet(); else journeyChanged();
     toast(`Load ${TARGET_NAME[S.target]}: every step done. The lane is booting; the Now view and the dock follow it.`, 'ok', 7000);
     return;
   }
@@ -683,7 +709,10 @@ function waitJob(id, onTick){
 }
 function waitFor(pred, timeoutMs){
   const t0 = Date.now();
-  return new Promise(resolve => { const tick = () => { if (pred() || Date.now() - t0 > timeoutMs) return resolve(); setTimeout(tick, 500); }; tick(); });
+  // a predicate that throws (state not read yet after a reconnect) counts as not yet: a throw inside the
+  // timer would leave the promise pending for good, and a load waiting on it running forever
+  const holds = () => { try { return !!pred(); } catch { return false; } };
+  return new Promise(resolve => { const tick = () => { if (holds() || Date.now() - t0 > timeoutMs) return resolve(); setTimeout(tick, 500); }; tick(); });
 }
 
 // ── the dock: the job running now, from every view and every browser ─────────
@@ -896,7 +925,12 @@ function wireShell(){
   try { setRailMin(localStorage.getItem('cockpit.rail') === 'min'); } catch { setRailMin(false); }
   $('railbtn').addEventListener('click', () => setRailMin(!document.body.classList.contains('railmin')));
   $('serving').addEventListener('click', () => showView('lanes'));
-  $('jobpip').addEventListener('click', () => { if (reopenJourney()) return; dockHidden = null; dockPinned = true; $('dock').hidden = false; });
+  $('jobpip').addEventListener('click', () => {
+    const cur = (F.job || {}).current;
+    if (loadAway() && (!cur || cur.id === SHEET.jobId) && reopenJourney()) return;
+    dockHidden = null; dockPinned = true; $('dock').hidden = false;
+  });
+  window.addEventListener('beforeunload', e => { if (leaveWarning()){ e.preventDefault(); e.returnValue = ''; } });
   // the sheet
   $('sh-cancel').addEventListener('click', () => closeSheet());
   $('sh-go').addEventListener('click', sheetGo);

@@ -1293,6 +1293,112 @@ class TheLoadWindowCanBeHiddenWhileItsStepsRun(unittest.TestCase):
         self.assertFalse(r["pip"], "nothing runs and no load waits: no job button")
         self.assertIsNone(r["sheet"])
 
+    # The review of 2026-10-13 (681e25a), one test per finding.
+    HIDE = r"""
+    running('j1', 30, 'downloading'); await __advance(1000);
+    $('sh-cancel').click(); await __settle();
+    """
+
+    def test_on_a_narrow_screen_the_way_back_still_shows(self):
+        r = run(self, self.BODY + self.HIDE + r"""
+        report({away: $('jobpip').classList.contains('away'), hidden: $('jobpip').hidden});
+        """)
+        self.assertEqual(r, {"away": True, "hidden": False})
+        narrow = [(sel, decl) for sel, media, decl in css_rules() if any("max-width:1100px" in m.replace(" ", "") for m in media)]
+        self.assertIn(".jobpip.away", [sel for sel, _ in narrow], "the head hides .jobpip under 1100 px: .away must undo it")
+        self.assertIn("display:flex", dict(narrow)[".jobpip.away"].replace(" ", ""))
+        phone = [(sel, decl) for sel, media, decl in css_rules() if any("max-width:720px" in m.replace(" ", "") for m in media)]
+        self.assertIn("max-width:25vw", dict(phone).get(".jobpip.away", "").replace(" ", ""), "on a phone it must not widen the page")
+
+    def test_no_generation_starts_while_a_load_runs(self):
+        r = run(self, self.BODY + self.HIDE + r"""
+        const toasts = [];
+        for (const f of [imgRun, imgSample, vidRun, s1Run]){ clear($('toasts')); await f(); await __settle(); toasts.push(toastText()); }
+        report({toasts, posts: __fetches.map(x => x.url).filter(u => /generate|systemone/.test(u))});
+        """)
+        self.assertEqual(r["posts"], [], "nothing was sent to a lane")
+        for t in r["toasts"]:
+            self.assertIn("is still running", t)
+
+    def test_every_control_says_it_waits_for_the_load(self):
+        r = run(self, self.BODY + self.HIDE + r"""
+        const b = $('oc-fitbtn');
+        report({disabled: b.disabled, title: b.title});
+        """)
+        self.assertTrue(r["disabled"])
+        self.assertIn("A load is running (27B uncensored, NVFP4)", r["title"])
+
+    def test_a_failure_brings_the_window_back_with_the_focus_on_cancel(self):
+        r = run(self, self.BODY + self.HIDE + r"""
+        job(null, [{id: 'j1', action: 'switch', status: 'failed', rc: 1, elapsed: 31}]);
+        await __advance(2000); await __settle(); await __advance(10);
+        report({back: !$('scrim').hidden, focus: document.activeElement && document.activeElement.id});
+        """)
+        self.assertTrue(r["back"])
+        self.assertEqual(r["focus"], "sh-cancel", "never Retry: a key pressed elsewhere must not run the step again")
+
+    def test_brought_back_while_it_runs_the_focus_is_on_hide(self):
+        r = run(self, self.BODY + self.HIDE + r"""
+        $('jobpip').click(); await __settle(); await __advance(10);
+        report({focus: document.activeElement && document.activeElement.id, label: txt('sh-cancel')});
+        """)
+        self.assertEqual(r, {"focus": "sh-cancel", "label": "Hide"})
+
+    def test_a_failure_under_the_menu_stays_away_and_says_so(self):
+        r = run(self, self.BODY + self.HIDE + r"""
+        $('menu').hidden = false;
+        job(null, [{id: 'j1', action: 'switch', status: 'failed', rc: 1, elapsed: 31}]);
+        await __advance(2000); await __settle();
+        const under = {scrim: $('scrim').hidden, toast: toastText(), pip: txt('jobpip-what')};
+        $('menu').hidden = true; $('jobpip').click(); await __settle();
+        report({under, back: !$('scrim').hidden, go: txt('sh-go')});
+        """)
+        self.assertTrue(r["under"]["scrim"], "the window does not come back under the menu")
+        self.assertIn("Step 1 failed with exit code 1", r["under"]["toast"])
+        self.assertEqual(r["under"]["pip"], "Load 27B uncensored, NVFP4: a step failed")
+        self.assertTrue(r["back"])
+        self.assertEqual(r["go"], "Retry from here")
+
+    def test_another_job_on_the_button_opens_the_dock_not_the_load(self):
+        r = run(self, self.BODY + self.HIDE + r"""
+        job({id: 'auto1', action: 'unit', params: {verb: 'restart', unit: 'qwen38-keepalive.service'}, elapsed: 2, lines: []});
+        await __advance(100);
+        $('jobpip').click(); await __settle();
+        report({scrim: $('scrim').hidden, dock: !$('dock').hidden});
+        """)
+        self.assertEqual(r, {"scrim": True, "dock": True})
+
+    def test_leaving_the_page_asks_first_while_a_load_runs_away(self):
+        r = run(self, self.BODY + r"""
+        const leave = () => { const ev = {returnValue: undefined, prevented: false, preventDefault(){ this.prevented = true; }};
+                              (window._listeners.beforeunload || []).forEach(f => f(ev)); return ev.prevented; };
+        const shown = leave();
+        """ + self.HIDE + r"""
+        const away = leave();
+        F.config.dry_run = true; const dry = leave(); F.config.dry_run = false;
+        report({shown, away, dry});
+        """)
+        self.assertEqual(r, {"shown": False, "away": True, "dry": False})
+
+    def test_a_wait_whose_check_throws_still_ends(self):
+        r = run(self, r"""
+        let n = 0, done = false;
+        waitFor(() => { n++; if (n < 3) throw new Error('state not read yet'); return true; }, 90000).then(() => { done = true; });
+        await __advance(2000); await __settle();
+        report({done, n});
+        """)
+        self.assertTrue(r["done"], "a predicate that threw twice, then held, ended the wait")
+
+    def test_a_new_action_closes_a_failed_load_put_away(self):
+        r = run(self, self.BODY + self.HIDE + r"""
+        $('menu').hidden = false;
+        job(null, [{id: 'j1', action: 'switch', status: 'failed', rc: 1, elapsed: 31}]);
+        await __advance(2000); await __settle(); $('menu').hidden = true;
+        askAction('diag_bundle', {});                   // needs no engine
+        report({mode: SHEET && SHEET.mode, scrim: !$('scrim').hidden, pip: $('jobpip').hidden});
+        """)
+        self.assertEqual(r, {"mode": "one", "scrim": True, "pip": True})
+
     def test_the_job_button_brings_a_hidden_load_back(self):
         r = run(self, self.BODY + r"""
         running('j1', 30, 'downloading'); await __advance(1000);

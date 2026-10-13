@@ -337,6 +337,7 @@ function vidErr(out, status){
 }
 async function vidRun(){
   VS.touched = true; vidSync();
+  if (loadRunning()) return toast(LOAD_RUNNING, 'warn');   // its next step could stop this lane
   if (VS.inflight || VS.busy) return toast('The lane is already making a video; one at a time.', 'warn');
   const p = vidProblem(); if (p) return toast(p, 'warn');
   if (!VS.available) return toast(vidLaneWhy(), 'warn');
