@@ -455,9 +455,35 @@ function viewerActual(){
   v.style.width = on && v.naturalWidth ? `${Math.round(v.naturalWidth / (window.devicePixelRatio || 1))}px` : '';
 }
 function closeViewer(){ $('viewer').hidden = true; giveBack('viewer'); }
-function closeSheet(){ if (SHEET && SHEET.running) return; $('scrim').hidden = true; const s = SHEET; SHEET = null; if (s && s.onClose) s.onClose(); giveBack('sheet'); }
+// A load whose steps are running is put away, not closed: its steps go on, the dock follows the step that
+// runs, and the job button brings the window back. The window held the whole page through a 20-minute
+// download, and reloading the page to get it back stopped the chain (Hasan, 2026-10-12).
+function closeSheet(){
+  if (SHEET && SHEET.running){
+    if (SHEET.mode !== 'journey') return;          // one action closes its window once the job is accepted
+    SHEET.hidden = true; $('scrim').hidden = true; giveBack('sheet'); renderPip(); return;
+  }
+  $('scrim').hidden = true; const s = SHEET; SHEET = null; if (s && s.onClose) s.onClose(); giveBack('sheet'); renderPip();
+}
+function reopenJourney(){
+  if (!(SHEET && SHEET.mode === 'journey' && SHEET.hidden)) return false;
+  SHEET.hidden = false; openSheet(); renderPip(); return true;
+}
+// The job button: the job that runs, or a load put away while it waits between two steps (a stopped lane
+// reading down can take 90 s), so the window always has a way back while its steps go on.
+function renderPip(){
+  const pip = $('jobpip'); if (!pip) return;
+  const cur = (F.job || {}).current, away = SHEET && SHEET.mode === 'journey' && SHEET.running && SHEET.hidden;
+  pip.hidden = !(cur || away);
+  if (cur) setText('jobpip-what', describeJob(cur));
+  else if (away) setText('jobpip-what', `Load ${TARGET_NAME[SHEET.target]}: between steps`);
+}
+// Nothing else starts while a load runs, its window shown or put away.
+const loadRunning = () => !!(SHEET && SHEET.running && SHEET.mode === 'journey');
+const LOAD_RUNNING = 'A load is still running: the job button brings its window back.';
 function askAction(name, params, warns, opts = {}){
   if (offline) return toast('The cockpit is unreachable right now: nothing can be started.', 'err');
+  if (loadRunning()) return toast(LOAD_RUNNING, 'warn');
   if (NEEDS_ENGINE.has(name) && !textReady()) return toast(noEngineWhy(), 'warn');
   if (F.job && F.job.current) return toast(busyWhy(), 'warn');
   if (!$('scrim').hidden) return;
@@ -535,6 +561,7 @@ function laneJourneySteps(target){
 }
 function askJourney(target, opts = {}){
   if (offline) return toast('The cockpit is unreachable right now: nothing can be started.', 'err');
+  if (loadRunning()) return toast(LOAD_RUNNING, 'warn');
   if (F.job && F.job.current) return toast(busyWhy(), 'warn');
   if (!$('scrim').hidden) return;
   const unit = TARGET_UNIT(target);
@@ -542,7 +569,7 @@ function askJourney(target, opts = {}){
   const steps = laneJourneySteps(target);
   if (!steps.length) return toast(`${TARGET_NAME[target]} is already serving.`, 'ok');
   setText('sh-title', `Load ${TARGET_NAME[target]}`);
-  setText('sh-lede', (TARGET_NOTE[target] || '') + `\n\nThe page runs these steps one after the other, each as its own job, and stops at the first that fails. Closing the page stops the chain after the step that is running.` + (F.config.dry_run ? '\n\nDry run: nothing will really be executed, the state on the box never moves, and a gate can refuse a later step of the walk-through because it still reads the box as it was.' : ''));
+  setText('sh-lede', (TARGET_NOTE[target] || '') + `\n\nThe page runs these steps one after the other, each as its own job, and stops at the first that fails. Hide puts this window away while they run; closing the page stops the chain after the step that is running.` + (F.config.dry_run ? '\n\nDry run: nothing will really be executed, the state on the box never moves, and a gate can refuse a later step of the walk-through because it still reads the box as it was.' : ''));
   const w = $('sh-warns'); clear(w);
   const serving = servingEngine();
   const warns = [];
@@ -580,7 +607,13 @@ function jLive(i, text){
 const jobLast = cur => String((cur.lines || []).slice(-1)[0] || '').replace(/\x1b\[[0-9;]*[A-Za-z]/g, '').trim();
 async function runJourney(){
   const S = SHEET; S.running = true;
-  $('sh-go').disabled = true; $('sh-cancel').disabled = true;
+  $('sh-go').disabled = true; setText($('sh-cancel'), 'Hide');
+  // a step that fails says why in the window, brought back if it was put away
+  const stopped = () => {
+    $('sh-go').disabled = false; setText($('sh-cancel'), 'Cancel'); setText($('sh-go'), 'Retry from here');
+    if (S.hidden && SHEET === S){ S.hidden = false; openSheet(); }
+    renderPip();
+  };
   for (let i = S.idx; i < S.steps.length; i++){
     const st = S.steps[i]; jStep(i, 'run');
     setText('sh-status', `Step ${i + 1} of ${S.steps.length}: ${st.title}…`);
@@ -591,7 +624,7 @@ async function runJourney(){
       $('sh-status').className = 'status err';
       const why = r.out.reasons ? r.out.reasons.join('; ') : r.out.error || r.out.message || 'HTTP ' + r.status;
       setText('sh-status', `Step ${i + 1} refused: ` + why + (F.config.dry_run && r.out.reasons ? ' (dry run: the steps above changed nothing on the box, so the gate still reads the state as it was)' : ''));
-      $('sh-go').disabled = false; $('sh-cancel').disabled = false; setText($('sh-go'), 'Retry from here'); return;
+      stopped(); return;
     }
     const id = r.out.job || r.out.id;
     const res = await waitJob(id, cur => { const last = jobLast(cur); jLive(i, fmtDur(cur.elapsed) + ' so far' + (last ? ': ' + last : '')); });
@@ -599,7 +632,7 @@ async function runJourney(){
       jStep(i, 'fail'); S.running = false; S.idx = i;
       $('sh-status').className = 'status err';
       setText('sh-status', `Step ${i + 1} ${res.why}. ` + (res.lost ? 'The Now view and Logs say where the lane is before anything is retried.' : 'Its log is in the dock.'));
-      $('sh-go').disabled = false; $('sh-cancel').disabled = false; setText($('sh-go'), 'Retry from here'); return;
+      stopped(); return;
     }
     jLive(i, null);
     jStep(i, 'done');
@@ -612,8 +645,13 @@ async function runJourney(){
       if (!F.config.dry_run) await waitFor(() => { const e = engines()[st.params.unit]; return !e || UNIT_DOWN.has(e.state); }, 90000);
     }
   }
-  S.running = false;
+  S.running = false; setText($('sh-cancel'), 'Cancel');
   setText('sh-status', 'Done. The lane is booting: the Now view and the dock follow it.');
+  if (S.hidden){   // put away: the page stays where the person went, a toast says it ended
+    if (SHEET === S) closeSheet();
+    toast(`Load ${TARGET_NAME[S.target]}: every step done. The lane is booting; the Now view and the dock follow it.`, 'ok', 7000);
+    return;
+  }
   setTimeout(() => { if (SHEET === S) closeSheet(); showView('now'); }, 900);
 }
 // A job is done when the job collector shows it finished. Resolves {ok, why} ({lost} too, for
@@ -665,9 +703,7 @@ function renderJob(d){
     if (JOBLINES.id !== cur.id){ JOBLINES.id = cur.id; JOBLINES.lines = []; }
     if (cur.lines && cur.lines.length) JOBLINES.lines = cur.lines;
     setText('dock-last', JOBLINES.lines.length ? JOBLINES.lines[JOBLINES.lines.length - 1] : 'starting…');
-    const pip = $('jobpip'); if (pip){ pip.hidden = false; setText('jobpip-what', describeJob(cur)); }
   } else {
-    const pip = $('jobpip'); if (pip) pip.hidden = true;
     if (recent && (now - (recent.ended || recent.started) < 60 || dockPinned) && dockHidden !== recent.id){
       showIt = true;
       const ok = recent.status === 'done';
@@ -686,6 +722,7 @@ function renderJob(d){
     }
   }
   dock.hidden = !showIt;
+  renderPip();
   setText('dock-pre', JOBLINES.lines.join('\n') || '(no output yet)');
   const pre = $('dock-pre'); if (!pre.hidden) pre.scrollTop = pre.scrollHeight;
   const say = cur ? `${describeJob(cur)}: running` : recent ? `${describeJob(recent)}: ${recent.status}` : '';
@@ -859,7 +896,7 @@ function wireShell(){
   try { setRailMin(localStorage.getItem('cockpit.rail') === 'min'); } catch { setRailMin(false); }
   $('railbtn').addEventListener('click', () => setRailMin(!document.body.classList.contains('railmin')));
   $('serving').addEventListener('click', () => showView('lanes'));
-  $('jobpip').addEventListener('click', () => { dockHidden = null; dockPinned = true; $('dock').hidden = false; });
+  $('jobpip').addEventListener('click', () => { if (reopenJourney()) return; dockHidden = null; dockPinned = true; $('dock').hidden = false; });
   // the sheet
   $('sh-cancel').addEventListener('click', () => closeSheet());
   $('sh-go').addEventListener('click', sheetGo);

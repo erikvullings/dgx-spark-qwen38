@@ -1201,6 +1201,112 @@ class TheLoadWindowFollowsAStepToItsEnd(unittest.TestCase):
         self.assertEqual(r["after"]["actions"], ["switch"], r["after"])
 
 
+class TheLoadWindowCanBeHiddenWhileItsStepsRun(unittest.TestCase):
+    """While a step ran, the load window could not be closed: Cancel was disabled, a click
+    outside it and Escape did nothing, and a 20-minute download held the whole page until it
+    was reloaded, which also stopped the chain (Hasan, 2026-10-12). Now Hide puts the window
+    away, the steps go on, the job button brings it back, a failure brings it back on its own,
+    and nothing else starts while the hidden chain runs."""
+
+    BODY = TheLoadWindowFollowsAStepToItsEnd.BODY + r"""
+    const done = (id, name) => ({id, action: name, status: 'done', rc: 0, elapsed: 31});
+    """
+
+    def test_hide_puts_the_window_away_and_the_steps_go_on(self):
+        r = run(self, self.BODY + r"""
+        running('j1', 30, 'downloading'); await __advance(1000);
+        const during = {label: txt('sh-cancel'), disabled: $('sh-cancel').disabled};
+        $('sh-cancel').click(); await __settle();
+        const hidden = $('scrim').hidden;
+        job(null, [done('j1', 'switch')]);
+        await __advance(2000); await __settle(); await __advance(2000);
+        report({during, hidden, actions: state().actions});
+        """)
+        self.assertEqual(r["during"], {"label": "Hide", "disabled": False}, r)
+        self.assertTrue(r["hidden"], "Hide puts the window away")
+        self.assertEqual(r["actions"], ["switch", "unit"], "the next step ran with the window hidden")
+
+    def test_nothing_else_starts_while_a_hidden_load_runs(self):
+        r = run(self, self.BODY + r"""
+        running('j1', 30, 'downloading'); await __advance(1000);
+        $('sh-cancel').click(); await __settle();
+        job(null, [done('j1', 'switch')]);              // between two steps: no job runs
+        await __advance(600); await __settle();
+        askAction('flush_cache', {});
+        report({scrim: $('scrim').hidden, toast: toastText(), mode: SHEET && SHEET.mode});
+        """)
+        self.assertTrue(r["scrim"], "no other window opened")
+        self.assertEqual(r["mode"], "journey", "the running load keeps the window")
+        self.assertIn("is still running", r["toast"])
+
+    def test_a_hidden_load_that_ends_leaves_the_view_alone(self):
+        r = run(self, self.BODY + r"""
+        showView('library');
+        running('j1', 30, 'downloading'); await __advance(1000);
+        $('sh-cancel').click(); await __settle();
+        job(null, [done('j1', 'switch')]); await __advance(2000); await __settle(); await __advance(1000);
+        job(null, [done('j2', 'unit'), done('j1', 'switch')]); await __advance(2000); await __settle(); await __advance(2000);
+        report({view: activeView, sheet: SHEET, scrim: $('scrim').hidden, toast: toastText(), actions: state().actions});
+        """)
+        self.assertEqual(r["actions"], ["switch", "unit"], r)
+        self.assertEqual(r["view"], "library", "the page stays where the person went")
+        self.assertIsNone(r["sheet"])
+        self.assertTrue(r["scrim"])
+        self.assertIn("every step done", r["toast"])
+
+    def test_a_hidden_load_that_fails_comes_back_with_why(self):
+        r = run(self, self.BODY + r"""
+        running('j1', 30, 'downloading'); await __advance(1000);
+        $('sh-cancel').click(); await __settle();
+        const hidden = $('scrim').hidden;
+        job(null, [{id: 'j1', action: 'switch', status: 'failed', rc: 1, elapsed: 31}]);
+        await __advance(2000); await __settle();
+        report({hidden, back: !$('scrim').hidden, status: txt('sh-status'), label: txt('sh-cancel'), go: txt('sh-go')});
+        """)
+        self.assertTrue(r["hidden"])
+        self.assertTrue(r["back"], "a failure brings the window back")
+        self.assertIn("Step 1 failed with exit code 1", r["status"])
+        self.assertEqual((r["label"], r["go"]), ("Cancel", "Retry from here"))
+
+    def test_between_two_steps_the_job_button_stays_and_brings_the_window_back(self):
+        r = run(self, self.BODY + r"""
+        running('j1', 30, 'downloading'); await __advance(1000);
+        $('sh-cancel').click(); await __settle();
+        job(null, [done('j1', 'switch')]);              // the next step is posted, its job not seen yet
+        await __advance(600); await __settle();
+        const between = {pip: !$('jobpip').hidden, what: txt('jobpip-what')};
+        $('jobpip').click(); await __settle();
+        report({between, back: !$('scrim').hidden, pipAfter: !$('jobpip').hidden});
+        """)
+        self.assertEqual(r["between"], {"pip": True, "what": "Load 27B uncensored, NVFP4: between steps"}, r)
+        self.assertTrue(r["back"])
+        self.assertFalse(r["pipAfter"], "the window is back and no job runs: the button has nothing left to bring back")
+
+    def test_the_job_button_goes_once_a_hidden_load_has_ended(self):
+        r = run(self, self.BODY + r"""
+        running('j1', 30, 'downloading'); await __advance(1000);
+        $('sh-cancel').click(); await __settle();
+        job(null, [done('j1', 'switch')]); await __advance(2000); await __settle(); await __advance(1000);
+        job(null, [done('j2', 'unit'), done('j1', 'switch')]); await __advance(2000); await __settle(); await __advance(2000);
+        report({pip: !$('jobpip').hidden, sheet: SHEET});
+        """)
+        self.assertFalse(r["pip"], "nothing runs and no load waits: no job button")
+        self.assertIsNone(r["sheet"])
+
+    def test_the_job_button_brings_a_hidden_load_back(self):
+        r = run(self, self.BODY + r"""
+        running('j1', 30, 'downloading'); await __advance(1000);
+        $('sh-cancel').click(); await __settle();
+        const hidden = $('scrim').hidden;
+        running('j1', 90, 'downloading'); await __advance(500);
+        $('jobpip').click(); await __settle();
+        report({hidden, back: !$('scrim').hidden, live: state().live[0]});
+        """)
+        self.assertTrue(r["hidden"])
+        self.assertTrue(r["back"], "the job button reopens the load window")
+        self.assertIn("1 min 30 so far: downloading", r["live"])
+
+
 class TheLastFiveMinutesSayTheEnginesCounters(unittest.TestCase):
     """The Traffic view's last 5 minutes come from the engine's own counters, which the
     cockpit reads and windows (engine_metrics.py): what each row says, and what the box says
