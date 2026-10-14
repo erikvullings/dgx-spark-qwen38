@@ -666,7 +666,11 @@ function askJourney(target, opts = {}){
     li.append(n, body); j.append(li);
   });
   show('sh-cmd-lbl', false); show('sh-cmd', false);
-  setText('sh-status', `${steps.length} step${steps.length > 1 ? 's' : ''}, about ${fmtMin(bootSeconds(unit) + 15)} in all`);
+  // a first Load downloads before it boots, and the page can time the boot, not the downloads
+  const boot = fmtMin(bootSeconds(unit) + 15);
+  setText('sh-status', steps.some(s => s.name === 'prepare')
+    ? `${steps.length} steps: its first Load downloads first (the line under each step says how far it is), then it answers in about ${boot}`
+    : `${steps.length} step${steps.length > 1 ? 's' : ''}, about ${boot} in all`);
   $('sh-status').className = 'status';
   const go = $('sh-go'); go.disabled = false; go.className = 'btn primary'; setText(go, `Load ${LANE_NAME[unit]}`);
   SHEET = {mode: 'journey', target, steps, idx: 0, onClose: opts.onClose};

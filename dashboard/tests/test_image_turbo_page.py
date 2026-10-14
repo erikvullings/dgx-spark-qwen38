@@ -102,6 +102,21 @@ class LoadingIt(unittest.TestCase):
         self.assertNotIn("The next step fetches", r["desc"])
         self.assertEqual(r["cmd"], "bash prepare-lane.sh 27b")
 
+    def test_the_window_does_not_time_a_first_load_by_its_boot_alone(self):
+        # "4 steps, about 90 s in all" stood over 8 minutes of preparation and download on the
+        # reference box (2026-10-15): the page can time the boot, not the downloads
+        def status(ready):
+            return run(self, lanes("stopped", "image", text_state="ready") + r"""
+            feed({lanes_ready: {image: %s, video: true, kolibri: null}});
+            askJourney('image');
+            report($('sh-status').textContent);
+            """ % ready)
+        first = status("false")
+        self.assertIn("its first Load downloads first", first)
+        self.assertIn("then it answers in about", first)
+        self.assertNotIn("in all", first)
+        self.assertRegex(status("true"), r"^\d+ steps, about .+ in all$")
+
     def test_a_lane_not_prepared_offers_its_load_and_no_start(self):
         # Start as installed would start a unit with nothing to run (the flash lane's launcher
         # would pull its 30 GB image inside the start, then find no checkpoint): its Load
