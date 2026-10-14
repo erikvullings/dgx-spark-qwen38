@@ -458,6 +458,8 @@ class AnUpstreamShutDown(unittest.TestCase):
         # the answer took its socket's number, then a duplicate of it was shut down: the pump
         # can close the answer in between (the stream's last chunk) and the number then goes to
         # the next socket anyone opens, which was shut down instead (found in review, 2026-10-14)
+        saved = dict(os.environ)
+        self.addCleanup(lambda: (os.environ.clear(), os.environ.update(saved)))
         os.environ["UPSTREAM"] = "http://127.0.0.1:9"
         mod = load_proxy(f"kproxy_shut_{time.time_ns()}")
 
