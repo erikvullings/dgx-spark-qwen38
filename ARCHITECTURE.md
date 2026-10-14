@@ -15,9 +15,10 @@ CI keeps true.
   keepalive-proxy.py ── feeds ──> cockpit request feed / zombie guard
       |  127.0.0.1 :30000
       v
-  SGLang engine (docker, exactly one lane enabled at a time)
-      ├── 27B lane: qwen38-sglang(.service)      NVFP4/FP8 + DFlash2 draft
-      └── flash lane: qwen38-flash(.service)      176B NVFP4 + NEXTN, PLE table on NVMe
+  text engine (docker, exactly one lane enabled at a time)
+      ├── 27B lane: qwen38-sglang(.service)      SGLang, NVFP4/FP8 + DFlash2 draft
+      ├── flash lane: qwen38-flash(.service)      SGLang, 176B NVFP4 + NEXTN, PLE table on NVMe
+      └── Kolibri lane: qwen38-kolibri(.service)  vLLM 0.29 + Aleph Alpha's plugin, Kolibri-1 FP8 or NVFP4
   HF cache (weights, pinned revisions)    ~/flashnext-ple (176B N-gram table)
 
   cockpit :30090 ── sudo exact argv ──> systemd (start/stop/switch/flush)

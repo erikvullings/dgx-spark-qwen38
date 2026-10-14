@@ -86,8 +86,18 @@ Authentication on every path except `/health`: `Authorization: Bearer
 dialect is Bearer-only: an `x-api-key` header is not read. The engine
 enforces the key; the proxy forwards it verbatim.
 
-Served model names: `qwen3.8-27b` (27B lane, both context modes) and
-`qwen3.8-flash-next` (flash lane). Send the name, not the checkpoint path.
+Served model names: `qwen3.8-27b` (27B lane, both context modes),
+`qwen3.8-flash-next` (flash lane) and `kolibri-1` (Kolibri lane). Send the name,
+not the checkpoint path. A client set up for one lane keeps working on another:
+SGLang answers any name, and on the Kolibri lane, whose vLLM refuses a model it does
+not serve, the proxy gives such a request the served name (proxy v6.37).
+
+The Kolibri lane (vLLM, [docs/kolibri-lane.md](kolibri-lane.md)) differs from the
+Qwen lanes in three things a client sees: its reasoning comes in the `reasoning` field
+of the message (vLLM's name; the Qwen lanes say `reasoning_content`), its levels are
+its own (`low`, `medium`, `high`, which its template defaults to, and `none`, in
+`chat_template_kwargs.reasoning_effort` or the top-level `reasoning_effort`), and it
+has no vision. `/v1/systemone` needs a Qwen lane and says so there.
 
 Reasoning effort is a first-class field in both dialects: `lean`, which a
 request that names no level gets, and Qwen's own `low`, `medium` and `xhigh`
