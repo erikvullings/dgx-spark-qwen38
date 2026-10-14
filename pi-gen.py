@@ -18,8 +18,9 @@ per model name, modalities, contextWindow, maxTokens, a 1568x1568 /
 512 KiB image resize limit and compat.supportsDeveloperRole false (the
 system prompt as "system": the served template refuses "developer");
 pi's settings.json adds the default model,
-modelThinkingLevels "off" for our models (unset sends no effort field, which
-is the patched template's lean default), keepRecentTokens from the artifact's
+modelThinkingLevels "off" for the Qwen models (unset sends no effort field, which
+is the patched template's lean default) and "high" for Kolibri, which is sent
+its effort (EFFORT_FIELD), keepRecentTokens from the artifact's
 compaction block and per-lane reserveTokens = the lane's output cap. omp
 gets the same values re-serialized: the same models array, thinking block
 added, inputLimits and pi's compat dropped (its schema has no room for them);
@@ -140,6 +141,13 @@ def api_key(options):
 # 400 "Unexpected message role." (pi 0.99.2 through the proxy to the flash lane,
 # 2026-10-01). With the role off, the prompt goes out as "system".
 PI_COMPAT = {"supportsDeveloperRole": False}
+# Kolibri's template reads reasoning_effort none, low, medium or high, and vLLM 0.29 hands it
+# a request's top-level field (and none turns thinking off). With no field it reasons at high:
+# pi's "off" sent nothing, so a pi user saw thinking off on a lane reasoning at high on every
+# request (found in review, 2026-10-14). pi sends the field for these models, its "off" as
+# none and its other levels as the nearest of the four, and starts at high, what Kolibri does
+# unasked. omp gets none as its "minimal" (OMP_LEVEL).
+EFFORT_FIELD = {"kolibri": ({"off": "none", "minimal": "low", "xhigh": "high"}, "high")}
 
 
 def model_meta(mid, m):
@@ -174,6 +182,10 @@ def build(artifact):
         provs[prov] = {"baseUrl": base, "api": "openai-completions",
                        "apiKey": api_key(opts), "models": [meta]}
         thinking[f"{prov}/{mid}"] = "off"
+        if prov in EFFORT_FIELD:
+            level_map, thinking[f"{prov}/{mid}"] = EFFORT_FIELD[prov]
+            meta["compat"]["supportsReasoningEffort"] = True
+            meta["thinkingLevelMap"] = dict(level_map)
         overrides[f"{prov}/{mid}"] = {"reserveTokens": meta["maxTokens"]}
         tiers = list((models[mid] or {}).get("variants") or {})
         if tiers:
@@ -208,7 +220,7 @@ def build(artifact):
 # vLLM and SGLang, sends the kwargs alone. omp validates models.yml itself:
 # these spellings were fixed against its error output, not only the docs.
 OMP_LEVEL = {"lean": "minimal", "low": "low", "medium": "medium", "minimal": "minimal",
-             "high": "high", "xhigh": "xhigh", "max": "max"}
+             "high": "high", "xhigh": "xhigh", "max": "max", "none": "minimal"}
 
 
 def omp_thinking(tiers):
@@ -228,7 +240,12 @@ def omp_thinking(tiers):
     compat = {"thinkingFormat": "qwen-chat-template"}
     if not levels:
         return None, compat
-    default = "minimal" if "lean" in tiers and "minimal" in levels else levels[0]
+    if "lean" in tiers and "minimal" in levels:
+        default = "minimal"           # the patched Qwen template's own default
+    elif "none" in tiers and "high" in levels:
+        default = "high"              # Kolibri reasons at high unasked (EFFORT_FIELD)
+    else:
+        default = levels[0]
     thinking = {"mode": "effort", "efforts": levels, "defaultLevel": default}
     compat["qwenTemplateReasoningEffort"] = True
     if rmap:
@@ -250,7 +267,7 @@ def omp_convert(models_doc, settings, efforts):
             # does not carry them, and a schema error makes omp skip the whole
             # file. models is an ARRAY in omp too (verified against omp's own
             # validation error).
-            e = {k: v for k, v in m.items() if k not in ("inputLimits", "compat")}
+            e = {k: v for k, v in m.items() if k not in ("inputLimits", "compat", "thinkingLevelMap")}
             thinking, compat = omp_thinking(efforts.get(f"{prov}/{m['id']}", []))
             if thinking:
                 e["thinking"] = thinking

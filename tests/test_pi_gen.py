@@ -160,6 +160,37 @@ class PiGen(unittest.TestCase):
                                   "reasoningEffortMap": {"minimal": "lean"}})
         self.assertEqual(omp_cfg["modelRoles"]["default"], "qwen38/qwen3.8-27b")
 
+    def test_kolibri_is_sent_its_effort_and_starts_at_high(self):
+        # Kolibri reasons at high with no effort field: pi's "off" sent nothing, so a pi user saw
+        # thinking off while every request reasoned at high (found in review, 2026-10-14)
+        art = json.loads(json.dumps(ARTIFACT))
+        art["provider"]["kolibri"] = {
+            "options": {"baseURL": "http://127.0.0.1:30001/v1", "apiKey": "{file:/keys/api-key}"},
+            "models": {"kolibri-1": {"name": "Kolibri-1 FP8 official (local, 262K)",
+                                     "limit": {"context": 173000, "input": 173000, "output": 64000},
+                                     "variants": {"none": {}, "low": {}, "medium": {}, "high": {}},
+                                     "modalities": {"input": ["text"], "output": ["text"]}}}}
+        art["model"] = "kolibri/kolibri-1"
+        with open(self.art, "w") as f:
+            f.write(json.dumps(art))
+        self.gen()
+        models, settings = self.read_pi()
+        entry = models["providers"]["kolibri"]["models"][0]
+        self.assertEqual(entry["compat"], {"supportsDeveloperRole": False, "supportsReasoningEffort": True})
+        self.assertEqual(entry["thinkingLevelMap"], {"off": "none", "minimal": "low", "xhigh": "high"})
+        self.assertEqual(settings["modelThinkingLevels"]["kolibri/kolibri-1"], "high")
+        self.assertEqual(settings["modelThinkingLevels"]["qwen38/qwen3.8-27b"], "off", "the Qwen lanes as before")
+        self.assertNotIn("thinkingLevelMap", models["providers"]["qwen38"]["models"][0])
+        omp_models, _ = self.read_omp()
+        omp_entry = dict(omp_models["providers"]["kolibri"]["models"][0])
+        self.assertEqual(omp_entry.pop("thinking"), {"mode": "effort", "efforts": ["minimal", "low", "medium", "high"],
+                                                     "defaultLevel": "high"})
+        self.assertEqual(omp_entry.pop("compat"), {"thinkingFormat": "qwen-chat-template",
+                                                   "qwenTemplateReasoningEffort": True,
+                                                   "reasoningEffortMap": {"minimal": "none"}})
+        pi_entry = {k: v for k, v in entry.items() if k not in ("compat", "thinkingLevelMap")}
+        self.assertEqual(omp_entry, pi_entry, "one build, two serializations; omp has no thinkingLevelMap")
+
     def test_idempotent(self):
         self.gen()
         again = self.gen()
