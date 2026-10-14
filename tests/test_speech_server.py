@@ -151,7 +151,11 @@ class Routes(unittest.TestCase):
         cases = [({"input": ""}, "non-empty"), ({"input": "  "}, "non-empty"), ({"voice": "af_heart"}, "non-empty"),
                  ({"input": "x" * 4097}, "4097"), ({"input": "x", "voice": "nobody"}, "no voice"),
                  ({"input": "x", "speed": 3}, "between"), ({"input": "x", "speed": "fast"}, "number"),
-                 ({"input": "x", "response_format": "mp3"}, "wav or pcm")]
+                 ({"input": "x", "response_format": "mp3"}, "wav or pcm"),
+                 # a voice that is not a string dropped the connection with no answer, its
+                 # lookup raising in the handler (found in review, 2026-10-14)
+                 ({"input": "x", "voice": ["af_heart"]}, "'voice' must be a string"),
+                 ({"input": "x", "voice": {"id": "af_heart"}}, "'voice' must be a string")]
         for req, needle in cases:
             with self.subTest(req=req):
                 code, _, body = self.speak(**req)

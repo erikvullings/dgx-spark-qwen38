@@ -294,6 +294,8 @@ def make_handler(tts, asr_url, default_voice, asr_name, tts_name="kokoro-82m", a
             if len(text) > MAX_INPUT:
                 return self._err(400, f"'input' is {len(text)} characters, over {MAX_INPUT}")
             voice = req.get("voice") or default_voice
+            if not isinstance(voice, str):
+                return self._err(400, "'voice' must be a string")
             if voice in OPENAI_VOICES:
                 voice = default_voice
             if voice not in tts.voices:
