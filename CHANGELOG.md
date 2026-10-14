@@ -1,5 +1,51 @@
 # Changelog
 
+## v1.31.0 (2026-10-14): one fetch for every lane's checkpoint, and a text Load that needs no network
+
+**One fetch for every lane's checkpoint.** Seven copies of the download had grown in install.sh,
+install-image.sh, install-video.sh, install-kolibri.sh and switch-model.sh, and they had drifted:
+a switch to the image or video lane (a cockpit Load) gave up at the first network error where
+every installer retried; only the Kolibri lane checked that every shard an index names is in the
+cache before trusting a snapshot, which huggingface_hub's own offline check misses without its
+tree cache; what the cache already held came off the room needed in GB in one copy and in GiB in
+another; and the Xet exception the flash checkpoint's 53.7 GB n-gram table needs lived in the text
+lanes' copies alone. They are one script now, `ckpt-fetch.py`, run where each lane's own
+huggingface_hub is (the text lanes' and Kolibri's serving images, the image and video lanes'
+venvs): five resumed attempts everywhere, the byte count everywhere (the text, image and video
+installers had none), the room counted in bytes (the need in GB, the free side as df counts it),
+the Xet exception for any repo the CDN refuses, and the shard check wherever the cache is asked
+first (every switch, and Kolibri's installer), on the files a lane serves (the reference box
+keeps an index of MiniMax-H3's Ref2VA partition, with none of its shards, from a pull that once
+began it). What each caller keeps of
+its own is an option: the cache first, the room, and what becomes of refs/main (pointed at the
+commit fetched where a unit serves the repo by name, the image and video installers and the
+image switch; filled only where missing or broken for the text lanes and the video switch).
+`kolibri-fetch.py` went into it.
+
+**A Load of a text lane needs no network when the cache holds it.** The text switch (the 27B's
+targets and the flash's) asked the Hub every time, so a cockpit Load whose checkpoint the cache
+held whole died without the network or under the Hub's throttling, where the image, video and
+Kolibri switches answered from the cache. It asks the cache first now, as they do.
+
+**pi and omp follow an update.** pi-gen.py writes their files from the opencode.json this box's
+install fits, and a switch or a fit regenerated them, an update did not: v1.30.0's changed
+Kolibri's pair in opencode.json and left pi's at the old one until the next switch. install.sh
+regenerates them now, on a box that asked for them once (docs/pi.md).
+
+**The README's first screen** says what the box is in one promise, three numbers measured on the
+reference box, and why this rather than a recipe.
+
+**Tested.** ckpt-fetch.py runs whole against a fake hub (a whole snapshot answers without the
+network; a missing shard, a shard whose blob is gone, or a component's index left short is
+fetched; resumed attempts; the Xet exception and its end; the room; both refs/main policies),
+every caller runs it with its options and none keeps a fetch of its own, the switches' own blocks
+and the installers' steps run against fakes as before, the text switch's run asks the cache
+first, and install.sh regenerates pi's and omp's files as the switch does. On the reference box, offline and
+with the cache mounted read-only, it found every cached checkpoint whole in each lane's own
+runtime: the 27B and its drafter and the flash in their SGLang images, both Kolibri checkpoints
+in the vLLM image, the image lane and its Turbo, and the video lane's FL2VA partition in their
+venvs (14 runs, both modes wherever the callers use both).
+
 ## v1.30.0 (2026-10-14): Kolibri compacts at 185,000 tokens, one record of the text lane, and each lane proved on what is installed
 
 Kolibri's opencode limits, and what the review of v1.29.0 left as proposals, done.
