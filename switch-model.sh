@@ -71,6 +71,11 @@ IMG_STAGE="$CONFIG_DIR/qwen38-image.service.switch-stage"
 VIDEO_UNIT="/etc/systemd/system/qwen38-video.service"
 VIDEO_UNIT_NAME="qwen38-video.service"
 
+# The one fetch of every lane's checkpoint, run in the lane's image or venv. Checked here,
+# before any branch mounts it: docker -v of a host file that is not there makes a
+# root-owned directory in its place.
+[ -f "$REPO_DIR/ckpt-fetch.py" ] || die "ckpt-fetch.py is missing next to this script: run it from the repository."
+
 # Free GB under a path's filesystem, whole numbers, "" when df cannot answer. Every
 # branch's room check reads through this, so it lives before the branches run.
 dl_free_gb(){ local p="${1:-$HF_CACHE}"; while [ ! -e "$p" ]; do p="$(dirname "$p")"; done
@@ -137,19 +142,18 @@ if [ "$CHOICE" = "kolibri" ] || [ "$CHOICE" = "kolibri-nvfp4" ]; then
   if [ -n "${HF_TOKEN:-}" ]; then export HF_TOKEN; KOL_TOKEN_ARGS=(-e HF_TOKEN); fi
   KOL_PROGRESS_ARGS=()
   if [ -f "$REPO_DIR/hf-progress.py" ]; then
-    KOL_PROGRESS_ARGS=(-v "$REPO_DIR/hf-progress.py:/opt/qwen38/hf-progress.py:ro" -e QWEN38_REPO_DIR=/opt/qwen38)
+    KOL_PROGRESS_ARGS=(-v "$REPO_DIR/hf-progress.py:/opt/qwen38/hf-progress.py:ro")
   fi
   # In the lane's own image, as the text lanes fetch theirs in their serving image; --init
   # for the same reason as below: a cockpit job stopped past its timeout stops this too.
-  # kolibri-fetch.py is the one copy of the fetch, install-kolibri.sh's too (it says why).
+  # ckpt-fetch.py is the one fetch of every lane's checkpoint (it says why).
   docker run --rm --init --network host --user "$(id -u):$(id -g)" --entrypoint python3 \
     -e HF_HOME=/hf -e HF_HUB_DOWNLOAD_TIMEOUT=30 -e HF_HUB_DISABLE_XET=1 \
     -e HF_HUB_DISABLE_PROGRESS_BARS="$DL_NO_BARS" \
-    -e KOL_MODEL="$KOL_MODEL" -e KOL_REV="$KOL_REV" \
-    -e KOL_NEED_GB="$KOL_NEED_GB" -e KOL_FREE_GB="$(dl_free_gb "$KOL_HF")" \
     "${KOL_TOKEN_ARGS[@]}" "${KOL_PROGRESS_ARGS[@]}" \
-    -v "$REPO_DIR/kolibri-fetch.py:/opt/qwen38/kolibri-fetch.py:ro" \
-    -v "$KOL_HF":/hf "$KOL_IMAGE" /opt/qwen38/kolibri-fetch.py \
+    -v "$REPO_DIR/ckpt-fetch.py:/opt/qwen38/ckpt-fetch.py:ro" \
+    -v "$KOL_HF":/hf "$KOL_IMAGE" /opt/qwen38/ckpt-fetch.py "$KOL_MODEL" "$KOL_REV" --offline-first \
+    --need-gb "$KOL_NEED_GB" --free-gb "$(dl_free_gb "$KOL_HF")" \
     || die "the Kolibri checkpoint could not be verified or fetched (re-run to resume; set HF_TOKEN if it stalls)"
   # The unit names one checkpoint, its revision and its memory share, on one line each; a
   # switch rewrites those and nothing else.
@@ -309,61 +313,17 @@ if [ "$CHOICE" = "image" ] || [ "$CHOICE" = "image-turbo" ]; then
   fi
   printf '\n\033[1;36m── Verifying %s @ %s in the cache (resumable)\033[0m\n' "$IMG_MODEL" "$IMG_REV"
   # The same two lessons the text lanes learned: Xet stalls on this box, and an
-  # unauthenticated pull gets throttled. local_files_only first, so a complete cache
-  # answers without touching the network at all. A revision is fetched as such and
-  # refs/main pointed at it when it had none, because the unit runs offline by name, which
-  # resolves refs/main: fetched at main, a push upstream would have changed what the lane
-  # serves (the same lesson as install-image.sh, 2026-09-24).
-  HF_HOME="${IMG_HF:-$HF_CACHE}" HF_HUB_DOWNLOAD_TIMEOUT=30 HF_HUB_DISABLE_XET=1 IMG_MODEL="$IMG_MODEL" IMG_REV="$IMG_REV" \
-    IMG_NEED_GB=34 IMG_FREE_GB="$(dl_free_gb "${IMG_HF:-$HF_CACHE}")" \
-    HF_HUB_DISABLE_PROGRESS_BARS="$DL_NO_BARS" QWEN38_REPO_DIR="$REPO_DIR" \
-    "$IMG_PY" - <<'PYIMG' || die "the image checkpoint could not be verified or fetched (re-run to resume; set HF_TOKEN if it stalls)"
-import contextlib
-import importlib.util
-import os
-from huggingface_hub import snapshot_download
-
-
-def reporting(*args, **kwargs):
-    """hf-progress.py's byte count while the rest comes; a progress line is never worth a download."""
-    try:
-        spec = importlib.util.spec_from_file_location(
-            "hf_progress", os.path.join(os.environ["QWEN38_REPO_DIR"], "hf-progress.py"))
-        mod = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(mod)
-        return mod.reporting(*args, **kwargs)
-    except Exception:
-        return contextlib.nullcontext()
-
-
-repo, rev = os.environ["IMG_MODEL"], os.environ["IMG_REV"]
-try:
-    path = snapshot_download(repo, revision=rev, local_files_only=True)
-except Exception:
-    # Both checkpoints of this lane are about 33 GB; refused before the first byte rather
-    # than stopped by a full disk halfway. What the cache already holds of the repo comes
-    # off the need: a fetch that stopped resumes from there.
-    from huggingface_hub import constants
-    blobs = os.path.join(constants.HF_HUB_CACHE, "models--" + repo.replace("/", "--"), "blobs")
-    have = sum(e.stat().st_size for e in os.scandir(blobs) if e.is_file()) if os.path.isdir(blobs) else 0
-    free = int(os.environ.get("IMG_FREE_GB") or 0)
-    need = max(int(os.environ["IMG_NEED_GB"]) - have // 2**30, 1)
-    if free and free < need:
-        raise SystemExit(f"{free} GB free in the cache, and {repo} needs about {need} GB more: free some space first")
-    print("not complete in the cache, fetching the rest", flush=True)
-    with reporting(repo, revision=rev):
-        path = snapshot_download(repo, revision=rev)
-print(path)
-sha = os.path.basename(path.rstrip("/"))
-if rev != "main" and sha == rev:
-    ref = os.path.join(os.path.dirname(os.path.dirname(path.rstrip("/"))), "refs", "main")
-    os.makedirs(os.path.dirname(ref), exist_ok=True)
-    old = open(ref).read().strip() if os.path.exists(ref) else ""
-    if old != sha:
-        with open(ref, "w") as f:
-            f.write(sha)
-        print(f"refs/main -> {sha[:12]}" + (f" (was {old[:12]})" if old else ""), flush=True)
-PYIMG
+  # unauthenticated pull gets throttled. ckpt-fetch.py, the one fetch of every lane: the
+  # cache first, so a complete one answers without touching the network at all; both
+  # checkpoints of this lane are about 33 GB, refused before the first byte when the room
+  # is not there. A revision is fetched as such and refs/main pointed at it, because the
+  # unit runs offline by name, which resolves refs/main: fetched at main, a push upstream
+  # would have changed what the lane serves (the same lesson as install-image.sh, 2026-09-24).
+  HF_HOME="${IMG_HF:-$HF_CACHE}" HF_HUB_DOWNLOAD_TIMEOUT=30 HF_HUB_DISABLE_XET=1 \
+    HF_HUB_DISABLE_PROGRESS_BARS="$DL_NO_BARS" \
+    "$IMG_PY" "$REPO_DIR/ckpt-fetch.py" "$IMG_MODEL" "$IMG_REV" --offline-first \
+    --need-gb 34 --free-gb "$(dl_free_gb "${IMG_HF:-$HF_CACHE}")" --refs-main pin \
+    || die "the image checkpoint could not be verified or fetched (re-run to resume; set HF_TOKEN if it stalls)"
   # The unit names one checkpoint; a switch between the lane's two rewrites that name and
   # nothing else.
   IMG_REWRITTEN=""
@@ -483,54 +443,16 @@ if [ "$CHOICE" = "video" ]; then
   VID_FREE_GB="$(dl_free_gb "${VID_HF:-$HF_CACHE}")"
   [ "${VID_FREE_GB:-0}" -ge "$VID_WANT_GB" ] \
     || die "not enough room for $VID_MODEL under HF_HOME=${VID_HF:-$HF_CACHE}: ${VID_FREE_GB:-?} GB free, about $VID_WANT_GB GB needed (nothing was changed). Free some space first, or point HF_HOME at a bigger disk."
-  HF_HOME="${VID_HF:-$HF_CACHE}" HF_HUB_DOWNLOAD_TIMEOUT=30 HF_HUB_DISABLE_XET=1 VID_MODEL="$VID_MODEL" VID_ALLOW="$VID_ALLOW" VID_REV="$VID_REV" \
-    HF_HUB_DISABLE_PROGRESS_BARS="$DL_NO_BARS" QWEN38_REPO_DIR="$REPO_DIR" \
-    "$VID_PY" - <<'PYVID' || die "the video checkpoint could not be verified or fetched (re-run to resume; set HF_TOKEN if it stalls; if the pinned revision was removed upstream, ./install-video.sh VIDEO_MODEL_REV=main re-pins it)"
-import contextlib
-import importlib.util
-import os
-import re
-from huggingface_hub import snapshot_download
-
-
-def reporting(*args, **kwargs):
-    """hf-progress.py's byte count while the rest comes; a progress line is never worth a download."""
-    try:
-        spec = importlib.util.spec_from_file_location(
-            "hf_progress", os.path.join(os.environ["QWEN38_REPO_DIR"], "hf-progress.py"))
-        mod = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(mod)
-        return mod.reporting(*args, **kwargs)
-    except Exception:
-        return contextlib.nullcontext()
-
-
-repo = os.environ["VID_MODEL"]
-rev = os.environ["VID_REV"]
-allow = [p for p in os.environ["VID_ALLOW"].split() if p] or None
-try:
-    # local_files_only first, so a complete cache answers without touching the
-    # network at all; a full sha resolves straight from snapshots/, refs or no refs.
-    path = snapshot_download(repo, revision=rev, local_files_only=True, allow_patterns=allow)
-except Exception:
-    print("not complete in the cache, fetching the rest", flush=True)
-    with reporting(repo, revision=rev, allow_patterns=allow):
-        path = snapshot_download(repo, revision=rev, allow_patterns=allow)
-print(path)
-# refs/main is what the offline unit resolves, and a download by sha never writes
-# it: create it when missing, repair it when it holds no commit hash (a corrupt ref
-# strands the unit offline whatever just succeeded here), never move a valid one
-# the installer or the pin watch will answer for. This runs on the local-cache
-# success too: that is the common path, and the ref can be exactly as absent there.
-if len(rev) == 40:
-    ref = os.path.join(os.path.dirname(os.path.dirname(path.rstrip("/"))), "refs", "main")
-    cur = open(ref).read().strip() if os.path.exists(ref) else ""
-    if cur != rev and not re.fullmatch(r"[0-9a-f]{40}", cur):
-        os.makedirs(os.path.dirname(ref), exist_ok=True)
-        with open(ref, "w") as f:
-            f.write(rev)
-        print(f"   refs/main -> {rev[:12]}", flush=True)
-PYVID
+  # ckpt-fetch.py, the one fetch of every lane: the cache first (a full sha resolves straight
+  # from snapshots/, refs or no refs), then the rest with resumed attempts. refs/main is what
+  # the offline unit resolves, and a download by sha never writes it: --refs-main fill creates
+  # it when missing and repairs it when it holds no commit hash (a corrupt ref strands the unit
+  # offline whatever just succeeded here), and never moves a valid one the installer or the pin
+  # watch will answer for. It runs on the local-cache success too: that is the common path.
+  HF_HOME="${VID_HF:-$HF_CACHE}" HF_HUB_DOWNLOAD_TIMEOUT=30 HF_HUB_DISABLE_XET=1 \
+    HF_HUB_DISABLE_PROGRESS_BARS="$DL_NO_BARS" \
+    "$VID_PY" "$REPO_DIR/ckpt-fetch.py" "$VID_MODEL" "$VID_REV" --allow "$VID_ALLOW" --offline-first --refs-main fill \
+    || die "the video checkpoint could not be verified or fetched (re-run to resume; set HF_TOKEN if it stalls; if the pinned revision was removed upstream, ./install-video.sh VIDEO_MODEL_REV=main re-pins it)"
   # Which lane this box served, written down before it is disabled: install.sh
   # updates that lane on a later run, and enablement cannot tell it once all are off.
   for TEXT_UNIT_NAME in qwen38-sglang.service qwen38-flash.service; do
@@ -720,94 +642,31 @@ DL_TOKEN_ARGS=()
 # by name: docker takes the value from its own environment, so the token is not in the
 # docker client's argv, which any local user can read in /proc (found in review, 2026-09-24)
 if [ -n "${HF_TOKEN:-}" ]; then export HF_TOKEN; DL_TOKEN_ARGS=(-e HF_TOKEN); fi
-# The byte count reads hf-progress.py in the container. Mounted only when it is there: a
-# bind of a missing file makes docker create a root-owned directory in its place.
+# The byte count reads hf-progress.py in the container, beside ckpt-fetch.py. Mounted only
+# when it is there: a bind of a missing file makes docker create a root-owned directory in
+# its place.
 DL_PROGRESS_ARGS=()
 if [ -f "$REPO_DIR/hf-progress.py" ]; then
-  DL_PROGRESS_ARGS=(-v "$REPO_DIR/hf-progress.py:/opt/qwen38/hf-progress.py:ro" -e QWEN38_REPO_DIR=/opt/qwen38)
+  DL_PROGRESS_ARGS=(-v "$REPO_DIR/hf-progress.py:/opt/qwen38/hf-progress.py:ro")
 fi
 # --init: the cockpit stops a switch that overruns its job timeout with a TERM to the
 # whole process group, and docker run passes it on to the container, where python3 as
 # PID 1 has no handler for it and ignores it. Measured on the reference box: without
 # --init the container outlived the TERM and then a SIGKILL of its docker client, and
 # went on downloading with nobody attached; with it, both were gone within 6 s.
-docker run --rm -i --init --network host --user "$(id -u):$(id -g)" \
+# ckpt-fetch.py, the one fetch of every lane's checkpoint (resumed attempts, the Xet exception
+# the flash checkpoint's 53.7 GB n-gram table needs, the byte count). Offline serving resolves
+# "main" via refs/main, which a pinned-sha download never writes: --refs-main fill writes it
+# where it is missing and never moves one the box serves.
+docker run --rm --init --network host --user "$(id -u):$(id -g)" \
   --entrypoint python3 \
   -e HF_HOME=/hf -e HF_HUB_DOWNLOAD_TIMEOUT=30 -e HF_HUB_DISABLE_XET=1 \
   -e HF_HUB_DISABLE_PROGRESS_BARS="$DL_NO_BARS" \
-  -e MODEL_REPO="$TARGET_REPO" -e MODEL_REV="$TARGET_REV" \
   "${DL_TOKEN_ARGS[@]}" "${DL_PROGRESS_ARGS[@]}" \
+  -v "$REPO_DIR/ckpt-fetch.py:/opt/qwen38/ckpt-fetch.py:ro" \
   -v "$HF_CACHE":/hf \
-  "$DL_IMAGE" - <<'PYEOF' || die "download failed ($(dl_free_gb) GB left under $HF_CACHE; if that is near 0 the disk filled up, otherwise re-run to resume: HuggingFace throttles unauthenticated downloads, set HF_TOKEN=<your token> if it stalls)"
-import contextlib
-import importlib.util
-import os
-import time
-from huggingface_hub import constants, snapshot_download
-
-
-def reporting(*args, **kwargs):
-    """hf-progress.py's byte count while the checkpoint comes; never worth a download."""
-    try:
-        spec = importlib.util.spec_from_file_location(
-            "hf_progress", os.path.join(os.environ["QWEN38_REPO_DIR"], "hf-progress.py"))
-        mod = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(mod)
-        return mod.reporting(*args, **kwargs)
-    except Exception:
-        return contextlib.nullcontext()
-
-
-def download(repo, rev):
-    """snapshot_download, with the one exception to the Xet ban above.
-
-    The classic CDN refuses any single file over MAX_HTTP_DOWNLOAD_SIZE
-    (50,000,000,000 bytes) and says so in a ValueError naming hf_xet. One target
-    ships such a file: nvidia/Qwen3.8-Flash-Next-NVFP4 carries its n-gram table
-    as one 53.7 GB safetensors. Without this, that target cannot be fetched at
-    all: the resume loop retries the refusal four times and the run dies under a
-    message naming four causes that are all the wrong one, over a traceback that
-    does name hf_xet (seen 2026-09-18, 74 GB of the 124 left in cache). Xet is
-    turned back on only for the repo the CDN just refused, and turned off again
-    right after, so every other file keeps the transfer path that measured
-    89 MB/s against its 0-8.
-    """
-    try:
-        return snapshot_download(repo, revision=rev)
-    except Exception as e:
-        if "too large to be downloaded" not in str(e) or not constants.HF_HUB_DISABLE_XET:
-            raise
-        print("a file is over the classic CDN limit; retrying this repo with Xet", flush=True)
-        constants.HF_HUB_DISABLE_XET = False
-        try:
-            return snapshot_download(repo, revision=rev)
-        finally:
-            constants.HF_HUB_DISABLE_XET = True
-
-
-print("──", os.environ["MODEL_REPO"], "@", os.environ["MODEL_REV"], flush=True)
-with reporting(os.environ["MODEL_REPO"], revision=os.environ["MODEL_REV"]):
-    # a new attempt keeps every file already whole; one cut off mid-way starts over (the
-    # huggingface_hub of the pinned images, 1.30 and 1.33, keeps no partial file)
-    for attempt in range(1, 6):
-        try:
-            path = download(os.environ["MODEL_REPO"], os.environ["MODEL_REV"])
-            break
-        except Exception as e:
-            if attempt == 5:
-                raise
-            print(f"download interrupted ({type(e).__name__}), resuming ({attempt}/5)...", flush=True)
-            time.sleep(10)
-# Same guarantee as install.sh: offline serving resolves "main" via refs/main,
-# which a pinned-sha download never writes. Write it once, never overwrite.
-sha = os.path.basename(path.rstrip("/"))
-ref = os.path.join(os.path.dirname(os.path.dirname(path.rstrip("/"))), "refs", "main")
-if len(sha) == 40 and not os.path.exists(ref):
-    os.makedirs(os.path.dirname(ref), exist_ok=True)
-    with open(ref, "w") as f:
-        f.write(sha)
-print("checkpoint ready", flush=True)
-PYEOF
+  "$DL_IMAGE" /opt/qwen38/ckpt-fetch.py "$TARGET_REPO" "$TARGET_REV" --refs-main fill \
+  || die "download failed ($(dl_free_gb) GB left under $HF_CACHE; if that is near 0 the disk filled up, otherwise re-run to resume: HuggingFace throttles unauthenticated downloads, set HF_TOKEN=<your token> if it stalls)"
 
 # 2) 1M YaRN patch on the target's cached config.json (27B pair only, and only
 #    if its unit uses it; flash serves its native window)

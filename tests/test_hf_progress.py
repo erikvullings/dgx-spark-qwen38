@@ -10,6 +10,7 @@ checkpoint: no sizes means one line and the download as before, and the download
 failure still fails the switch. They need no huggingface_hub and no network: the Hub is a
 stub module, the cache a temporary directory.
 """
+import ast
 import contextlib
 import importlib.util
 import os
@@ -271,63 +272,54 @@ def mock_modules(mods):
                 sys.modules[k] = v
 
 
-def heredoc(tag):
-    m = re.search(r"<<'%s'.*?\n(.*?)\n%s\n" % (tag, tag), SWITCH, re.S)
-    assert m, tag
-    return m.group(1)
+FETCH = (REPO / "ckpt-fetch.py").read_text()
 
 
-class SwitchModelWiresIt(unittest.TestCase):
-    """The three fetches of switch-model.sh (image lane, video lane, text lanes) each count
-    their bytes, and each keeps its download if the count cannot load."""
+def reporting_from(file):
+    """ckpt-fetch.py's reporting(), as it runs from `file`: it loads hf-progress.py beside itself."""
+    tree = ast.parse(FETCH)
+    fn = next(n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name == "reporting")
+    ns = {"__file__": str(file)}
+    exec(compile("import contextlib, importlib.util, os\n" + ast.get_source_segment(FETCH, fn), "ckpt-fetch.py", "exec"), ns)
+    return ns["reporting"]
 
-    def test_each_fetch_runs_inside_the_count(self):
-        self.assertRegex(heredoc("PYIMG"), r"with reporting\(repo, revision=rev\):\n\s+path = snapshot_download\(repo, revision=rev\)")
-        self.assertRegex(heredoc("PYVID"), r"with reporting\(repo, revision=rev, allow_patterns=allow\):\n"
-                                           r"\s+path = snapshot_download\(repo, revision=rev, allow_patterns=allow\)")
-        text = heredoc("PYEOF")
-        loop = text.index('with reporting(os.environ["MODEL_REPO"], revision=os.environ["MODEL_REV"]):')
-        self.assertLess(loop, text.index("for attempt in range(1, 6):"), "every resumed attempt is counted")
+
+class EveryFetchCountsItsBytes(unittest.TestCase):
+    """ckpt-fetch.py, the one fetch of every lane (switch-model.sh's four and the installers'),
+    counts its bytes, and keeps its download if the count cannot load."""
+
+    def test_every_resumed_attempt_runs_inside_the_count(self):
+        loop = FETCH.index("with reporting(a.repo, revision=a.rev, **kw):")
+        self.assertLess(loop, FETCH.index("for attempt in range(1, ATTEMPTS + 1):"), "every resumed attempt is counted")
 
     def test_a_cache_that_answers_alone_asks_the_hub_nothing(self):
-        # the image and video lanes try local_files_only first: no count, no request, there
-        for tag in ("PYIMG", "PYVID"):
-            body = heredoc(tag)
-            self.assertLess(body.index("local_files_only=True"), body.index("with reporting("), tag)
+        self.assertLess(FETCH.index("local_files_only=True"), FETCH.index("with reporting("))
 
     def test_the_count_that_cannot_load_is_no_count(self):
-        for tag in ("PYIMG", "PYVID", "PYEOF"):
-            body = heredoc(tag)
-            end = "return contextlib.nullcontext()"
-            helper = body[body.index("def reporting("):body.index(end) + len(end)]
-            ns = {}
-            exec(compile("import contextlib, importlib.util, os\n" + helper, tag, "exec"), ns)
-            for env in ({}, {"QWEN38_REPO_DIR": "/nonexistent"}):
-                with self.subTest(tag=tag, env=env), mock_env(env):
-                    cm = ns["reporting"]("org/model")
-                    self.assertIsInstance(cm, contextlib.nullcontext)
+        with tempfile.TemporaryDirectory() as d:
+            cm = reporting_from(pathlib.Path(d) / "ckpt-fetch.py")("org/model")
+        self.assertIsInstance(cm, contextlib.nullcontext)
 
-    def test_the_count_loads_from_the_repo(self):
-        body = heredoc("PYIMG")
-        end = "return contextlib.nullcontext()"
-        helper = body[body.index("def reporting("):body.index(end) + len(end)]
-        ns = {}
-        exec(compile("import contextlib, importlib.util, os\n" + helper, "PYIMG", "exec"), ns)
-        with mock_env({"QWEN38_REPO_DIR": str(REPO)}):
-            cm = ns["reporting"]("org/model")
+    def test_the_count_loads_from_beside_the_script(self):
+        cm = reporting_from(REPO / "ckpt-fetch.py")("org/model")
         self.assertNotIsInstance(cm, contextlib.nullcontext)
 
-    def test_the_container_gets_the_file_only_when_it_is_there(self):
+    def test_a_container_gets_the_file_only_when_it_is_there(self):
+        # beside ckpt-fetch.py in /opt/qwen38, where the docker callers mount both
         self.assertIn('if [ -f "$REPO_DIR/hf-progress.py" ]; then', SWITCH)
-        self.assertIn('-v "$REPO_DIR/hf-progress.py:/opt/qwen38/hf-progress.py:ro" -e QWEN38_REPO_DIR=/opt/qwen38', SWITCH)
+        self.assertEqual(SWITCH.count('-v "$REPO_DIR/hf-progress.py:/opt/qwen38/hf-progress.py:ro")'), 2,
+                         "the text lanes' and Kolibri's")
         self.assertIn('"${DL_TOKEN_ARGS[@]}" "${DL_PROGRESS_ARGS[@]}"', SWITCH)
+        self.assertNotIn("QWEN38_REPO_DIR", SWITCH, "the script finds it beside itself")
+        install = (REPO / "install.sh").read_text()
+        self.assertIn('[ -f "$REPO_DIR/hf-progress.py" ] && DL_PROGRESS_ARGS=(-v "$REPO_DIR/hf-progress.py:/opt/qwen38/hf-progress.py:ro")', install)
 
     def test_kolibris_installer_mounts_it_only_when_it_is_there_too(self):
         # docker -v of a host file that is not there makes a root-owned directory in its place,
         # here in the repository (found in review, 2026-10-14)
         kol = (REPO / "install-kolibri.sh").read_text()
         self.assertIn('[ -f "$HERE/hf-progress.py" ] && DL_PROGRESS_ARGS=(-v "$HERE/hf-progress.py:/opt/qwen38/hf-progress.py:ro")', kol)
-        self.assertIn('-v "$HERE/kolibri-fetch.py:/opt/qwen38/kolibri-fetch.py:ro" "${DL_PROGRESS_ARGS[@]}"', kol)
+        self.assertIn('-v "$HERE/ckpt-fetch.py:/opt/qwen38/ckpt-fetch.py:ro" "${DL_PROGRESS_ARGS[@]}"', kol)
         self.assertEqual(kol.count("hf-progress.py:/opt/qwen38/hf-progress.py"), 1, "one mount, the guarded one")
 
     def test_bars_go_only_without_a_terminal(self):

@@ -1,4 +1,4 @@
-"""Byte progress of a checkpoint download, for the three fetches of switch-model.sh.
+"""Byte progress of a checkpoint download, for ckpt-fetch.py, the one fetch of every lane.
 
 snapshot_download counts FILES ("Fetching 422 files: 35%"), a 53 GB safetensors the same
 as a 2 KB config, and through a 22-minute switch to a 135 GB checkpoint started from the
@@ -10,11 +10,11 @@ already holds whole (the releases pinned here start a cut-off file over).
 Bytes and rates are decimal (GB, MB/s), the way the Hub states repository sizes.
 
 The part that counts and words needs nothing. reporting() needs huggingface_hub, and runs
-wherever snapshot_download runs: the image and video lanes' venvs, the text lanes'
-pinned SGLang image. It never raises and never holds a download up: without the sizes it
-says so once and the download goes on as before. A file fetched over Xet (the one repo
-switch-model.sh lets use it) lands whole at its end, so the count holds still while it
-comes.
+wherever ckpt-fetch.py runs, which loads it from beside itself: the image and video lanes'
+venvs, the text lanes' pinned SGLang image and Kolibri's image, where both are mounted. It
+never raises and never holds a download up: without the sizes it says so once and the
+download goes on as before. A file fetched over Xet (the one repo ckpt-fetch.py lets use it)
+lands whole at its end, so the count holds still while it comes.
 """
 import os
 import threading

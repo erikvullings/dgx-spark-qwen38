@@ -5,8 +5,9 @@ install-image.sh fetched Qwen/Qwen-Image-2.1 at main, so a push upstream would h
 changed what a fresh install serves, the one thing every other pin in this repo prevents
 (found in review, 2026-09-24). The unit serves the repo by name with HF_HUB_OFFLINE=1,
 which resolves refs/main, and a download by commit writes no ref: the pinned commit has to
-become main. These run the script's own download step, as written, against a fake
-huggingface_hub that keeps the library's signature and lays out the cache as it does.
+become main. These run the script's own download step, ckpt-fetch.py with the arguments the
+script passes it, against a fake huggingface_hub that keeps the library's signature and lays
+out the cache as it does.
 """
 import os
 import pathlib
@@ -20,6 +21,9 @@ REPO = pathlib.Path(__file__).resolve().parents[1]
 SCRIPT = (REPO / "install-image.sh").read_text()
 
 FAKE_HUB = r'''import json, os
+class constants:
+    HF_HUB_CACHE = os.path.join(os.environ["HF_HOME"], "hub")
+    HF_HUB_DISABLE_XET = True
 def snapshot_download(repo_id, *, revision=None, **kw):
     with open(os.environ["FAKE_LOG"], "a") as f:
         f.write(json.dumps({"repo": repo_id, "revision": revision}) + "\n")
@@ -34,9 +38,8 @@ def snapshot_download(repo_id, *, revision=None, **kw):
 '''
 
 
-def download_step() -> str:
-    start = SCRIPT.index("import os, time\nfrom huggingface_hub import snapshot_download")
-    return SCRIPT[start:SCRIPT.index("\nPY\n", start)]
+# the script's own call, with the options it passes (the model and its revision come first)
+CALL = '"$VENV/bin/python" "$HERE/ckpt-fetch.py" "$MODEL" "$MODEL_REV" --refs-main pin'
 
 
 # the revision the lane was measured with on 2026-09-22 (the box's cache, refs/main)
@@ -53,10 +56,10 @@ class TheImageCheckpoint(unittest.TestCase):
         self.ref = self.hf / "hub" / "models--Qwen--Qwen-Image-2.1" / "refs" / "main"
 
     def run_step(self, rev):
-        env = {**os.environ, "PYTHONPATH": str(self.t / "py"), "HF_HOME": str(self.hf),
-               "FAKE_LOG": str(self.t / "log"), "MODEL_REPO": "Qwen/Qwen-Image-2.1", "MODEL_REV": rev}
-        r = subprocess.run([sys.executable, "-c", download_step()], env=env, capture_output=True, text=True,
-                           timeout=60)
+        self.assertTrue(CALL in SCRIPT, "install-image.sh no longer fetches through ckpt-fetch.py this way")
+        env = {**os.environ, "PYTHONPATH": str(self.t / "py"), "HF_HOME": str(self.hf), "FAKE_LOG": str(self.t / "log")}
+        r = subprocess.run([sys.executable, str(REPO / "ckpt-fetch.py"), "Qwen/Qwen-Image-2.1", rev, "--refs-main", "pin"],
+                           env=env, capture_output=True, text=True, timeout=60)
         self.assertEqual(r.returncode, 0, r.stderr)
         return [line for line in (self.t / "log").read_text().splitlines()]
 

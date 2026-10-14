@@ -221,7 +221,8 @@ command -v docker >/dev/null || die "docker is required (stock on DGX OS)."
 docker info >/dev/null 2>&1 || die "docker does not answer for $(id -un). Is it running, and is $(id -un) in the docker group?"
 [ -s "$CONFIG_DIR/api-key" ] || die "no API key at $CONFIG_DIR/api-key. Run ./install.sh first: this lane serves behind the proxy with that key."
 [ -f "$HERE/engine-preflight.sh" ] && [ -f "$HERE/engine-secrets.sh" ] && [ -f "$HERE/vllm_engine_auth.py" ] \
-  || die "engine-preflight.sh, engine-secrets.sh or vllm_engine_auth.py is missing next to this script: run it from the repository."
+  && [ -f "$HERE/ckpt-fetch.py" ] \
+  || die "engine-preflight.sh, engine-secrets.sh, vllm_engine_auth.py or ckpt-fetch.py is missing next to this script: run it from the repository."
 # Measured where each part lands: the weights go to HF_CACHE, the image to Docker's own
 # disk. What the cache already holds of this checkpoint comes off its share, by bytes.
 existing(){ local p="$1"; while [ ! -e "$p" ]; do p="$(dirname "$p")"; done; printf '%s\n' "$p"; }
@@ -285,14 +286,13 @@ DL_PROGRESS_ARGS=()
 if [ -n "${HF_TOKEN:-}" ]; then export HF_TOKEN; DL_TOKEN_ARGS=(-e HF_TOKEN); fi
 # The image's own huggingface_hub, as install.sh does for the other text lanes, with the
 # same Xet ban (the classic CDN path measured 89 MB/s where Xet stalled at 0 to 8), through
-# kolibri-fetch.py, the one copy of the fetch switch-model.sh runs too: a snapshot the cache
-# holds is taken only when every shard its index names is there (the fetch here had no such
-# check, and huggingface_hub's own sees a missing file only with its tree cache).
+# ckpt-fetch.py, the one fetch of every lane's checkpoint: --offline-first takes a snapshot
+# the cache holds only when every shard its index names is there (huggingface_hub's own
+# check sees a missing file only with its tree cache).
 docker run --rm --network host --user "$(id -u):$(id -g)" --entrypoint python3 \
-  -e HF_HOME=/hf -e HF_HUB_DOWNLOAD_TIMEOUT=30 -e HF_HUB_DISABLE_XET=1 \
-  -e KOL_MODEL="$MODEL" -e KOL_REV="$MODEL_REV" -e KOL_NEED_GB="$WEIGHTS_GB" "${DL_TOKEN_ARGS[@]}" \
-  -v "$HERE/kolibri-fetch.py:/opt/qwen38/kolibri-fetch.py:ro" "${DL_PROGRESS_ARGS[@]}" \
-  -v "$HF_CACHE":/hf "$LOCAL_IMAGE" /opt/qwen38/kolibri-fetch.py \
+  -e HF_HOME=/hf -e HF_HUB_DOWNLOAD_TIMEOUT=30 -e HF_HUB_DISABLE_XET=1 "${DL_TOKEN_ARGS[@]}" \
+  -v "$HERE/ckpt-fetch.py:/opt/qwen38/ckpt-fetch.py:ro" "${DL_PROGRESS_ARGS[@]}" \
+  -v "$HF_CACHE":/hf "$LOCAL_IMAGE" /opt/qwen38/ckpt-fetch.py "$MODEL" "$MODEL_REV" --offline-first \
   || die "checkpoint download failed. Causes: no internet, HuggingFace throttling an unauthenticated download (set HF_TOKEN=<your token>), a pinned revision removed upstream, or a permission error in $HF_CACHE. Re-running resumes."
 
 step "4/5 Service"

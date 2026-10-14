@@ -465,8 +465,9 @@ jobs:
           # after DFlash2 replaced it: 6 GB and minutes of download that no
           # serving path referenced, and run.sh refused to start without it.
           # Downloads and serving must not drift apart again.
-          dl=$(sed -n '/^for repo, rev in ((os.environ/,/^)):/p' install.sh \
-               | grep -oE 'os\.environ\["[A-Z0-9_]+_REPO"\]' | grep -oE '[A-Z0-9_]+_REPO' | sort -u)
+          # (install.sh fetches each through ckpt-fetch.py, one dl_fetch call per repo, since v1.31)
+          dl=$(grep -oE '^dl_fetch "\$DL_[A-Z0-9_]+_REPO"' install.sh \
+               | grep -oE 'DL_[A-Z0-9_]+_REPO' | sed 's/^DL_//' | sort -u)
           echo "downloaded: $dl"
           [ "$(echo "$dl" | wc -l)" -eq 2 ] || { echo "expected exactly MODEL_REPO and DRAFT2_REPO"; exit 1; }
           echo "$dl" | grep -qx MODEL_REPO  || { echo "the target model is not downloaded"; exit 1; }

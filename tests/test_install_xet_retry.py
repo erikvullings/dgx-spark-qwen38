@@ -13,19 +13,18 @@ repo's settings. The resume loop retried the refusal four times and the run
 died, over a traceback that did name hf_xet, under a failure message listing
 four causes that were all the wrong one, with 74 GB of the 124 left in cache.
 
-So the two downloaders (install.sh step 4 and switch-model.sh step 1, which
-carry the same block) turn Xet back on for exactly the repo the CDN just
-refused, and turn it off again. These gates run the real block, extracted from
-the scripts, against a stub Hub: they fail if the retry is removed, if it fires
-on unrelated failures, or if it leaves Xet on for the rest of the run.
+So the fetch (ckpt-fetch.py, which install.sh step 4 and switch-model.sh step 1 both run,
+since v1.31 the one copy) turns Xet back on for exactly the repo the CDN just refused, and
+turns it off again. These gates run the script against a stub Hub: they fail if the retry
+is removed, if it fires on unrelated failures, or if it leaves Xet on for the rest of the run.
 """
-import ast
+import importlib.util
 import json
 import os
 import pathlib
-import re
 import shutil
 import subprocess
+import sys
 import tempfile
 import unittest
 
@@ -81,14 +80,7 @@ def snapshot_download(repo, revision=None):
 NO_SLEEP = "import time\ntime.sleep = lambda *a, **k: None\n"
 
 
-def download_block(script: str) -> str:
-    """The python the downloader feeds to the pinned image, or a failure naming what moved."""
-    text = (REPO / script).read_text()
-    blocks = re.findall(r"<<'PYEOF'.*?\n(.*?)\nPYEOF\n", text, re.S)
-    hits = [b for b in blocks if "snapshot_download" in b]
-    if len(hits) != 1:
-        raise AssertionError(f"{script}: expected exactly one download block, found {len(hits)}")
-    return hits[0]
+FETCH = REPO / "ckpt-fetch.py"
 
 
 class XetRetry(unittest.TestCase):
@@ -104,51 +96,58 @@ class XetRetry(unittest.TestCase):
         self.snapshot.mkdir(parents=True)
         self.log = self.tmp / "calls.jsonl"
 
-    def run_block(self, script, *, mode, big_repo, model="org/model", draft=""):
+    def fetch(self, repo, *, mode, big_repo):
         env = dict(os.environ,
                    PYTHONPATH=str(self.tmp),
-                   HF_HUB_DISABLE_XET="1",           # what the docker run sets
+                   HF_HOME=str(self.tmp),
+                   HF_HUB_DISABLE_XET="1",           # what every caller sets
                    FAKE_MODE=mode,
                    FAKE_BIG_REPO=big_repo,
                    FAKE_LOG=str(self.log),
-                   FAKE_SNAPSHOT=str(self.snapshot),
-                   MODEL_REPO=model, MODEL_REV="rev1",
-                   DRAFT2_REPO=draft, DRAFT2_REV="rev2")
-        r = subprocess.run(["python3", "-c", download_block(script)],
+                   FAKE_SNAPSHOT=str(self.snapshot))
+        r = subprocess.run([sys.executable, str(FETCH), repo, "rev1", "--refs-main", "fill"],
                            capture_output=True, text=True, timeout=120, env=env)
         calls = [json.loads(l) for l in self.log.read_text().splitlines() if l.strip()] \
             if self.log.exists() else []
         return r, calls
 
-    def test_the_installer_retries_an_oversized_repo_with_xet(self):
-        """install.sh: the CDN refusal is answered by one retry with Xet on."""
-        r, calls = self.run_block("install.sh", mode="cdn_limit", big_repo="org/model")
+    def test_an_oversized_repo_is_retried_with_xet(self):
+        """The CDN refusal is answered by one retry with Xet on."""
+        r, calls = self.fetch("org/model", mode="cdn_limit", big_repo="org/model")
         self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
         self.assertEqual([c["xet_disabled"] for c in calls], [True, False],
                          f"expected a CDN attempt then a Xet attempt, got {calls}")
-        self.assertIn("checkpoints ready", r.stdout)
+        self.assertIn("retrying this repo with Xet", r.stdout)
 
-    def test_the_switch_retries_an_oversized_repo_with_xet(self):
-        """switch-model.sh carries the same answer, since it downloads the same targets."""
-        r, calls = self.run_block("switch-model.sh", mode="cdn_limit", big_repo="org/model")
-        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
-        self.assertEqual([c["xet_disabled"] for c in calls], [True, False],
-                         f"expected a CDN attempt then a Xet attempt, got {calls}")
-        self.assertIn("checkpoint ready", r.stdout)
-
-    def test_xet_goes_back_off_for_the_next_repo(self):
-        """The exception is per repo. A 27B install downloads two, and only one is huge."""
-        r, calls = self.run_block("install.sh", mode="cdn_limit",
-                                  big_repo="org/model", draft="org/draft")
+    def test_xet_stays_off_for_the_next_repo(self):
+        """The exception is per repo. A 27B install fetches two, one run each, and only one is huge."""
+        self.fetch("org/model", mode="cdn_limit", big_repo="org/model")
+        r, calls = self.fetch("org/draft", mode="cdn_limit", big_repo="org/model")
         self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
         draft_calls = [c for c in calls if c["repo"] == "org/draft"]
         self.assertTrue(draft_calls, f"the drafter was never downloaded: {calls}")
         self.assertTrue(all(c["xet_disabled"] for c in draft_calls),
                         f"the drafter inherited Xet from the repo before it: {draft_calls}")
 
+    def test_xet_goes_back_off_after_the_retry(self):
+        """Within one process: on again for the refused repo, off again right after."""
+        sys.path.insert(0, str(self.tmp))
+        self.addCleanup(sys.path.remove, str(self.tmp))
+        os.environ.update(HF_HUB_DISABLE_XET="1", HF_HOME=str(self.tmp), FAKE_MODE="cdn_limit",
+                          FAKE_BIG_REPO="org/model", FAKE_LOG=str(self.log), FAKE_SNAPSHOT=str(self.snapshot))
+        for k in ("HF_HUB_DISABLE_XET", "HF_HOME", "FAKE_MODE", "FAKE_BIG_REPO", "FAKE_LOG", "FAKE_SNAPSHOT"):
+            self.addCleanup(os.environ.pop, k, None)
+        sys.modules.pop("huggingface_hub", None)
+        self.addCleanup(sys.modules.pop, "huggingface_hub", None)
+        spec = importlib.util.spec_from_file_location("ckpt_fetch_under_test", FETCH)
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+        mod.download("org/model", "rev1", {})
+        self.assertTrue(mod.constants.HF_HUB_DISABLE_XET, "Xet left on after the retry")
+
     def test_an_unrelated_failure_does_not_turn_xet_on(self):
         """A reset connection is what the resume loop is for; it says nothing about transports."""
-        r, calls = self.run_block("install.sh", mode="other_error", big_repo="none")
+        r, calls = self.fetch("org/model", mode="other_error", big_repo="none")
         self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
         self.assertTrue(all(c["xet_disabled"] for c in calls),
                         f"an unrelated error flipped the transport: {calls}")
@@ -156,22 +155,19 @@ class XetRetry(unittest.TestCase):
 
     def test_a_repo_xet_cannot_fetch_either_still_fails(self):
         """The retry must not become a loop that never ends or a failure that reads as success."""
-        r, calls = self.run_block("install.sh", mode="cdn_limit_always", big_repo="org/model")
+        r, calls = self.fetch("org/model", mode="cdn_limit_always", big_repo="org/model")
         self.assertNotEqual(r.returncode, 0, "an undownloadable repo reported success")
-        self.assertNotIn("checkpoints ready", r.stdout)
+        self.assertNotIn(str(self.snapshot), r.stdout)
         self.assertLessEqual(len(calls), 12, f"the retry compounded into {len(calls)} attempts")
 
-    def test_both_downloaders_carry_the_same_helper(self):
-        """Two copies of one rule drift. This is the pair that already drifted once."""
-        def helper(script):
-            block = download_block(script)
-            fns = [n for n in ast.parse(block).body
-                   if isinstance(n, ast.FunctionDef) and n.name == "download"]
-            self.assertEqual(len(fns), 1, f"{script}: no single download helper")
-            return ast.get_source_segment(block, fns[0])
-        self.assertEqual(helper("install.sh"), helper("switch-model.sh"),
-                         "install.sh and switch-model.sh no longer retry the same way")
+    def test_both_text_downloaders_run_the_one_script(self):
+        """Two copies of one rule drift, and this pair did once: both run ckpt-fetch.py now."""
+        for script in ("install.sh", "switch-model.sh"):
+            text = (REPO / script).read_text()
+            with self.subTest(script=script):
+                self.assertIn("/opt/qwen38/ckpt-fetch.py", text)
+                self.assertNotIn("def download(", text, "a download helper of its own again")
 
 
 if __name__ == "__main__":
-    unittest.main(verbosity=2)
+    unittest.main()

@@ -792,7 +792,7 @@ class TheImageLaneIsALaneLikeTheOthers(unittest.TestCase):
         code = "\n".join(ln for ln in branch.splitlines() if not ln.lstrip().startswith("#"))
         self.assertNotIn("docker run", code)
         self.assertNotIn("docker image inspect", code)
-        self.assertIn('"$IMG_PY" -', code)
+        self.assertIn('"$IMG_PY" "$REPO_DIR/ckpt-fetch.py"', code)   # the one fetch, in the lane's venv
 
     def test_every_privileged_call_the_image_switch_makes_is_allowlisted(self):
         sudoers = (REPO / "dashboard" / "sudoers-cockpit.template").read_text()

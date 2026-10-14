@@ -44,6 +44,9 @@ def snapshot_download(repo, revision=None, local_files_only=False, **kw):
     if local_files_only and not snap.exists():
         raise FileNotFoundError(repo)
     snap.mkdir(parents=True, exist_ok=True)
+    if not local_files_only:          # a fetch leaves the snapshot whole: its weights are there
+        (snap / "transformer").mkdir(exist_ok=True)
+        (snap / "transformer" / "diffusion_pytorch_model.safetensors").write_text("w")
     return str(snap)
 '''
 FAKE_CONSTANTS = '''
@@ -114,7 +117,10 @@ def sandbox(model, *, grid=True, cached=(), free_gb=500, enabled=(), active=(), 
     (venv / "python").write_text(f'#!/bin/sh\nPYTHONPATH="{fake}" exec /usr/bin/python3 "$@"\n')
     (venv / "python").chmod(0o755)
     for repo, rev in cached:
-        (d / unit_hf / "hub" / ("models--" + repo.replace("/", "--")) / "snapshots" / rev).mkdir(parents=True)
+        # a whole snapshot holds its weights (ckpt-fetch.py takes one without any as incomplete)
+        snap = d / unit_hf / "hub" / ("models--" + repo.replace("/", "--")) / "snapshots" / rev
+        (snap / "transformer").mkdir(parents=True)
+        (snap / "transformer" / "diffusion_pytorch_model.safetensors").write_text("w")
     for repo, ref in refs:
         r = d / unit_hf / "hub" / ("models--" + repo.replace("/", "--")) / "refs/main"
         r.parent.mkdir(parents=True, exist_ok=True)
@@ -367,10 +373,11 @@ class TheRoomCheck(unittest.TestCase):
         self.assertIn(f"hub {TURBO} {PINS['IMAGE_TURBO_PIN_REV']} local=False", log)
 
     def test_the_rest_must_still_fit(self):
-        d, unit, g = sandbox(BASE, free_gb=3, blobs=[(TURBO, 30)])
+        # 30 GiB held of 34 GB leave 1.79 GB (bytes: the need in GB, df's free side in GiB)
+        d, unit, g = sandbox(BASE, free_gb=1, blobs=[(TURBO, 30)])
         rc, out, log = run(d, unit, g, "image-turbo")
         self.assertNotEqual(rc, 0)
-        self.assertIn("needs about 4 GB more", out)
+        self.assertIn("needs about 2 GB more", out)
         self.assertNotIn("local=False", log)
         self.assertEqual(model_of(unit), BASE)
 

@@ -79,6 +79,8 @@ def walled(script="install.sh", at=None, after=False, units=None):
     if units != REAL_UNITS:
         lanes = lanes.replace("/etc/systemd/system", str(units))
     (d / "lanes.sh").write_text(lanes)
+    # and the fetch they run (since v1.31), which they check is there before mounting it
+    (d / "ckpt-fetch.py").write_text((REPO / "ckpt-fetch.py").read_text())
     return str(copy)
 
 

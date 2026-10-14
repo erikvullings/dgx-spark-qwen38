@@ -347,33 +347,13 @@ echo "fetching with allow: ${ALLOW:-(whole repo)} (variant $VARIANT, model $MODE
 # The same two lessons the LLM lane learned the hard way: the Hub's Xet backend stalls
 # silently on this box (0-8 MB/s against 89 on the classic CDN), and an unauthenticated
 # pull gets throttled, so HF_TOKEN is passed through when it is set.
-HF_HOME="$HF_CACHE" HF_HUB_DOWNLOAD_TIMEOUT=30 HF_HUB_DISABLE_XET=1 MODEL_REPO="$MODEL" MODEL_REV="$MODEL_REV" MODEL_ALLOW="$ALLOW" \
-  "$VENV/bin/python" - <<'PY' || die "checkpoint download failed. Causes: no internet, HuggingFace throttling an unauthenticated download (set HF_TOKEN=<your token>), a pinned revision removed upstream (VIDEO_MODEL_REV=main serves the current one), a disk too small for the partition served, or a permission error in the cache. Re-running resumes."
-import os, time
-from huggingface_hub import snapshot_download
-repo, rev = os.environ["MODEL_REPO"], os.environ["MODEL_REV"]
-allow = [p for p in os.environ["MODEL_ALLOW"].split() if p] or None
-for attempt in range(1, 5):
-    try:
-        path = snapshot_download(repo, revision=rev, allow_patterns=allow); print(path, flush=True); break
-    except Exception as e:
-        if attempt == 4:
-            raise
-        print(f"   attempt {attempt} stopped ({type(e).__name__}); resuming in 10 s", flush=True)
-        time.sleep(10)
-# The unit serves the repo by name with HF_HUB_OFFLINE=1, which resolves refs/main, and
-# a download by commit writes no ref: main is pointed at the pinned commit, which is
-# what is served.
-sha = os.path.basename(path.rstrip("/"))
-ref = os.path.join(os.path.dirname(os.path.dirname(path.rstrip("/"))), "refs", "main")
-if len(sha) == 40 and sha == rev:
-    os.makedirs(os.path.dirname(ref), exist_ok=True)
-    old = open(ref).read().strip() if os.path.exists(ref) else ""
-    if old != sha:
-        with open(ref, "w") as f:
-            f.write(sha)
-        print(f"   refs/main -> {sha[:12]}" + (f" (was {old[:12]})" if old else ""), flush=True)
-PY
+# ckpt-fetch.py is the one fetch of every lane's checkpoint (resumed attempts, the room, the
+# byte count). The unit serves the repo by name with HF_HUB_OFFLINE=1, which resolves
+# refs/main, and a download by commit writes no ref: --refs-main pin points main at the
+# pinned commit, which is what is served.
+HF_HOME="$HF_CACHE" HF_HUB_DOWNLOAD_TIMEOUT=30 HF_HUB_DISABLE_XET=1 \
+  "$VENV/bin/python" "$HERE/ckpt-fetch.py" "$MODEL" "$MODEL_REV" --allow "$ALLOW" --refs-main pin \
+  || die "checkpoint download failed. Causes: no internet, HuggingFace throttling an unauthenticated download (set HF_TOKEN=<your token>), a pinned revision removed upstream (VIDEO_MODEL_REV=main serves the current one), a disk too small for the partition served, or a permission error in the cache. Re-running resumes."
 # The Turbo adapter, for the FL2VA weights it was trained on; a ref2va lane has no Turbo.
 # The lane serves without it, so a failed fetch is a note: the Video view keeps its Turbo
 # switch off until a re-run of this script fetches it.

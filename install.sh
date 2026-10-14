@@ -1325,71 +1325,31 @@ if [ -n "${HF_TOKEN:-}" ]; then export HF_TOKEN; DL_TOKEN_ARGS=(-e HF_TOKEN); fi
 # when moving at all) while the classic CDN path measured 89 MB/s on the same
 # box, same second. HF_HUB_DOWNLOAD_TIMEOUT turns any remaining silent stall
 # into a ReadTimeout that the retry loop below resumes from.
-docker run --rm -i --network host --user "$(id -u):$(id -g)" \
-  --entrypoint python3 \
-  -e HF_HOME=/hf -e HF_HUB_DOWNLOAD_TIMEOUT=30 -e HF_HUB_DISABLE_XET=1 \
-  -e MODEL_REPO="$DL_MODEL_REPO" -e MODEL_REV="$MODEL_REV" \
-  -e DRAFT2_REPO="$DL_DRAFT2_REPO" -e DRAFT2_REV="$DRAFT2_REV" \
-  "${DL_TOKEN_ARGS[@]}" \
-  -v "$HF_CACHE":/hf \
-  "$PULLED_IMAGE" - <<'PYEOF' || die "Checkpoint download failed. Causes: no internet, HuggingFace throttling of unauthenticated downloads (set HF_TOKEN=<your token>, or re-run: downloads resume), a pinned revision removed (try MODEL_REV=main DRAFT2_REV=main ./install.sh), or a permission error: if your $HF_CACHE contains root-owned files from other tools, fix with: sudo chown -R \$(id -u):\$(id -g) $HF_CACHE"
-import os
-import time
-from huggingface_hub import constants, snapshot_download
-
-
-def download(repo, rev):
-    """snapshot_download, with the one exception to the Xet ban above.
-
-    The classic CDN refuses any single file over MAX_HTTP_DOWNLOAD_SIZE
-    (50,000,000,000 bytes) and says so in a ValueError naming hf_xet. One target
-    ships such a file: nvidia/Qwen3.8-Flash-Next-NVFP4 carries its n-gram table
-    as one 53.7 GB safetensors. Without this, that target cannot be fetched at
-    all: the resume loop retries the refusal four times and the run dies under a
-    message naming four causes that are all the wrong one, over a traceback that
-    does name hf_xet (seen 2026-09-18, 74 GB of the 124 left in cache). Xet is
-    turned back on only for the repo the CDN just refused, and turned off again
-    right after, so every other file keeps the transfer path that measured
-    89 MB/s against its 0-8.
-    """
-    try:
-        return snapshot_download(repo, revision=rev)
-    except Exception as e:
-        if "too large to be downloaded" not in str(e) or not constants.HF_HUB_DISABLE_XET:
-            raise
-        print("a file is over the classic CDN limit; retrying this repo with Xet", flush=True)
-        constants.HF_HUB_DISABLE_XET = False
-        try:
-            return snapshot_download(repo, revision=rev)
-        finally:
-            constants.HF_HUB_DISABLE_XET = True
-
-
-for repo, rev in ((os.environ["MODEL_REPO"], os.environ["MODEL_REV"]),
-                  (os.environ["DRAFT2_REPO"], os.environ["DRAFT2_REV"])):
-    if not repo:  # kept custom model: already in cache, nothing to download
-        continue
-    print(f"── {repo} @ {rev}", flush=True)
-    for attempt in range(1, 6):  # a resumed attempt reuses every finished byte
-        try:
-            path = download(repo, rev)
-            break
-        except Exception as e:
-            if attempt == 5:
-                raise
-            print(f"download interrupted ({type(e).__name__}), resuming ({attempt}/5)...", flush=True)
-            time.sleep(10)
-    # A pinned-sha download writes no refs/main; serving later with
-    # HF_HUB_OFFLINE=1 (the 1m unit) resolves "main" through that file and
-    # would fail on a fresh machine. Write it once, never overwrite.
-    sha = os.path.basename(path.rstrip("/"))
-    ref = os.path.join(os.path.dirname(os.path.dirname(path.rstrip("/"))), "refs", "main")
-    if len(sha) == 40 and not os.path.exists(ref):
-        os.makedirs(os.path.dirname(ref), exist_ok=True)
-        with open(ref, "w") as f:
-            f.write(sha)
-print("checkpoints ready", flush=True)
-PYEOF
+# ckpt-fetch.py, the one fetch of every lane's checkpoint, in the pinned image (resumed
+# attempts, each keeping every file already whole; the Xet exception the flash checkpoint's
+# 53.7 GB n-gram table needs; the byte count, when hf-progress.py is there to mount: a bind of
+# a missing file makes docker create a root-owned directory in its place). A pinned-sha
+# download writes no refs/main, and serving with HF_HUB_OFFLINE=1 (the 1m unit) resolves
+# "main" through it and would fail on a fresh machine: --refs-main fill writes it where it is
+# missing and never moves one the box serves.
+[ -f "$REPO_DIR/ckpt-fetch.py" ] || die "ckpt-fetch.py is missing next to install.sh: run it from the repository."
+DL_PROGRESS_ARGS=()
+[ -f "$REPO_DIR/hf-progress.py" ] && DL_PROGRESS_ARGS=(-v "$REPO_DIR/hf-progress.py:/opt/qwen38/hf-progress.py:ro")
+dl_fetch(){  # $1 repo, $2 revision; an empty repo is a kept custom model (already in cache) or flash's drafter (none)
+  [ -n "$1" ] || return 0
+  echo "── $1 @ $2"
+  docker run --rm --network host --user "$(id -u):$(id -g)" \
+    --entrypoint python3 \
+    -e HF_HOME=/hf -e HF_HUB_DOWNLOAD_TIMEOUT=30 -e HF_HUB_DISABLE_XET=1 \
+    "${DL_TOKEN_ARGS[@]}" "${DL_PROGRESS_ARGS[@]}" \
+    -v "$REPO_DIR/ckpt-fetch.py:/opt/qwen38/ckpt-fetch.py:ro" \
+    -v "$HF_CACHE":/hf \
+    "$PULLED_IMAGE" /opt/qwen38/ckpt-fetch.py "$1" "$2" --refs-main fill \
+    || die "Checkpoint download failed. Causes: no internet, HuggingFace throttling of unauthenticated downloads (set HF_TOKEN=<your token>, or re-run: downloads resume), a pinned revision removed (try MODEL_REV=main DRAFT2_REV=main ./install.sh), or a permission error: if your $HF_CACHE contains root-owned files from other tools, fix with: sudo chown -R \$(id -u):\$(id -g) $HF_CACHE"
+}
+dl_fetch "$DL_MODEL_REPO" "$MODEL_REV"
+dl_fetch "$DL_DRAFT2_REPO" "$DRAFT2_REV"
+echo "checkpoints ready"
 
 # Say the image the unit will actually carry, not the pin it came from: those
 # are the same thing on a default install and different the moment someone

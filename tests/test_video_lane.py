@@ -167,7 +167,7 @@ class TheInstaller(unittest.TestCase):
         """The repo holds FL2VA/ and Ref2VA/ (81 files each) plus a root native layout,
         and --model-variant fl2va roots the pipeline in FL2VA/ alone: fetching the rest
         filled the reference box's disk at 98% and killed the pull."""
-        self.assertIn("allow_patterns", self.text)
+        self.assertIn('"$HERE/ckpt-fetch.py" "$MODEL" "$MODEL_REV" --allow "$ALLOW"', self.text)
         self.assertIn("FL2VA/*", self.text)
         self.assertIn("Ref2VA/*", self.text)
         self.assertIn("fetching with allow:", self.text)
@@ -489,10 +489,9 @@ class TheSwitch(unittest.TestCase):
         before its first byte, stranding the offline unit on a half-fetched snapshot."""
         i = SWITCH.read_text().index('if [ "$CHOICE" = "video" ]; then')
         block = SWITCH.read_text()[i:SWITCH.read_text().index("exit 0", i)]
-        self.assertIn("allow_patterns", block)
+        # ckpt-fetch.py asks the cache, then the Hub, with the same allow patterns (its own test)
+        self.assertIn('"$VID_MODEL" "$VID_REV" --allow "$VID_ALLOW" --offline-first --refs-main fill', block)
         self.assertIn("FL2VA/*", block)
-        self.assertIn("revision=rev, local_files_only=True, allow_patterns=allow", block)
-        self.assertIn("revision=rev, allow_patterns=allow", block)
         self.assertIn("refs/main", block)
         self.assertIn('VIDEO_MODEL_PIN_REV', block)
 
