@@ -2798,12 +2798,21 @@ def answered_whole(body):
     return all(m.group(1) == b"f" for m in STREAM_KEY.finditer(body))
 
 
+class _KeptSocketHTTPConnection(http.client.HTTPConnection):
+    """An HTTPConnection that keeps the socket it opened: an answer that says Connection: close
+    takes the socket from the connection (sock = None) and keeps it open until the answer is
+    closed, and _shut_upstream ends it through this object (v6.37)."""
+    def connect(self):
+        super().connect()
+        self.kept_sock = self.sock
+
+
 class _UpstreamHTTP(urllib.request.HTTPHandler):
     """urlopen's own HTTP handler, keeping a hand on the connection it opens, so that
     _watch_client can end it from another thread."""
     def http_open(self, req):
         def connection(host, **kw):
-            req.upstream = http.client.HTTPConnection(host, **kw)
+            req.upstream = _KeptSocketHTTPConnection(host, **kw)
             return req.upstream
         return self.do_open(connection, req)
 
@@ -2972,7 +2981,16 @@ class H(BaseHTTPRequestHandler):
         req = urllib.request.Request(UPSTREAM + self.path, data=body,
                                      headers=self._hdrs(), method=self.command)
         self._upstream_req = req            # _watch_client ends req.upstream
-        self._upstream_engine = _SERVED["engine"]   # v6.37: whose request this is (_abort_upstream)
+        # v6.37: whose request this is (_abort_upstream). Read again when unknown: a pool read
+        # that failed on the way here drops the lane's facts, and an abandoned Kolibri stream
+        # then took SGLang's way, an /abort_request vLLM answers 404 and a drain of up to
+        # DRAIN_MAX_S (found in review, 2026-10-14).
+        if not _SERVED["engine"]:
+            try:
+                served_models()
+            except EngineUnreachable:
+                pass
+        self._upstream_engine = _SERVED["engine"]
         # GETs are metadata and always fast; a generation may legitimately take
         # tens of minutes before its first byte (cold giant prefill).
         timeout = UPSTREAM_GET_TIMEOUT_S if self.command == "GET" else None
@@ -3227,22 +3245,19 @@ class H(BaseHTTPRequestHandler):
 
     def _shut_upstream(self):
         """End the connection to the engine now, from any thread: shutdown() wakes a read
-        blocked on it and the engine reads the end at once. Through the answer's own file
-        descriptor (a duplicate of it), since an answer that says Connection: close (urllib
-        asks for one) takes the socket from its HTTPConnection when it arrives."""
-        resp = getattr(self, "_upstream_resp", None)
+        blocked on it and the engine reads the end at once. Through the socket object the
+        connection opened (_KeptSocketHTTPConnection), since an answer that says Connection:
+        close (urllib asks for one) takes it from its HTTPConnection when it arrives. The object,
+        not its number: the answer can close between the two, and the number then belongs to
+        whatever connection opens next, which a duplicate of it shut down instead (found in
+        review, 2026-10-14). A closed socket object has no number left: shutdown() fails, and
+        touches nothing."""
+        up = getattr(getattr(self, "_upstream_req", None), "upstream", None)
+        sock = getattr(up, "kept_sock", None)
+        if sock is None:
+            return
         try:
-            fd = resp.fileno() if resp is not None else -1
-        except Exception:
-            fd = -1
-        try:
-            if fd >= 0:
-                with socket.socket(fileno=os.dup(fd)) as dup:
-                    dup.shutdown(socket.SHUT_RDWR)
-                return
-            up = getattr(getattr(getattr(self, "_upstream_req", None), "upstream", None), "sock", None)
-            if up is not None:
-                up.shutdown(socket.SHUT_RDWR)
+            sock.shutdown(socket.SHUT_RDWR)
         except OSError:
             pass
 

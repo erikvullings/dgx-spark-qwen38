@@ -27,6 +27,7 @@ import threading
 import tempfile
 import time
 import unittest
+import urllib.request
 from contextlib import redirect_stderr
 from pathlib import Path
 
@@ -51,6 +52,7 @@ class FakeVllm(http.server.BaseHTTPRequestHandler):
     protocol_version = "HTTP/1.1"
     served = "kolibri-1"
     owner = "vllm"
+    metrics_fail = False   # /metrics answering 500, as a read of the pool that fails
     bodies = []            # every chat body it received, parsed
     closed_at = {}         # prompt -> when the proxy closed a stream it was writing
     aborts = []            # /abort_request calls (vLLM has none: 404)
@@ -69,7 +71,9 @@ class FakeVllm(http.server.BaseHTTPRequestHandler):
 
     def do_GET(self):
         path = self.path.split("?")[0]
-        if path == "/metrics":
+        if path == "/metrics" and FakeVllm.metrics_fail:
+            self._json(500, {"detail": "Internal Server Error"})
+        elif path == "/metrics":
             out = METRICS.encode()
             self.send_response(200)
             self.send_header("Content-Type", "text/plain")
@@ -246,7 +250,7 @@ class ThroughTheProxy(unittest.TestCase):
         cls.engine.server_close()
 
     def setUp(self):
-        FakeVllm.served, FakeVllm.owner = "kolibri-1", "vllm"
+        FakeVllm.served, FakeVllm.owner, FakeVllm.metrics_fail = "kolibri-1", "vllm", False
         with FakeVllm.lock:
             FakeVllm.bodies.clear(); FakeVllm.aborts.clear(); FakeVllm.closed_at.clear()
         self.mod.invalidate_pool()
@@ -364,6 +368,49 @@ class ThroughTheProxy(unittest.TestCase):
         self.assertEqual(self.mod._SERVED["names"], ())
         self.assertEqual(self.mod.served_vocab(), 128000)
 
+    def test_a_failed_pool_read_on_the_way_does_not_send_a_kolibri_stream_sglangs_way(self):
+        # the cached facts expire, and the next prompt's read of them fails (/metrics, here):
+        # the facts dropped on the way, the request went out with no engine noted, and the
+        # client that left was handled as on SGLang: an /abort_request vLLM answers 404, then a
+        # drain while vLLM kept generating (found in review, 2026-10-14)
+        self.mod.pool_tokens()
+        self.mod._POOL["ts"] = 0.0
+        FakeVllm.metrics_fail = True
+        since = len(self.lines)
+        s = self.post({"model": "kolibri-1", "stream": True,
+                       "messages": [{"role": "user", "content": "slow after a failed read"}]}, read_all=False)
+        s.settimeout(10)
+        s.recv(4096)
+        t0 = time.time()
+        s.close()
+        end = time.time() + 5
+        while time.time() < end and "slow after a failed read" not in FakeVllm.closed_at:
+            time.sleep(0.05)
+        self.assertLess(FakeVllm.closed_at.get("slow after a failed read", 1e12) - t0, 2.0,
+                        "vLLM did not see its client leave")
+        self.assertEqual(FakeVllm.aborts, [], "vLLM has no /abort_request")
+        time.sleep(0.3)
+        self.assertNotIn("drained an abandoned", "\n".join(self.lines[since:]))
+
+    def test_a_new_engine_that_names_itself_drops_what_was_learned_without_systemd(self):
+        # a proxy that names no unit (PROXY_HOLD_UNITS unset, as run by hand) learns of a switch
+        # only from the names the engine gives: kept, the 27B's vocabulary judged Kolibri's ids
+        FakeVllm.served, FakeVllm.owner = "qwen3.8-27b", "sglang"
+        self.mod.served_models()
+        self.mod._VOCAB.update(size=248320, ts=time.time())
+        FakeVllm.served, FakeVllm.owner = "kolibri-1", "vllm"
+        self.mod._SERVED["ts"] = 0.0                       # the names' 600 s are over
+        self.mod.served_models()
+        self.assertEqual(self.mod._VOCAB["size"], 0, "served_models")
+        FakeVllm.served, FakeVllm.owner = "qwen3.8-27b", "sglang"   # the 27B again
+        self.mod._SERVED["ts"] = 0.0
+        self.mod.served_models()
+        self.mod._VOCAB.update(size=248320, ts=time.time())
+        FakeVllm.served, FakeVllm.owner = "kolibri-1", "vllm"        # then Kolibri, met first
+        self.mod.invalidate_pool()                                   # by the pool's read
+        self.mod.pool_tokens()
+        self.assertEqual(self.mod._VOCAB["size"], 0, "the pool's read of vLLM's facts")
+
     def test_on_sglang_a_foreign_name_goes_as_it_came(self):
         FakeVllm.served, FakeVllm.owner = "qwen3.8-27b", "sglang"
         self.mod.served_models()
@@ -372,6 +419,66 @@ class ThroughTheProxy(unittest.TestCase):
         self.assertEqual(FakeVllm.bodies[-1]["model"], "my-alias")
 
 
+
+
+class AnUpstreamShutDown(unittest.TestCase):
+    """_shut_upstream ends the engine's connection, and never another one."""
+
+    def test_a_connection_opened_meanwhile_on_the_same_number_is_left_alone(self):
+        # the answer took its socket's number, then a duplicate of it was shut down: the pump
+        # can close the answer in between (the stream's last chunk) and the number then goes to
+        # the next socket anyone opens, which was shut down instead (found in review, 2026-10-14)
+        os.environ["UPSTREAM"] = "http://127.0.0.1:9"
+        mod = load_proxy(f"kproxy_shut_{time.time_ns()}")
+
+        class Short(http.server.BaseHTTPRequestHandler):
+            protocol_version = "HTTP/1.1"
+            def log_message(self, *a):
+                pass
+            def do_GET(self):
+                self.send_response(200)
+                self.send_header("Content-Type", "text/event-stream")
+                self.send_header("Transfer-Encoding", "chunked")
+                self.send_header("Connection", "close")
+                self.end_headers()
+                self.wfile.write(b"5\r\nhello\r\n0\r\n\r\n")
+                self.wfile.flush()
+
+        eng = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Short)
+        eng.daemon_threads = True
+        threading.Thread(target=eng.serve_forever, daemon=True).start()
+        self.addCleanup(lambda: (eng.shutdown(), eng.server_close()))
+        other = socket.socket()
+        other.bind(("127.0.0.1", 0))
+        other.listen()
+        self.addCleanup(other.close)
+        h = mod.H.__new__(mod.H)
+        req = urllib.request.Request(f"http://127.0.0.1:{eng.server_port}/s")
+        h._upstream_req = req
+        h._upstream_resp = resp = mod._UPSTREAM_OPENER.open(req, timeout=5)
+        victim = {}
+        real_dup = os.dup
+
+        def the_pump_and_another_thread_first(fd):
+            resp.read1(8192); resp.read1(8192)         # the last chunk: the answer closes
+            v = socket.create_connection(other.getsockname())
+            victim["sock"], victim["peer"] = v, other.accept()[0]
+            return real_dup(fd)
+
+        mod.os.dup = the_pump_and_another_thread_first
+        try:
+            if "kept_sock" in vars(getattr(req, "upstream", object())):
+                resp.read1(8192); resp.read1(8192)     # the same order, for the code that keeps the socket
+                v = socket.create_connection(other.getsockname())
+                victim["sock"], victim["peer"] = v, other.accept()[0]
+            h._shut_upstream()
+        finally:
+            mod.os.dup = real_dup
+        self.addCleanup(victim["sock"].close)
+        self.addCleanup(victim["peer"].close)
+        victim["sock"].sendall(b"x")
+        victim["peer"].settimeout(2)
+        self.assertEqual(victim["peer"].recv(10), b"x", "another connection was shut down")
 
 
 class ALaneSwitch(unittest.TestCase):

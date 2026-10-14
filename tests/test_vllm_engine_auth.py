@@ -89,6 +89,15 @@ class TheEngineAsksTheKeyEverywhere(unittest.TestCase):
                 fake, status = self.call(path, method="GET")
                 self.assertEqual((status, fake.reached), (None, [path]))
 
+    def test_only_those_two_are_open_not_what_starts_like_them(self):
+        # pinned: a test of the open routes passed with "path.startswith(OPEN)" too, which
+        # opens any route vLLM may add under /health or /metrics without the slash (review,
+        # 2026-10-14; none in 0.29)
+        for path in ("/healthz", "/health/x", "/healthy", "/metricsx", "/metrics_raw"):
+            with self.subTest(path=path):
+                fake, status = self.call(path, method="GET")
+                self.assertEqual((status, fake.reached), (401, []))
+
     def test_a_root_path_is_taken_off_first(self):
         fake, status = self.call("/engine/health", root="/engine", method="GET")
         self.assertEqual(fake.reached, ["/engine/health"])
