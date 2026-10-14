@@ -39,7 +39,7 @@ def run(lane, free, images):
         (t / name).chmod(0o755)
     need, label = ("35", "30 GB Docker image") if lane == "flash" else ("40", "39 GB Docker image")
     script = ("set -euo pipefail\ndie(){ echo \"DIE: $*\"; exit 1; }\n"
-              f"LANE={lane}; DOCKER_NEED_GB={need}; IMG_LABEL='{label}'\n"
+              f"LANE={lane}; DOCKER_NEED_GB={need}; IMG_LABEL='{label}'; UNITS_ONLY=0\n"   # a whole install
               "IMAGE=lmsysorg/sglang@sha256:27b; FLASH_IMAGE=lmsysorg/sglang@sha256:flash\n"
               + block() + 'echo "PASS need=$DOCKER_NEED_GB pull=$PULL_TARGET"\n')
     r = subprocess.run(["bash", "-c", script], capture_output=True, text=True, timeout=30,

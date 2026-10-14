@@ -90,6 +90,18 @@ class LoadingIt(unittest.TestCase):
         self.assertNotIn("The next step fetches", r["desc"])
         self.assertEqual(r["cmd"], "bash prepare-lane.sh flash")
 
+    def test_the_27b_beside_a_serving_flash_not_prepared_is_prepared_first_too(self):
+        r = run(self, lanes("stopped", "image") + r"""
+        feed({lanes_ready: {image: true, video: true, kolibri: null, flash: true, '27b': false}});
+        const steps = laneJourneySteps('stock');
+        report({steps: steps.map(s => s.name + (s.params.lane ? ' ' + s.params.lane : '')), desc: steps[0].desc,
+                cmd: argvFor(steps[0].name, steps[0].params).join(' '), start: !LCARDS.has(U27) || true});
+        """)
+        self.assertEqual(r["steps"][0], "prepare 27b")
+        self.assertIn("its DFlash2 draft and its checkpoint", r["desc"])
+        self.assertNotIn("The next step fetches", r["desc"])
+        self.assertEqual(r["cmd"], "bash prepare-lane.sh 27b")
+
     def test_a_lane_not_prepared_offers_its_load_and_no_start(self):
         # Start as installed would start a unit with nothing to run (the flash lane's launcher
         # would pull its 30 GB image inside the start, then find no checkpoint): its Load

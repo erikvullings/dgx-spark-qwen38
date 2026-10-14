@@ -159,3 +159,30 @@ pin_tag() {   # $1 lane, $2 image: a digest reference present on this box gets i
     echo "NOTE: could not tag $2; a docker image prune would delete it"
   fi
 }
+
+# The image a text lane's launcher (flash) or unit (27B) runs: the word on the line before its
+# server command, whatever its form (a digest pin, a tag an operator passed, a local build).
+engine_image(){  # $1 the launcher or the unit
+  { grep -B1 -m1 -- 'python3 -m sglang.launch_server' "$1" 2>/dev/null || true; } | head -1 | awk '{print $1}'
+}
+# Whether the DFlash2 draft a 27B unit names is in the cache it mounts, at its revision (a ref
+# such as main read through refs/): its config and a weights file (a snapshot links a file only
+# once it is whole).
+draft_in_cache(){  # $1 the 27B unit
+  local repo rev hf snap f
+  repo="$({ grep -oE -- '--speculative-draft-model-path [^ ]+' "$1" 2>/dev/null || true; } | head -1 | cut -d' ' -f2)"
+  [ -n "$repo" ] || return 0   # no draft named: its image is all the lane needs
+  rev="$({ grep -oE -- '--speculative-draft-model-revision [^ ]+' "$1" || true; } | head -1 | cut -d' ' -f2)"
+  hf="$({ grep -oE -- '-v [^ :]+:/root/\.cache/huggingface' "$1" || true; } | head -1 | sed -e 's/^-v //' -e 's|:/root/\.cache/huggingface$||')"
+  snap="$hf/hub/models--${repo//\//--}"
+  [ -n "$rev" ] || rev=main
+  if [ -f "$snap/refs/$rev" ]; then rev="$(cat "$snap/refs/$rev")"; fi
+  [ -f "$snap/snapshots/$rev/config.json" ] || return 1
+  for f in "$snap/snapshots/$rev"/*.safetensors; do [ -e "$f" ] && return 0; done
+  return 1
+}
+# Room on the disk that holds a path, in GB: the nearest folder of it that exists.
+free_gb_at(){  # $1 a path
+  local p="$1"; while [ ! -e "$p" ]; do p="$(dirname "$p")"; done
+  { df -BG --output=avail "$p" 2>/dev/null || true; } | tail -1 | tr -dc '0-9'
+}

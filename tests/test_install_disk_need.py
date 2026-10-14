@@ -61,7 +61,7 @@ def run(lane, root, free_gb=1000, ple_other_disk=None):
         stub = f'PATH="{t}:$PATH"\n'
     script = (stub + "set -euo pipefail\ndie(){ echo \"DIE: $*\"; exit 1; }\n"
               f'HF_CACHE="{root}"; MODEL_REPO=org/model; MODEL_REV=abc123; LANE={lane}\n'
-              f'PLE_DIR="{ple}"; FREE_DISK_GB={free_gb}\n'
+              f'PLE_DIR="{ple}"; FREE_DISK_GB={free_gb}; UNITS_ONLY=0   # a whole install (an on-demand one takes no room)\n'
               + BLOCK + 'echo "NEED=$NEED_GB"\n')
     r = subprocess.run(["bash", "-c", script], capture_output=True, text=True, timeout=60)
     out = r.stdout + r.stderr

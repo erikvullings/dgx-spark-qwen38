@@ -597,10 +597,11 @@ const IMG_INTERRUPTED_AT = {t: 0}, VID_INTERRUPTED_AT = {t: 0};
 // page chains them, one job after the other, and says each command before it runs.
 // what a side lane's first Load builds before its switch fetches the checkpoint
 const LANE_RUNTIME = {flash: 'its SGLang image (about 30 GB), its checkpoint (about 136 GB) and its reduced draft vocabulary',
+  '27b': 'its SGLang image (about 15 GB to download), its DFlash2 draft and its checkpoint (about 28 GB)',
   image: 'a venv and SGLang Diffusion, about 11 GB, about 10 minutes',
   video: 'a venv and SGLang Diffusion, about 11 GB, about 10 minutes, and the Turbo adapter',
   kolibri: 'its vLLM image, about 23 GB, pulled and built here'};
-const SIDE_LANE = {[IMAGE_UNIT]: 'image', [VIDEO_UNIT]: 'video', [KOLIBRI_UNIT]: 'kolibri', [UFLASH]: 'flash'};
+const SIDE_LANE = {[IMAGE_UNIT]: 'image', [VIDEO_UNIT]: 'video', [KOLIBRI_UNIT]: 'kolibri', [UFLASH]: 'flash', [U27]: '27b'};
 function laneJourneySteps(target){
   const unit = TARGET_UNIT(target);
   const steps = [];
@@ -608,7 +609,7 @@ function laneJourneySteps(target){
   const lane = SIDE_LANE[unit];
   if (lane && (F.lanesReady || {})[lane] === false)
     steps.push({name: 'prepare', params: {lane}, title: `Build the runtime of ${LANE_NAME[unit]}`,
-      desc: `Its first Load: ${LANE_RUNTIME[lane]}, with no sudo.` + (lane === 'flash' ? '' : ' The next step fetches its checkpoint.')});
+      desc: `Its first Load: ${LANE_RUNTIME[lane]}, with no sudo.` + (lane === 'flash' || lane === '27b' ? '' : ' The next step fetches its checkpoint.')});
   const serving = servingEngine();
   // none enabled: the switch step makes this one the boot lane, as it does from any other
   const enabled = bootUnit();

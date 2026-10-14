@@ -1968,23 +1968,59 @@ def collect_jobs():
     return job_snapshot()
 
 
+def engine_image(text: str):
+    """The image a text lane's launcher (flash) or unit (27B) runs: the word on the line before
+    its server command, whatever its form (a digest pin, a tag an operator passed, a local
+    build), as lanes.sh reads it."""
+    lines = text.splitlines()
+    for i, line in enumerate(lines[1:], 1):
+        if "python3 -m sglang.launch_server" in line:
+            words = lines[i - 1].split()
+            return words[0] if words else None
+    return None
+
+
+def draft_in_cache(text: str) -> bool:
+    """Whether the DFlash2 draft a 27B unit names is in the cache it mounts, at its revision (a
+    ref such as main read through refs/): its config and a weights file, as lanes.sh reads it."""
+    repo = re.search(r"--speculative-draft-model-path (\S+)", text)
+    if not repo:
+        return True
+    rev = re.search(r"--speculative-draft-model-revision (\S+)", text)
+    hf = re.search(r"-v ([^ :]+):/root/\.cache/huggingface", text)
+    if not hf:
+        return False
+    snap = Path(hf.group(1)) / "hub" / ("models--" + repo.group(1).replace("/", "--"))
+    r = rev.group(1) if rev else "main"
+    try:
+        if (snap / "refs" / r).is_file():
+            r = (snap / "refs" / r).read_text().strip()
+        d = snap / "snapshots" / r
+        return (d / "config.json").is_file() and any(d.glob("*.safetensors"))
+    except OSError:
+        return False
+
+
 def lane_prepared(lane: str):
     """Whether a lane installed on demand is prepared, as install.sh reads it: the venv and the
     note of its wheel (written once the wheel is in) for the image and video lanes, the image
-    its unit names for Kolibri, the image its launcher names for the flash lane beside the lane
-    that serves, and the draft vocabulary that launcher waits for, when it waits for one. None
-    when the lane is not installed (no unit, no launcher)."""
+    its unit names for Kolibri; for the other text lane beside the lane that serves, the image
+    its launcher (flash) or unit (27B) runs, with the draft vocabulary the flash launcher waits
+    for, when it waits for one, and the 27B's DFlash2 draft. None when the lane is not
+    installed (no unit, no launcher)."""
     unit = {"image": IMAGE_UNIT_PATH, "video": VIDEO_UNIT_PATH, "kolibri": KOLIBRI_UNIT_PATH,
-            "flash": UNIT_PATHS["qwen38-flash.service"]}[lane]
+            "flash": UNIT_PATHS["qwen38-flash.service"], "27b": UNIT_PATHS["qwen38-sglang.service"]}[lane]
     try:
         text = unit.read_text(errors="replace")
     except OSError:
         return None
-    if lane == "flash":
-        m = re.search(r"lmsysorg/sglang@sha256:[0-9a-f]{64}|qwen38-flash:[A-Za-z0-9._-]+", text)
-        if not (m and run(["docker", "image", "inspect", "--format", "{{.Id}}", m.group(0)],
-                          timeout=10).strip().startswith("sha256:")):
+    if lane in ("flash", "27b"):
+        img = engine_image(text)
+        if not (img and run(["docker", "image", "inspect", "--format", "{{.Id}}", img],
+                            timeout=10).strip().startswith("sha256:")):
             return False
+        if lane == "27b":
+            return draft_in_cache(text)
         waits = re.search(r'\[ -s "([^"]+)" \] && TIER\+=\(--speculative-token-map', text)
         return not waits or Path(waits.group(1)).exists()
     if lane == "kolibri":
@@ -2003,7 +2039,7 @@ def lane_prepared(lane: str):
 def collect_lanes_ready():
     """30 s tier: which side lanes are prepared, for the Load journey (it builds a lane's
     runtime first when it is not)."""
-    return {lane: lane_prepared(lane) for lane in ("image", "video", "kolibri", "flash")}
+    return {lane: lane_prepared(lane) for lane in ("image", "video", "kolibri", "flash", "27b")}
 
 TIERS = [
     (1.0, {"machine": collect_machine, "engine_fast": collect_engine_fast, "job": collect_jobs}),
@@ -2173,7 +2209,7 @@ ACTIONS["fetch"] = {
 # through prepare-lane.sh, which takes the lane as an argument of its own.
 ACTIONS["prepare"] = {
     "danger": "low",
-    "params": {"lane": ["flash", "image", "kolibri", "video"]},
+    "params": {"lane": ["27b", "flash", "image", "kolibri", "video"]},
     "argv": lambda p: ["bash", str(REPO_DIR / "prepare-lane.sh"), p["lane"]],
     "timeout": 5400,
 }

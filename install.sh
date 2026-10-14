@@ -82,14 +82,17 @@ case "$SECONDARY" in
   ""|27b|flash) ;;
   *) echo "ERROR: QWEN38_SECONDARY names a text lane, 27b or flash (got: $SECONDARY)" >&2; exit 1 ;;
 esac
-# The flash lane installed on demand beside the lane that serves (the run that serves asks for
-# it when the flash lane's image is not on the box): its unit and launcher only, no image, no
-# checkpoint, no template, no draft vocabulary. Its first Load from the cockpit prepares it
-# (prepare-lane.sh flash), and that Load's switch writes its template.
+# The other text lane installed on demand beside the lane that serves (the run that serves asks
+# for it when that lane is not prepared): its unit (and the flash lane's launcher) only, with no
+# image, no checkpoint, no template, no draft vocabulary, and no room taken for them. Its first
+# Load from the cockpit prepares it (prepare-lane.sh), checking the room for what it fetches,
+# and that Load's switch writes its template (and the 27B's 1M configs).
 UNITS_ONLY=0
 if [ "${QWEN38_UNITS_ONLY:-0}" = 1 ]; then
-  [ "$SECONDARY" = flash ] || { echo "ERROR: QWEN38_UNITS_ONLY is for the flash lane installed beside another (QWEN38_SECONDARY=flash)" >&2; exit 1; }
-  UNITS_ONLY=1
+  case "$SECONDARY" in
+    flash|27b) UNITS_ONLY=1 ;;
+    *) echo "ERROR: QWEN38_UNITS_ONLY is for the text lane installed beside another (QWEN38_SECONDARY=flash or 27b)" >&2; exit 1 ;;
+  esac
 fi
 
 # ── Pinned, validated versions (override via env if you know what you do) ──
@@ -1109,12 +1112,15 @@ side_prepared(){  # $1 lane (image, video, kolibri)
     *) return 1 ;;
   esac
 }
-# The flash lane, installed beside the lane that serves, is on demand too: prepared when the image
-# its launcher names is on the box (every box installed before this).
-flash_prepared(){
-  local img
-  img="$({ grep -m1 -oE 'lmsysorg/sglang@sha256:[0-9a-f]{64}|qwen38-flash:[A-Za-z0-9._-]+' "$CONFIG_DIR/launch-flash.sh" 2>/dev/null || true; } | head -1)"
-  [ -n "$img" ] && docker image inspect "$img" >/dev/null 2>&1
+# The other text lane, installed beside the lane that serves, is on demand too: prepared when the
+# image its launcher (flash) or unit (27B) runs is on the box, with the 27B's DFlash2 draft in
+# the cache (every box installed before this is).
+text_lane_prepared(){  # $1 flash|27b
+  local f img
+  if [ "$1" = flash ]; then f="$CONFIG_DIR/launch-flash.sh"; else f="$SGL_UNIT_PATH"; fi
+  img="$(engine_image "$f")"
+  if [ -z "$img" ] || ! docker image inspect "$img" >/dev/null 2>&1; then return 1; fi
+  [ "$1" = flash ] || draft_in_cache "$f"
 }
 side_mode(){  # $1 lane, $2 --with-<lane> given: the installer's option for this run
   if [ "$ALL_WEIGHTS" -eq 1 ] || [ "$2" -eq 1 ] || side_prepared "$1"; then echo --no-smoke; else echo --units-only; fi
@@ -1216,7 +1222,7 @@ else
   HAVE_B="$({ du -s --apparent-size -B1 "$HF_REPO_CACHE/blobs" 2>/dev/null || true; } | cut -f1)"
   NEED_GB=$((NEED_GB - ${HAVE_B:-0} / 1073741824)); [ "$NEED_GB" -ge 10 ] || NEED_GB=10   # floor: never under the need
 fi
-if [ "$LANE" = "flash" ] && ! ls "$PLE_DIR"/ple_table_*.bin >/dev/null 2>&1; then
+if [ "$LANE" = "flash" ] && [ "$UNITS_ONLY" -eq 0 ] && ! ls "$PLE_DIR"/ple_table_*.bin >/dev/null 2>&1; then
   # The 47.7 GiB sparse backing file is written on every boot, in PLE_DIR; the space
   # has to be there whether or not a previous boot left one behind, and on that disk:
   # it was counted against HF_CACHE's, which says nothing when PLE_DIR is elsewhere.
@@ -1228,6 +1234,9 @@ if [ "$LANE" = "flash" ] && ! ls "$PLE_DIR"/ple_table_*.bin >/dev/null 2>&1; the
     [ -n "$PLE_FREE_GB" ] && [ "$PLE_FREE_GB" -ge 50 ] || die "Need ~50 GB free under PLE_DIR=$PLE_DIR for the flash lane's PLE table (47.7 GiB, written at every boot); found ${PLE_FREE_GB:-unknown} GB. Free some space or set PLE_DIR to another disk."
   fi
 fi
+# A lane installed on demand takes no room now: its first Load checks the room for what it
+# fetches (prepare-lane.sh, then its switch).
+[ "$UNITS_ONLY" -eq 0 ] || NEED_GB=0
 [ -n "$FREE_DISK_GB" ] && [ "$FREE_DISK_GB" -ge "$NEED_GB" ] || die "Need ~${NEED_GB} GB free for the checkpoints and caches under $HF_CACHE; found ${FREE_DISK_GB:-unknown} GB. Free some space or set HF_CACHE to another disk."
 DOCKER_ROOT=$(docker info --format '{{.DockerRootDir}}' 2>/dev/null || echo /var/lib/docker)
 DOCKER_FREE_GB=$({ df -BG --output=avail "$DOCKER_ROOT" 2>/dev/null || true; } | tail -1 | tr -dc '0-9')
@@ -1243,6 +1252,7 @@ fi
 if docker image inspect "$PULL_TARGET" >/dev/null 2>&1; then
   DOCKER_NEED_GB=5; IMG_LABEL="container (its image is already here)"
 fi
+[ "$UNITS_ONLY" -eq 0 ] || DOCKER_NEED_GB=0
 [ "${DOCKER_FREE_GB:-0}" -ge "$DOCKER_NEED_GB" ] || die "Need ~${DOCKER_NEED_GB} GB free on $DOCKER_ROOT for the $IMG_LABEL; found ${DOCKER_FREE_GB:-?} GB (docker images live there, not under \$HOME)."
 # One disk for both, as on the reference box: the two needs add up there. Checked apart,
 # 45 GB free passed a first 27B install that needs 45 for the checkpoints and 40 for the
@@ -1291,7 +1301,8 @@ fi
 echo "OK (aarch64, ${TOTAL_GB} GB RAM, ${FREE_DISK_GB} GB free)"
 
 if [ "$UNITS_ONLY" -eq 1 ]; then
-  step "2/10 The Flash-Next image: pulled at the lane's first Load"
+  if [ "$LANE" = "flash" ]; then step "2/10 The Flash-Next image: pulled at the lane's first Load (~30 GB)"
+  else step "2/10 The SGLang image: pulled at the lane's first Load (~15 GB to download)"; fi
   PULLED_IMAGE="$PULL_TARGET"
 elif [ "$LANE" = "flash" ]; then
   step "2/10 Pulling the official SGLang Flash-Next image (~30 GB, one-time, resumable)"
@@ -1341,7 +1352,8 @@ else
 fi
 
 if [ "$UNITS_ONLY" -eq 1 ]; then
-  step "4/10 The Flash-Next checkpoint: fetched at the lane's first Load (~136 GB)"
+  if [ "$LANE" = "flash" ]; then step "4/10 The Flash-Next checkpoint: fetched at the lane's first Load (~136 GB)"
+  else step "4/10 The checkpoints (the target and its DFlash2 draft): fetched at the lane's first Load (~28 GB)"; fi
 elif [ "$LANE" = "flash" ]; then
   step "4/10 Downloading the Flash-Next checkpoint (~136 GB, one-time, reuses/resumes any local copy)"
   echo "This is the big one: at 100 MB/s it takes ~25 min. Interrupting is safe, re-running resumes."
@@ -1483,6 +1495,11 @@ fi
 # 2026-09-24). Called at step 8 just before the unit is installed, or at the end of step 7
 # on a --no-service install, which writes no unit.
 apply_context_configs(){
+  if [ "$UNITS_ONLY" -eq 1 ]; then
+    # no checkpoint yet: its preparation patches the draft's config, its switch the target's
+    [ "$LANE" = "27b" ] && echo "the checkpoints' configs for the $CONTEXT_MODE window: set at the lane's first Load"
+    return 0
+  fi
   if [ "$CONTEXT_MODE" = "1m" ]; then
     # Both configs must carry the YaRN patch (target AND draft, or the draft
     # crashes at load). Idempotent; originals backed up as config.json.pre-yarn.
@@ -1552,10 +1569,11 @@ if [ -z "$SECONDARY" ] && [ "$NO_SERVICE" -eq 0 ]; then
     step "The ${SECOND_LANE/27b/27B} lane, installed beside the ${LANE/27b/27B} lane (it serves when it is loaded)"
     SECOND_ENV=()
     [ "$SECOND_FRESH" -eq 1 ] && SECOND_ENV=(MODEL_CHOICE="$SECOND_TARGET")
-    # The flash lane on demand: its units only, unless it is prepared, asked for by name, or
-    # --all-weights; its first Load from the cockpit prepares it.
+    # The other text lane on demand: its units only, unless it is prepared, asked for by name
+    # (--with-flash, --with-27b) or --all-weights; its first Load from the cockpit prepares it.
     SECOND_UNITS=0
-    if [ "$SECOND_LANE" = flash ] && [ "$ALL_WEIGHTS" -eq 0 ] && [ "$WITH_FLASH" -eq 0 ] && ! flash_prepared; then
+    SECOND_NAMED="$WITH_FLASH"; [ "$SECOND_LANE" = 27b ] && SECOND_NAMED="$WITH_27B"
+    if [ "$ALL_WEIGHTS" -eq 0 ] && [ "$SECOND_NAMED" -eq 0 ] && ! text_lane_prepared "$SECOND_LANE"; then
       SECOND_UNITS=1; SECOND_ENV+=(QWEN38_UNITS_ONLY=1)
     fi
     if env -u MODEL_CHOICE -u MODEL_REV -u CONTEXT_MODE -u RESTART_ENGINE \

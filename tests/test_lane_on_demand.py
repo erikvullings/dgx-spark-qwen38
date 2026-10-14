@@ -198,7 +198,7 @@ class TheDispatcher(unittest.TestCase):
                 self.assertEqual(self.run_it(lane), (0, f"install-{lane}.sh --prepare"))
 
     def test_anything_else_is_refused(self):
-        for args in ((), ("27b",), ("../install",), ("image", "--uninstall"), ("",)):
+        for args in ((), ("27B",), ("../install",), ("image", "--uninstall"), ("",)):
             with self.subTest(args=args):
                 rc, out = self.run_it(*args)
                 self.assertEqual(rc, 2, out)
@@ -206,66 +206,190 @@ class TheDispatcher(unittest.TestCase):
 
 
 
-class TheFlashPreparation(unittest.TestCase):
-    """prepare-lane.sh flash, run as written in a HOME of the test's own: the image the launcher
-    names is pulled, the checkpoint of the target it serves fetched by the switch's own --fetch,
-    and the reduced draft vocabulary built from it when the launcher takes one."""
+class TextBox:
+    """prepare-lane.sh <flash|27b>, run as written in a HOME of the test's own, against a docker
+    that records its calls and knows which images are on the box (one is, once pulled), a df that
+    gives the room the test says, and a switch-model.sh and a patch-yarn.py that record theirs.
+    The launcher and the unit are written as their templates write them."""
 
-    PINS = dict(re.findall(r'^(FLASH(?:_NVDA|_UNC)?_(?:REPO|REV))="([^"]+)"', (REPO / "install.sh").read_text(), re.M))
-    IMG = "lmsysorg/sglang@sha256:" + "c" * 64
+    PINS = dict(re.findall(r'^((?:FLASH(?:_NVDA|_UNC)?|STOCK|UNC|FP8|UNCFP8)_(?:REPO|REV))="([^"]+)"',
+                           (REPO / "install.sh").read_text(), re.M))
 
-    def run_it(self, repo_var="FLASH", map_line=True, image_here=False):
-        t = pathlib.Path(tempfile.mkdtemp(prefix="prepare-flash-"))
-        d = t / "repo"
+    def __init__(self, image_here=False, free_gb=1000):
+        self.t = t = pathlib.Path(tempfile.mkdtemp(prefix="prepare-text-"))
+        self.d = d = t / "repo"
         d.mkdir()
-        for f in ("prepare-lane.sh", "lanes.sh", "install.sh"):
+        for f in ("lanes.sh", "install.sh"):
             (d / f).write_text((REPO / f).read_text())
+        self.units = t / "units"
+        self.units.mkdir()
+        (d / "prepare-lane.sh").write_text((REPO / "prepare-lane.sh").read_text().replace("/etc/systemd/system/", f"{self.units}/"))
         (d / "switch-model.sh").write_text(f'echo "switch-model.sh $*" >> "{t}/calls"\n')
-        hf = t / "hf"
-        model, rev = self.PINS[f"{repo_var}_REPO"], self.PINS[f"{repo_var}_REV"]
-        (hf / "hub" / ("models--" + model.replace("/", "--")) / "snapshots" / rev).mkdir(parents=True)
-        cfg = t / "home" / ".config" / "qwen38"
-        cfg.mkdir(parents=True)
-        (cfg / "launch-flash.sh").write_text(
-            f"docker run -v {hf}:/root/.cache/huggingface {self.IMG} python3 -m sglang.launch_server --model-path {model} \\\n"
-            + (f'[ -s "{cfg}/token-map-65536.pt" ] && TIER+=(--speculative-token-map /out/token-map-65536.pt)\n' if map_line else ""))
+        (d / "patch-yarn.py").write_text(f'import sys\nopen("{t}/calls", "a").write("patch-yarn.py " + " ".join(sys.argv[1:]) + "\\n")\n')
+        self.hf, self.ple = t / "hf", t / "ple"
+        self.hf.mkdir()
+        self.ple.mkdir()
+        self.cfg = t / "home" / ".config" / "qwen38"
+        self.cfg.mkdir(parents=True)
+        (t / "docker-root").mkdir()
         (t / "bin").mkdir()
-        # the image is on the box once pulled (or before, image_here); no local tag is, until tagged
-        (t / "bin" / "docker").write_text(
-            f'#!/bin/sh\necho "docker $*" >> "{t}/calls"\n'
-            'case "$1 $2" in\n'
-            '  "image inspect") case "$3" in qwen38-pinned:*) exit 1 ;; esac\n'
-            f'    [ -e "{t}/pulled" ] || [ {int(image_here)} = 1 ] || exit 1; echo sha256:abc; exit 0 ;;\n'
-            f'  "pull "*) touch "{t}/pulled" ;;\n'
-            'esac\nexit 0\n')
-        (t / "bin" / "docker").chmod(0o755)
-        r = subprocess.run(["bash", str(d / "prepare-lane.sh"), "flash"], capture_output=True, text=True, timeout=60,
-                           env={"PATH": f"{t}/bin:/usr/bin:/bin", "HOME": str(t / "home")})
-        calls = (t / "calls").read_text().splitlines() if (t / "calls").exists() else []
+        self.stub("docker", f'echo "docker $*" >> "{t}/calls"\n'
+                  'case "$1 $2" in\n'
+                  f'  "info "*) echo "{t}/docker-root" ;;\n'
+                  '  "image inspect") case "$3" in qwen38-pinned:*) exit 1 ;; esac\n'
+                  f'    [ -e "{t}/pulled" ] || [ {int(image_here)} = 1 ] || exit 1; echo sha256:abc ;;\n'
+                  f'  "pull "*) touch "{t}/pulled" ;;\n'
+                  'esac\nexit 0\n')
+        self.stub("df", f'printf "Avail\\n{free_gb}G\\n"')
+
+    def stub(self, name, body):
+        (self.t / "bin" / name).write_text("#!/bin/sh\n" + body)
+        (self.t / "bin" / name).chmod(0o755)
+
+    def flash(self, model, image, map_line=True):
+        (self.cfg / "launch-flash.sh").write_text(
+            "exec /usr/bin/docker run --rm --name qwen38-flash --gpus all \\\n"
+            f"  -v {self.hf}:/root/.cache/huggingface \\\n  -v {self.cfg}:/out \\\n  -v {self.ple}:/ple \\\n"
+            f"  -e HF_HUB_OFFLINE=1 \\\n  {image} \\\n  python3 -m sglang.launch_server \\\n"
+            f"    --model-path {model} --tp-size 1 \\\n"
+            + (f'[ -s "{self.cfg}/token-map-65536.pt" ] && TIER+=(--speculative-token-map /out/token-map-65536.pt)\n' if map_line else ""))
+
+    def unit27(self, model, image, window="1m", draft="org/Qwen3.8-27B-DFlash2", drev="d" * 40):
+        (self.units / "qwen38-sglang.service").write_text(
+            "[Service]\nExecStart=/usr/bin/docker run --rm --name qwen38-sglang --gpus all \\\n"
+            f"  -v {self.cfg}/sglang-cache:/cache \\\n  -v {self.hf}:/root/.cache/huggingface \\\n  -v {self.cfg}:/out \\\n"
+            f"  {image} \\\n  python3 -m sglang.launch_server \\\n"
+            f"    --trust-remote-code --model-path {model} --tp-size 1 \\\n"
+            + ("    --context-length 1010000 \\\n" if window == "1m" else "")
+            + f"    --speculative-algorithm DFLASH --speculative-draft-model-path {draft} \\\n"
+            f"    --speculative-draft-model-revision {drev} \\\n")
+
+    def run(self, lane, **env):
+        r = subprocess.run(["bash", str(self.d / "prepare-lane.sh"), lane], capture_output=True, text=True, timeout=60,
+                           env={"PATH": f"{self.t}/bin:/usr/bin:/bin", "HOME": str(self.t / "home"), **env})
+        calls = (self.t / "calls").read_text().splitlines() if (self.t / "calls").exists() else []
         return r.returncode, r.stdout + r.stderr, calls
 
+
+def heads(calls):
+    return [" ".join(c.split()[0:2]) for c in calls]
+
+
+class TheFlashPreparation(unittest.TestCase):
+    """prepare-lane.sh flash: the image the launcher runs pulled (its room checked first) and
+    tagged, the checkpoint of the target it serves fetched by the switch's own --fetch, the room
+    of the PLE table it writes at every boot checked after it, and the reduced draft vocabulary
+    built from it when the launcher takes one."""
+
+    IMG = "lmsysorg/sglang@sha256:" + "c" * 64
+
+    def box(self, repo_var="FLASH", map_line=True, image="", **kw):
+        b = TextBox(**kw)
+        model = b.PINS[f"{repo_var}_REPO"]
+        (b.hf / "hub" / ("models--" + model.replace("/", "--")) / "snapshots" / b.PINS[f"{repo_var}_REV"]).mkdir(parents=True)
+        b.flash(model, image or self.IMG, map_line)
+        return b
+
     def test_image_checkpoint_and_vocabulary_in_that_order(self):
-        rc, out, calls = self.run_it()
+        rc, out, calls = self.box().run("flash")
         self.assertEqual(rc, 0, out)
-        self.assertEqual([c.split()[0:2] for c in calls],
-                         [["docker", "image"], ["docker", "pull"], ["docker", "image"], ["docker", "image"],
-                          ["docker", "tag"], ["switch-model.sh", "flash"], ["docker", "run"]])
+        self.assertEqual(heads(calls), ["docker image", "docker info", "docker pull", "docker image", "docker image",
+                                        "docker tag", "switch-model.sh flash", "docker run"])
         self.assertIn(f"docker pull {self.IMG}", calls)
         # tagged as install.sh tags what it pulls, so a docker image prune leaves it alone
         self.assertIn(f"docker tag {self.IMG} qwen38-pinned:flash-cccccccccccc", calls)
         self.assertIn("switch-model.sh flash --fetch", calls)
-        self.assertIn(f"/snapshots/{self.PINS['FLASH_REV']} --out /out/token-map-65536.pt --size 65536", calls[-1])
+        self.assertIn(f"/snapshots/{TextBox.PINS['FLASH_REV']} --out /out/token-map-65536.pt --size 65536", calls[-1])
 
     def test_the_target_follows_the_model_the_launcher_serves(self):
-        rc, out, calls = self.run_it(repo_var="FLASH_NVDA", image_here=True)
+        rc, out, calls = self.box(repo_var="FLASH_NVDA", image_here=True).run("flash")
         self.assertEqual(rc, 0, out)
         self.assertIn("switch-model.sh flash-nvda --fetch", calls)
-        self.assertFalse([c for c in calls if c.startswith("docker pull")], calls)
+        self.assertNotIn("docker pull", heads(calls))
+
+    def test_an_image_an_operator_named_by_tag_is_read_too(self):
+        tag = "lmsysorg/sglang:dev-qwen38-next-local"
+        rc, out, calls = self.box(image=tag).run("flash")
+        self.assertEqual(rc, 0, out)
+        self.assertIn(f"docker pull {tag}", calls)
+        self.assertNotIn("docker tag", heads(calls))          # a tag needs none
 
     def test_no_vocabulary_asked_none_built(self):
-        rc, out, calls = self.run_it(map_line=False)
+        rc, out, calls = self.box(map_line=False).run("flash")
         self.assertEqual(rc, 0, out)
-        self.assertFalse([c for c in calls if c.startswith("docker run")], calls)
+        self.assertNotIn("docker run", heads(calls))
+
+    def test_no_room_for_the_image_is_refused_before_its_pull(self):
+        rc, out, calls = self.box(free_gb=20).run("flash")
+        self.assertEqual(rc, 1, out)
+        self.assertIn("need ~35 GB free", out)
+        self.assertEqual(heads(calls), ["docker image", "docker info"])
+
+    def test_no_room_for_the_ple_table_is_refused_after_the_checkpoint(self):
+        rc, out, calls = self.box(image_here=True, free_gb=20).run("flash")
+        self.assertEqual(rc, 1, out)
+        self.assertIn("for the flash lane's PLE table", out)
+        self.assertEqual(heads(calls)[-1], "switch-model.sh flash")   # the checkpoint came; no vocabulary built
+        b = self.box(image_here=True, free_gb=20)
+        (b.ple / "ple_table_0.bin").write_text("t")                   # a table already there takes its own room
+        self.assertEqual(b.run("flash")[0], 0)
+
+
+class TheTwentySevenBPreparation(unittest.TestCase):
+    """prepare-lane.sh 27b, the 27B beside a serving flash: the image its unit runs pulled and
+    tagged, its DFlash2 draft fetched in that image, its config patched for the 1M window the unit
+    serves (restored for the native one), and the checkpoint of the target it serves fetched by
+    the switch's own --fetch, which patches the target's config at the Load."""
+
+    IMG = "lmsysorg/sglang@sha256:" + "e" * 64
+    DRAFT, DREV = "org/Qwen3.8-27B-DFlash2", "d" * 40
+
+    def box(self, repo_var="UNC", window="1m", **kw):
+        b = TextBox(**kw)
+        b.unit27(b.PINS[f"{repo_var}_REPO"], self.IMG, window, self.DRAFT, self.DREV)
+        return b
+
+    def test_image_draft_its_config_and_checkpoint_in_that_order(self):
+        b = self.box()
+        rc, out, calls = b.run("27b")
+        self.assertEqual(rc, 0, out)
+        self.assertEqual(heads(calls), ["docker image", "docker info", "docker pull", "docker image", "docker image",
+                                        "docker tag", "docker run", "patch-yarn.py " + str(b.hf), "switch-model.sh uncensored"])
+        run = next(c for c in calls if c.startswith("docker run"))
+        self.assertIn(f"-v {b.hf}:/hf {self.IMG} /opt/qwen38/ckpt-fetch.py {self.DRAFT} {self.DREV} --refs-main fill", run)
+        self.assertIn(f"patch-yarn.py {b.hf} {self.DRAFT} {self.DREV}", calls)
+        self.assertIn("switch-model.sh uncensored --fetch", calls)
+        self.assertIn(f"docker tag {self.IMG} qwen38-pinned:27b-eeeeeeeeeeee", calls)
+
+    def test_a_native_unit_puts_the_drafts_config_back(self):
+        b = self.box(window="native", image_here=True)
+        rc, out, calls = b.run("27b")
+        self.assertEqual(rc, 0, out)
+        self.assertIn(f"patch-yarn.py --restore {b.hf} {self.DRAFT} {self.DREV}", calls)
+
+    def test_the_target_follows_the_model_the_unit_serves(self):
+        for repo_var, target in (("STOCK", "stock"), ("FP8", "fp8"), ("UNCFP8", "uncensored-fp8")):
+            with self.subTest(target=target):
+                rc, out, calls = self.box(repo_var=repo_var, image_here=True).run("27b")
+                self.assertEqual(rc, 0, out)
+                self.assertEqual(calls[-1], f"switch-model.sh {target} --fetch")
+
+    def test_a_token_goes_by_its_name_only(self):
+        rc, out, calls = self.box(image_here=True).run("27b", HF_TOKEN="hf_value_never_shown")
+        self.assertEqual(rc, 0, out)
+        run = next(c for c in calls if c.startswith("docker run"))
+        self.assertIn(" -e HF_TOKEN ", run)
+        self.assertNotIn("hf_value_never_shown", "\n".join(calls) + out)
+
+    def test_what_it_cannot_prepare_is_refused(self):
+        b = TextBox()
+        b.unit27("org/a-custom-27b", self.IMG)
+        rc, out, _ = b.run("27b")
+        self.assertEqual(rc, 1, out)
+        self.assertIn("which no 27B target names", out)
+        rc, out, _ = TextBox().run("27b")                                   # no unit at all
+        self.assertEqual(rc, 1, out)
+        self.assertIn("the 27B lane is not installed", out)
 
 
 if __name__ == "__main__":
