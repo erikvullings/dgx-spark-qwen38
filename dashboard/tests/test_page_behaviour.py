@@ -143,6 +143,64 @@ class TheKolibriLaneIsSaidAsItIs(unittest.TestCase):
         self.assertNotIn("No text engine is serving", r["verdict"])
         self.assertEqual((r["acc"], r["kv"]), ("no draft model", "25.0 %"))
 
+    def test_the_probe_line_says_it_does_not_run_there(self):
+        # the canary skips on Kolibri, and the page showed the last Qwen lane's result as its own:
+        # "ok, 0.4 s" or "2 failures in a row: URLError" (found in review, 2026-10-14)
+        out = {}
+        for name, canary in (("ok", "{skipped: true, why: WHY, last_ok: 1700000000, latency: 0.4, fails: 0}"),
+                             ("fail", "{skipped: true, why: WHY, last_ok: 1700000000, fails: 2, last_err: 'URLError'}")):
+            out[name] = run(self, self.KOLIBRI + r"""
+            const WHY = "the Kolibri lane is checked by vLLM's own /health, not by a generation";
+            feed({canary: %s});
+            report({line: txt('px-probe'), last: txt('px-last')});
+            """ % canary)
+        for r in out.values():
+            self.assertIn("not run", r["line"])
+            self.assertIn("vLLM's own /health", r["line"])
+            self.assertNotIn("ok, 0.4 s", r["line"])
+            self.assertNotIn("failures in a row", r["line"])
+            self.assertEqual(r["last"], "none on the Kolibri lane")
+
+    def test_traffic_while_it_loads_says_it_serves_nothing_yet(self):
+        r = run(self, r"""
+        const U = JSON.parse(JSON.stringify(UNITS));
+        U.units['qwen38-sglang.service'] = {active: 'inactive', enabled: 'disabled'};
+        U.units['qwen38-kolibri.service'] = {active: 'active', enabled: 'enabled'};
+        feed({config: CONFIG, units: U, lifecycle: life({'qwen38-kolibri.service': eng('loading-weights', {target: 'kolibri'})})});
+        feed({metrics: {lane: null}, decode: {lane: null}});
+        report({verdict: txt('wm-verdict'), cap: txt('wm-cap')});
+        """)
+        self.assertNotIn("serves on vLLM", r["verdict"])
+        self.assertIn("loading", r["verdict"])
+
+    def test_the_belts_say_they_cannot_act_there(self):
+        r = run(self, self.KOLIBRI + r"""
+        const L = life({'qwen38-kolibri.service': eng('ready', {target: 'kolibri'})},
+                       {pool_guard: {enabled: true, threshold: 0.6, fails: 0, flushes: 0}});
+        feed({lifecycle: L, engine_fast: {mem_floor: {gib: 3, aborts: 0}}});
+        report({floor: txt('mm-floor'), guard: txt('mm-guard')});
+        """)
+        self.assertIn("cannot act on the Kolibri lane", r["floor"])
+        self.assertIn("not on the Kolibri lane", r["guard"])
+
+    def test_the_engine_row_names_the_engine(self):
+        r = run(self, self.KOLIBRI + r"""
+        feed({engine_info: {info: {version: 'vLLM 0.29.0', served_model_name: 'kolibri-1'}}});
+        const kol = txt('eng-ver');
+        feed({config: CONFIG, units: UNITS, lifecycle: life({'qwen38-sglang.service': eng('ready')})});
+        feed({engine_info: {info: {version: '0.5.21+cu130'}}});
+        report({kol, qwen: txt('eng-ver'), label: $('eng-ver').previousElementSibling.textContent});
+        """)
+        self.assertEqual((r["kol"], r["qwen"], r["label"]), ("vLLM 0.29.0", "SGLang 0.5.21", "Engine"))
+
+    def test_the_switch_sheet_says_what_a_kolibri_switch_does(self):
+        r = run(self, self.KOLIBRI + r"""
+        report({kol: EXPLAIN.switch({target: 'kolibri'}), q: EXPLAIN.switch({target: 'stock'})});
+        """)
+        self.assertNotIn("proxy ceiling", r["kol"], "the switch to Kolibri never touches it")
+        self.assertIn("opencode", r["kol"])
+        self.assertIn("proxy ceiling", r["q"])
+
     def test_on_a_qwen_lane_nothing_is_refused(self):
         r = run(self, r"""
         feed({config: CONFIG, units: UNITS, lifecycle: life({'qwen38-sglang.service': eng('ready')})});

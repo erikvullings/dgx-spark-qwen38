@@ -179,7 +179,10 @@ on('engine_info', d => {
   setText('eng-spec', i.speculative_algorithm ? `${i.speculative_algorithm}, ${i.speculative_num_steps} steps, ${i.speculative_num_draft_tokens} draft tokens` : 'none');
   setText('eng-attn', i.prefill_attention_backend ? `${i.prefill_attention_backend} / ${i.decode_attention_backend}` : (i.attention_backend ?? 'n/a'));
   setText('eng-radix', i.mamba_radix_cache_strategy ?? 'n/a');
-  setText('eng-ver', String(i.version ?? 'n/a').split('+')[0]);
+  // which engine, named: SGLang gives a bare number, the Kolibri lane "vLLM 0.29.0" (the row read
+  // "SGLang vLLM 0.29.0" there: review, 2026-10-14)
+  const ver = String(i.version ?? 'n/a').split('+')[0];
+  setText('eng-ver', /^\d/.test(ver) ? 'SGLang ' + ver : ver);
 });
 on('containers', d => {
   const serving = Object.entries(d.containers || {}).find(([, c]) => c.image);
@@ -189,7 +192,8 @@ on('containers', d => {
 });
 on('canary', d => {
   setText('px-probe', F.canaryTxt || '…');
-  setText('px-last', d.last_ok ? clockTime(d.last_ok) : 'never in this cockpit’s life');
+  setText('px-last', d.skipped && (servingEngine() || [])[0] === KOLIBRI_UNIT ? 'none on the Kolibri lane'
+    : d.last_ok ? clockTime(d.last_ok) : 'never in this cockpit’s life');
 });
 function renderProxy(){
   const u = F.units[PROXY_UNIT] || {};

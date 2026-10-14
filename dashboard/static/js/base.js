@@ -423,7 +423,9 @@ const EXPLAIN = {
   },
   switch: p => (TARGET_NOTE[p.target] ? TARGET_NOTE[p.target] + '\n\n' : '') +
     `switch-model.sh verifies the checkpoint, makes this lane the one enabled at boot and ${TARGET_UNIT(p.target) === VIDEO_UNIT ? 'changes nothing else'
-      : TARGET_UNIT(p.target) === IMAGE_UNIT ? 'points its unit at this checkpoint' : 'rewrites its unit, the proxy ceiling and the opencode default model'}. It never restarts anything.`,
+      : TARGET_UNIT(p.target) === IMAGE_UNIT ? 'points its unit at this checkpoint'
+      : TARGET_UNIT(p.target) === KOLIBRI_UNIT ? 'points its unit at this checkpoint and its memory share, and makes Kolibri opencode\'s default model, with its compaction'
+      : 'rewrites its unit, the proxy ceiling and the opencode default model'}. It never restarts anything.`,
   flush_cache: () => 'Empties the radix cache. Harmless; the engine refuses it while requests run.',
   abort_all: () => 'Every running or queued generation ends now; the clients see their stream end.',
   smoke: () => 'One real 200-token generation through the proxy, the way a client uses it.',

@@ -44,10 +44,12 @@ on('metrics', d => {
   if (!d.lane){
     // The Kolibri lane serves on vLLM, whose counters are not SGLang's: "no text engine is
     // serving" was said while it served (found in review, 2026-10-14)
-    const kolibri = (servingEngine() || [])[0] === KOLIBRI_UNIT;
-    cap('wm-cap', kolibri ? 'Kolibri: vLLM' : 'no text engine', ''); setText('wm-note', '');
-    setText('wm-verdict', kolibri ? 'The Kolibri lane serves on vLLM, and these counters are SGLang\'s: there are none here for it. Its running and waiting requests are above.'
-                                  : 'No text engine is serving: there is nothing to count.');
+    const kolibri = (servingEngine() || [])[0] === KOLIBRI_UNIT, up = kolibri && textReady();
+    // while it loads it serves nothing yet, next to a Requests line that says so (review, 2026-10-14)
+    cap('wm-cap', up ? 'Kolibri: vLLM' : kolibri ? 'Kolibri: loading' : 'no text engine', ''); setText('wm-note', '');
+    setText('wm-verdict', up ? 'The Kolibri lane serves on vLLM, and these counters are SGLang\'s: there are none here for it. Its running and waiting requests are above.'
+                         : kolibri ? 'The Kolibri lane is loading: it serves nothing yet, and these counters are SGLang\'s.'
+                         : 'No text engine is serving: there is nothing to count.');
     facts($('wm-facts'), []); return;
   }
   if (d.requests == null){
@@ -161,11 +163,16 @@ on('machine', d => {
   setText('dk-home', dk.home ? fmtGiB(dk.home.free) + ' free of ' + fmtGiB(dk.home.total) : 'n/a');
   setText('dk-docker', dk.docker ? fmtGiB(dk.docker.free) + ' free of ' + fmtGiB(dk.docker.total) : 'n/a');
 });
+// On the Kolibri lane neither belt can act: vLLM has no route that aborts a generation or
+// flushes its cache, and they read "armed" there (review, 2026-10-14).
+const kolibriHolds = () => (servingEngine() || [])[0] === KOLIBRI_UNIT;
 on('engine_fast', d => {
+  if (kolibriHolds()){ setText('mm-floor', `cannot act on the Kolibri lane: vLLM has no route to abort a generation (stopping the lane stops them)`); return; }
   if (d.mem_floor){ const f = d.mem_floor; setText('mm-floor', `aborts generations under ${f.gib} GiB` + (f.aborts ? `, fired ${f.aborts} time${f.aborts > 1 ? 's' : ''}` : ', never fired')); }
 });
 on('lifecycle', d => {
   const g = d.pool_guard; if (!g) return;
+  if (kolibriHolds()){ setText('mm-guard', 'not on the Kolibri lane: vLLM has no cache flush route, and evicts its prefix cache by itself'); return; }
   setText('mm-guard', !g.enabled ? 'off (COCKPIT_POOL_GUARD=0)' : g.fails ? `cannot flush since ${clockTime(g.last_fail)}: ${g.last_err}`
     : g.flushes ? `${g.flushes} flush${g.flushes > 1 ? 'es' : ''}, last ${clockTime(g.last)}, above ${Math.round(g.threshold * 100)} % held` : `armed at ${Math.round(g.threshold * 100)} % held, never fired`);
 });
