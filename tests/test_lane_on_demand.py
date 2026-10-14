@@ -198,11 +198,74 @@ class TheDispatcher(unittest.TestCase):
                 self.assertEqual(self.run_it(lane), (0, f"install-{lane}.sh --prepare"))
 
     def test_anything_else_is_refused(self):
-        for args in ((), ("flash",), ("../install",), ("image", "--uninstall"), ("",)):
+        for args in ((), ("27b",), ("../install",), ("image", "--uninstall"), ("",)):
             with self.subTest(args=args):
                 rc, out = self.run_it(*args)
                 self.assertEqual(rc, 2, out)
                 self.assertIn("usage", out)
+
+
+
+class TheFlashPreparation(unittest.TestCase):
+    """prepare-lane.sh flash, run as written in a HOME of the test's own: the image the launcher
+    names is pulled, the checkpoint of the target it serves fetched by the switch's own --fetch,
+    and the reduced draft vocabulary built from it when the launcher takes one."""
+
+    PINS = dict(re.findall(r'^(FLASH(?:_NVDA|_UNC)?_(?:REPO|REV))="([^"]+)"', (REPO / "install.sh").read_text(), re.M))
+    IMG = "lmsysorg/sglang@sha256:" + "c" * 64
+
+    def run_it(self, repo_var="FLASH", map_line=True, image_here=False):
+        t = pathlib.Path(tempfile.mkdtemp(prefix="prepare-flash-"))
+        d = t / "repo"
+        d.mkdir()
+        for f in ("prepare-lane.sh", "lanes.sh", "install.sh"):
+            (d / f).write_text((REPO / f).read_text())
+        (d / "switch-model.sh").write_text(f'echo "switch-model.sh $*" >> "{t}/calls"\n')
+        hf = t / "hf"
+        model, rev = self.PINS[f"{repo_var}_REPO"], self.PINS[f"{repo_var}_REV"]
+        (hf / "hub" / ("models--" + model.replace("/", "--")) / "snapshots" / rev).mkdir(parents=True)
+        cfg = t / "home" / ".config" / "qwen38"
+        cfg.mkdir(parents=True)
+        (cfg / "launch-flash.sh").write_text(
+            f"docker run -v {hf}:/root/.cache/huggingface {self.IMG} python3 -m sglang.launch_server --model-path {model} \\\n"
+            + (f'[ -s "{cfg}/token-map-65536.pt" ] && TIER+=(--speculative-token-map /out/token-map-65536.pt)\n' if map_line else ""))
+        (t / "bin").mkdir()
+        # the image is on the box once pulled (or before, image_here); no local tag is, until tagged
+        (t / "bin" / "docker").write_text(
+            f'#!/bin/sh\necho "docker $*" >> "{t}/calls"\n'
+            'case "$1 $2" in\n'
+            '  "image inspect") case "$3" in qwen38-pinned:*) exit 1 ;; esac\n'
+            f'    [ -e "{t}/pulled" ] || [ {int(image_here)} = 1 ] || exit 1; echo sha256:abc; exit 0 ;;\n'
+            f'  "pull "*) touch "{t}/pulled" ;;\n'
+            'esac\nexit 0\n')
+        (t / "bin" / "docker").chmod(0o755)
+        r = subprocess.run(["bash", str(d / "prepare-lane.sh"), "flash"], capture_output=True, text=True, timeout=60,
+                           env={"PATH": f"{t}/bin:/usr/bin:/bin", "HOME": str(t / "home")})
+        calls = (t / "calls").read_text().splitlines() if (t / "calls").exists() else []
+        return r.returncode, r.stdout + r.stderr, calls
+
+    def test_image_checkpoint_and_vocabulary_in_that_order(self):
+        rc, out, calls = self.run_it()
+        self.assertEqual(rc, 0, out)
+        self.assertEqual([c.split()[0:2] for c in calls],
+                         [["docker", "image"], ["docker", "pull"], ["docker", "image"], ["docker", "image"],
+                          ["docker", "tag"], ["switch-model.sh", "flash"], ["docker", "run"]])
+        self.assertIn(f"docker pull {self.IMG}", calls)
+        # tagged as install.sh tags what it pulls, so a docker image prune leaves it alone
+        self.assertIn(f"docker tag {self.IMG} qwen38-pinned:flash-cccccccccccc", calls)
+        self.assertIn("switch-model.sh flash --fetch", calls)
+        self.assertIn(f"/snapshots/{self.PINS['FLASH_REV']} --out /out/token-map-65536.pt --size 65536", calls[-1])
+
+    def test_the_target_follows_the_model_the_launcher_serves(self):
+        rc, out, calls = self.run_it(repo_var="FLASH_NVDA", image_here=True)
+        self.assertEqual(rc, 0, out)
+        self.assertIn("switch-model.sh flash-nvda --fetch", calls)
+        self.assertFalse([c for c in calls if c.startswith("docker pull")], calls)
+
+    def test_no_vocabulary_asked_none_built(self):
+        rc, out, calls = self.run_it(map_line=False)
+        self.assertEqual(rc, 0, out)
+        self.assertFalse([c for c in calls if c.startswith("docker run")], calls)
 
 
 if __name__ == "__main__":

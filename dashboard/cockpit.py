@@ -1969,14 +1969,24 @@ def collect_jobs():
 
 
 def lane_prepared(lane: str):
-    """Whether a side lane's runtime is on the box, as install.sh reads it: the venv and the
+    """Whether a lane installed on demand is prepared, as install.sh reads it: the venv and the
     note of its wheel (written once the wheel is in) for the image and video lanes, the image
-    its unit names for Kolibri. None when the lane is not installed (no unit)."""
-    unit = {"image": IMAGE_UNIT_PATH, "video": VIDEO_UNIT_PATH, "kolibri": KOLIBRI_UNIT_PATH}[lane]
+    its unit names for Kolibri, the image its launcher names for the flash lane beside the lane
+    that serves, and the draft vocabulary that launcher waits for, when it waits for one. None
+    when the lane is not installed (no unit, no launcher)."""
+    unit = {"image": IMAGE_UNIT_PATH, "video": VIDEO_UNIT_PATH, "kolibri": KOLIBRI_UNIT_PATH,
+            "flash": UNIT_PATHS["qwen38-flash.service"]}[lane]
     try:
         text = unit.read_text(errors="replace")
     except OSError:
         return None
+    if lane == "flash":
+        m = re.search(r"lmsysorg/sglang@sha256:[0-9a-f]{64}|qwen38-flash:[A-Za-z0-9._-]+", text)
+        if not (m and run(["docker", "image", "inspect", "--format", "{{.Id}}", m.group(0)],
+                          timeout=10).strip().startswith("sha256:")):
+            return False
+        waits = re.search(r'\[ -s "([^"]+)" \] && TIER\+=\(--speculative-token-map', text)
+        return not waits or Path(waits.group(1)).exists()
     if lane == "kolibri":
         m = re.search(r"qwen38-kolibri:\S+", text)
         return bool(m) and run(["docker", "image", "inspect", "--format", "{{.Id}}", m.group(0)],
@@ -1993,7 +2003,7 @@ def lane_prepared(lane: str):
 def collect_lanes_ready():
     """30 s tier: which side lanes are prepared, for the Load journey (it builds a lane's
     runtime first when it is not)."""
-    return {lane: lane_prepared(lane) for lane in ("image", "video", "kolibri")}
+    return {lane: lane_prepared(lane) for lane in ("image", "video", "kolibri", "flash")}
 
 TIERS = [
     (1.0, {"machine": collect_machine, "engine_fast": collect_engine_fast, "job": collect_jobs}),
@@ -2163,7 +2173,7 @@ ACTIONS["fetch"] = {
 # through prepare-lane.sh, which takes the lane as an argument of its own.
 ACTIONS["prepare"] = {
     "danger": "low",
-    "params": {"lane": ["image", "kolibri", "video"]},
+    "params": {"lane": ["flash", "image", "kolibri", "video"]},
     "argv": lambda p: ["bash", str(REPO_DIR / "prepare-lane.sh"), p["lane"]],
     "timeout": 5400,
 }

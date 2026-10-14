@@ -42,6 +42,8 @@ class Prepare(unittest.TestCase):
         cls.cp.IMAGE_UNIT_PATH = cls.units / "qwen38-image.service"
         cls.cp.VIDEO_UNIT_PATH = cls.units / "qwen38-video.service"
         cls.cp.KOLIBRI_UNIT_PATH = cls.units / "qwen38-kolibri.service"
+        cls.cp.UNIT_PATHS = {"qwen38-sglang.service": cls.units / "qwen38-sglang.service",
+                             "qwen38-flash.service": cls.units / "launch-flash.sh"}
 
     @classmethod
     def tearDownClass(cls):
@@ -66,11 +68,28 @@ class Prepare(unittest.TestCase):
     def test_which_lanes_are_prepared(self):
         self.lane("image", built=True)
         self.lane("video", built=False)
-        self.assertEqual(self.cp.collect_lanes_ready(), {"image": True, "video": False, "kolibri": None})
+        self.assertEqual(self.cp.collect_lanes_ready(), {"image": True, "video": False, "kolibri": None, "flash": None})
         (self.units / "qwen38-kolibri.service").write_text("ExecStart=/usr/bin/docker run qwen38-kolibri:1.0\n")
         self.assertIs(self.cp.collect_lanes_ready()["kolibri"], False)
         self.images.add("qwen38-kolibri:1.0")
         self.assertIs(self.cp.collect_lanes_ready()["kolibri"], True)
+
+    def test_the_flash_lane_beside_the_serving_one(self):
+        # its image, and the draft vocabulary its launcher waits for when it waits for one
+        img = "lmsysorg/sglang@sha256:" + "d" * 64
+        vocab = self.tmp / "token-map-65536.pt"
+        vocab.unlink(missing_ok=True)
+        launch = self.units / "launch-flash.sh"
+        launch.write_text(f"docker run {img} --model-path x\n"
+                          f'[ -s "{vocab}" ] && TIER+=(--speculative-token-map /out/token-map-65536.pt)\n')
+        self.assertIs(self.cp.lane_prepared("flash"), False)          # no image
+        self.images.add(img)
+        self.assertIs(self.cp.lane_prepared("flash"), False)          # the vocabulary it waits for
+        vocab.write_text("map")
+        self.assertIs(self.cp.lane_prepared("flash"), True)
+        launch.write_text(f"docker run {img} --model-path x\nTIER+=(--speculative-token-map /out/token-map-65536.pt)\n")
+        vocab.unlink()
+        self.assertIs(self.cp.lane_prepared("flash"), True)           # built before: the line it always had
 
     def test_a_venv_without_its_wheels_note_is_not_prepared(self):
         # the venv is made first and the wheel's note written once the wheel is in
@@ -86,7 +105,7 @@ class Prepare(unittest.TestCase):
             if self.cp.JOBS[body["job"]].status != "running":
                 break
             __import__("time").sleep(0.05)
-        for lane in ("flash", "27b", "../install", ""):
+        for lane in ("27b", "../install", "", "flash "):
             with self.subTest(lane=lane):
                 self.assertEqual(self.cp.start_action("prepare", {"lane": lane})[0], 400)
 

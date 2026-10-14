@@ -77,6 +77,19 @@ class LoadingIt(unittest.TestCase):
         """)
         self.assertEqual(r, {"now": True, "lanes": True})
 
+    def test_the_flash_lane_not_prepared_is_prepared_first_too(self):
+        r = run(self, lanes("stopped", "image", text_state="ready") + r"""
+        feed({lanes_ready: {image: true, video: true, kolibri: null, flash: false}});
+        const steps = laneJourneySteps('flash');
+        report({steps: steps.map(s => s.name + (s.params.lane ? ' ' + s.params.lane : '')), desc: steps[0].desc,
+                cmd: argvFor(steps[0].name, steps[0].params).join(' ')});
+        """)
+        self.assertEqual(r["steps"][0], "prepare flash")
+        self.assertIn("switch", r["steps"])
+        self.assertIn("checkpoint (about 136 GB)", r["desc"])
+        self.assertNotIn("The next step fetches", r["desc"])
+        self.assertEqual(r["cmd"], "bash prepare-lane.sh flash")
+
     def test_a_prepared_lane_loads_as_before(self):
         r = run(self, lanes("stopped", "image", text_state="ready") + r"""
         feed({lanes_ready: {image: true, video: true, kolibri: null}});

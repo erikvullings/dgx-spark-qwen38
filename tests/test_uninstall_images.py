@@ -96,8 +96,9 @@ class TheReclaimCommandReallyReclaims(unittest.TestCase):
         self.assertIn(f"docker rmi '{OLD_TAG}' '{OLD_DIGEST}'    # 30.1GB", out)
 
     def test_the_installer_tags_what_it_pulls_by_digest(self):
+        # pin_tag is in lanes.sh, shared with prepare-lane.sh (2026-10-15); install.sh calls it
+        self.assertIn('tag="qwen38-pinned:$1-', (REPO / "lanes.sh").read_text())
         text = (REPO / "install.sh").read_text()
-        self.assertIn('tag="qwen38-pinned:$1-', text)
         self.assertIn('pin_tag "$LANE" "$PULLED_IMAGE"', text)
         self.assertIn('then pin_tag 27b "$IMAGE"; else pin_tag flash "$FLASH_IMAGE"; fi', text)
 

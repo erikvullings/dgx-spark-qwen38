@@ -89,7 +89,8 @@ class ThePinnedImagesAreTagged(unittest.TestCase):
     images: both serving images of the reference box were in that set (2026-09-23)."""
 
     def run_pin(self, present, tagged=False, ref="lmsysorg/sglang@sha256:" + "d6e7288627be" + "0" * 52):
-        text = INSTALL.read_text()
+        # in lanes.sh since prepare-lane.sh tags the image a lane's first Load pulls (2026-10-15)
+        text = (REPO / "lanes.sh").read_text()
         start = text.index("pin_tag() {")
         fn = text[start:text.index("\n}\n", start) + 3]
         t = pathlib.Path(tempfile.mkdtemp(prefix="pin-"))
@@ -120,6 +121,11 @@ class ThePinnedImagesAreTagged(unittest.TestCase):
 
     def test_a_tag_reference_needs_no_tag(self):
         self.assertEqual(self.run_pin(present=True, ref="lmsysorg/sglang:v0.5.19"), ("", ""))
+
+    def test_install_sh_has_it_before_it_tags(self):
+        text = INSTALL.read_text()
+        self.assertLess(text.index('. "$REPO_DIR/lanes.sh"'), text.index('pin_tag "$LANE" "$PULLED_IMAGE"'))
+        self.assertNotIn("pin_tag() {", text)       # one definition, in lanes.sh
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)
