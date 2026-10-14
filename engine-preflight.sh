@@ -55,7 +55,7 @@ gpu_holders() {
     # SGLang's lanes, and the Kolibri lane's vLLM: its engine core is VLLM::EngineCore (the
     # kernel keeps 15 characters of it) and its API server a python3 running vllm serve.
     if [ ! -d "$PROC/$pid" ] || [[ "$comm" == sglang* ]] || [[ "$cmd" == *sglang* ]] \
-       || [[ "$comm" == VLLM::* ]] || [[ "$cmd" == *vllm\ serve* ]] || [[ "$cmd" == *vllm/* ]]; then
+       || [[ "$comm" == VLLM::* ]] || [[ "$cmd" == *vllm\ serve* ]]; then
       eng=$((eng + mib)); rem+="$pid ${comm:-gone} $mib MiB; "
     else
       oth+="$pid ${comm:-$name} $mib MiB; "

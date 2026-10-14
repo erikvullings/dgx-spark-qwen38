@@ -20,7 +20,7 @@ INSTALL = REPO / "install.sh"
 
 def block() -> str:
     text = INSTALL.read_text()
-    start = text.index("OC_27B=0; OC_FLASH=0\n")
+    start = text.index("OC_27B=0; OC_FLASH=0; OC_KOLIBRI=0\n")
     end = text.index("\nPYEOF\n", start) + len("\nPYEOF\n")
     return text[start:end]
 
@@ -31,8 +31,11 @@ PINS = "\n".join(line for line in INSTALL.read_text().splitlines()
 
 
 def generate(lane, mode, unit_ctx=None, flash_unit=False, model="RadixArk/Qwen3.8-27B-NVFP4",
-             pair=None, names=False, flash_running=None):
+             pair=None, names=False, flash_running=None, kolibri_unit=False, kolibri_boot=False, doc=False):
     t = pathlib.Path(tempfile.mkdtemp(prefix="oc-art-"))
+    kolibri = t / "qwen38-kolibri.service"
+    if kolibri_unit:
+        kolibri.write_text("ExecStart=... Aleph-Alpha/Kolibri-1 --revision 258cae8f ...\n")
     if flash_running:
         (t / "launch-flash.sh").write_text(
             "docker run img python3 -m sglang.launch_server --model-path RadixArk/Qwen3.8-Flash-Next-NVFP4 "
@@ -46,13 +49,17 @@ def generate(lane, mode, unit_ctx=None, flash_unit=False, model="RadixArk/Qwen3.
     ctx, out = pair or (("205000", "32000") if lane == "flash" else ("700000", "200000"))
     script = ("set -euo pipefail\ndie(){ echo \"DIE: $*\"; exit 1; }\n" + PINS + "\n"
               f'LANE={lane}; CONTEXT_MODE={mode}; SGL_UNIT_PATH="{sgl}"; FLASH_UNIT_PATH="{flash}"\n'
+              f'KOLIBRI_UNIT_PATH="{kolibri}"; KOLIBRI_BOOT={1 if kolibri_boot else 0}\n'
               f'MODEL_CHOICE={"flash" if lane == "flash" else "stock"}\n'
               f'REPO_DIR="{REPO}"; CONFIG_DIR="{t}"; OC_PORT=30001; OC_CTX={ctx}; OC_OUT={out}\n'
               'OC_LABEL=local; OPENCODE_PIN=1\n' + block())
     r = subprocess.run(["bash", "-c", script], capture_output=True, text=True, timeout=60,
                        env={"PATH": "/usr/bin:/bin", "HOME": str(t)})
     assert r.returncode == 0, r.stdout + r.stderr
-    doc = json.loads((t / "opencode.json").read_text())
+    doc_ = json.loads((t / "opencode.json").read_text())
+    if doc:
+        return doc_
+    doc = doc_
     if names:
         return {p: b["models"][next(iter(b["models"]))]["name"] for p, b in doc["provider"].items()}
     return {p: b["models"][next(iter(b["models"]))]["limit"] for p, b in doc["provider"].items()}
@@ -115,6 +122,29 @@ class TheLaneNotInstalledKeepsItsCheckpointsName(unittest.TestCase):
     def test_an_fp8_27b_is_named_fp8_and_a_native_one_says_its_window(self):
         names = generate("flash", "native", unit_ctx=262144, model="Qwen/Qwen3.8-27B-FP8", names=True)
         self.assertEqual(names["qwen38"], "Qwen3.8-27B FP8 official + DFlash2 (local, 262K)")
+
+
+class ABoxBootingKolibri(unittest.TestCase):
+    """Kolibri serving at boot: opencode's default is Kolibri, and the compaction block, global,
+    is sized from its window (38,000 kept of its 153,000 threshold), not from the 27B's (132,000
+    on a 1M 27B, and opencode compacted again every step or two: found in review, 2026-10-14)."""
+
+    def test_the_default_and_the_compaction_are_kolibris(self):
+        d = generate("27b", "1m", unit_ctx=1010000, flash_unit=True, pair=("551000", "160000"),
+                     kolibri_unit=True, kolibri_boot=True, doc=True)
+        self.assertEqual(d["model"], "kolibri/kolibri-1")
+        self.assertIn("kolibri", d["provider"])
+        self.assertEqual(d["compaction"]["preserve_recent_tokens"], 38000)
+
+    def test_with_kolibri_installed_but_not_at_boot_the_27b_keeps_its_own(self):
+        d = generate("27b", "1m", unit_ctx=1010000, pair=("551000", "160000"), kolibri_unit=True, doc=True)
+        self.assertEqual(d["model"], "qwen38/qwen3.8-27b")
+        self.assertIn("kolibri", d["provider"], "the installed lane is offered")
+        self.assertEqual(d["compaction"]["preserve_recent_tokens"], 132000)
+
+    def test_without_its_unit_there_is_no_kolibri_provider(self):
+        d = generate("27b", "1m", unit_ctx=1010000, pair=("551000", "160000"), doc=True)
+        self.assertNotIn("kolibri", d["provider"])
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)

@@ -601,6 +601,7 @@ done
 KEEP_MODEL_VERBATIM=0
 SGL_UNIT_PATH="/etc/systemd/system/qwen38-sglang.service"
 FLASH_UNIT_PATH="/etc/systemd/system/qwen38-flash.service"
+KOLIBRI_UNIT_PATH="/etc/systemd/system/qwen38-kolibri.service"
 for _p in "$SGL_UNIT_PATH" "$FLASH_UNIT_PATH"; do
   if [ -f "$_p" ] && [ ! -r "$_p" ]; then
     echo "NOTE: an installed unit ($_p) exists but is not readable (pre-v1.2.3 installs used mode 600),"
@@ -1770,11 +1771,11 @@ OC_27B=0; OC_FLASH=0; OC_KOLIBRI=0
 { [ "$LANE" = "flash" ] || [ -f "$FLASH_UNIT_PATH" ]; } && OC_FLASH=1
 # The Kolibri lane is installed at the end of a run (install-kolibri.sh): its provider comes
 # with the first run that finds its unit, or with the first switch to it.
-[ -f /etc/systemd/system/qwen38-kolibri.service ] && OC_KOLIBRI=1
+[ -f "$KOLIBRI_UNIT_PATH" ] && OC_KOLIBRI=1
 OC_KOLIBRI_CTX=""; OC_KOLIBRI_OUT=""; OC_KOLIBRI_NAME=""
 if [ "$OC_KOLIBRI" -eq 1 ]; then
   OC_KOLIBRI_TARGET=kolibri
-  grep -qs -- "Quantinine/Kolibri-1-NVFP4A16-FP8 --revision" /etc/systemd/system/qwen38-kolibri.service && OC_KOLIBRI_TARGET=kolibri-nvfp4
+  grep -qs -- "Quantinine/Kolibri-1-NVFP4A16-FP8 --revision" "$KOLIBRI_UNIT_PATH" && OC_KOLIBRI_TARGET=kolibri-nvfp4
   OC_KOLIBRI_PAIR="$("$REPO_DIR/oc-limits.sh" "$OC_KOLIBRI_TARGET")" \
     || die "oc-limits.sh refused $OC_KOLIBRI_TARGET (repo bug: please open an issue)"
   OC_KOLIBRI_CTX="${OC_KOLIBRI_PAIR%% *}"; OC_KOLIBRI_OUT="$(echo "$OC_KOLIBRI_PAIR" | cut -d' ' -f2)"
@@ -1803,6 +1804,14 @@ PY
     OC_KEEP="$("$REPO_DIR/oc-limits.sh" --preserve "$OC_FIT_CTX")" \
       || die "oc-limits.sh --preserve failed for $OC_FIT_CTX (repo bug: please open an issue)"
   fi
+fi
+# The Kolibri lane serving at boot: opencode's default is Kolibri (OC_POINT_* below), and the
+# compaction block, global, goes with the default's window, as a switch to it sizes it. Sized
+# from the Qwen lane, a 27B in 1M mode kept 132,000 verbatim against Kolibri's threshold of
+# 153,000, and opencode compacted again every step or two (found in review, 2026-10-14).
+if [ "$KOLIBRI_BOOT" -eq 1 ] && [ "$OC_KOLIBRI" -eq 1 ] && [ -n "$OC_KOLIBRI_CTX" ]; then
+  OC_KEEP="$("$REPO_DIR/oc-limits.sh" --preserve "$OC_KOLIBRI_CTX")" \
+    || die "oc-limits.sh --preserve failed for $OC_KOLIBRI_CTX (repo bug: please open an issue)"
 fi
 # The other engine's limits, for when both providers are present: the 27B block
 # keeps its context-mode limits, flash always serves its native window. A flash install
@@ -2691,7 +2700,7 @@ except Exception as e:
     IMAGE_FRESH=0; VIDEO_FRESH=0; KOLIBRI_FRESH=0
     [ -f /etc/systemd/system/qwen38-image.service ] || IMAGE_FRESH=1
     [ -f /etc/systemd/system/qwen38-video.service ] || VIDEO_FRESH=1
-    [ -f /etc/systemd/system/qwen38-kolibri.service ] || KOLIBRI_FRESH=1
+    [ -f "$KOLIBRI_UNIT_PATH" ] || KOLIBRI_FRESH=1
     IMAGE_STATE=off; VIDEO_STATE=off; KOLIBRI_STATE=off
     if [ "$WANT_IMAGE" -eq 1 ]; then
       step "Qwen-Image 2.1 lane (text-to-image, editing, native RGBA)"
@@ -2829,7 +2838,7 @@ except Exception as e:
     fi
     lane_line "Images     " "$IMAGE_STATE" image image "40 GB" /etc/systemd/system/qwen38-image.service
     lane_line "Videos     " "$VIDEO_STATE" video video "144 GB" /etc/systemd/system/qwen38-video.service
-    lane_line "Kolibri-1  " "$KOLIBRI_STATE" kolibri kolibri "102 GB" /etc/systemd/system/qwen38-kolibri.service
+    lane_line "Kolibri-1  " "$KOLIBRI_STATE" kolibri kolibri "102 GB" "$KOLIBRI_UNIT_PATH"
     [ "$LANE" = "27b" ] && echo "  Benchmark  : ./bench.sh"
     exit 0
   fi

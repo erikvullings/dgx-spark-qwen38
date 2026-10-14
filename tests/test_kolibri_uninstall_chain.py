@@ -12,6 +12,7 @@ a box that had been serving the flash lane.
 The script's own uninstall block runs here, whole, against a fake unit path and a fake
 config directory; sudo, systemctl and docker are stubs that write down every call.
 """
+import json
 import os
 import pathlib
 import subprocess
@@ -26,10 +27,16 @@ BLOCK = TEXT[START:END]
 
 
 class TheUninstallKeepsTheChain(unittest.TestCase):
-    def run_block(self, files, kolibri_at_boot=False):
+    def run_block(self, files, kolibri_at_boot=False, opencode=None):
         d = pathlib.Path(tempfile.mkdtemp(prefix="kol-uninstall-"))
+        self.home = d / "home"
         cfg = d / "cfg"
         cfg.mkdir()
+        (self.home / ".config" / "opencode").mkdir(parents=True)
+        if opencode is not None:
+            (cfg / "opencode.json").write_text(json.dumps(opencode, indent=2))
+            (self.home / ".config" / "opencode" / "opencode.json").write_text(json.dumps(opencode, indent=2))
+        self.cfg = cfg
         for name, value in files.items():
             (cfg / name).write_text(value + "\n")
         bin_ = d / "bin"
@@ -49,6 +56,7 @@ class TheUninstallKeepsTheChain(unittest.TestCase):
         script = "\n".join([
             "set -euo pipefail",
             "step(){ :; }",
+            f'HERE="{REPO}"',
             "ACTION=uninstall",
             "UNIT=qwen38-kolibri.service",
             f'INSTALLED="{unit}"',
@@ -60,7 +68,7 @@ class TheUninstallKeepsTheChain(unittest.TestCase):
             "KOLIBRI_NVFP4_REPO=Quantinine/Kolibri-1-NVFP4A16-FP8",
             BLOCK,
         ])
-        env = dict(os.environ, PATH=f"{bin_}:/usr/bin:/bin")
+        env = dict(os.environ, PATH=f"{bin_}:/usr/bin:/bin", HOME=str(self.home))
         r = subprocess.run(["bash", "-c", script], capture_output=True, text=True, env=env, timeout=30)
         self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
         return {p.name: p.read_text().strip() for p in cfg.iterdir() if p.name.startswith("lane-before-")}
@@ -92,6 +100,36 @@ class TheUninstallKeepsTheChain(unittest.TestCase):
                                "lane-before-kolibri": "qwen38-sglang.service"})
         self.assertEqual(left, {"lane-before-image": "qwen38-flash.service",
                                 "lane-before-video": "qwen38-image.service"})
+
+    def test_opencode_loses_the_provider_and_its_default_follows_the_lane_before(self):
+        # left as they were, opencode offered and defaulted to a model nothing served, and its
+        # small-model calls sent "none" to the Qwen template, which refuses it
+        conf = {"$schema": "https://opencode.ai/config.json", "model": "kolibri/kolibri-1",
+                "small_model": "kolibri/kolibri-1",
+                "provider": {p: {"options": {"baseURL": "http://127.0.0.1:30001/v1",
+                                             "apiKey": "{file:/k/api-key}"},
+                                 "models": {m: {"name": m}}}
+                             for p, m in (("qwen38", "qwen3.8-27b"), ("flashnext", "qwen3.8-flash-next"),
+                                          ("kolibri", "kolibri-1"))}}
+        self.run_block({"lane-before-kolibri": "qwen38-flash.service"}, opencode=conf)
+        for path in (self.cfg / "opencode.json", self.home / ".config/opencode/opencode.json"):
+            left = json.loads(path.read_text())
+            self.assertNotIn("kolibri", left["provider"], path)
+            self.assertEqual((left["model"], left["small_model"]),
+                             ("flashnext/qwen3.8-flash-next",) * 2, path)
+            self.assertEqual(left["provider"]["flashnext"]["models"]["qwen3.8-flash-next"]["name"],
+                             "qwen3.8-flash-next", "no name changed")
+
+    def test_a_default_that_was_not_kolibri_is_left_where_it_was(self):
+        conf = {"model": "qwen38/qwen3.8-27b",
+                "provider": {p: {"options": {"baseURL": "http://127.0.0.1:30001/v1",
+                                             "apiKey": "{file:/k/api-key}"},
+                                 "models": {m: {"name": m}}}
+                             for p, m in (("qwen38", "qwen3.8-27b"), ("kolibri", "kolibri-1"))}}
+        self.run_block({"lane-before-kolibri": "qwen38-flash.service"}, opencode=conf)
+        left = json.loads((self.cfg / "opencode.json").read_text())
+        self.assertEqual(left["model"], "qwen38/qwen3.8-27b")
+        self.assertNotIn("kolibri", left["provider"])
 
     def test_kolibri_at_boot_still_gives_the_boot_back_to_its_own_lane(self):
         # the handover reads Kolibri's link before anything else touches it

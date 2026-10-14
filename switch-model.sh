@@ -142,6 +142,7 @@ if [ "$CHOICE" = "kolibri" ] || [ "$CHOICE" = "kolibri-nvfp4" ]; then
     -v "$KOL_HF":/hf "$KOL_IMAGE" - <<'PYKOL' || die "the Kolibri checkpoint could not be verified or fetched (re-run to resume; set HF_TOKEN if it stalls)"
 import contextlib
 import importlib.util
+import json
 import os
 import time
 from huggingface_hub import constants, snapshot_download
@@ -159,9 +160,24 @@ def reporting(*args, **kwargs):
         return contextlib.nullcontext()
 
 
+def complete(path):
+    """Every shard the index names is in the snapshot (a file appears there only once its
+    blob is whole), as install.sh's ckpt_cached reads it: huggingface_hub's own offline
+    check sees a missing file only when it cached the repo's tree, which a download made
+    with another tool or an older hub never wrote, and vLLM then dies at every start."""
+    try:
+        with open(os.path.join(path, "model.safetensors.index.json")) as f:
+            shards = set(json.load(f)["weight_map"].values())
+    except (OSError, ValueError, KeyError, TypeError, AttributeError):
+        shards = {"model.safetensors"}
+    return bool(shards) and all(os.path.exists(os.path.join(path, s)) for s in shards)
+
+
 repo, rev = os.environ["KOL_MODEL"], os.environ["KOL_REV"]
 try:
     path = snapshot_download(repo, revision=rev, local_files_only=True)
+    if not complete(path):
+        raise FileNotFoundError(f"a shard the index of {repo} names is missing")
 except Exception:
     # Refused before the first byte rather than stopped by a full disk halfway. What the
     # cache already holds of the repo comes off the need: a fetch that stopped resumes.
@@ -251,11 +267,18 @@ PYKOL
     KOL_SRC="$(mktemp)"
     if [ -n "$KOL_PAIR" ] && python3 "$REPO_DIR/oc-kolibri.py" "http://127.0.0.1:${KOL_PORT:-30001}/v1" "$CONFIG_DIR/api-key" \
          "${KOL_PAIR%% *}" "$(echo "$KOL_PAIR" | cut -d' ' -f2)" "${KOL_NAME:-Kolibri-1 (local, 262K)}" > "$KOL_SRC"; then
+      # The compaction block is global: sized from Kolibri's window as every text switch sizes
+      # it from its own. Left as the Qwen lane wrote it (132,000 on a 27B in 1M mode), opencode
+      # kept almost all of a session verbatim against Kolibri's threshold and compacted again
+      # every step or two (found in review, 2026-10-14). pi's keepRecentTokens follows (pi-gen).
+      KOL_KEEP="$("$REPO_DIR/oc-limits.sh" --preserve "${KOL_PAIR%% *}")" || KOL_KEEP=""
       for OC_JSON in "$CONFIG_DIR/opencode.json" "$HOME/.config/opencode/opencode.json"; do
         [ -f "$OC_JSON" ] || continue
         python3 "$REPO_DIR/oc-merge-limits.py" "$OC_JSON" --add-providers "$KOL_SRC" >/dev/null || true
         python3 "$REPO_DIR/oc-point-default.py" "$OC_JSON" kolibri "$CHOICE" 262144 \
           || echo "NOTE: could not update $OC_JSON (hand-edited?); set its \"model\" field yourself"
+        [ -n "$KOL_KEEP" ] && { python3 "$REPO_DIR/oc-merge-limits.py" "$OC_JSON" --compaction "$KOL_KEEP" \
+          || echo "NOTE: could not update the compaction block in $OC_JSON; check it by hand ($KOL_KEEP)"; }
       done
     fi
     rm -f "$KOL_SRC"

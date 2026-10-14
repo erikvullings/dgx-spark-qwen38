@@ -7,6 +7,7 @@ Usage: oc-merge-limits.py <target opencode.json> <provider> <model id> <context>
        oc-merge-limits.py <target opencode.json> --autoupdate notify
        oc-merge-limits.py <target opencode.json> --add-providers <generated opencode.json>
        oc-merge-limits.py <target opencode.json> --remove-providers <API key file>
+       oc-merge-limits.py <target opencode.json> --remove-provider <provider id>
 
 Only the "limit" object of the named provider/model is rewritten, in place,
 by targeted text substitution: comments, ordering and the user's other
@@ -592,6 +593,54 @@ def add_providers(path: str, source: str) -> int:
     return 0
 
 
+def remove_provider(path: str, pid: str) -> int:
+    """Take one provider of this box out of an opencode.json, with "model" and "small_model"
+    when they name it: a lane removed on its own (install-kolibri.sh --uninstall) left opencode
+    offering, and defaulting to, a model nothing serves any more. The rest of the file stays as
+    it is, by the same targeted edit as everything here; the file itself is never removed."""
+    if pid not in OURS:
+        print(f"{pid!r} is not one of this box's providers ({', '.join(OURS)}): refused")
+        return 2
+    opened = _open(path)
+    if opened is None:
+        return 1
+    text, doc = opened
+    if not isinstance(doc.get("provider"), dict) or pid not in doc["provider"]:
+        print(f"no provider {pid!r} in {path}: unchanged")
+        return 0
+    cur = copy.deepcopy(doc)
+    del cur["provider"][pid]
+    steps = [(["provider", pid], copy.deepcopy(cur))]
+    for k in ("model", "small_model"):
+        if isinstance(cur.get(k), str) and cur[k].split("/", 1)[0] == pid:
+            del cur[k]
+            steps.append(([k], copy.deepcopy(cur)))
+    new_text = text
+    for where, want in steps:
+        try:
+            cand = remove_member(new_text, where)
+            ok = load(cand) == want
+        except ValueError:
+            ok = False
+        if not ok:
+            print(f"{path}: refused, could not take {where[-1]!r} out by an edit that leaves the rest "
+                  f"as it is; remove the {pid} provider by hand")
+            return 1
+        new_text = cand
+    saved, bad = commit(path, new_text, cur)
+    if bad:
+        print(f"{path}: refused, {bad}; unchanged.")
+        return 1
+    try:
+        ok = _reread(path) == cur
+    except ValueError:
+        ok = False
+    if not _landed(path, saved, "" if ok else "it reads back differently", "the removal"):
+        return 1
+    print(f"removed the {pid} provider from {path} (backup {saved})")
+    return 0
+
+
 def remove_providers(path: str, key_file: str) -> int:
     """Take out of an opencode.json the providers that read this box's API key file.
 
@@ -664,6 +713,8 @@ def main(argv: list[str]) -> int:
         return add_providers(argv[1], argv[3])
     if len(argv) == 4 and argv[2] == "--remove-providers":
         return remove_providers(argv[1], argv[3])
+    if len(argv) == 4 and argv[2] == "--remove-provider":
+        return remove_provider(argv[1], argv[3])
     if len(argv) == 6 and argv[4] == "--add-variant":
         return add_variant(argv[1], argv[2], argv[3], argv[5])
     keep_lower = argv[6:] == ["--keep-lower"]

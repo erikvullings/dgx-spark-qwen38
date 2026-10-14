@@ -48,9 +48,10 @@ Percpu:            20000 kB
 
 
 class Box:
-    """A fake /proc with five processes: 101 an SGLang scheduler, 102 SGLang's launcher
+    """A fake /proc with six processes: 101 an SGLang scheduler, 102 SGLang's launcher
     (a python3 whose command line names sglang), 103 somebody's own training script, 104
-    vLLM's engine core (the Kolibri lane), 105 vLLM's API server."""
+    vLLM's engine core (the Kolibri lane), 105 vLLM's API server, 106 somebody's own script
+    in a directory named vllm."""
 
     def __init__(self):
         self.t = pathlib.Path(tempfile.mkdtemp(prefix="preflight-"))
@@ -59,7 +60,8 @@ class Box:
                                ("102", "python3", "python3\0-m\0sglang.launch_server"),
                                ("103", "python3", "python3\0train.py"),
                                ("104", "VLLM::EngineCor", "VLLM::EngineCore"),
-                               ("105", "python3", "/usr/bin/python3\0/usr/local/bin/vllm\0serve\0Aleph-Alpha/Kolibri-1")):
+                               ("105", "python3", "/usr/bin/python3\0/usr/local/bin/vllm\0serve\0Aleph-Alpha/Kolibri-1"),
+                               ("106", "python3", "python3\0/home/u/vllm/benchmarks/bench.py")):
             (self.proc / pid).mkdir(parents=True)
             (self.proc / pid / "comm").write_text(comm + "\n")
             (self.proc / pid / "cmdline").write_text(cmd + "\0")
@@ -135,6 +137,14 @@ class WhatBlocksAStart(unittest.TestCase):
         rc, out, _ = self.box.run()
         self.assertEqual(rc, 0, out)
         self.assertIn("other programs hold GPU memory: 103 python3 16578 MiB", out)
+
+    def test_a_path_with_vllm_in_it_is_not_an_engine(self):
+        """Any command line holding "vllm/" was a remnant, so a script of one's own in a vllm
+        checkout held every lane's start (found in review, 2026-10-14)."""
+        self.box.smi('echo "106, python3, 3000"')
+        rc, out, _ = self.box.run()
+        self.assertEqual(rc, 0, out)
+        self.assertIn("other programs hold GPU memory: 106 python3 3000 MiB", out)
 
     def test_a_small_remnant_is_below_the_line(self):
         """The tokenizer of an engine being torn down holds 196 MiB for a few seconds."""

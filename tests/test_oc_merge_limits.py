@@ -256,6 +256,29 @@ def main() -> None:
         rc, out = remove(p)
         assert rc == 0 and doc_of(p) == {"provider": {"x": {}}, "y": 1}, open(p).read()
 
+    # 9. --remove-provider: one lane of this box removed on its own (install-kolibri.sh
+    #    --uninstall). Its provider goes, with "model" and "small_model" when they name it;
+    #    the other providers, the user's comments and the file itself stay.
+    def remove_one(path, pid):
+        r = subprocess.run([sys.executable, SCRIPT, path, "--remove-provider", pid],
+                           capture_output=True, text=True)
+        return r.returncode, (r.stdout + r.stderr).strip()
+
+    body = ('{\n  // mine\n  "model": "kolibri/kolibri-1",\n  "small_model": "qwen38/qwen3.8-27b",\n'
+            '  "provider": {\n    "qwen38": ' + json.dumps(box()) + ',\n'
+            '    "kolibri": ' + json.dumps(box()) + '\n  }\n}\n')
+    p = write(tmp, body)
+    want = doc_of(p)
+    del want["provider"]["kolibri"], want["model"]
+    rc, out = remove_one(p, "kolibri")
+    assert rc == 0 and "removed the kolibri provider" in out, out
+    assert doc_of(p) == want, doc_of(p)
+    assert "// mine" in open(p).read(), "a comment was dropped"
+    rc, out = remove_one(p, "kolibri")
+    assert rc == 0 and "unchanged" in out, out
+    rc, out = remove_one(p, "anthropic")           # only this box's own providers
+    assert rc == 2 and "refused" in out and doc_of(p) == want, out
+
     print("test_oc_merge_limits: OK")
 
 

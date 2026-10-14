@@ -143,6 +143,44 @@ if [ "$ACTION" = uninstall ]; then
       rm -f "$CONFIG_DIR/lane-before-$SIDE"
     fi
   done
+  # opencode and pi: the kolibri provider goes, and a default that named it follows the text
+  # lane this box had before Kolibri (oc-point-default.py with no target: no name changes).
+  # Left as they were, opencode offered and defaulted to a model nothing served, and its
+  # small-model calls sent Kolibri's level "none" to the Qwen template, which refuses it
+  # (found in review, 2026-10-14).
+  OC_BACK="$KOL_BEFORE"
+  for _ in 1 2 3; do
+    case "$OC_BACK" in
+      qwen38-image.service|qwen38-video.service)
+        SIDE="${OC_BACK#qwen38-}"; OC_BACK="$(cat "$CONFIG_DIR/lane-before-${SIDE%.service}" 2>/dev/null || true)" ;;
+      *) break ;;
+    esac
+  done
+  case "$OC_BACK" in
+    qwen38-flash.service) OC_LANE=flash ;;
+    qwen38-sglang.service) OC_LANE=27b ;;
+    *) OC_LANE=27b; [ -f /etc/systemd/system/qwen38-sglang.service ] || OC_LANE=flash ;;
+  esac
+  OC_SUM_BEFORE="$({ cat "$CONFIG_DIR/opencode.json" "$HOME/.config/opencode/opencode.json" 2>/dev/null || true; } | sha256sum)"
+  for OC_JSON in "$CONFIG_DIR/opencode.json" "$HOME/.config/opencode/opencode.json"; do
+    [ -f "$OC_JSON" ] || continue
+    WAS_DEFAULT=0
+    grep -qsE '"model"[[:space:]]*:[[:space:]]*"kolibri/' "$OC_JSON" && WAS_DEFAULT=1
+    python3 "$HERE/oc-merge-limits.py" "$OC_JSON" --remove-provider kolibri \
+      || echo "NOTE: could not take the kolibri provider out of $OC_JSON; remove it by hand"
+    if [ "$WAS_DEFAULT" -eq 1 ]; then
+      python3 "$HERE/oc-point-default.py" "$OC_JSON" "$OC_LANE" "" "" \
+        || echo "NOTE: could not point $OC_JSON at the $OC_LANE lane; set its \"model\" field yourself"
+    fi
+  done
+  if [ -d "$CONFIG_DIR/pi" ] || [ -d "$CONFIG_DIR/omp" ]; then
+    python3 "$HERE/pi-gen.py" --config "$CONFIG_DIR/opencode.json" --out "$CONFIG_DIR" \
+      || echo "NOTE: could not regenerate the pi/omp artifacts; run ./pi-gen.py by hand"
+  fi
+  if [ "$OC_SUM_BEFORE" != "$({ cat "$CONFIG_DIR/opencode.json" "$HOME/.config/opencode/opencode.json" 2>/dev/null || true; } | sha256sum)" ] \
+     && systemctl is-active --quiet opencode-web.service 2>/dev/null; then
+    sudo systemctl restart opencode-web.service && echo "opencode-web.service restarted so it reads the change"
+  fi
   rm -f "$CONFIG_DIR/lane-before-kolibri"
   docker rm -f "$CONTAINER" >/dev/null 2>&1 || true
   for img in $(docker images --format '{{.Repository}}:{{.Tag}}' 'qwen38-kolibri' 2>/dev/null); do
@@ -150,6 +188,7 @@ if [ "$ACTION" = uninstall ]; then
   done
   # vLLM writes its compile cache as root inside the container: what the user cannot remove, sudo does
   rm -rf "$CONFIG_DIR/kolibri-cache" 2>/dev/null || sudo rm -rf --one-file-system "$CONFIG_DIR/kolibri-cache"
+  rm -rf "$CONFIG_DIR/vllm-auth"
   echo "the base image $KOLIBRI_BASE_IMAGE stays (docker rmi it yourself if nothing else uses it)"
   for R in "$KOLIBRI_FP8_REPO" "$KOLIBRI_NVFP4_REPO"; do
     D="$HF_CACHE/hub/models--${R//\//--}"
@@ -164,7 +203,8 @@ command -v nvidia-smi >/dev/null || die "nvidia-smi not found: this needs the NV
 command -v docker >/dev/null || die "docker is required (stock on DGX OS)."
 docker info >/dev/null 2>&1 || die "docker does not answer for $(id -un). Is it running, and is $(id -un) in the docker group?"
 [ -s "$CONFIG_DIR/api-key" ] || die "no API key at $CONFIG_DIR/api-key. Run ./install.sh first: this lane serves behind the proxy with that key."
-[ -f "$HERE/engine-preflight.sh" ] && [ -f "$HERE/engine-secrets.sh" ] || die "engine-preflight.sh or engine-secrets.sh is missing next to this script: run it from the repository."
+[ -f "$HERE/engine-preflight.sh" ] && [ -f "$HERE/engine-secrets.sh" ] && [ -f "$HERE/vllm_engine_auth.py" ] \
+  || die "engine-preflight.sh, engine-secrets.sh or vllm_engine_auth.py is missing next to this script: run it from the repository."
 # Measured where each part lands: the weights go to HF_CACHE, the image to Docker's own
 # disk. What the cache already holds of this checkpoint comes off its share, by bytes.
 existing(){ local p="$1"; while [ ! -e "$p" ]; do p="$(dirname "$p")"; done; printf '%s\n' "$p"; }
@@ -176,7 +216,9 @@ IMAGE_NEED="$IMAGE_GB"
 docker image inspect "$LOCAL_IMAGE" >/dev/null 2>&1 && IMAGE_NEED=0
 docker image inspect "$KOLIBRI_BASE_IMAGE" >/dev/null 2>&1 && IMAGE_NEED=0
 FREE_W="$(free_gb "$HF_CACHE")"; FREE_D="$(free_gb "$DOCKER_ROOT")"
-if [ "$(stat -c %d "$(existing "$HF_CACHE")")" = "$(stat -c %d "$(existing "$DOCKER_ROOT")")" ]; then
+# -L: a cache moved to another disk behind a symlink (~/.cache/huggingface on an SSD) is on
+# that disk; the link's own device is the home directory's, which skipped Docker's check.
+if [ "$(stat -L -c %d "$(existing "$HF_CACHE")")" = "$(stat -L -c %d "$(existing "$DOCKER_ROOT")")" ]; then
   WANT=$((WEIGHTS_NEED + IMAGE_NEED))
   [ "${FREE_W:-0}" -ge "$WANT" ] \
     || die "${FREE_W:-?} GB free on the disk of $HF_CACHE and $DOCKER_ROOT, this needs about $WANT GB ($WEIGHTS_NEED for the checkpoint, $IMAGE_NEED for the image). Free some space, or ./install.sh --no-kolibri to leave this lane out."
@@ -215,10 +257,6 @@ DEOF
   rm -rf "$BUILD"
   echo "built from $KOLIBRI_BASE_IMAGE and the plugin's wheel"
 fi
-# Images of this lane built from older pins: the unit no longer names them.
-for img in $(docker images --format '{{.Repository}}:{{.Tag}}' 'qwen38-kolibri' 2>/dev/null); do
-  [ "$img" = "$LOCAL_IMAGE" ] || { docker rmi "$img" >/dev/null 2>&1 && echo "removed the older build $img"; }
-done
 
 step "3/5 Checkpoint ($MODEL @ ${MODEL_REV:0:12}, resumable)"
 mkdir -p "$HF_CACHE"
@@ -253,6 +291,11 @@ cmp -s "$HERE/engine-preflight.sh" "$CONFIG_DIR/engine-preflight.sh" \
   || install -m 755 "$HERE/engine-preflight.sh" "$CONFIG_DIR/engine-preflight.sh"
 cmp -s "$HERE/engine-secrets.sh" "$CONFIG_DIR/engine-secrets.sh" \
   || install -m 755 "$HERE/engine-secrets.sh" "$CONFIG_DIR/engine-secrets.sh"
+# The middleware that asks the key on every route of the engine (see vllm_engine_auth.py),
+# in a directory of its own: the unit mounts that one, read-only, on the module path.
+mkdir -p "$CONFIG_DIR/vllm-auth"
+cmp -s "$HERE/vllm_engine_auth.py" "$CONFIG_DIR/vllm-auth/vllm_engine_auth.py" \
+  || install -m 644 "$HERE/vllm_engine_auth.py" "$CONFIG_DIR/vllm-auth/vllm_engine_auth.py"
 RENDER="$(mktemp)"; trap 'rm -f "$RENDER"' EXIT
 sed -e "s|__USER__|$(id -un)|g" -e "s|__GROUP__|$(id -gn)|g" -e "s|__HOME__|$HOME|g" \
     -e "s|__IMAGE__|$LOCAL_IMAGE|g" -e "s|__MODEL__|$MODEL|g" -e "s|__REV__|$MODEL_REV|g" \
@@ -269,6 +312,11 @@ else
     echo "NOTE: Kolibri is serving the unit it started with; it serves this one after: sudo systemctl restart $UNIT"
   fi
 fi
+# Images of this lane built from older pins, once the unit names this one: removed before
+# the checkpoint came, a failed download left the unit naming an image that was gone.
+for img in $(docker images --format '{{.Repository}}:{{.Tag}}' 'qwen38-kolibri' 2>/dev/null); do
+  [ "$img" = "$LOCAL_IMAGE" ] || { docker rmi "$img" >/dev/null 2>&1 && echo "removed the older build $img"; }
+done
 # Installed, not switched to: the lane this box serves stays the lane it serves.
 echo "installed as a lane of its own. Switch to it like any lane:"
 echo "  the cockpit: Load on Kolibri-1 in the Lanes view"
@@ -326,7 +374,11 @@ if "READY" not in text:
     raise SystemExit(f"reply: {text[:200]!r}")
 print(f"   reply: {text[:40]!r}")
 PY
-CODE="$(ask '{"model":"kolibri-1","messages":[{"role":"user","content":"What is the weather in Berlin? Use celsius."}],"max_tokens":2048,"tools":[{"type":"function","function":{"name":"get_weather","description":"Get the current weather for a city.","parameters":{"type":"object","properties":{"city":{"type":"string"},"unit":{"type":"string","enum":["celsius","fahrenheit"]}},"required":["city"]}}}]}')"
+# At effort none: at high (the template's default), the kolibri1 reasoning parser cuts the
+# reasoning at a <tool_call> the model writes inside it, and the call is missed, on 1.9 to
+# 3.5 % of the replies to an English weather request like this one (Quantinine, both
+# checkpoints); at none they measured every call parsed. A first install must not fail by chance.
+CODE="$(ask '{"model":"kolibri-1","messages":[{"role":"user","content":"What is the weather in Berlin? Use celsius."}],"max_tokens":2048,"chat_template_kwargs":{"reasoning_effort":"none"},"tools":[{"type":"function","function":{"name":"get_weather","description":"Get the current weather for a city.","parameters":{"type":"object","properties":{"city":{"type":"string"},"unit":{"type":"string","enum":["celsius","fahrenheit"]}},"required":["city"]}}}]}')"
 [ "$CODE" = 200 ] || { echo "HTTP ${CODE:-000}: $(head -c 300 "$OUT")"; die "the tool-call request failed (HTTP ${CODE:-000})."; }
 python3 - "$OUT" <<'PY' || die "the lane did not return a parsed tool call (the kolibri1 parsers are not in effect?)."
 import json, sys
@@ -338,10 +390,18 @@ args = json.loads(calls[0]["function"]["arguments"])
 print(f"   tool call: get_weather({args})")
 PY
 # The key must not be in the lane's journal (vLLM masks api_key in its argument log line).
-if sudo journalctl -u "$UNIT" --since "$SINCE" --no-pager 2>/dev/null | grep -q -F -f <(head -1 "$CONFIG_DIR/api-key"); then
-  die "the API key appears in the lane's journal: rotate it, and report this."
+# Read whole first, then searched: piped into grep -q under pipefail, a journal long enough
+# to fill the pipe died of SIGPIPE at the first match, and the check read "not found".
+JOURNAL_COPY="$(mktemp)"
+# shellcheck disable=SC2024  # the copy is this user's own temporary file, written by this shell
+if ! sudo journalctl -u "$UNIT" --since "$SINCE" --no-pager > "$JOURNAL_COPY" 2>/dev/null; then
+  rm -f "$JOURNAL_COPY"; die "the lane's journal could not be read to check the key is not in it."
 fi
-echo "   the key is in none of the lane's journal lines"
+if grep -q -F -f <(head -1 "$CONFIG_DIR/api-key") "$JOURNAL_COPY"; then
+  rm -f "$JOURNAL_COPY"; die "the API key appears in the lane's journal: rotate it, and report this."
+fi
+echo "   the key is in none of the lane's $(wc -l < "$JOURNAL_COPY") journal lines"
+rm -f "$JOURNAL_COPY"
 # the trap stops the lane and brings the serving lane back, whichever way this ends
 
 step "Done: the Kolibri lane is installed and proved it serves on $ENGINE_BIND:$PORT"
