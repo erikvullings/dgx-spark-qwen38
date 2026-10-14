@@ -345,6 +345,25 @@ class ThroughTheProxy(unittest.TestCase):
         self.assertEqual(self.mod.served_vocab(), 128000)
         self.assertTrue(any(b.get("logit_bias") and b["model"] == "kolibri-1" for b in FakeVllm.bodies))
 
+    def test_names_lost_to_one_failed_read_are_read_again_for_the_rename(self):
+        # the pool cached, the names dropped by one failed read of /v1/models (served_models
+        # empties them, the pool stays): the rename read the cached pool, which names nothing,
+        # and vLLM answered 404 to every other name until the pool expired (found in review,
+        # 2026-10-14)
+        self.mod.pool_tokens()
+        self.mod._SERVED.update(names=(), engine="", ts=0.0)
+        got = self.post({"model": "qwen3.8-27b", "stream": True, "messages": [{"role": "user", "content": "hi"}]})
+        self.assertTrue(got.startswith(b"HTTP/1.1 200"), got[:200])
+        self.assertEqual(FakeVllm.bodies[-1]["model"], "kolibri-1")
+
+    def test_the_vocabulary_probe_names_the_served_model_with_no_name_read_yet(self):
+        # right after a switch, or a first request with logit_bias: no name read yet, the probe
+        # named "probe", vLLM refused it with a 404 before it looked at logit_bias, and the guard
+        # went 60 s without a vocabulary (found in review, 2026-10-14)
+        self.mod._VOCAB.update(size=0, ts=0.0)
+        self.assertEqual(self.mod._SERVED["names"], ())
+        self.assertEqual(self.mod.served_vocab(), 128000)
+
     def test_on_sglang_a_foreign_name_goes_as_it_came(self):
         FakeVllm.served, FakeVllm.owner = "qwen3.8-27b", "sglang"
         self.mod.served_models()

@@ -1565,9 +1565,17 @@ def served_vocab():
     if time.time() - _VOCAB["ts"] < (3600 if _VOCAB["size"] else 60):
         return _VOCAB["size"]
     _VOCAB["ts"] = time.time()          # claimed before the probe, so a failure counts
-    # The served name when it is known: vLLM refuses any other with a 404 before it looks at
-    # logit_bias (SGLang takes any name, and took "probe").
-    model = (_SERVED["names"] or ("probe",))[0]
+    # The served name: vLLM refuses any other with a 404 before it looks at logit_bias (SGLang
+    # takes any name, and took "probe"). Read here when none is known yet: right after a switch
+    # the probe named "probe", and the guard went 60 s without a vocabulary (found in review,
+    # 2026-10-14).
+    names = _SERVED["names"]
+    if not names:
+        try:
+            names = served_models()
+        except EngineUnreachable:
+            return _VOCAB["size"]       # nothing answers it: no probe, and the failure is kept
+    model = (names or ("probe",))[0]
     body = json.dumps({"model": model, "messages": [{"role": "user", "content": "x"}],
                        "max_tokens": 1, "logit_bias": {"999999999": 1}}).encode()
     try:
@@ -2480,9 +2488,14 @@ def route_model_name(body, path):
     # request after it reached vLLM with its old name, and a 404 (found in review, 2026-10-14).
     follow_engine_restarts()
     if not _SERVED["engine"]:
-        # What every prompt reads anyway, cached: on an engine without SGLang's info routes
-        # that read names it too (_vllm_facts). It costs a Qwen lane no request it did not make.
-        pool_tokens()
+        # Read where it is said, and kept 600 s. The cached pool was read here instead: once
+        # one failed read of /v1/models had dropped the names and kept the pool, it named
+        # nothing, and vLLM answered 404 to every other name until the pool expired (found in
+        # review, 2026-10-14). A Qwen lane pays one /v1/models every 600 s for it.
+        try:
+            served_models()
+        except EngineUnreachable:
+            return body, None
     if _SERVED["engine"] != "vllm":
         return body, None
     names = _SERVED["names"]
