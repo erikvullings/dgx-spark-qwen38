@@ -431,6 +431,25 @@ class EtaHistory(unittest.TestCase):
     def test_no_history_gives_none(self):
         self.assertIsNone(lc.eta_for({}, "u"))
 
+    def test_each_checkpoint_has_its_own_median(self):
+        # the Kolibri lane's FP8 and NVFP4 boots, one median for both told neither (found in
+        # review, 2026-10-14): measured 520, 560, 603 s and 394, 430 s on the reference box
+        h, K = {}, "qwen38-kolibri.service"
+        for v in (520, 560, 603):
+            h = lc.record_boot(h, K, v, target="kolibri")
+        for v in (394, 430):
+            h = lc.record_boot(h, K, v, target="kolibri-nvfp4")
+        self.assertEqual(lc.eta_for(h, K, "kolibri"), 560)
+        self.assertEqual(lc.eta_for(h, K, "kolibri-nvfp4"), 412)
+        self.assertEqual(lc.boots_for(h, K, "kolibri-nvfp4"), [394, 430])
+        self.assertEqual(lc.eta_for(h, K), 520, "the unit's series keeps every boot")
+
+    def test_a_checkpoint_with_no_boot_yet_reads_the_units(self):
+        # a box's history from before the boots were kept per checkpoint
+        h = {"qwen38-kolibri.service": [600.0, 640.0]}
+        self.assertEqual(lc.eta_for(h, "qwen38-kolibri.service", "kolibri-nvfp4"), 620)
+        self.assertEqual(lc.boots_for(h, "qwen38-kolibri.service", "kolibri"), [600.0, 640.0])
+
 
 class NoMarkerTail(unittest.TestCase):
     def test_decode_only_tail_claims_nothing(self):

@@ -1658,7 +1658,8 @@ def collect_lifecycle():
                         age = monotonic_now() - mono_us / 1e6
                 except ValueError:
                     pass
-                usual = lc.eta_for(history, unit) or TEXT_BOOT_DEFAULT_S.get(unit, 780.0)
+                usual = lc.eta_for(history, unit, unit_target(unit).get("target")) \
+                    or TEXT_BOOT_DEFAULT_S.get(unit, 780.0)
                 if watched or age is None or age <= usual + WARMUP_GRACE_S:
                     st["state"] = "warming-up"
             # An activation that served has fired up, whatever the last 300 lines say later.
@@ -1837,7 +1838,8 @@ def collect_lifecycle():
                 LAST_PROGRESS["ts"] = None
                 READY_SINCE.pop(unit, None)
             witnessed = LIFE["witnessed"].get(unit, False)
-        eta = lc.eta_for(history, unit)
+        target = unit_target(unit).get("target")
+        eta = lc.eta_for(history, unit, target)
         overdue = bool(eta and elapsed and st["state"] in lc.TRANSITIONAL
                        and elapsed > 2 * eta)
         # the image engine's own answer to which checkpoint it serves (the unit's file says
@@ -1868,8 +1870,8 @@ def collect_lifecycle():
                          "elapsed": round(elapsed, 1) if elapsed else None,
                          "state_elapsed": round(state_elapsed, 1) if state_elapsed is not None else None,
                          "eta": eta, "overdue": overdue,
-                         "boots": history.get(unit, [])[-5:],
-                         "pools": lc.pool_spread(history, unit, unit_target(unit).get("target"))}
+                         "boots": lc.boots_for(history, unit, target)[-5:],
+                         "pools": lc.pool_spread(history, unit, target)}
         states[unit] = st["state"]
         # transitions: events + boot-duration learning
         was = prev.get(unit)
@@ -1877,7 +1879,7 @@ def collect_lifecycle():
             add_event("state", f"{unit.replace('.service', '')}: {was} \u2192 {st['state']}")
             if st["state"] == "ready" and elapsed and witnessed \
                     and was in lc.TRANSITIONAL:
-                history = lc.record_boot(history, unit, elapsed)
+                history = lc.record_boot(history, unit, elapsed, target=target)
                 if own_facts:
                     # Neither diffusion lane has a KV pool, and ENGINE_BASE is the text lane's
                     # port: reading a pool here would record the wrong engine's, or nothing.

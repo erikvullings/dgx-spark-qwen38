@@ -454,16 +454,34 @@ def warn_reasons(action: str, params: dict, states: dict,
 
 
 # ── Stage timing: history + ETA (median of real observed durations) ─────────
-def eta_for(history: dict, unit: str) -> float | None:
-    """Median full-boot duration for this unit (seconds)."""
-    vals = [v for v in history.get(unit, []) if isinstance(v, (int, float))]
+def boot_key(unit: str, target: str | None) -> str:
+    """History key for one unit's boot durations, per served target. A boot depends on the
+    checkpoint as the pool does (pool_key): the Kolibri lane's FP8 boots in 8 min 40 s to
+    10 min 03 s and its NVFP4 in 6 min 34 s to 7 min 10 s, and one median of both told
+    neither (found in review, 2026-10-14)."""
+    return f"{unit}:boot:{target}"
+
+
+def boots_for(history: dict, unit: str, target: str | None = None) -> list:
+    """The boot durations that speak for this target: its own once it has one, else the
+    unit's, which every boot fed before they were kept per target."""
+    own = history.get(boot_key(unit, target), []) if target else []
+    return [v for v in (own or history.get(unit, [])) if isinstance(v, (int, float))]
+
+
+def eta_for(history: dict, unit: str, target: str | None = None) -> float | None:
+    """Median full-boot duration for this unit's target (seconds)."""
+    vals = boots_for(history, unit, target)
     return statistics.median(vals) if vals else None
 
 
-def record_boot(history: dict, unit: str, seconds: float, keep: int = 12) -> dict:
-    lst = list(history.get(unit, []))
-    lst.append(round(float(seconds), 1))
-    history[unit] = lst[-keep:]
+def record_boot(history: dict, unit: str, seconds: float, keep: int = 12,
+                target: str | None = None) -> dict:
+    """One boot, in the unit's series and, when its target is known, in the target's."""
+    for key in (unit, boot_key(unit, target)) if target else (unit,):
+        lst = list(history.get(key, []))
+        lst.append(round(float(seconds), 1))
+        history[key] = lst[-keep:]
     return history
 
 
