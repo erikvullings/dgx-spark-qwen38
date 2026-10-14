@@ -397,7 +397,7 @@ port behind the same proxy and key, so every client reaches it as model `kolibri
 Anthropic dialect alike. It needs about 102 GB; `--no-kolibri` leaves it out, `--with-kolibri`
 brings it back.
 
-On the cockpit's Lanes view, pick **Kolibri-1** and press **Load** (about 9 minutes to answer);
+On the cockpit's Lanes view, pick **Kolibri-1** and press **Load** (about 10 minutes to answer);
 from a terminal, `./switch-model.sh kolibri`. Two checkpoints, measured here:
 
 | | decode, 1 / 8 / 16 streams | weights | quality against the official FP8 |

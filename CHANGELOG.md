@@ -27,8 +27,8 @@ and its anonymous usage report to its authors is off.
 |---|---|---|
 | decode, 1 / 4 / 8 / 16 streams | 48.0 / 121.9 / 165.8 / 202.0 tok/s | 52.9 / 157.7 / 248.2 / 377.2 tok/s |
 | prefill of 128K tokens | 48.5 s | 40.6 s |
-| weights / KV cache | 73.6 GiB / 2.09M tokens | 42.8 GiB / 2.01M tokens |
-| boot | 8 min 40 s | 7 min 10 s |
+| weights / KV cache | 73.6 GiB / 2.09M to 2.18M tokens | 42.8 GiB / 2.00M to 2.01M tokens |
+| boot | 8 min 40 s to 10 min 03 s | 6 min 34 s to 7 min 10 s |
 
 The FP8 is deterministic to the bit on this box: 153,450 prompt log-probabilities of English, German and
 French Wikipedia came out identical across runs and with eight documents batched. Against it, the NVFP4

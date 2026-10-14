@@ -110,7 +110,7 @@ function makerMark(unit, cls = 'mark'){
 // How long each lane takes to answer after a start, before the box has seen one of its
 // boots (measured on the reference box). Once a lane booted in front of the cockpit, the
 // median of its own boots replaces these.
-const READY_DEFAULT = {[U27]: 540, [UFLASH]: 780, [KOLIBRI_UNIT]: 520, [IMAGE_UNIT]: 70, [VIDEO_UNIT]: 720};
+const READY_DEFAULT = {[U27]: 540, [UFLASH]: 780, [KOLIBRI_UNIT]: 600, [IMAGE_UNIT]: 70, [VIDEO_UNIT]: 720};
 const TARGET_SHORT = {stock: 'stock', uncensored: 'uncensored', fp8: 'FP8', 'uncensored-fp8': 'FP8 uncensored',
                       flash: '', 'flash-uncensored': 'uncensored', 'flash-nvda': 'NVIDIA export', image: '2.1', 'image-turbo': 'Turbo', video: 'H3',
                       kolibri: 'FP8', 'kolibri-nvfp4': 'NVFP4'};

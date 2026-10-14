@@ -235,7 +235,7 @@ PYKOL
       echo "Its unit already named this checkpoint. Started before it did, the lane serves what it loaded: sudo systemctl restart $KOLIBRI_UNIT_NAME"
     fi
   else
-    echo "Effective after:  sudo systemctl start $KOLIBRI_UNIT_NAME   (or next reboot; ready in about 9 min)"
+    echo "Effective after:  sudo systemctl start $KOLIBRI_UNIT_NAME   (or next reboot; ready in about 10 min)"
   fi
   # opencode follows the lane, as on a text switch: the kolibri provider (added here to a
   # config written before the lane was installed) becomes the default of the generated

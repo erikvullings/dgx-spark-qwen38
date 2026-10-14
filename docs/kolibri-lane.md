@@ -63,14 +63,22 @@ vllm serve <checkpoint> --revision <pinned sha> --served-model-name kolibri-1 \
 | download | 78.9 GB | 45.8 GB (at its first switch) |
 | weights in memory | 73.55 GiB | 42.77 GiB |
 | memory share | 0.80 | 0.55 |
-| KV cache | 2,093,056 tokens | 2,014,877 tokens |
-| boot from the USB SSD | 8 min 40 s (weights 440 s) | 7 min 10 s (weights 338 s) |
+| KV cache | 2,093,056 to 2,175,959 tokens (3 boots) | 1,997,166 and 2,014,877 tokens (2 boots) |
+| boot from the USB SSD | 8 min 40 s to 10 min 03 s (weights 440 to 525 s, 3 boots) | 6 min 34 s and 7 min 10 s (weights 309 s and 338 s) |
 | decode, 1 / 4 / 8 / 16 streams | 48.0 / 121.9 / 165.8 / 202.0 tok/s | 52.9 / 157.7 / 248.2 / 377.2 tok/s |
 | prefill of 32K / 128K tokens | 7.7 s / 48.5 s | 6.7 s / 40.6 s |
-| MemAvailable at its busiest | 11.1 GiB | 17.6 GiB |
+| MemAvailable, lowest seen | 10.9 GiB | 48.1 GiB |
 
-Each memory share keeps the same cache, about 2.1 million tokens, 8 requests at the full window:
-the NVFP4's 30.8 GiB of weights saved go back to the box rather than to a cache nobody fills.
+Each memory share keeps about the same cache, 2.0 to 2.2 million tokens, 7.6 to 8.3 requests at
+the full window (it moves by a few percent from one boot to the next, as on SGLang): the NVFP4's
+30.8 GiB of weights saved go back to the box rather than to a cache nobody fills. The lowest
+MemAvailable came with the measurement scripts running on the box beside the engine (benchmark
+client, log-probability analysis); the lane's own clients and a 96,252-token prompt left 15.5 GiB.
+
+Speeds and prefills were measured with `vllm bench serve` on the same image and flags, before the
+lane existed, the NVFP4 at memory share 0.80 (16 streams of these lengths fit either cache); the FP8
+lane decodes one stream through its proxy at 47.9 to 48.2 tok/s, the same.
+
 Long contexts stay fast on either, the sliding-window layers costing little past 513 tokens: the
 FP8 decodes at 46, 41 and 36 tok/s with 32K, 128K and 250K tokens of context, and prefills 250,000
 tokens in 94.5 s.
