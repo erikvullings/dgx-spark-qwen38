@@ -169,6 +169,50 @@ def scan_hf_cache(root: Path) -> list[dict]:
     return out
 
 
+REV_RE = re.compile(r"^[0-9a-f]{40}$")
+
+
+def deletion_plan(repo_dir: Path, rev: str) -> dict:
+    """What deleting one cached revision removes: its snapshot folder and the blobs no other
+    snapshot of the repo links to, with the bytes that frees. {"refused": why} for a name
+    that is not a revision here, and for a revision a ref names, which a load by name reads.
+    Nothing is removed here: the cockpit's job does that, after the page showed this."""
+    if not REV_RE.match(rev or ""):
+        return {"refused": "not a revision hash"}
+    snaps = repo_dir / "snapshots"
+    target = snaps / rev
+    if not target.is_dir():
+        return {"refused": "this revision is not in the cache"}
+    refs = repo_dir / "refs"
+    if refs.is_dir():
+        for ref in sorted(refs.rglob("*")):
+            try:
+                named = ref.is_file() and ref.read_text().strip() == rev
+            except OSError:
+                named = True                 # unreadable: assume it names it
+            if named:
+                return {"refused": f"refs/{ref.relative_to(refs)} names it, and a load by name reads it"}
+    blobs = (repo_dir / "blobs").resolve()
+    mine: set[str] = set()
+    others: set[str] = set()
+    for d in snaps.iterdir():
+        bucket = mine if d.name == rev else others
+        for base, _dirs, files in os.walk(d):
+            for fn in files:
+                link = Path(base) / fn
+                if link.is_symlink():
+                    bucket.add(os.path.realpath(link))
+    # only this repo's own blobs, whatever a link says
+    only = sorted(b for b in mine - others if Path(b).parent == blobs)
+    size = 0
+    for b in only:
+        try:
+            size += os.stat(b).st_size
+        except OSError:
+            pass
+    return {"snapshot": str(target), "blobs": only, "bytes": size}
+
+
 def classify(models: list[dict], pins: dict[str, str]) -> list[dict]:
     """Mark every cached revision pinned (by which var) or stray."""
     rev2var = {rev: var for var, rev in pins.items()}

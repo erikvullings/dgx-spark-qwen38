@@ -153,6 +153,54 @@ class TheCachesTheUnitsName(unittest.TestCase):
         self.assertEqual(rg.cache_dirs(texts), ["/data/hf", "/other/hf"])
 
 
+def fake_repo(root, revs, shared=(), refs=None):
+    """A Hugging Face cache repo folder: each revision's snapshot links its files to blobs,
+    a file named in shared links to the same blob in every revision."""
+    import os
+    repo = root / "models--o--m"
+    (repo / "blobs").mkdir(parents=True)
+    for rev, files in revs.items():
+        snap = repo / "snapshots" / rev
+        snap.mkdir(parents=True)
+        for name, data in files.items():
+            blob = repo / "blobs" / (name if name in shared else f"{rev[:4]}-{name}")
+            blob.write_bytes(data)
+            os.symlink(os.path.relpath(blob, snap), snap / name)
+    for name, rev in (refs or {}).items():
+        (repo / "refs").mkdir(exist_ok=True)
+        (repo / "refs" / name).write_text(rev)
+    return repo
+
+
+class WhatADeleteRemoves(unittest.TestCase):
+    """A stray revision is deleted with the blobs only it links to: a blob another revision
+    shares stays, and so does a revision a ref names, which a load by name reads."""
+
+    def setUp(self):
+        import tempfile
+        self.root = Path(tempfile.mkdtemp(prefix="registry-delete-"))
+        self.addCleanup(__import__("shutil").rmtree, self.root, True)
+        self.a, self.b = "a" * 40, "b" * 40
+
+    def test_only_the_blobs_no_other_revision_shares(self):
+        repo = fake_repo(self.root, {self.a: {"config.json": b"same", "w.safetensors": b"x" * 10},
+                                     self.b: {"config.json": b"same", "w.safetensors": b"y" * 20}},
+                         shared={"config.json"})
+        plan = rg.deletion_plan(repo, self.b)
+        self.assertNotIn("refused", plan)
+        self.assertEqual([Path(b).name for b in plan["blobs"]], ["bbbb-w.safetensors"])
+        self.assertEqual(plan["bytes"], 20)
+
+    def test_a_revision_a_ref_names_is_refused(self):
+        repo = fake_repo(self.root, {self.a: {"w.safetensors": b"x"}}, refs={"main": self.a})
+        self.assertIn("refs/main", rg.deletion_plan(repo, self.a)["refused"])
+
+    def test_a_revision_not_in_the_cache_is_refused(self):
+        repo = fake_repo(self.root, {self.a: {"w.safetensors": b"x"}})
+        self.assertIn("refused", rg.deletion_plan(repo, self.b))
+        self.assertIn("refused", rg.deletion_plan(repo, "../" + self.a))
+
+
 class PinModelsCoversEveryLane(unittest.TestCase):
     """The registry knew the text lanes' checkpoints only: the image, video and Kolibri
     lanes' weights read as "other models", with no pin and no status, so nothing could say
