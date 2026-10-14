@@ -120,7 +120,7 @@ class TheCheckPins(PinsBase):
         rc, out = self.run_pins(None, "hf_secretvalue123")
         self.assertEqual(rc, 0, out)
         hf = [c for c in self.calls() if c["url"].startswith("https://huggingface.co/")]
-        self.assertEqual(len(hf), 13, hf)          # nine checkpoints, the diffusion lanes' three and the video Turbo adapter
+        self.assertEqual(len(hf), 15, hf)          # nine checkpoints, the diffusion lanes' three, the video Turbo adapter and Kolibri's two
         for c in hf:
             self.assertIn("Authorization: Bearer hf_secretvalue123", c["stdin"], c)
             self.assertFalse(any("hf_secretvalue123" in a for a in c["argv"]), c["argv"])
@@ -186,6 +186,24 @@ class ThePinsOutsideThePinBlock(PinsBase):
         self.assertTrue(any("Qwen/Qwen-Image-2.1-Turbo/raw/d65dbc9a" in c["url"] and c["url"].endswith("/model_index.json")
                             for c in self.calls()), "the Turbo checkpoint is asked for at its pinned revision")
 
+    def test_the_kolibri_lanes_are_checked_too(self):
+        # its checkpoints, base image and plugin wheel were checked by nothing: a revision,
+        # digest or release removed upstream went unseen (found in review, 2026-10-14)
+        rc, out = self.run_pins()
+        self.assertEqual(rc, 0, out)
+        for label in ("kolibri-fp8", "kolibri-nvfp4", "kolibri-plugin", "kolibri-base"):
+            self.assertIn("ok", self.line(out, label), out)
+        urls = [c["url"] for c in self.calls()]
+        self.assertTrue(any("Aleph-Alpha/Kolibri-1/raw/258cae8ffffc" in u for u in urls), "at its pinned revision")
+        self.assertTrue(any("Quantinine/Kolibri-1-NVFP4A16-FP8/raw/4a8406455c47" in u for u in urls))
+        self.assertIn("https://pypi.org/pypi/aleph-alpha-inference/1.0.0/json", urls)
+        self.assertTrue(any("/v2/vllm/vllm-openai/manifests/sha256:18372a72249386" in u for u in urls))
+
+    def test_a_removed_kolibri_revision_fails(self):
+        rc, out = self.run_pins({"Quantinine/Kolibri-1-NVFP4A16-FP8/raw/": [404, "RevisionNotFound"]})
+        self.assertEqual(rc, 1, out)
+        self.assertIn("FAIL", self.line(out, "kolibri-nvfp4"))
+
     def test_a_removed_source_commit_fails(self):
         rc, out = self.run_pins({"api.github.com/repos/sgl-project/sglang/commits/": [422, ""]})
         self.assertEqual(rc, 1, out)
@@ -233,7 +251,7 @@ class TheEndpointsThatDoNotAnswer(PinsBase):
         for label in self.GITHUB:
             self.assertIn("HTTP 504 from the GitHub API, so not checked", self.line(out, label), out)
             self.assertNotIn("no such", self.line(out, label), out)
-        self.assertIn("3 of 20 pins could not be asked about", out)
+        self.assertIn("3 of 24 pins could not be asked about", out)
         self.assertIn("run it again before re-pinning anything", out)
         self.assertNotIn("A removed upstream revision", out)
 

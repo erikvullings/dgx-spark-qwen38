@@ -52,6 +52,10 @@ IMAGE_PIN="$PIN"; IMAGE_WHEEL="$WHEEL"
 vline="$(grep -E '^(VIDEO_MODEL_PIN|VIDEO_MODEL_PIN_REV|VIDEO_TURBO_REPO|VIDEO_TURBO_REV|VIDEO_TURBO_FILE|PIN|WHEEL)=' "$REPO_DIR/install-video.sh")"
 eval "$vline"
 VIDEO_PIN="$PIN"; VIDEO_WHEEL="$WHEEL"
+# The Kolibri lane's: its two checkpoints, the vLLM image its build starts from and the
+# plugin's wheel, which nothing checked either (found in review, 2026-10-14).
+kline="$(grep -E '^KOLIBRI_(BASE_IMAGE|PLUGIN_VERSION|FP8_REPO|FP8_REV|NVFP4_REPO|NVFP4_REV)=' "$REPO_DIR/install-kolibri.sh")"
+eval "$kline"
 
 # Hugging Face answers an anonymous request with 401 both for a gated repo and for one that
 # does not exist (or is private): only its x-error-code tells a gated repo apart, so the
@@ -221,12 +225,17 @@ check_model  video-turbo    "$VIDEO_TURBO_REPO" "$VIDEO_TURBO_REV" "$VIDEO_TURBO
 check_commit sglang-source-video sgl-project/sglang "$VIDEO_PIN"
 check_wheel  sglang-wheel-video sglang "$VIDEO_WHEEL"
 check_asset  opencode       anomalyco/opencode "v$OPENCODE_VERSION" opencode-linux-arm64.tar.gz "$OPENCODE_SHA256"
+echo "Kolibri lane"
+check_model  kolibri-fp8    "$KOLIBRI_FP8_REPO"   "$KOLIBRI_FP8_REV"
+check_model  kolibri-nvfp4  "$KOLIBRI_NVFP4_REPO" "$KOLIBRI_NVFP4_REV"
+check_wheel  kolibri-plugin aleph-alpha-inference "$KOLIBRI_PLUGIN_VERSION"
 
 echo "Images"
 img="$(grep -E '^(IMAGE|FLASH_IMAGE)=' "$REPO_DIR/install.sh")"
 eval "$img"
 check_image 27b-base       "$IMAGE"
 check_image flash-base     "$FLASH_IMAGE"
+check_image kolibri-base   "$KOLIBRI_BASE_IMAGE"
 
 echo
 if [ "$FAIL" -eq 0 ]; then
