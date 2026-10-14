@@ -56,8 +56,6 @@ for a in "$@"; do case "$a" in
 esac; done
 
 CONFIG_DIR="$HOME/.config/qwen38"
-# What the installed unit says, so a re-run without variables changes nothing.
-unit_flag(){ { grep -m1 -oE -- "$1 [^ \\\\']+" "$INSTALLED" 2>/dev/null || true; } | awk '{print $2}'; }
 
 # The pins, at column 0 like install.sh's: the vLLM image Aleph Alpha's Dockerfile builds on
 # (v0.29.0, its arm64 manifest), the plugin's wheel, and the two checkpoints at the
