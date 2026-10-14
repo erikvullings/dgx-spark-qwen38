@@ -1,5 +1,49 @@
 # Changelog
 
+## v1.30.0 (2026-10-14): one record of the text lane, and each lane proved on the unit installed
+
+What the review of v1.29.0 left as proposals, done.
+
+**One record of the text lane the box comes back to.** A switch to a side lane (image, video,
+Kolibri) disables the text lane's unit, so the box has to remember which text lane it used. Until
+now each side lane kept a link to the lane it took the boot from, install.sh followed those links
+with six order-dependent lines, and the three side lanes' uninstalls followed them their own ways:
+a round trip between side lanes made two links name each other (v1.29.0 closed that loop), a side
+lane removed left another's link naming a unit that was gone, and the image and video lanes'
+uninstalls then left the box with no lane at boot. One record now, `~/.config/qwen38/text-lane`,
+the 27B's or the flash's unit, written by every switch and by install.sh and read by all of them
+through one library, `lanes.sh`. There is no chain left to follow or to close. A box switched
+before keeps its answer: its links are read once, while its side lane is still the one at boot. An
+uninstall whose text lane is gone gives the boot to the text lane installed, the 27B first, where
+a link that led nowhere left nothing. The boot goes back to the text lane, not to another side
+lane the box served in between (Kolibri, then images, then the image lane removed: the flash or
+the 27B serves, and Kolibri is one Load away).
+
+**Each lane's proof proves the unit installed.** ./install-image.sh, ./install-video.sh and
+./install-kolibri.sh, run while their lane served, proved the engine that ran: an update of the
+unit (that run's, or an update's, which leaves a serving lane serving) had not reached it. Each
+installer now says when its lane serves an older unit than the one installed, and its proof
+restarts such a lane to prove the new one.
+
+**One fetch of Kolibri's checkpoint.** install-kolibri.sh and switch-model.sh each had their own,
+and only the switch checked that every shard of the index is in the cache before it trusts a
+snapshot (huggingface_hub sees a missing file offline only with its tree cache, and vLLM then dies
+at every start). Both run `kolibri-fetch.py` now, inside the lane's image; on the reference box it
+found both checkpoints whole in under a second, with no network at all.
+
+**The cockpit learns a lane's boot time per checkpoint.** Kolibri's FP8 boots in 8 min 40 s to
+10 min 03 s and its NVFP4 in 6 min 34 s to 7 min 10 s, and one median of both told neither, in the
+load window's countdown and on the Lanes view. A box's history from before goes on serving until a
+checkpoint has boots of its own.
+
+**The proxy (v6.39) stops asking vLLM SGLang's routes.** Every read of the pool on the Kolibri lane
+began with two 404s (/server_info, /get_server_info), and the hold's probe asked /server_info each
+time: the proxy now notes that the engine has neither, until an engine starts again.
+
+**Tested.** Every change has a test that fails on v1.29.1, and every sequence of switches up to six
+lanes long (1,364) holds the one truth: the text lane is the last one served. The local CI ran in
+full, no step skipped. An update restarts the proxy and the cockpit; the engines keep running.
+
 ## v1.29.1 (2026-10-14): a key with a space after it reaches the Kolibri lane too
 
 **What was found.** The production checks run after the update to v1.29.0 on the reference box sent
