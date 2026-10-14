@@ -247,7 +247,7 @@ BENCHMARKS.md (host memory vs prompt length on the flash lane): free memory on t
 not memory the driver will hand to a new CUDA context. A speech lane that needs the GPU
 cannot promise to start beside flash.
 
-## Still open
+## Still open, none of it planned
 
 - **Qwen3-TTS** (ten languages, nine voices, cloning), once llama.cpp's server endpoint
   ([#26603](https://github.com/ggml-org/llama.cpp/pull/26603)) lands and runs faster than

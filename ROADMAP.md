@@ -178,10 +178,11 @@ the cockpit drift panel says so, per lane, until it is.
 - **The speech lane, next steps** (asked for in
   [discussion #38](https://github.com/hasso5703/dgx-spark-qwen38/discussions/38)). It is
   built, opt-in: `./install-speech.sh` serves Qwen3-ASR and Kokoro-82M on the CPU, beside
-  any lane, behind OpenAI's audio routes ([docs/speech-lane.md](docs/speech-lane.md)). Next:
-  a cockpit view (record and play in the browser, Load and proof like the other lanes'),
-  the lane in the one command, and Qwen3-TTS as a second voice once llama.cpp's server
-  endpoint lands and runs faster than real time.
+  any lane, behind OpenAI's audio routes ([docs/speech-lane.md](docs/speech-lane.md)), from
+  a script of its own. Possible next steps, none of them planned: a cockpit view (record and
+  play in the browser, Load and proof like the other lanes'), the lane in the one command,
+  and Qwen3-TTS as a second voice once llama.cpp's server endpoint lands and runs faster
+  than real time.
 
 ## Considered (and why not yet)
 
