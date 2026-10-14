@@ -375,17 +375,28 @@ class TheParentStartsIt(unittest.TestCase):
 
 class TheOtherLanesAndTheirProofs(unittest.TestCase):
     """The end of the run as written, against stub installers and a stub prove_text_lane:
-    what is prepared, what is proved, in which order, and that the served lane comes back."""
+    what is installed and how (whole, or its units only, prepared at its first Load), what is
+    proved, in which order, and that the served lane comes back."""
     BLOCK = between("    # ── Every other lane", "    printf '\\n\\033[1;32m✅ Installed")
+    MODES = between("side_prepared(){", "\n}\n") + "\n}\n" + between("side_mode(){", "\n}\n") + "\n}\n"
 
     def end(self, units=(), want_image=1, want_video=1, with_image=0, with_video=0, with_flash=0,
             second_state="installed", second_fresh=1, image_rc=0, video_rc=0, prove_fail="",
-            want_kolibri=1, with_kolibri=0, kolibri_rc=0):
+            want_kolibri=1, with_kolibri=0, kolibri_rc=0, prepared=(), all_weights=0):
         t = tmp("lane-end-")
         unit_dir = t / "units"
         unit_dir.mkdir()
         for u in units:
-            (unit_dir / u).write_text("[Unit]\n")
+            (unit_dir / u).write_text("[Unit]\nExecStart=/usr/bin/docker run qwen38-kolibri:test\n"
+                                      if u == "qwen38-kolibri.service" else "[Unit]\n")
+        # a prepared lane: its runtime is on the box (the venv and its wheel's note; Kolibri's image)
+        for lane in prepared:
+            if lane in ("image", "video"):
+                d = t / "home" / ".local" / "share" / f"qwen38-{lane}"
+                (d / "venv" / "bin").mkdir(parents=True)
+                (d / "venv" / "bin" / "python").write_text("#!/bin/sh\n")
+                (d / "venv" / "bin" / "python").chmod(0o755)
+                (d / "sglang-wheel").write_text("0.5.21\n")
         repo = t / "repo"
         repo.mkdir()
         log = t / "calls"
@@ -399,9 +410,11 @@ class TheOtherLanesAndTheirProofs(unittest.TestCase):
         bin_.mkdir()
         stub(bin_ / "sudo", f'echo "sudo $*" >> "{log}"')
         stub(bin_ / "curl", "exit 0")
+        stub(bin_ / "docker", 'exit 0' if "kolibri" in prepared else 'exit 1')
         block = self.BLOCK.replace("/etc/systemd/system/", f"{unit_dir}/")
         script = ("set -euo pipefail\nstep(){ echo \"STEP $*\"; }\ndie(){ echo \"DIE $*\"; exit 1; }\n"
-                  "stale_since(){ return 1; }\n"
+                  "stale_since(){ return 1; }\n" + f'HOME="{t}/home"; ALL_WEIGHTS={all_weights}\n'
+                  + self.MODES.replace("/etc/systemd/system/", f"{unit_dir}/") +
                   f'prove_text_lane(){{ echo "prove $*" >> "{log}"; case "$1" in {prove_fail or "__none__"}) return 1 ;; esac; }}\n'
                   f'REPO_DIR="{repo}"; CONFIG_DIR="{t}"; LANE=27b; UNIT_NAME=qwen38-sglang.service; SMOKE_MODEL=qwen3.8-27b\n'
                   f'KOLIBRI_UNIT_PATH="{unit_dir}/qwen38-kolibri.service"\n'
@@ -414,8 +427,20 @@ class TheOtherLanesAndTheirProofs(unittest.TestCase):
                            env={"PATH": f"{bin_}:/usr/bin:/bin"})
         return r.returncode, r.stdout + r.stderr, log.read_text().splitlines()
 
-    def test_a_new_box_prepares_then_proves_each_lane_and_its_own_last(self):
+    def test_a_new_box_installs_the_side_lanes_on_demand_and_proves_its_text_lanes(self):
+        # their units only: the cockpit's first Load of each builds it (on demand, 2026-10-14)
         rc, out, calls = self.end()
+        self.assertEqual(rc, 0, out)
+        self.assertEqual(calls, [
+            "install-image.sh --units-only", "install-video.sh --units-only", "install-kolibri.sh --units-only",
+            "sudo systemctl stop qwen38-sglang.service",
+            "prove qwen38-flash.service qwen3.8-flash-next stop",
+            "prove qwen38-sglang.service qwen3.8-27b",
+            "sudo systemctl restart qwen38-keepalive.service", "oc-fit-limits"])
+        self.assertIn("STATES second=proved image=units video=units kolibri=units", out)
+
+    def test_all_weights_prepares_then_proves_each_lane_and_its_own_last(self):
+        rc, out, calls = self.end(all_weights=1)
         self.assertEqual(rc, 0, out)
         self.assertEqual(calls, [
             "install-image.sh --no-smoke", "install-video.sh --no-smoke", "install-kolibri.sh --no-smoke",
@@ -426,27 +451,36 @@ class TheOtherLanesAndTheirProofs(unittest.TestCase):
             "sudo systemctl restart qwen38-keepalive.service", "oc-fit-limits"])
         self.assertIn("STATES second=proved image=proved video=proved kolibri=proved", out)
 
-    def test_a_routine_update_proves_nothing_and_keeps_the_lane_serving(self):
+    def test_a_lane_not_prepared_yet_stays_units_only_on_an_update(self):
         rc, out, calls = self.end(units=("qwen38-image.service", "qwen38-video.service", "qwen38-kolibri.service"),
                                   second_fresh=0)
+        self.assertEqual(rc, 0, out)
+        self.assertEqual(calls, ["install-image.sh --units-only", "install-video.sh --units-only",
+                                 "install-kolibri.sh --units-only"])
+        self.assertIn("STATES second=installed image=units video=units kolibri=units", out)
+
+    def test_a_routine_update_proves_nothing_and_keeps_the_lane_serving(self):
+        rc, out, calls = self.end(units=("qwen38-image.service", "qwen38-video.service", "qwen38-kolibri.service"),
+                                  second_fresh=0, prepared=("image", "video", "kolibri"))
         self.assertEqual(rc, 0, out)
         self.assertEqual(calls, ["install-image.sh --no-smoke", "install-video.sh --no-smoke",
                                  "install-kolibri.sh --no-smoke"])
         self.assertIn("STATES second=installed image=installed video=installed kolibri=installed", out)
 
     def test_a_lane_left_out_is_not_touched(self):
-        rc, out, calls = self.end(units=("qwen38-video.service",), want_image=0, want_kolibri=0, second_fresh=0)
+        rc, out, calls = self.end(units=("qwen38-video.service",), want_image=0, want_kolibri=0, second_fresh=0,
+                                  prepared=("video",))
         self.assertEqual(calls, ["install-video.sh --no-smoke"])
         self.assertIn("image=off", out)
         self.assertIn("kolibri=off", out)
 
     def test_a_lane_that_does_not_install_is_not_proved_and_the_rest_goes_on(self):
-        rc, out, calls = self.end(image_rc=1)
+        rc, out, calls = self.end(image_rc=1, all_weights=1)
         self.assertEqual(rc, 0, out)
         self.assertNotIn("install-image.sh ", calls)
         self.assertIn("install-video.sh ", calls)
         self.assertIn("image=failed", out)
-        rc, out, calls = self.end(kolibri_rc=1)
+        rc, out, calls = self.end(kolibri_rc=1, all_weights=1)
         self.assertEqual(rc, 0, out)
         self.assertNotIn("install-kolibri.sh ", calls)
         self.assertIn("install-image.sh ", calls)
@@ -454,18 +488,27 @@ class TheOtherLanesAndTheirProofs(unittest.TestCase):
 
     def test_naming_a_lane_proves_it_on_an_update(self):
         units = ("qwen38-image.service", "qwen38-video.service", "qwen38-kolibri.service")
-        rc, out, calls = self.end(units=units, second_fresh=0, with_video=1)
+        prepared = ("image", "video", "kolibri")
+        rc, out, calls = self.end(units=units, second_fresh=0, with_video=1, prepared=prepared)
         self.assertEqual(calls[3:], ["sudo systemctl stop qwen38-sglang.service", "install-video.sh ",
                                      "prove qwen38-sglang.service qwen3.8-27b",
                                      "sudo systemctl restart qwen38-keepalive.service", "oc-fit-limits"])
         self.assertIn("video=proved", out)
-        rc, out, calls = self.end(units=units, second_fresh=0, with_flash=1)
+        rc, out, calls = self.end(units=units, second_fresh=0, with_flash=1, prepared=prepared)
         self.assertIn("prove qwen38-flash.service qwen3.8-flash-next stop", calls)
-        rc, out, calls = self.end(units=units, second_fresh=0, with_kolibri=1)
+        rc, out, calls = self.end(units=units, second_fresh=0, with_kolibri=1, prepared=prepared)
         self.assertEqual(calls[3:], ["sudo systemctl stop qwen38-sglang.service", "install-kolibri.sh ",
                                      "prove qwen38-sglang.service qwen3.8-27b",
                                      "sudo systemctl restart qwen38-keepalive.service", "oc-fit-limits"])
         self.assertIn("kolibri=proved", out)
+
+    def test_naming_a_lane_not_prepared_yet_installs_it_whole_and_proves_it(self):
+        units = ("qwen38-image.service", "qwen38-video.service", "qwen38-kolibri.service")
+        rc, out, calls = self.end(units=units, second_fresh=0, with_image=1)
+        self.assertEqual(calls[:3], ["install-image.sh --no-smoke", "install-video.sh --units-only",
+                                     "install-kolibri.sh --units-only"])
+        self.assertIn("install-image.sh ", calls)
+        self.assertIn("image=proved video=units kolibri=units", out)
 
     def test_a_proof_that_fails_is_said_and_the_served_lane_still_comes_back(self):
         rc, out, calls = self.end(prove_fail="qwen38-flash.service")

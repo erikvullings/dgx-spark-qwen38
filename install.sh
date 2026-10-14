@@ -452,6 +452,7 @@ WITH_27B=0
 NO_27B=0
 WITH_KOLIBRI=0
 NO_KOLIBRI=0
+ALL_WEIGHTS=0
 for arg in "$@"; do
   case "$arg" in
     --no-start) NO_START=1 ;;
@@ -470,6 +471,7 @@ for arg in "$@"; do
     --no-27b) NO_27B=1 ;;
     --with-kolibri) WITH_KOLIBRI=1 ;;
     --no-kolibri) NO_KOLIBRI=1 ;;
+    --all-weights) ALL_WEIGHTS=1 ;;
     --with-claude-warmup)
       echo "NOTE: --with-claude-warmup was removed in v1.3 (the repo's client story moved to opencode)."
       echo "      The flag is ignored; an installed warmup drop-in from an earlier version is cleaned up." ;;
@@ -479,21 +481,24 @@ Usage: ./install.sh [--no-start] [--no-service] [--no-opencode | --with-opencode
                    [--no-cockpit | --with-cockpit] [--no-image | --with-image]
                    [--no-video | --with-video] [--no-flash | --with-flash]
                    [--no-27b | --with-27b] [--no-kolibri | --with-kolibri]
+                   [--all-weights]
 
 Run it as yourself. Never with sudo in front: it calls sudo itself for the
 privileged steps, and under sudo every path it writes moves to /root (see the
 refusal at the top of this file).
 
-A plain run installs the whole box: both text lanes (the one MODEL_CHOICE names
+A plain run installs the box: both text lanes (the one MODEL_CHOICE names
 serves, the 27B by default, and the other is installed beside it, ready to
-load), the image lane, the video lane, the Kolibri lane (Aleph Alpha's
-Kolibri-1, on vLLM), the keepalive proxy with its typed decision endpoint, the
-opencode wiring, the cockpit and its Agent view. Each lane a run installs for
-the first time proves it serves before the run ends. All of it takes
-about 540 GB of disk (27B 54, flash 203, image 40, video 144, Kolibri 102):
-about an hour and a half of work on the box, plus the downloads (about 90
-minutes at 100 MB/s). A lane that does not fit on the disk is left out and named at the
-end, with the command that adds it later. When it finishes it prints the
+load), the keepalive proxy with its typed decision endpoint, the opencode
+wiring, the cockpit and its Agent view. The image lane, the video lane and the
+Kolibri lane (Aleph Alpha's Kolibri-1, on vLLM) are installed on demand: a run
+puts in their units, and the first Load of each from the cockpit builds its
+runtime and fetches its weights (image 40 GB, video 144, Kolibri 102), as the
+user, with no sudo. Each text lane a run installs for the first time proves it
+serves before the run ends. The two text lanes take about 260 GB of disk (27B
+54, flash 203), about 45 minutes of downloads at 100 MB/s. A lane that does not
+fit on the disk is left out and named at the end, with the command that adds it
+later. When it finishes it prints the
 cockpit URL, and from there you start, stop, switch, watch and benchmark
 without a terminal.
 
@@ -524,6 +529,10 @@ without a terminal.
   --no-kolibri          leave the Kolibri-1 lane out (vLLM, 102 GB), remembered
                         the same way (./install-kolibri.sh --uninstall removes it)
   --with-kolibri        bring it back after a --no-kolibri
+  --all-weights         install the image, video and Kolibri lanes whole now,
+                        runtime and weights, and prove each new one (without
+                        it, each is built at its first Load from the cockpit;
+                        --with-<lane> does the same for that one lane)
 
 Re-running over an existing install keeps the operator's choices: the target
 model (any of the seven), the context mode (native/1m), the flash serving tier,
@@ -1068,6 +1077,31 @@ if [ -z "$SECONDARY" ]; then
   lane_wanted 27b "$NO_27B" "$WITH_27B"; WANT_27B="$WANT"
   lane_wanted kolibri "$NO_KOLIBRI" "$WITH_KOLIBRI"; WANT_KOLIBRI="$WANT"
 fi
+
+# The image, video and Kolibri lanes are installed on demand: a run puts in their units
+# (--units-only, what needs root), and the cockpit's first Load of each builds its runtime
+# as the user (--prepare) and fetches its weights (its switch). A lane already prepared
+# (its runtime on the box, as on every box installed before this) is updated whole, as
+# before; --all-weights, or a lane asked for by name (--with-<lane>), is installed whole now
+# and proved when it is new. The runtime is what says prepared: the venv and the note of
+# its wheel for the image and video lanes, the image its unit names for Kolibri.
+side_prepared(){  # $1 lane (image, video, kolibri)
+  local unit dir img
+  case "$1" in
+    image|video)
+      unit="/etc/systemd/system/qwen38-$1.service"
+      dir="$({ grep -m1 -E '^WorkingDirectory=' "$unit" 2>/dev/null || true; } | cut -d= -f2-)"
+      dir="${dir:-$HOME/.local/share/qwen38-$1}"
+      [ -x "$dir/venv/bin/python" ] && [ -s "$dir/sglang-wheel" ] ;;
+    kolibri)
+      img="$({ grep -m1 -oE 'qwen38-kolibri:[^ ]+' "$KOLIBRI_UNIT_PATH" 2>/dev/null || true; })"
+      [ -n "$img" ] && docker image inspect "$img" >/dev/null 2>&1 ;;
+    *) return 1 ;;
+  esac
+}
+side_mode(){  # $1 lane, $2 --with-<lane> given: the installer's option for this run
+  if [ "$ALL_WEIGHTS" -eq 1 ] || [ "$2" -eq 1 ] || side_prepared "$1"; then echo --no-smoke; else echo --units-only; fi
+}
 
 if [ "$NO_SERVICE" -eq 1 ] && [ "$CONTEXT_MODE" = "1m" ]; then
   if [ -z "$_ENV_CONTEXT_MODE" ]; then
@@ -2367,15 +2401,15 @@ else
   # Since v1.20 a side lane missing here is installed too, unless it was left out
   # (lane_wanted): installed and updated, proved by its first load from the cockpit.
   if [ "$WANT_IMAGE" -eq 1 ]; then
-    "$REPO_DIR/install-image.sh" --no-smoke \
+    "$REPO_DIR/install-image.sh" "$(side_mode image "$WITH_IMAGE")" \
       || echo "NOTE: the image lane did not install or update; retry with ./install-image.sh --no-smoke"
   fi
   if [ "$WANT_VIDEO" -eq 1 ]; then
-    "$REPO_DIR/install-video.sh" --no-smoke \
+    "$REPO_DIR/install-video.sh" "$(side_mode video "$WITH_VIDEO")" \
       || echo "NOTE: the video lane did not install or update; retry with ./install-video.sh --no-smoke"
   fi
   if [ "$WANT_KOLIBRI" -eq 1 ]; then
-    "$REPO_DIR/install-kolibri.sh" --no-smoke \
+    "$REPO_DIR/install-kolibri.sh" "$(side_mode kolibri "$WITH_KOLIBRI")" \
       || echo "NOTE: the Kolibri lane did not install or update; retry with ./install-kolibri.sh --no-smoke"
   fi
   SERVING_LANE="image"
@@ -2658,21 +2692,24 @@ except Exception as e:
     IMAGE_STATE=off; VIDEO_STATE=off; KOLIBRI_STATE=off
     if [ "$WANT_IMAGE" -eq 1 ]; then
       step "Qwen-Image 2.1 lane (text-to-image, editing, native RGBA)"
-      if "$REPO_DIR/install-image.sh" --no-smoke; then IMAGE_STATE=installed; else
+      IMAGE_MODE="$(side_mode image "$WITH_IMAGE")"
+      if "$REPO_DIR/install-image.sh" "$IMAGE_MODE"; then IMAGE_STATE=installed; [ "$IMAGE_MODE" = --units-only ] && IMAGE_STATE=units; else
         IMAGE_STATE=failed
         echo "NOTE: the image lane did not install (the lines above say why); the rest goes on."
       fi
     fi
     if [ "$WANT_VIDEO" -eq 1 ]; then
       step "MiniMax-H3 lane (text-to-video with joint video-and-audio)"
-      if "$REPO_DIR/install-video.sh" --no-smoke; then VIDEO_STATE=installed; else
+      VIDEO_MODE="$(side_mode video "$WITH_VIDEO")"
+      if "$REPO_DIR/install-video.sh" "$VIDEO_MODE"; then VIDEO_STATE=installed; [ "$VIDEO_MODE" = --units-only ] && VIDEO_STATE=units; else
         VIDEO_STATE=failed
         echo "NOTE: the video lane did not install (the lines above say why); the rest goes on."
       fi
     fi
     if [ "$WANT_KOLIBRI" -eq 1 ]; then
       step "Kolibri-1 lane (Aleph Alpha's German and English reasoning model, on vLLM)"
-      if "$REPO_DIR/install-kolibri.sh" --no-smoke; then KOLIBRI_STATE=installed; else
+      KOLIBRI_MODE="$(side_mode kolibri "$WITH_KOLIBRI")"
+      if "$REPO_DIR/install-kolibri.sh" "$KOLIBRI_MODE"; then KOLIBRI_STATE=installed; [ "$KOLIBRI_MODE" = --units-only ] && KOLIBRI_STATE=units; else
         KOLIBRI_STATE=failed
         echo "NOTE: the Kolibri lane did not install (the lines above say why); the rest goes on."
       fi
@@ -2777,6 +2814,7 @@ except Exception as e:
       case "$2" in
         proved)    echo "  $1: installed and proved it serves; Load it from the cockpit's Lanes view (or ./switch-model.sh $4)" ;;
         installed) echo "  $1: installed and up to date; Load it from the cockpit's Lanes view (or ./switch-model.sh $4)" ;;
+        units)     echo "  $1: installed, ready to load: its first Load from the cockpit's Lanes view builds it and fetches its weights ($5)" ;;
         failed)    if [ -f "$6" ]; then
                      # installed, then its proof failed: a plain run updates it and proves nothing
                      # (it is no longer new), so the line said a retry that never came (review, 2026-10-14)
