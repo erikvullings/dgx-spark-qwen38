@@ -173,19 +173,19 @@ class TheUninstallKeepsTheChain(unittest.TestCase):
         self.assertIn("no engine is enabled at boot any more", self.out)
 
     def test_the_compaction_follows_the_default_put_back(self):
-        # sized from Kolibri's window, it stayed at 38,000 tokens on a 27B whose own table keeps
-        # far more (found in review, 2026-10-14)
-        conf = {"model": "kolibri/kolibri-1", "compaction": {"auto": True, "preserve_recent_tokens": 38000},
+        # sized from Kolibri's window, it stayed at Kolibri's 46,000 tokens on a 27B whose own table
+        # keeps far more (found in review, 2026-10-14)
+        conf = {"model": "kolibri/kolibri-1", "compaction": {"auto": True, "preserve_recent_tokens": 46000},
                 "provider": {"qwen38": {"options": {"baseURL": "http://127.0.0.1:30001/v1", "apiKey": "{file:/k/api-key}"},
                                         "models": {"qwen3.8-27b": {"name": "qwen3.8-27b",
                                                                    "limit": {"context": 529000, "output": 250000}}}},
                              "kolibri": {"options": {"baseURL": "http://127.0.0.1:30001/v1", "apiKey": "{file:/k/api-key}"},
                                          "models": {"kolibri-1": {"name": "kolibri-1",
-                                                                  "limit": {"context": 152000, "output": 32768}}}}}}
+                                                                  "limit": {"context": 205000, "output": 32000}}}}}}
         self.run_block({"lane-before-kolibri": "qwen38-sglang.service"}, opencode=conf)
         want = int(subprocess.run([str(REPO / "oc-limits.sh"), "--preserve", "529000"],
                                   capture_output=True, text=True, check=True).stdout)
-        self.assertNotEqual(want, 38000)
+        self.assertNotEqual(want, 46000)
         for path in (self.cfg / "opencode.json", self.home / ".config/opencode/opencode.json"):
             left = json.loads(path.read_text())
             self.assertEqual(left["model"], "qwen38/qwen3.8-27b", path)

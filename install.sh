@@ -1792,7 +1792,8 @@ fi
 # The Kolibri lane serving at boot: opencode's default is Kolibri (OC_POINT_* below), and the
 # compaction block, global, goes with the default's window, as a switch to it sizes it. Sized
 # from the Qwen lane, a 27B in 1M mode kept 132,000 verbatim against Kolibri's threshold of
-# 153,000, and opencode compacted again every step or two (found in review, 2026-10-14).
+# 185,000 (153,000 when this was found), and opencode compacted again every step or two (found in
+# review, 2026-10-14).
 if [ "$KOLIBRI_BOOT" -eq 1 ] && [ "$OC_KOLIBRI" -eq 1 ] && [ -n "$OC_KOLIBRI_CTX" ]; then
   OC_KEEP="$("$REPO_DIR/oc-limits.sh" --preserve "$OC_KOLIBRI_CTX")" \
     || die "oc-limits.sh --preserve failed for $OC_KOLIBRI_CTX (repo bug: please open an issue)"

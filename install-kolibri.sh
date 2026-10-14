@@ -168,7 +168,8 @@ if [ "$ACTION" = uninstall ]; then
       python3 "$HERE/oc-point-default.py" "$OC_JSON" "$OC_LANE" "" "" \
         || echo "NOTE: could not point $OC_JSON at the $OC_LANE lane; set its \"model\" field yourself"
       # The compaction with it, from the window of the model put back: sized from Kolibri's, it
-      # kept 38,000 tokens verbatim where a 27B at 1M keeps 132,000 (found in review, 2026-10-14).
+      # kept 46,000 tokens verbatim where a 27B at 1M keeps 132,000 (found in review, 2026-10-14,
+      # at Kolibri's 38,000 then).
       OC_DEF_CTX="$(python3 - "$HERE/oc-merge-limits.py" "$OC_JSON" <<'PYCTX' || true
 import importlib.util, sys
 spec = importlib.util.spec_from_file_location("ocm", sys.argv[1])
