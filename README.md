@@ -29,9 +29,9 @@ builds on its published config,
 takes its measurements as its DGX Spark reference, and it is listed in
 [awesome-dgx-spark](https://github.com/bidual/awesome-dgx-spark).
 
-![The Spark cockpit's Now view: one pool of unified memory and what holds it, the four lanes in their rack with their makers' marks and the serving one edged in green, and below them the requests and the timeline](docs/img/cockpit-now.png)
+![The Spark cockpit's Now view: one pool of unified memory and what holds it, the lanes in their rack with their makers' marks and the serving one edged in green, and below them the requests and the timeline](docs/img/cockpit-now.png)
 
-*The cockpit, installed by default: one pool of unified memory, four lanes that take turns in it, and the whole box run from a browser, on a laptop or a phone.*
+*The cockpit, installed by default: one pool of unified memory, lanes that take turns in it, and the whole box run from a browser, on a laptop or a phone.*
 
 ## In detail
 
@@ -121,7 +121,7 @@ Requirements: DGX Spark or other GB10 machine (128 GB unified), stock DGX OS (Do
 
 One command, first install and updates alike. It clones or updates `~/dgx-spark-qwen38`, then runs the pinned installer, which installs **the whole box**: both text lanes (the 27B serves, Flash-Next 176B is installed beside it, ready to load), the Kolibri lane, the image lane, the video lane, the keepalive proxy with its typed-decision endpoint, the opencode wiring, the cockpit and its Agent view. Every lane a run installs for the first time proves it serves before the run ends. On a new box that is about an hour and a half of work (92 minutes measured, the weights cached), plus the downloads (about 530 GB, 90 minutes at 100 MB/s). It ends by printing the cockpit URL, and there is nothing left to run by hand.
 
-**Updating a box from before v1.20** installs the lanes it does not have yet, up to about 390 GB of downloads. To keep a box as it is, say so once, and later runs remember it: `--no-flash` (or `--no-27b` on a flash box), `--no-image`, `--no-video`, after `bash -s --` on the one-liner.
+**Updating a box installs the lanes it does not have yet.** From v1.20 to v1.28, that is the Kolibri lane: 79 GB of weights and a 22 GB image pulled and built on the box. On a box serving a text lane, its proof then stops that lane while Kolibri boots and answers (about 10 minutes), and brings it back (its own boot again: 5 to 9 minutes for the 27B, 12 to 15 for the flash); a box serving the image or the video lane keeps serving, and Kolibri proves itself at its first Load. From before v1.20, up to about 490 GB of downloads. To keep a box as it is, say so once, and later runs remember it: `--no-kolibri`, `--no-flash` (or `--no-27b` on a flash box), `--no-image`, `--no-video`, after `bash -s --` on the one-liner.
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/hasso5703/dgx-spark-qwen38/main/get.sh | bash
@@ -175,6 +175,7 @@ Everything below is optional and combinable. Variables ride on the `bash` side o
 | The other text lane | default, or `--no-flash` (on a 27B box), `--no-27b` (on a flash box) | installed beside the serving one, not enabled at boot | since v1.20: the same installer, started again for that lane, with its own target kept across updates; proved once, when it is new. `--with-flash` / `--with-27b` bring it back, and prove it |
 | Image lane | default, or `--no-image` | installed, not serving | Qwen-Image 2.1, 40 GB, proved once when it is new; `--with-image` brings it back after a `--no-image` |
 | Video lane | default, or `--no-video` | installed, not serving | MiniMax-H3, about 165 GB of headroom, proved once when it is new (about 23 min); `--with-video` brings it back |
+| Kolibri lane | default, or `--no-kolibri` | installed, not serving | Aleph Alpha's Kolibri-1 on vLLM, 102 GB (79 checkpoint, 23 image), proved once when it is new (about 10 min); `--with-kolibri` brings it back, and proves it |
 | opencode integration | default, or `--no-opencode` | on | on = ready config + `oc` launcher + default model following every switch; off = none of that, your own opencode config is never touched. `--with-opencode` turns it back on |
 | Ports | `PORT=`, `PROXY_PORT=` | 30000, 30001 | agent clients use the proxy port |
 | Storage | `HF_CACHE=`, `PLE_DIR=` | `~/.cache/huggingface`, `~/flashnext-ple` | checkpoints, and the 48 GB flash PLE backing file |
@@ -187,7 +188,7 @@ Combinations that make sense:
 ```bash
 # one-liner forms (variables on the bash side, flags after "bash -s --")
 curl -fsSL https://raw.githubusercontent.com/hasso5703/dgx-spark-qwen38/main/get.sh | bash                                  # everything: 27B stock serving (1M), flash beside it, images, video, opencode, cockpit
-curl -fsSL https://raw.githubusercontent.com/hasso5703/dgx-spark-qwen38/main/get.sh | bash -s -- --no-flash --no-video      # a smaller disk: the 27B and images only
+curl -fsSL https://raw.githubusercontent.com/hasso5703/dgx-spark-qwen38/main/get.sh | bash -s -- --no-flash --no-video --no-kolibri   # a smaller disk: the 27B and images only
 curl -fsSL https://raw.githubusercontent.com/hasso5703/dgx-spark-qwen38/main/get.sh | CONTEXT_MODE=native bash              # the 262144 window instead
 curl -fsSL https://raw.githubusercontent.com/hasso5703/dgx-spark-qwen38/main/get.sh | MODEL_CHOICE=uncensored bash           # abliterated 27B, 1M context
 curl -fsSL https://raw.githubusercontent.com/hasso5703/dgx-spark-qwen38/main/get.sh | MODEL_CHOICE=flash bash               # Flash-Next lane (service only)
@@ -692,7 +693,7 @@ question you had when you opened the page.
 
 | View | What it answers | What you can do there |
 |---|---|---|
-| **Now** | Is the box serving, and on what? The pool of unified memory and what holds it, the four lanes, activity, the last events | Load a lane from the rack; the Engine actions button at the top, on every view, runs a smoke generation, flushes the prefix cache, aborts every generation, writes a diagnostics bundle and fits opencode's limits |
+| **Now** | Is the box serving, and on what? The pool of unified memory and what holds it, the five lanes, activity, the last events | Load a lane from the rack; the Engine actions button at the top, on every view, runs a smoke generation, flushes the prefix cache, aborts every generation, writes a diagnostics bundle and fits opencode's limits |
 | **Agent** | opencode's own web interface, framed behind this login | Run a session on the box from a laptop or a phone, no terminal |
 | **Lanes** | Which lanes exist, which one serves, what the probes and containers say, the engine's facts and the proxy | Act on any lane this repo installed: Load runs the switch-stop-start journey in one path |
 | **Traffic** | What the engine and the proxy each did with the same traffic: live feed, abandoned-request guard, pool and decode, and the last 5 minutes from the engine's own counters (prompt tokens from the cache, decode speed, first token, tokens per second) | Read a dead decode from both sides of the wire |

@@ -52,9 +52,9 @@ that script with `AGENT_BIND=`.
 
 ## What it looks like
 
-![The cockpit's Now view: one pool of unified memory and what holds it, the four lanes in their rack with their makers' marks and the serving one edged in green, and below them the requests and the timeline](img/cockpit-now.png)
+![The cockpit's Now view: one pool of unified memory and what holds it, the lanes in their rack with their makers' marks and the serving one edged in green, and below them the requests and the timeline](img/cockpit-now.png)
 
-*Now: one pool of unified memory, four lanes that take turns in it, and which one holds the box. The timeline is the engines' own state transitions, including the kernel's GPU-allocation refusals that precede the memory edge on this hardware.*
+*Now: one pool of unified memory, lanes that take turns in it, and which one holds the box. The timeline is the engines' own state transitions, including the kernel's GPU-allocation refusals that precede the memory edge on this hardware.*
 
 ![The Lanes view: each lane with its maker's mark, every version it can load in one row of buttons with the one serving marked in green, its Load or Stop button, its facts and its last five boots](img/cockpit-lanes.png)
 

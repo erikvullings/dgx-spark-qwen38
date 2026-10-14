@@ -1,6 +1,6 @@
 # The Kolibri lane: Aleph Alpha's Kolibri-1 on one DGX Spark
 
-Kolibri-1 is Aleph Alpha's open model (Apache 2.0, released 2026-10-02): a mixture of experts of
+Kolibri-1 is Aleph Alpha's open model (Apache 2.0, released 2026-10-03): a mixture of experts of
 78.1B parameters with 3.46B active per token (384 routed experts, 6 per token, and one shared
 expert), 50 layers of which 40 use a 513-token sliding window and 10 full attention, its weights
 in FP8 with 128x128 block scales, and a native context of 262,144 tokens. It is built for German
@@ -144,4 +144,4 @@ other requests they tested. The call the model wrote after its reasoning is then
 - The cockpit: **Kolibri-1** in the Lanes view, **FP8** or **NVFP4**, then **Load**.
 - A terminal: `./switch-model.sh kolibri` (or `kolibri-nvfp4`), then the commands it prints.
 - Installed by every plain `./install.sh`; `--no-kolibri` leaves it out (102 GB), `--with-kolibri`
-  brings it back, `./install-kolibri.sh --uninstall` removes its unit and image (weights kept).
+  brings it back, `./install-kolibri.sh --uninstall` removes its unit and its local image (the weights stay, and so does the 22 GB vLLM image it was built on, which the script names for you to remove).

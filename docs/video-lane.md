@@ -45,7 +45,7 @@ Back is the same three moves the other way. From a terminal the switch is
 **Never two engines at once.** The video checkpoint (fl2va partition plus shared
 components) does not fit beside any serving
 lane. The cockpit refuses to start any engine while another one is busy, and says which
-one to stop, for all four lanes alike. The unit also carries `Conflicts=` with the
+one to stop, for every lane alike. The unit also carries `Conflicts=` with the
 other engine units, as a second belt for a `systemctl start` typed at a terminal.
 
 The engine actions menu's Flush cache, Abort all and Smoke are greyed out while the video lane

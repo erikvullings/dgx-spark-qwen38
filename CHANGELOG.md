@@ -3,12 +3,19 @@
 ## v1.29.0 (2026-10-14): Kolibri-1, Aleph Alpha's German and English model, as a fifth lane
 
 **What it is.** [Kolibri-1](https://huggingface.co/Aleph-Alpha/Kolibri-1) is Aleph Alpha's open model
-(Apache 2.0, released 2026-10-02): a 78B mixture of experts with 3.5B active per token, built for German
+(Apache 2.0, released 2026-10-03): a 78B mixture of experts with 3.5B active per token, built for German
 and English, with reasoning and tool calls. Every plain install now includes it as a fifth lane, beside
 the 27B, the flash, the image and the video lanes; `--no-kolibri` leaves it out (102 GB), and later runs
 remember it. On the cockpit's Lanes view it is **Kolibri-1**, **FP8** or **NVFP4**, then **Load**; from a
 terminal, `./switch-model.sh kolibri` or `kolibri-nvfp4`. Clients reach it through the proxy on `:30001`
 with the box's key, as model `kolibri-1`, in the OpenAI and the Anthropic dialects alike.
+
+**What an update does.** It installs the Kolibri lane too, as v1.20 did the lanes it added: 79 GB of
+weights and a 22 GB image pulled and built on the box. On a box serving a text lane, the lane then
+proves itself: the serving lane stops while Kolibri boots and answers (about 10 minutes), then boots
+again (5 to 9 minutes for the 27B, 12 to 15 for the flash). A box serving the image or the video lane
+keeps serving, and Kolibri proves itself at its first Load. `bash -s -- --no-kolibri` on the one-liner
+keeps a box as it is. The proxy and the cockpit restart, since both change.
 
 **Aleph Alpha's own serving stack.** SGLang cannot load Kolibri (sglang#43256), so this lane runs vLLM
 0.29.0 with Aleph Alpha's plugin, aleph-alpha-inference 1.0.0, which pins it. Their container is
@@ -67,18 +74,37 @@ default, what Kolibri does unasked), and omp offers `none` as "minimal". `./inst
 takes the provider out of opencode and pi, points a default that named it at the text lane before, and
 keeps the other side lanes' way back to that lane. The installer reads the whole journal before it looks
 for the key in it, follows a symlinked model cache to its disk, removes an older image only once the
-unit names the new one, and proves the tool call at effort none (at high, the reasoning parser misses a
-call on 1.9 to 3.5 % of such requests); a switch takes a cached checkpoint only when every shard its
+unit names the new one, and proves the tool call at effort none (at high effort, Quantinine measured the
+reasoning parser missing the call on one English request, in 1.9 % of the FP8's replies and 3.5 % of
+the NVFP4's; at none, every call parsed); a switch takes a cached checkpoint only when every shard its
 index names is there. A round trip between side lanes (image, then Kolibri, then image again, from the
 cockpit) left each naming the other as the lane before it, and an update took the 27B for the text lane
 of a box that served the flash; a switch now closes such a loop, image and video included.
+
+**Four reviews before the merge** (2026-10-14: the code-review skill, then three reviewers, on the proxy
+and the engine's key guard, on the installers and the switch, and on the cockpit, the clients and the
+docs; no blocker, and no way past the key guard among 16 routes, 7 methods and 28 path tricks). What they
+found is fixed. The proxy reads which engine serves where it is said: a failed read of the lane's facts
+sent a request under another model's name to vLLM's 404, or an abandoned Kolibri stream SGLang's way
+into a drain, and its vocabulary probe named a model vLLM refuses. It shuts the engine's connection down
+through the socket itself, never through a number another connection may have taken meanwhile. A
+reasoning effort of `none`, which the clients set up for Kolibri send for "off", turns thinking off on
+a Qwen lane, whose template refused it with a 400. The local image's tag follows the plugin's pin, each
+checkpoint's memory share and size are declared once, in `install-kolibri.sh`, and `./check-pins.sh`
+watches the lane's four pins. `--uninstall` gives the boot back along the chain of lanes, past one
+removed since, and sizes opencode's compaction for the model it puts back; a proof that fails says why
+even when its journal cannot be read, and the closing line of a lane installed whose proof failed points
+at `--with-<lane>`, which proves it. The cockpit reads Kolibri as vLLM from its first second, refuses on
+the server what the page refuses, and no longer shows the last Qwen lane's probe, belts or engine name
+as Kolibri's.
 
 **Tested.** Every fix of this release has a test that fails on the code before it, and the local CI
 ran in full, no step skipped (the coverage, fuzz and property steps on their own interpreter). On the
 reference box: a fresh install from the one-liner, with the box's own install moved aside and then put
 back identical to the byte (287,388 files compared), installed and proved every lane in 92 minutes with
 the weights already cached (Kolibri: a reply and a parsed tool call, and the key in none of its journal
-lines); an update over v1.28.2 took 46 s. The cockpit loaded Kolibri, switched it to the NVFP4
+lines); an update over v1.28.2, Kolibri's image and weights already in place and the image lane
+serving, took 46 s. The cockpit loaded Kolibri, switched it to the NVFP4
 checkpoint and back, and gave the box back to the image lane, through its own actions. Through the
 proxy, the OpenAI and Anthropic SDKs, LiteLLM, fetch under Node and Bun, Claude Code, opencode, Hermes
 and pi answered, with the model named `kolibri-1` or a Qwen name; a request sent under the 27B's name
