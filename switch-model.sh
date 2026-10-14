@@ -128,18 +128,20 @@ KOLIBRI_UNIT_NAME="qwen38-kolibri.service"
 KOL_STAGE="$CONFIG_DIR/qwen38-kolibri.service.switch-stage"
 if [ "$CHOICE" = "kolibri" ] || [ "$CHOICE" = "kolibri-nvfp4" ]; then
   [ -f "$KOLIBRI_UNIT" ] || die "the Kolibri lane is not installed on this box (no $KOLIBRI_UNIT). Install it once: ./install.sh --with-kolibri (about 102 GB)"
-  # The lane's two checkpoints and their pinned revisions, from install-kolibri.sh, the one
-  # place they are declared.
-  eval "$(grep -E '^(KOLIBRI_FP8_REPO|KOLIBRI_FP8_REV|KOLIBRI_NVFP4_REPO|KOLIBRI_NVFP4_REV)=' "$REPO_DIR/install-kolibri.sh" || true)"
-  for _v in KOLIBRI_FP8_REPO KOLIBRI_FP8_REV KOLIBRI_NVFP4_REPO KOLIBRI_NVFP4_REV; do
+  # The lane's two checkpoints, their pinned revisions, memory shares and sizes, from
+  # install-kolibri.sh, the one place they are declared (the shares and sizes were copied
+  # here by hand, and a share tuned there came back at the next switch: found in review,
+  # 2026-10-14).
+  eval "$(grep -E '^KOLIBRI_(FP8|NVFP4)_(REPO|REV|GMU|GB)=' "$REPO_DIR/install-kolibri.sh" || true)"
+  for _v in KOLIBRI_FP8_REPO KOLIBRI_FP8_REV KOLIBRI_FP8_GMU KOLIBRI_FP8_GB \
+            KOLIBRI_NVFP4_REPO KOLIBRI_NVFP4_REV KOLIBRI_NVFP4_GMU KOLIBRI_NVFP4_GB; do
     eval "[ -n \"\${$_v:-}\" ]" || die "install-kolibri.sh no longer defines $_v (repo layout changed?)"
   done
   unset _v
-  # Each checkpoint's memory share, the same as install-kolibri.sh's (it says why).
   if [ "$CHOICE" = "kolibri-nvfp4" ]; then
-    KOL_MODEL="$KOLIBRI_NVFP4_REPO"; KOL_REV="$KOLIBRI_NVFP4_REV"; KOL_GMU=0.55; KOL_NEED_GB=46
+    KOL_MODEL="$KOLIBRI_NVFP4_REPO"; KOL_REV="$KOLIBRI_NVFP4_REV"; KOL_GMU="$KOLIBRI_NVFP4_GMU"; KOL_NEED_GB="$KOLIBRI_NVFP4_GB"
   else
-    KOL_MODEL="$KOLIBRI_FP8_REPO"; KOL_REV="$KOLIBRI_FP8_REV"; KOL_GMU=0.80; KOL_NEED_GB=79
+    KOL_MODEL="$KOLIBRI_FP8_REPO"; KOL_REV="$KOLIBRI_FP8_REV"; KOL_GMU="$KOLIBRI_FP8_GMU"; KOL_NEED_GB="$KOLIBRI_FP8_GB"
   fi
   KOL_IMAGE="$(grep -m1 -oE 'qwen38-kolibri:[^ ]+' "$KOLIBRI_UNIT" || true)"
   [ -n "$KOL_IMAGE" ] && docker image inspect "$KOL_IMAGE" >/dev/null 2>&1 \

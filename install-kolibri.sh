@@ -68,6 +68,12 @@ KOLIBRI_FP8_REPO="Aleph-Alpha/Kolibri-1"
 KOLIBRI_FP8_REV="258cae8ffffc8c12db670bdbc6ac01bcf8826c87"
 KOLIBRI_NVFP4_REPO="Quantinine/Kolibri-1-NVFP4A16-FP8"
 KOLIBRI_NVFP4_REV="4a8406455c474fd0fb2bd523c352cc99803eb492"
+# Each checkpoint's share of the GPU memory and its download in GB (why: where the checkpoint is
+# chosen below). switch-model.sh reads them here, with the repos and revisions.
+KOLIBRI_FP8_GMU="0.80"
+KOLIBRI_FP8_GB="79"
+KOLIBRI_NVFP4_GMU="0.55"
+KOLIBRI_NVFP4_GB="46"
 # The local image: the base and the wheel, nothing else. Its tag names both, so a change of
 # either pin is a new tag, and a box never serves an image built from older pins. The wheel
 # is named by its version, which PyPI never lets a file change under (the tag said 1.0.0
@@ -91,9 +97,9 @@ esac
 # (measured, the benchmark client on the box beside it); the NVFP4 holds 30.8 GiB less of
 # weights, and 0.55 gives that back to the box rather than to a cache nobody fills.
 if [ "$VARIANT" = nvfp4 ]; then
-  MODEL="$KOLIBRI_NVFP4_REPO"; MODEL_REV="$KOLIBRI_NVFP4_REV"; GMU=0.55; WEIGHTS_GB=46
+  MODEL="$KOLIBRI_NVFP4_REPO"; MODEL_REV="$KOLIBRI_NVFP4_REV"; GMU="$KOLIBRI_NVFP4_GMU"; WEIGHTS_GB="$KOLIBRI_NVFP4_GB"
 else
-  MODEL="$KOLIBRI_FP8_REPO"; MODEL_REV="$KOLIBRI_FP8_REV"; GMU=0.80; WEIGHTS_GB=79
+  MODEL="$KOLIBRI_FP8_REPO"; MODEL_REV="$KOLIBRI_FP8_REV"; GMU="$KOLIBRI_FP8_GMU"; WEIGHTS_GB="$KOLIBRI_FP8_GB"
 fi
 IMAGE_GB=23   # the base image unpacked (22.1 GB measured) and the plugin's layer
 

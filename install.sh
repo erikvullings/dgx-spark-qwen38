@@ -1775,7 +1775,9 @@ OC_27B=0; OC_FLASH=0; OC_KOLIBRI=0
 OC_KOLIBRI_CTX=""; OC_KOLIBRI_OUT=""; OC_KOLIBRI_NAME=""
 if [ "$OC_KOLIBRI" -eq 1 ]; then
   OC_KOLIBRI_TARGET=kolibri
-  grep -qs -- "Quantinine/Kolibri-1-NVFP4A16-FP8 --revision" "$KOLIBRI_UNIT_PATH" && OC_KOLIBRI_TARGET=kolibri-nvfp4
+  # the NVFP4 checkpoint as install-kolibri.sh pins it (it was written here a second time)
+  OC_KOLIBRI_NVFP4="$(sed -n 's/^KOLIBRI_NVFP4_REPO="\([^"]*\)"$/\1/p' "$REPO_DIR/install-kolibri.sh")"
+  [ -n "$OC_KOLIBRI_NVFP4" ] && grep -qs -- "$OC_KOLIBRI_NVFP4 --revision" "$KOLIBRI_UNIT_PATH" && OC_KOLIBRI_TARGET=kolibri-nvfp4
   OC_KOLIBRI_PAIR="$("$REPO_DIR/oc-limits.sh" "$OC_KOLIBRI_TARGET")" \
     || die "oc-limits.sh refused $OC_KOLIBRI_TARGET (repo bug: please open an issue)"
   OC_KOLIBRI_CTX="${OC_KOLIBRI_PAIR%% *}"; OC_KOLIBRI_OUT="$(echo "$OC_KOLIBRI_PAIR" | cut -d' ' -f2)"
