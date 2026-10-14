@@ -19,7 +19,11 @@ plugin's wheel, checked against the sha256 PyPI publishes. It serves the model c
 and the checkpoint's own sampling (temperature 1.0, top_p 0.97, top_k 128, which vLLM applies to any
 request that sets none). Reasoning is on, at the effort its template defaults to (high), and a request
 sets its own (`low`, `medium`, `high` or `none`). The key reaches vLLM in the file SGLang's lanes read,
-and its anonymous usage report to its authors is off.
+and its anonymous usage report to its authors is off. vLLM itself asks the key only under `/v1`, `/v2`,
+`/inference` and `/cohere`: `/invocations` (its SageMaker route, which runs chat and completions),
+`/tokenize` and `/detokenize` answered without it on the engine's port. A middleware loaded with
+`--middleware` (`vllm_engine_auth.py`) asks it everywhere but `/health` and `/metrics`, as the SGLang
+lanes do.
 
 **Measured on the reference box (2026-10-14), the checkpoint on a USB SSD.**
 
@@ -42,18 +46,30 @@ prose, and it disables `logit_bias`). Every number: [docs/kolibri-lane.md](docs/
 
 **The proxy serves a vLLM lane (v6.37).** vLLM answers neither `/server_info` nor `/abort_request`, and
 refuses a model it does not serve: the proxy reads the pool and the window from its `/metrics` and
-`/v1/models` (without them every body past 256 KiB was held as "not measured yet" for good), closes the
-connection of a client that left, which stops vLLM's generation within half a second (measured; it
-drained such a request up to 15 minutes), gives a request naming another model the served one (so a
-client set up for the 27B keeps working on Kolibri), and drops the vocabulary and the request-id rule it
-learned when another model names itself. System One says it needs a Qwen lane there.
+`/v1/models` (without them every body past 256 KiB was held as "not measured yet" for good), shuts down
+the connection of a client that left, which stops vLLM's generation within half a second (measured; it
+drained such a request up to 15 minutes, and a plain close waited for the stream's next byte, the first
+token after a long prefill), gives a request naming another model the served one (so a client set up for
+the 27B keeps working on Kolibri, a request held through Kolibri's boot and the first one after a switch
+included), notes which engine a request went to when it goes, and drops the vocabulary and the
+request-id rule it learned once an engine unit starts again. System One says it needs a Qwen lane there.
 
 **The cockpit follows it on its own facts**, as it does the image and the video lanes: its boot from
 vLLM's log (the shard being read, of 32), its health from vLLM's `/health`, its load and cache from
 `/metrics`, its engine panel from what it serves. None of the SGLang belts apply to it (the canary's
 model name is a 404 there, and the pool guard, the autoheal and the zombie guard read routes and log
-lines vLLM does not have). opencode gets a `kolibri` provider, text only, with Kolibri's own levels, and
-it becomes opencode's default when the lane is loaded.
+lines vLLM does not have), and the page says so: the actions vLLM has no route for (flush, abort all,
+fit the limits) are refused with why, the memory floor counts no abort it could not make, one prompt is
+capped by the engine's 262,144-token window, and Traffic says Kolibri serves. opencode gets a `kolibri`
+provider, text only, with Kolibri's own levels, and it becomes opencode's default when the lane is loaded,
+its compaction sized from Kolibri's window; pi sends Kolibri its effort (its "off" as `none`, high by
+default, what Kolibri does unasked), and omp offers `none` as "minimal". `./install-kolibri.sh --uninstall`
+takes the provider out of opencode and pi, points a default that named it at the text lane before, and
+keeps the other side lanes' way back to that lane. The installer reads the whole journal before it looks
+for the key in it, follows a symlinked model cache to its disk, removes an older image only once the
+unit names the new one, and proves the tool call at effort none (at high, the reasoning parser misses a
+call on 1.9 to 3.5 % of such requests); a switch takes a cached checkpoint only when every shard its
+index names is there.
 
 ## v1.28.2 (2026-10-13): a load window can be put away while its steps run, and long opencode sessions keep their cache
 

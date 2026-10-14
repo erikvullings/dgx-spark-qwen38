@@ -27,7 +27,7 @@ publishes for it. Nothing else is added.
 | `vllm/vllm-openai:v0.29.0` (CUDA 13.0), pinned | serves; the reference below |
 | `vllm/vllm-openai:v0.29.0-aarch64-cu129` (CUDA 12.9) | dies at its first FP8 GEMM: `cutlass_gemm_caller ... Error Internal`. Its block-FP8 kernels are built for `sm_120a`, which the GB10 (`sm_121`) cannot run; the CUDA 13.0 image carries `sm_120` without the `a` |
 | `vllm/vllm-openai:v0.31.0` with the same plugin | the token log-probabilities of 153,450 positions are identical to the bit, and the speed is the same (48.4, 161.7 and 201.6 tok/s at 1, 8 and 16 streams): nothing to gain, and outside the plugin's pin |
-| vLLM's own Kolibri support ([vllm#60827](https://github.com/vllm-project/vllm/pull/60827), merged 2026-10-13) | needs a transformers release that does not exist yet (the model was added to transformers on 2026-10-13, after 5.19.0); its own measurements put it 6 % slower at one stream than the plugin's implementation |
+| vLLM's own Kolibri support ([vllm#60827](https://github.com/vllm-project/vllm/pull/60827), merged 2026-10-13) | needs a transformers release that does not exist yet (the model was added to transformers on 2026-10-13, after 5.19.0); its own measurements, on a B200, put it 6 % slower at one stream than a native implementation proposed beside it ([vllm#60026](https://github.com/vllm-project/vllm/pull/60026), closed) |
 
 ## The serving command
 
@@ -51,7 +51,11 @@ vllm serve <checkpoint> --revision <pinned sha> --served-model-name kolibri-1 \
 - **The window** is the 262,144 tokens Aleph Alpha recommends. The model can extrapolate to
   1,048,576, which they advise against for complex tasks, and this lane does not serve.
 - **The key** reaches vLLM the way it reaches SGLang: `engine-secrets.yaml`, read with `--config`,
-  so it is on no command line; vLLM prints its arguments at boot with `api_key` masked.
+  so it is on no command line; vLLM prints its arguments at boot with `api_key` masked. vLLM
+  itself asks it only under `/v1`, `/v2`, `/inference` and `/cohere`: `/invocations` (its SageMaker
+  route, which runs chat and completions), `/tokenize` and `/detokenize` answered without it. A
+  middleware loaded with `--middleware` (`vllm_engine_auth.py`) asks it everywhere but `/health`
+  and `/metrics`, as the SGLang lanes do.
 - **Usage statistics**: vLLM reports anonymous usage to its authors by default; the unit turns that
   off (`VLLM_NO_USAGE_STATS=1`, `DO_NOT_TRACK=1`).
 
@@ -129,11 +133,11 @@ Through the proxy on `:30001`, with the box's key, as model `kolibri-1`:
 - **System One** needs a Qwen lane: its options are measured on the Qwen tokenizer. On this lane
   the proxy says so (400) and the cockpit's Decide view offers to load the flash lane.
 
-A known upstream issue of the `kolibri1` reasoning parser, measured by Quantinine on the official
-model: when the model writes a literal `<tool_call>` inside its reasoning, the parser ends the
-reasoning there and the tool parser then misses the call (on one English request at high effort,
-1.9 % of replies with the FP8; never on the other requests they tested). The call the model wrote
-after its reasoning is then left in the content.
+A known upstream issue of the `kolibri1` reasoning parser, measured by Quantinine on both
+checkpoints: when the model writes a literal `<tool_call>` inside its reasoning, the parser ends the
+reasoning there and the tool parser then misses the call. On one English request at high effort it
+hit 1.9 % of non-streamed replies with the FP8 and 3.5 % with the NVFP4; with the FP8, never on the
+other requests they tested. The call the model wrote after its reasoning is then left in the content.
 
 ## Switching to it, and back
 
