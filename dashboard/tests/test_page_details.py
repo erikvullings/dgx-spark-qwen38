@@ -691,6 +691,21 @@ class TheModelsViewDownloadsWhatALaneCanLoad(unittest.TestCase):
         self.assertEqual(r["sheet"]["cmd"], "bash switch-model.sh kolibri-nvfp4 --fetch")
         self.assertEqual(r["sent"], {"name": "fetch", "params": {"target": "kolibri-nvfp4"}, "csrf": "t"})
 
+    def test_a_lane_not_prepared_offers_its_first_load_and_no_download(self):
+        # the download runs in the lane's own image or venv, which only its first Load builds:
+        # Download there failed on a lane installed on demand (2026-10-15)
+        r = run(self, r"""
+        feed({lanes_ready: {kolibri: false, image: true, video: true, flash: true}});
+        __fetch = async (url, init) => url.startsWith('/api/registry') ? __response(200, %s) : new Promise(() => {});
+        await scanRegistry();
+        report({rows: [...$('reg-targets').tBodies[0].rows].map(tr => tr.textContent),
+                btns: [...$('reg-targets').querySelectorAll('button')].length});
+        """ % json.dumps(self.REG))
+        self.assertEqual(r["btns"], 0)
+        self.assertIn("its first Load downloads it", r["rows"][1])
+        self.assertIn("its first Load downloads it", r["rows"][2])
+        self.assertIn("its lane is not installed", r["rows"][3])
+
 
 class ExampleNamesCountRight(unittest.TestCase):
     """U41: the "Twenty options" example had eight."""

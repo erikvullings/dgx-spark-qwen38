@@ -629,9 +629,11 @@ case "$DL_IMAGE" in
   *) DL_IMAGE="$PIN_IMAGE" ;;              # unreadable invocation: fall back to the repo's pin
 esac
 docker image inspect "$DL_IMAGE" >/dev/null 2>&1 \
-  || die "the image this box would serve is not present ($DL_IMAGE): run MODEL_CHOICE=$CHOICE ./install.sh once, the switch stays surgical"
+  || die "the image this box would serve is not present ($DL_IMAGE): a lane installed on demand is prepared by its first Load from the cockpit (or ./prepare-lane.sh $TARGET_LANE); otherwise run MODEL_CHOICE=$CHOICE ./install.sh once, the switch stays surgical"
 
-if [ "$TARGET_LANE" = "27b" ]; then
+if [ "$FETCH_ONLY" -eq 1 ]; then
+  echo "fetching $TARGET_REPO @ $TARGET_REV; nothing else changes (--fetch)"
+elif [ "$TARGET_LANE" = "27b" ]; then
   CUR="$(grep -oE -- '--model-path [^ ]+' "$TARGET_UNIT" | head -1 | cut -d' ' -f2 || true)"
   if [ "$CUR" = "$TARGET_REPO" ] && ! systemctl is-enabled --quiet "$OTHER_UNIT_NAME" 2>/dev/null; then
     echo "unit already points at $TARGET_REPO"

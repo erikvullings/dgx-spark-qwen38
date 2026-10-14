@@ -34,7 +34,8 @@ room_or_die(){  # $1 GB, $2 a path on the disk it goes to, $3 what for
   [ "${free:-0}" -ge "$1" ] || die "need ~$1 GB free under $2 for $3; found ${free:-unknown} GB. Free some space, then Load the lane again: what came already is kept."
 }
 pull_image(){  # $1 image, $2 the lane (its local tag), $3 the room its pull needs in GB
-  section "The $2 lane's image (${1:0:40})"
+  local name="$2"; [ "$2" = 27b ] && name=27B
+  section "The $name lane's image (${1:0:40})"
   if docker image inspect "$1" >/dev/null 2>&1; then
     echo "already here"
   else

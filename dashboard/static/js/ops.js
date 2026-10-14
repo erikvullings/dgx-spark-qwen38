@@ -277,11 +277,14 @@ async function scanRegistry(){
       tr.insertCell().textContent = String(t.repo || '').split('/').pop();
       const st = tr.insertCell();
       st.append(tag(t.state === 'complete' ? 'on disk' : t.state === 'incomplete' ? 'begun' : 'not downloaded', t.state === 'complete' ? 'cool' : 'warn'));
-      if (t.state !== 'complete' && t.installed){
+      // a lane installed on demand and not prepared yet: the download runs in the image or the
+      // venv its first Load builds, so that Load is what downloads it
+      const lane = SIDE_LANE[TARGET_UNIT(t.target)], unbuilt = !!lane && (F.lanesReady || {})[lane] === false;
+      if (t.state !== 'complete' && t.installed && !unbuilt){
         const b4 = el('button', 'btn sm ghost', t.state === 'incomplete' ? 'Finish the download' : 'Download'); b4.type = 'button';
         b4.addEventListener('click', () => askAction('fetch', {target: t.target}));
         st.append(' ', b4);
-      } else if (t.state !== 'complete') st.append(' ', el('span', 'muted', 'its lane is not installed'));
+      } else if (t.state !== 'complete') st.append(' ', el('span', 'muted', t.installed ? 'its first Load downloads it' : 'its lane is not installed'));
     });
     if (!tt.rows.length) emptyRow(tt, 3, 'No target.');
     labelCells($('reg-targets'));
