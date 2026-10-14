@@ -183,6 +183,13 @@ class TheKolibriLaneIsSaidAsItIs(unittest.TestCase):
         self.assertIn("cannot act on the Kolibri lane", r["floor"])
         self.assertIn("not on the Kolibri lane", r["guard"])
 
+    def test_the_floor_belts_line_wraps_like_the_guards(self):
+        # its line is longer than the row, and it was cut with an ellipsis on the Machine view
+        # where the guard's wraps (the reference box, v1.29.0, 2026-10-14)
+        r = run(self, r"""report({floor: $('mm-floor').className, guard: $('mm-guard').className});""")
+        self.assertIn("wrap", r["floor"].split())
+        self.assertIn("wrap", r["guard"].split())
+
     def test_the_engine_row_names_the_engine(self):
         r = run(self, self.KOLIBRI + r"""
         feed({engine_info: {info: {version: 'vLLM 0.29.0', served_model_name: 'kolibri-1'}}});
