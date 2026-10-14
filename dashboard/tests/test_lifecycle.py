@@ -320,6 +320,100 @@ class ImageBootLog(unittest.TestCase):
         self.assertIn("13.3 GB DiT", b["detail"])
 
 
+class KolibriBootLog(unittest.TestCase):
+    """A real boot of the Kolibri lane, its container log on the reference box (vLLM 0.29.0,
+    the NVFP4 checkpoint, 2026-10-14): 51 shards at about 5.7 s each, then the compile, the
+    KV cache, the CUDA graphs and the API. Its tqdm lines carry the shard count."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.lines = (HERE.parent / "fixtures" / "kolibri-boot.log").read_text().splitlines()
+
+    def at(self, needle):
+        """The boot as it looked the moment this line was written."""
+        for i, ln in enumerate(self.lines):
+            if needle in ln:
+                return lc.parse_kolibri_boot_log(self.lines[:i + 1])
+        self.fail(f"the fixture has no line with {needle!r}")
+
+    def test_a_complete_boot_is_fired_up_with_every_stage_done(self):
+        b = lc.parse_kolibri_boot_log(self.lines)
+        self.assertTrue(b["fired_up"])
+        self.assertEqual(b["done"], list(lc.KOLIBRI_STAGES))
+        self.assertEqual(b["detail"], "ready")
+
+    def test_each_milestone_says_what_is_being_done(self):
+        for needle, stage, detail in (
+                ("Initializing a V1 LLM engine", "init", "starting vLLM"),
+                ("Loading weights took", "allocating-kv", "compiling the model"),
+                ("GPU KV cache size:", "capturing-graphs", "CUDA graphs"),
+                ("init engine (profile, create kv cache, warmup model) took", "warming-up", "starting the API")):
+            with self.subTest(line=needle):
+                b = self.at(needle)
+                self.assertEqual(b["stage"], stage)
+                self.assertIn(detail, b["detail"])
+                self.assertFalse(b["fired_up"])
+                self.assertEqual(b["done"], list(lc.KOLIBRI_STAGES[:lc.KOLIBRI_STAGES.index(stage)]))
+
+    def test_the_weights_stage_counts_the_shards(self):
+        """Seven minutes of "loading weights" say less than "shard 10 of 51 (20 %)"."""
+        b = self.at("10/51 [")
+        self.assertEqual(b["stage"], "loading-weights")
+        self.assertEqual(b["detail"], "shard 10 of 51 (20 %)")
+        first = self.at("0/51 [")
+        self.assertEqual(first["detail"], "shard 0 of 51 (0 %)")
+
+    def test_the_last_shard_line_is_the_count_shown(self):
+        b = lc.parse_kolibri_boot_log(self.lines[:self.lines.index(next(
+            ln for ln in self.lines if "Loading weights took" in ln))])
+        self.assertEqual(b["stage"], "loading-weights")
+        self.assertEqual(b["detail"], "shard 51 of 51 (100 %)")
+
+    def test_only_the_latest_boot_counts(self):
+        restarted = self.lines + ["(EngineCore pid=9) INFO 10-14 01:00:00 [core.py:123] Initializing a V1 LLM engine (v0.29.0) with config: x"]
+        b = lc.parse_kolibri_boot_log(restarted)
+        self.assertFalse(b["fired_up"])
+        self.assertEqual(b["stage"], "init")
+        self.assertEqual(b["done"], [])
+
+    def test_an_empty_log_is_not_a_boot(self):
+        b = lc.parse_kolibri_boot_log([])
+        self.assertIsNone(b["stage"])
+        self.assertFalse(b["fired_up"])
+        self.assertEqual(b["done"], [])
+
+
+class KolibriLane(unittest.TestCase):
+    K = "qwen38-kolibri.service"
+
+    def test_an_engine_on_the_text_port_but_not_one_of_the_sglang_belts(self):
+        """It holds the GPU like every engine, so it is one of them for the one-engine rule;
+        the canary, the pool guard and the autoheal read SGLang's routes and log lines,
+        which vLLM does not have, so it is not a TEXT_UNIT."""
+        self.assertIn(self.K, lc.ENGINE_UNITS)
+        self.assertNotIn(self.K, lc.TEXT_UNITS)
+        self.assertEqual(lc.KOLIBRI_UNIT, self.K)
+        self.assertEqual(set(lc.TEXT_UNITS), {"qwen38-sglang.service", "qwen38-flash.service"})
+
+    def test_it_waits_for_every_other_engine_and_they_for_it(self):
+        for other in ("qwen38-sglang.service", "qwen38-flash.service", "qwen38-image.service", "qwen38-video.service"):
+            with self.subTest(other=other):
+                r = lc.blocked_reasons("unit", {"unit": self.K, "verb": "start"}, {other: "ready"})
+                self.assertEqual(len(r), 1)
+                self.assertIn(other, r[0])
+                r = lc.blocked_reasons("unit", {"unit": other, "verb": "start"}, {self.K: "loading-weights"})
+                self.assertEqual(len(r), 1)
+                self.assertIn(self.K, r[0])
+
+    def test_a_switch_waits_for_its_boot(self):
+        self.assertEqual(len(lc.blocked_reasons("switch", {"target": "stock"}, {self.K: "allocating-kv"})), 1)
+
+    def test_opencode_follows_it_with_its_own_provider(self):
+        self.assertEqual(lc.opencode_default_follows("kolibri/kolibri-1", {self.K: "ready"}),
+                         (True, "follows the served lane"))
+        self.assertEqual(lc.opencode_default_follows("qwen38/qwen3.8-27b", {self.K: "ready"})[0], False)
+
+
 class EtaHistory(unittest.TestCase):
     def test_record_and_median(self):
         h = {}

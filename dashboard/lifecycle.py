@@ -82,6 +82,50 @@ VIDEO_MARKERS = [
 ]
 
 
+# ── The Kolibri lane speaks vLLM ────────────────────────────────────────────────
+# vLLM 0.29.0 serving Kolibri-1 on the reference box, one boot from the container's start to
+# its API (2026-10-14, the official FP8 from the USB SSD; the NVFP4 the same lines, 30 % sooner):
+#   0 s Initializing a V1 LLM engine   10 s Loading safetensors checkpoint shards (32 of them,
+#   a progress line per shard, about 14 s each)   440 s Loading weights took   470 s
+#   torch.compile took (0.7 s once its cache is warm)   485 s GPU KV cache size: N tokens
+#   500 s init engine (profile, create kv cache, warmup model) took   520 s Application startup complete
+# Its tqdm lines carry the shard count, so the weights stage says how far it is.
+KOLIBRI_STAGES = ("init", "loading-weights", "allocating-kv", "capturing-graphs", "warming-up")
+KOLIBRI_MARKERS = [
+    # (substring, stage it opens, what is being done while that line is the latest)
+    ("Initializing a V1 LLM engine", "init", "starting vLLM"),
+    ("Loading safetensors checkpoint shards", "loading-weights", "the checkpoint, shard by shard"),
+    ("Loading weights took", "allocating-kv", "compiling the model and measuring its memory"),
+    ("GPU KV cache size:", "capturing-graphs", "capturing the CUDA graphs"),
+    ("init engine (profile, create kv cache, warmup model) took", "warming-up", "starting the API"),
+    ("Application startup complete", "warming-up", "ready"),
+]
+_KOLIBRI_SHARDS = re.compile(r"Loading safetensors checkpoint shards:\s+(\d+)% Completed \| (\d+)/(\d+)")
+
+
+def parse_kolibri_boot_log(lines: list[str]) -> dict:
+    """The Kolibri lane's container log, reduced to the shape parse_boot_log returns, the
+    shard being read in `detail`. Only the latest boot counts (the last engine start)."""
+    start = 0
+    for i, ln in enumerate(lines):
+        if "Initializing a V1 LLM engine" in ln:
+            start = i
+    stage, detail, fired = None, "", False
+    for ln in lines[start:]:
+        for needle, st, what in KOLIBRI_MARKERS:
+            if needle in ln:
+                stage, detail = st, what
+                if needle == "Application startup complete":
+                    fired = True
+        m = _KOLIBRI_SHARDS.search(ln)     # a shard line is a weights line: the marker above set it
+        if m:
+            detail = f"shard {m.group(2)} of {m.group(3)} ({m.group(1)} %)"
+    done = list(KOLIBRI_STAGES[:KOLIBRI_STAGES.index(stage)]) if stage in KOLIBRI_STAGES else []
+    if fired:
+        done = list(KOLIBRI_STAGES)
+    return {"stage": stage, "done": done, "fired_up": fired, "detail": detail}
+
+
 def _parse_diffusion_boot_log(lines: list[str], markers: list, stages: tuple) -> dict:
     """A diffusion lane's journal, reduced to the same shape parse_boot_log returns.
 
@@ -332,16 +376,21 @@ TRANSITIONAL = BUSY_STATES - {"ready", "degraded", "orphan", "wedged"}
 # 31 GB of weights, and two engines at once on 121.6 GiB of unified memory is the
 # livelock this whole module exists to prevent. The video lane is one of them too:
 # about 116 GiB of weights by measured components (48.09 + 61.73 + 0.56 + 5.2,
-# docs/video-lane.md), for the same reason.
+# docs/video-lane.md), for the same reason. So is the Kolibri lane: 73.6 GiB of weights
+# (42.8 for its NVFP4 variant) and a KV cache beside them.
 ENGINE_UNITS = ("qwen38-sglang.service", "qwen38-flash.service",
-                "qwen38-image.service", "qwen38-video.service")
+                "qwen38-image.service", "qwen38-video.service", "qwen38-kolibri.service")
 IMAGE_UNIT = "qwen38-image.service"
 VIDEO_UNIT = "qwen38-video.service"
-# The engines that serve text on ENGINE_BASE. Every probe, guard and belt that talks to
-# that port (the generation canary, the pool guard, the wedge autoheal) is about these
+KOLIBRI_UNIT = "qwen38-kolibri.service"
+# The SGLang engines that serve text on ENGINE_BASE. Every probe, guard and belt that talks
+# to that port (the generation canary, the pool guard, the wedge autoheal) is about these
 # and only these: with a diffusion lane serving, :30000 is closed, and asking "is an
-# engine ready" instead sent the canary a chat completion to a dead port every 90 s.
-TEXT_UNITS = tuple(u for u in ENGINE_UNITS if u not in (IMAGE_UNIT, VIDEO_UNIT))
+# engine ready" instead sent the canary a chat completion to a dead port every 90 s. The
+# Kolibri lane serves text on that port too, from vLLM, which none of those belts know
+# (its routes, its log and its model names are not SGLang's): the cockpit follows it on
+# its own facts, as it does the image and the video lanes.
+TEXT_UNITS = tuple(u for u in ENGINE_UNITS if u not in (IMAGE_UNIT, VIDEO_UNIT, KOLIBRI_UNIT))
 
 
 def blocked_reasons(action: str, params: dict, states: dict) -> list[str]:
@@ -839,7 +888,8 @@ def guard_verdict(zombies: dict, guard: dict, override_env: bool | None) -> tupl
 
 
 # opencode default model vs the lane actually serving (the cockpit panel's verdict).
-LANE_PROVIDER = {"qwen38-sglang.service": "qwen38", "qwen38-flash.service": "flashnext"}
+LANE_PROVIDER = {"qwen38-sglang.service": "qwen38", "qwen38-flash.service": "flashnext",
+                 "qwen38-kolibri.service": "kolibri"}
 
 
 def opencode_default_follows(default_model, states: dict) -> tuple:

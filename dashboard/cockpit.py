@@ -96,12 +96,17 @@ DRY_RUN = os.environ.get("COCKPIT_DRY_RUN", "0") == "1"
 MASKED_FIELDS = {"api_key", "admin_api_key"}
 
 UNITS = ("qwen38-sglang.service", "qwen38-flash.service", "qwen38-image.service",
-         "qwen38-video.service", "qwen38-keepalive.service")
-JOURNAL_UNITS = UNITS + (AGENT_UNIT,)   # what the Logs tab may read (UNITS carries the image and video lanes)
-CONTAINERS = ("qwen38-sglang", "qwen38-flash")
+         "qwen38-video.service", "qwen38-kolibri.service", "qwen38-keepalive.service")
+JOURNAL_UNITS = UNITS + (AGENT_UNIT,)   # what the Logs tab may read (UNITS carries the image, video and Kolibri lanes)
+# The SGLang text engines' containers: what their scheduler lines and their abort contract
+# are read from. The Kolibri lane's vLLM writes neither, so it is only in CONTAINERS, the
+# list the Logs tab, the diagnostics bundle and the container stats read.
+SGL_CONTAINERS = ("qwen38-sglang", "qwen38-flash")
+CONTAINERS = SGL_CONTAINERS + ("qwen38-kolibri",)
 
 UNIT2CONT = {"qwen38-sglang.service": "qwen38-sglang",
-             "qwen38-flash.service": "qwen38-flash"}
+             "qwen38-flash.service": "qwen38-flash",
+             "qwen38-kolibri.service": "qwen38-kolibri"}
 HISTORY_FILE_NAME = "cockpit-history.json"
 
 EVENTS: deque = deque(maxlen=200)
@@ -435,7 +440,98 @@ def mem_available_gib() -> float | None:
     return None
 
 
+# ── The Kolibri lane: vLLM on the text port ─────────────────────────────────────
+# Its own facts, the way the image and the video lanes have theirs: vLLM has none of the
+# routes the SGLang belts read (/v1/loads, /server_info, /flush_cache, /abort_request), its
+# /health generates nothing, and its /metrics carries its load and its KV cache (all three
+# open without the key, as on SGLang). Measured on the reference box, vLLM 0.29.0, 2026-10-14.
+KOLIBRI_UNIT = "qwen38-kolibri.service"
+KOLIBRI_UNIT_PATH = Path("/etc/systemd/system/qwen38-kolibri.service")
+KOLIBRI_READY_ENTER: dict = {}
+_VLLM_GAUGE = re.compile(r"^(vllm:[a-z_]+)(\{[^}]*\})?\s+([-+0-9.eE]+)\s*$", re.M)
+
+
+def kolibri_serving() -> bool:
+    """True while the Kolibri lane holds the text port (from its boot to its stop)."""
+    with LIFE_LOCK:
+        return (LIFE.get("states") or {}).get(KOLIBRI_UNIT) in lc.BUSY_STATES
+
+
+def vllm_metrics_facts(text: str) -> dict:
+    """What the cockpit reads off vLLM's /metrics: requests running and waiting, the share of
+    the KV cache in use, and the cache's size in tokens (cache_config_info's label)."""
+    out = {"running": 0, "waiting": 0, "usage": 0.0, "pool": 0}
+    for name, labels, value in _VLLM_GAUGE.findall(text or ""):
+        try:
+            v = float(value)
+        except ValueError:
+            continue
+        if name == "vllm:num_requests_running":
+            out["running"] += int(v)
+        elif name == "vllm:num_requests_waiting":
+            out["waiting"] += int(v)
+        elif name == "vllm:kv_cache_usage_perc":
+            out["usage"] = v
+        elif name == "vllm:cache_config_info":
+            m = re.search(r'kv_cache_size_tokens="(\d+)"', labels or "")
+            out["pool"] = int(m.group(1)) if m else 0
+    return out
+
+
+def kolibri_load(timeout: float = 3.0):
+    """The Kolibri lane's load in the /get_load shape the rest of the cockpit reads."""
+    with urllib.request.urlopen(ENGINE_BASE + "/metrics", timeout=timeout) as r:
+        f = vllm_metrics_facts(r.read(2_000_000).decode("utf-8", "replace"))
+    used = int(f["usage"] * f["pool"])
+    return [{"dp_rank": 0, "num_reqs": f["running"] + f["waiting"], "num_waiting_reqs": f["waiting"],
+             "num_tokens": f["pool"], "num_used_tokens": used, "num_pending_tokens": f["pool"] - used}]
+
+
+def kolibri_healthy() -> bool:
+    """vLLM's own /health: 200 once its API is up, refused while it loads. It generates
+    nothing, unlike SGLang's, so it is asked at every tick of the lifecycle."""
+    try:
+        urllib.request.urlopen(ENGINE_BASE + "/health", timeout=3).read()
+        return True
+    except Exception:  # noqa: BLE001 (no answer is the answer)
+        return False
+
+
+def _kolibri_log() -> list[str]:
+    """The lane's container log: a new container at every start, so it is this boot's."""
+    return run(["docker", "logs", "--tail", "300", "qwen38-kolibri"], timeout=6, merge_err=True).splitlines()
+
+
+def kolibri_engine_state(unit: str, *, active: str, sub: str, prev_state: str | None,
+                         enter_key: str) -> tuple:
+    """(state, boot, running) for the Kolibri lane, from its own facts, with the image lane's
+    hysteresis: once it served in this activation, one slow probe keeps it ready and three in
+    a row make it degraded. None of the SGLang belts apply (pool guard, canary, autoheal,
+    zombie): they read routes and log lines vLLM does not have."""
+    running = bool(run(["docker", "ps", "-q", "-f", "name=^qwen38-kolibri$"]).strip())
+    healthy = running and kolibri_healthy()
+    UNHEALTHY_TICKS[unit] = 0 if healthy else UNHEALTHY_TICKS.get(unit, 0) + 1
+    served_here = KOLIBRI_READY_ENTER.get(unit) == enter_key and enter_key != "0"
+    boot = {"stage": None, "fired_up": False, "done": []}
+    if running and not healthy:
+        if served_here:
+            boot = {"stage": "warming-up", "fired_up": True, "done": list(lc.KOLIBRI_STAGES)}
+            healthy = UNHEALTHY_TICKS[unit] < 3
+        else:
+            boot = lc.parse_kolibri_boot_log(_kolibri_log())
+    st = lc.derive_state(unit_active=active, unit_sub=sub, container_running=running,
+                         healthy=healthy, boot=boot)
+    if st["state"] == "degraded" and prev_state not in ("ready", "degraded"):
+        st["state"] = "warming-up"
+    if st["state"] == "ready":
+        KOLIBRI_READY_ENTER[unit] = enter_key
+    return st, boot, running
+
+
 def engine_abort_all(timeout: float = 8.0):
+    if kolibri_serving():
+        raise RuntimeError("the Kolibri lane's vLLM has no route that aborts its generations "
+                           "(stopping the lane stops them)")
     req = urllib.request.Request(ENGINE_BASE + "/abort_request", method="POST",
                                  data=json.dumps({"abort_all": True}).encode(),
                                  headers={"Content-Type": "application/json",
@@ -450,7 +546,8 @@ HEALTH_RECHECK_S = float(os.environ.get("COCKPIT_HEALTH_RECHECK_S", "30"))
 @guard
 def collect_engine_fast():
     try:
-        load = engine_load(timeout=3)
+        # the Kolibri lane's vLLM answers none of SGLang's load routes (404, twice a second)
+        load = kolibri_load(timeout=3) if kolibri_serving() else engine_load(timeout=3)
     except Exception:  # noqa: BLE001
         load = None
     now = time.time()
@@ -541,6 +638,8 @@ def collect_kernel():
 
 @guard
 def collect_engine_info():
+    if kolibri_serving():
+        return kolibri_engine_info()
     # 10 s, not 6: SGLang's event loop stalls under a long prefill and a late answer is
     # far better than none (measured 30/08: three timeouts in a row at 6 s while the same
     # endpoint answered in 0.19 s between two requests).
@@ -575,6 +674,28 @@ def collect_engine_info():
         ceiling = int(m.group(1)) if m else 0
     return {"node_id": "local", "info": slim, "prompt_ceiling_tokens": ceiling,
             "served_target": served_target}
+
+
+def kolibri_engine_info():
+    """The engine panel's facts for the Kolibri lane, in the names SGLang's /server_info
+    gives them: what it serves (/v1/models), its KV cache and memory share (/metrics), and
+    its version (/version)."""
+    models = http_json(ENGINE_BASE + "/v1/models", timeout=10).get("data") or [{}]
+    with urllib.request.urlopen(ENGINE_BASE + "/metrics", timeout=10) as r:
+        text = r.read(2_000_000).decode("utf-8", "replace")
+    facts = vllm_metrics_facts(text)
+    cfg = re.search(r"^vllm:cache_config_info\{([^}]*)\}", text, re.M)
+    labels = dict(re.findall(r'(\w+)="([^"]*)"', cfg.group(1))) if cfg else {}
+    version = (http_json(ENGINE_BASE + "/version", timeout=5) or {}).get("version")
+    target = unit_target(KOLIBRI_UNIT).get("target")
+    slim = {"model_path": models[0].get("root"), "served_model_name": models[0].get("id"),
+            "context_length": models[0].get("max_model_len"),
+            "max_total_num_tokens": facts["pool"] or None,
+            "kv_cache_dtype": labels.get("cache_dtype"),
+            "mem_fraction_static": float(labels["gpu_memory_utilization"]) if labels.get("gpu_memory_utilization") else None,
+            "quantization": "nvfp4" if target == "kolibri-nvfp4" else "fp8" if target else None,
+            "version": f"vLLM {version}" if version else None}
+    return {"node_id": "local", "info": slim, "prompt_ceiling_tokens": 0, "served_target": target}
 
 
 CANARY: dict = {"fails": 0, "last_ok": None, "last_err": "", "latency": None}
@@ -654,6 +775,10 @@ def collect_canary():
     # generate anything, not even two tokens (a second cockpit shares the same box).
     # The reason travels with the skip: the page printed "engine busy" for all five, next
     # to the last success however old, with no text engine at all.
+    if not ready and states.get(KOLIBRI_UNIT) in ("ready", "degraded"):
+        # vLLM refuses the probe's model name, and its own /health already answers for it
+        return {"node_id": "local", **CANARY, "skipped": True,
+                "why": "the Kolibri lane is checked by vLLM's own /health, not by a generation"}
     why = ("this cockpit is a dry run" if DRY_RUN else "no text engine is ready" if not ready
            else "an action is running" if JOB_LOCK.locked() else "requests are running" if busy
            else "a client was active in the last minute" if recent else "")
@@ -763,7 +888,7 @@ DECODE_RE = re.compile(
 def collect_decode_telemetry():
     """Parse the newest scheduler lines from the serving container's log."""
     active = None
-    for c in CONTAINERS:
+    for c in SGL_CONTAINERS:
         if run(["docker", "ps", "-q", "-f", f"name=^{c}$"]).strip():
             active = c
             break
@@ -836,7 +961,7 @@ def collect_guard():
     by default upstream, and without it a request lost during prefill has no name
     the engine would recognise. See CHANGELOG v1.8.4 and sglang#35255."""
     active = None
-    for c in CONTAINERS:
+    for c in SGL_CONTAINERS:
         if run(["docker", "ps", "-q", "-f", f"name=^{c}$"]).strip():
             active = c
             break
@@ -1015,7 +1140,7 @@ def collect_opencode():
         out[key]["default"] = cfg.get("model")
         if key == "real":
             for prov, pv in (cfg.get("provider") or {}).items():
-                if prov not in ("qwen38", "flashnext"):
+                if prov not in ("qwen38", "flashnext", "kolibri"):
                     continue
                 for mid, mv in (pv.get("models") or {}).items():
                     lim = mv.get("limit") or {}
@@ -1034,7 +1159,7 @@ def collect_opencode():
     served = info.get("served_model_name") or ""
     out["fit"] = None
     if pool and served:
-        prov = {"qwen3.8-27b": "qwen38", "qwen3.8-flash-next": "flashnext"}.get(served)
+        prov = {"qwen3.8-27b": "qwen38", "qwen3.8-flash-next": "flashnext", "kolibri-1": "kolibri"}.get(served)
         lim = (out["real"]["limits"] or {}).get(f"{prov}/{served}") if prov else None
         if lim and lim.get("context"):
             ctx, outp = int(lim["context"]), int(lim.get("output") or 0)
@@ -1293,6 +1418,16 @@ def unit_target(unit: str) -> dict:
             if IMAGE_UNIT_PATH.exists() else None
         target = ("image-turbo" if model == IMAGE_TURBO_MODEL else "image") if model else None
         return {"model": model, "target": target}
+    if unit == KOLIBRI_UNIT:
+        # two checkpoints of one lane, named in its unit as <repo> --revision <sha>
+        try:
+            text = KOLIBRI_UNIT_PATH.read_text(errors="replace")
+        except OSError:
+            return {"model": None, "target": None}
+        m = re.search(r"(\S+) --revision [0-9a-f]{40}", text)
+        model = m.group(1) if m else None
+        target = ("kolibri-nvfp4" if model and "NVFP4" in model.upper() else "kolibri") if model else None
+        return {"model": model, "target": target}
     if unit == "qwen38-video.service":
         # one checkpoint, one target, same rule as the image lane
         model = _video_unit_flag("--model-path", "MiniMaxAI/MiniMax-H3") \
@@ -1388,8 +1523,13 @@ def collect_lifecycle():
             continue
         is_image = unit == lc.IMAGE_UNIT
         is_video = unit == lc.VIDEO_UNIT
+        is_kolibri = unit == lc.KOLIBRI_UNIT
         if (is_image or is_video) and not (IMAGE_UNIT_PATH.exists() if is_image else VIDEO_UNIT_PATH.exists()):
             continue                    # not installed: no card, no pill, no gate
+        if is_kolibri and not KOLIBRI_UNIT_PATH.exists():
+            continue
+        # the lanes the cockpit follows on their own facts, not the SGLang text belts
+        own_facts = is_image or is_video or is_kolibri
         boot = {"stage": None, "fired_up": False, "done": []}
         if is_image:
             st, boot, running = image_engine_state(
@@ -1401,11 +1541,15 @@ def collect_lifecycle():
                 unit, active=active, sub=d.get("SubState", "?"), prev_state=prev.get(unit),
                 enter_key=d.get("ActiveEnterTimestampMonotonic", "0"),
                 invocation=d.get("InvocationID", ""))
+        elif is_kolibri:
+            st, boot, running = kolibri_engine_state(
+                unit, active=active, sub=d.get("SubState", "?"), prev_state=prev.get(unit),
+                enter_key=d.get("ActiveEnterTimestampMonotonic", "0"))
         else:
             cont = UNIT2CONT[unit]
             running = bool(run(["docker", "ps", "-q", "-f",
                                 f"name=^{cont}$"]).strip())
-        if not is_image and not is_video and running and not healthy:
+        if not own_facts and running and not healthy:
             # A mature server's tail is pure decode noise: only read logs
             # while health is down (boot or trouble), where markers live.
             tail = run(["docker", "logs", "--tail", "300", cont],
@@ -1443,13 +1587,13 @@ def collect_lifecycle():
         # Hysteresis: a 2 s health probe times out under a heavy prefill.
         # Leaving ready needs 3 consecutive misses AND no fresh progress line;
         # a single 200 restores it at once.
-        if is_image or is_video:
+        if own_facts:
             pass                        # their state was derived above, from their own facts
         elif healthy:
             UNHEALTHY_TICKS[unit] = 0
         else:
             UNHEALTHY_TICKS[unit] = UNHEALTHY_TICKS.get(unit, 0) + 1
-        if not is_image and not is_video:
+        if not own_facts:
             progressing = LAST_PROGRESS["ts"] and time.time() - LAST_PROGRESS["ts"] < 30
             sticky_ready = (prev.get(unit) in ("ready", "wedged") and running and not healthy
                             and (UNHEALTHY_TICKS[unit] < 3 or progressing))
@@ -1489,7 +1633,7 @@ def collect_lifecycle():
                 was = seen[1] if seen and seen[0] == act else lc.parse_boot_log([])
                 if not was.get("fired_up"):
                     BOOT_SEEN[unit] = (act, {**was, "fired_up": True})
-        if st["state"] == "ready" and not is_image and not is_video:
+        if st["state"] == "ready" and not own_facts:
             with STATE_LOCK:
                 load = ((STATE.get("engine_fast") or {}).get("data", {})
                         .get("load") or [{}])[0]
@@ -1588,7 +1732,7 @@ def collect_lifecycle():
                     audit({"kind": "autoheal", "unit": unit, "code": code, "out": out})
             else:
                 WEDGED_SINCE.pop(unit, None)
-        if not is_image and not is_video:
+        if not own_facts:
             zp = lc.zombie_plan(state=st["state"],
                                 scheduler_alive=scheduler_alive(UNIT2CONT[unit])
                                 if st["state"] == "degraded" and running else None,
@@ -1665,7 +1809,8 @@ def collect_lifecycle():
                          "stage_done": boot.get("done", []),
                          # which stage list this engine walks, and what it is loading
                          # now: the UI draws each from here rather than assuming
-                          "stages": list(lc.VIDEO_STAGES if is_video else lc.IMAGE_STAGES if is_image else lc.STAGES),
+                          "stages": list(lc.VIDEO_STAGES if is_video else lc.IMAGE_STAGES if is_image
+                                         else lc.KOLIBRI_STAGES if is_kolibri else lc.STAGES),
                           "detail": boot.get("detail", ""),
                           "kind": "video" if is_video else "image" if is_image else "text",
                          # systemd's own word for how the last run ended: "timeout" is a
@@ -1693,9 +1838,10 @@ def collect_lifecycle():
             if st["state"] == "ready" and elapsed and witnessed \
                     and was in lc.TRANSITIONAL:
                 history = lc.record_boot(history, unit, elapsed)
-                if is_image or is_video:
-                    # Neither has a KV pool, and ENGINE_BASE is the text lane's port:
-                    # reading a pool here would record the wrong engine's, or nothing.
+                if own_facts:
+                    # Neither diffusion lane has a KV pool, and ENGINE_BASE is the text lane's
+                    # port: reading a pool here would record the wrong engine's, or nothing.
+                    # The Kolibri lane's is set by its memory share, read on /metrics.
                     save_history(history)
                     with LIFE_LOCK:
                         LIFE["witnessed"][unit] = False
@@ -1822,7 +1968,7 @@ AUDIT_LOG = CONFIG_DIR / "cockpit-audit.log"
 # text lane (each unit's own Conflicts=), which is why the modal says so before it runs.
 SERVING_UNITS = {"qwen38-sglang.service", "qwen38-flash.service",
                  "qwen38-keepalive.service", "qwen38-image.service",
-                 "qwen38-video.service", AGENT_UNIT}
+                 "qwen38-video.service", "qwen38-kolibri.service", AGENT_UNIT}
 UNIT_VERBS = {"start", "stop", "restart"}
 
 ACTIONS = {
@@ -1839,7 +1985,7 @@ ACTIONS = {
         "danger": "medium",
         "params": {"target": ["stock", "uncensored", "fp8", "uncensored-fp8",
                               "flash", "flash-nvda", "flash-uncensored", "image", "image-turbo",
-                              "video"]},
+                              "video", "kolibri", "kolibri-nvfp4"]},
         "argv": lambda p: ["bash", str(REPO_DIR / "switch-model.sh"), p["target"]],
         # A switch can download a whole checkpoint: 124 GB for flash take about 23 min at
         # the 89 MB/s the reference box gets, so 30 min failed it on any slower link, and
@@ -2071,6 +2217,8 @@ def served_model_name() -> str:
         states = dict(LIFE.get("states", {}))
     if states.get("qwen38-flash.service") not in (None, "stopped", "failed"):
         return "qwen3.8-flash-next"
+    if states.get(KOLIBRI_UNIT) not in (None, "stopped", "failed"):
+        return "kolibri-1"
     return "qwen3.8-27b"
 
 
@@ -2100,6 +2248,11 @@ def systemone_available(max_age: float = 60.0) -> dict:
     with LIFE_LOCK:
         states = dict(LIFE.get("states", {}))
     text = next(((u, states[u]) for u in lc.TEXT_UNITS if states.get(u) in lc.BUSY_STATES), None)
+    if text is None and states.get(KOLIBRI_UNIT) in lc.BUSY_STATES:
+        # the proxy refuses it there (v6.37): its labels are measured on the Qwen tokenizer
+        return {"available": False, "lane": "", "status": None,
+                "reason": "the Kolibri lane is serving: System One is answered by the 27B or the flash "
+                          "lane (its options are measured on the Qwen tokenizer), so load one of them"}
     key = (text, served_model_name() if text else "")
     with SYSTEMONE_LOCK:
         if (SYSTEMONE_CACHE["data"] and SYSTEMONE_CACHE.get("key") == key
@@ -2403,7 +2556,7 @@ def image_status() -> dict:
     # and saying so beats guessing "stopped" at a lane that may be serving
     out["state"] = states.get(IMAGE_UNIT) or "unknown"
     out["available"] = out["state"] in ("ready", "degraded")
-    out["llm_lane"] = next((u for u in lc.TEXT_UNITS if states.get(u) in lc.BUSY_STATES), "")
+    out["llm_lane"] = next((u for u in lc.TEXT_UNITS + (KOLIBRI_UNIT,) if states.get(u) in lc.BUSY_STATES), "")
     if out["available"]:
         out["progress"] = image_progress(serving=True)
     return out
@@ -2968,7 +3121,7 @@ def video_status() -> dict:
     # yet, and saying so beats guessing "stopped" at a lane that may be serving
     out["state"] = states.get(VIDEO_UNIT) or "unknown"
     out["available"] = out["state"] in ("ready", "degraded")
-    out["llm_lane"] = next((u for u in lc.TEXT_UNITS if states.get(u) in lc.BUSY_STATES), "")
+    out["llm_lane"] = next((u for u in lc.TEXT_UNITS + (KOLIBRI_UNIT,) if states.get(u) in lc.BUSY_STATES), "")
     if out["available"]:
         out["progress"] = dict(VIDEO_LAST) if VIDEO_LAST.get("status") not in ("completed", "failed", "") else {}
         out["run"] = video_run_now()
@@ -3604,6 +3757,9 @@ def video_content(vid: str) -> tuple[int, bytes, str]:
 
 
 def job_flush_cache(job: Job):
+    if kolibri_serving():
+        return False, ["the Kolibri lane's vLLM has no cache flush route (nothing was flushed); "
+                       "vLLM evicts its prefix cache by itself"], {"ok": False, "reason": "unsupported"}
     req = urllib.request.Request(ENGINE_BASE + "/flush_cache", method="POST", data=b"",
                                  headers={"Authorization": f"Bearer {api_key()}"})
     try:
@@ -3656,6 +3812,7 @@ def job_diag_bundle(job: Job):
         # bundle left out (found in review, 2026-09-24)
         (tdp / "journal-image.txt").write_text(run(["journalctl", "-u", IMAGE_UNIT, "-n", "300", "--no-pager", "-o", "short-iso"], timeout=15))
         (tdp / "journal-video.txt").write_text(run(["journalctl", "-u", VIDEO_UNIT, "-n", "300", "--no-pager", "-o", "short-iso"], timeout=15))
+        (tdp / "journal-kolibri.txt").write_text(run(["journalctl", "-u", KOLIBRI_UNIT, "-n", "300", "--no-pager", "-o", "short-iso"], timeout=15))
         (tdp / "journal-opencode-web.txt").write_text(run(["journalctl", "-u", AGENT_UNIT, "-n", "200", "--no-pager", "-o", "short-iso"], timeout=15))
         for cont in CONTAINERS:
             (tdp / f"docker-{cont}.txt").write_text(run(["docker", "logs", "--tail", "600", cont], timeout=15, merge_err=True))

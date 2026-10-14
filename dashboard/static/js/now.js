@@ -2,7 +2,7 @@
 /* Now: the one screen that answers "what is the box doing?".
 
    The hero is the unified pool, drawn at the machine's own scale and split live by what
-   holds it. The rack under it shows the four lanes as bays, one seated. Then what the
+   holds it. The rack under it shows the five lanes as bays, one seated. Then what the
    seated lane is doing, what happened lately, and the vitals of the machine. */
 
 const TOTAL_FALLBACK = 121.6 * GIB;

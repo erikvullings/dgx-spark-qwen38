@@ -1,5 +1,5 @@
 "use strict";
-/* Lanes: the four lanes as cards, each with what it serves, what it costs, and the one
+/* Lanes: the five lanes as cards, each with what it serves, what it costs, and the one
    verb that makes sense now. Loading a lane is a journey (base.js, askJourney); stop and
    start stay single actions for when that is all you want. */
 

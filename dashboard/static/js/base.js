@@ -89,14 +89,16 @@ const STAGE_LABEL = {'init': 'init', 'loading-weights': 'weights', 'loading-draf
 const ALL_STAGES = Object.keys(STAGE_LABEL);
 
 const U27 = 'qwen38-sglang.service', UFLASH = 'qwen38-flash.service', IMAGE_UNIT = 'qwen38-image.service',
-      VIDEO_UNIT = 'qwen38-video.service', PROXY_UNIT = 'qwen38-keepalive.service', AGENT_UNIT = 'opencode-web.service';
-const LANE_UNITS = [U27, UFLASH, IMAGE_UNIT, VIDEO_UNIT];
-const LANE_NAME = {[U27]: '27B', [UFLASH]: 'flash 176B', [IMAGE_UNIT]: 'Qwen-Image', [VIDEO_UNIT]: 'MiniMax-H3'};
+      VIDEO_UNIT = 'qwen38-video.service', KOLIBRI_UNIT = 'qwen38-kolibri.service',
+      PROXY_UNIT = 'qwen38-keepalive.service', AGENT_UNIT = 'opencode-web.service';
+const LANE_UNITS = [U27, UFLASH, KOLIBRI_UNIT, IMAGE_UNIT, VIDEO_UNIT];
+const LANE_NAME = {[U27]: '27B', [UFLASH]: 'flash 176B', [KOLIBRI_UNIT]: 'Kolibri-1', [IMAGE_UNIT]: 'Qwen-Image', [VIDEO_UNIT]: 'MiniMax-H3'};
 // What each lane is, for people: the kind of work it does and the one line that says so.
 // `lane` names the lane's hue in the stylesheet (--lane-<lane>); `maker` its mark in img/logos.
 const LANE_META = {
   [U27]: {title: 'Qwen3.8 27B', kind: 'Text, up to 1M tokens of context', desc: 'Dense 27B in NVFP4 with a DFlash2 draft. The long-context lane.', view: 'agent', lane: '27b', maker: 'qwen'},
   [UFLASH]: {title: 'Flash 176B', kind: 'Text, 262K tokens of context', desc: 'Mixture of experts, 176B in NVFP4 with its own draft head. The fast lane for agents.', view: 'agent', lane: 'flash', maker: 'qwen'},
+  [KOLIBRI_UNIT]: {title: 'Kolibri-1', kind: 'Text, 262K tokens, German and English', desc: 'Aleph Alpha’s mixture of experts, 78B with 3.5B active, served by vLLM. Reasoning and tool calls.', view: 'agent', lane: 'kolibri', maker: 'alephalpha'},
   [IMAGE_UNIT]: {title: 'Qwen-Image 2.1', kind: 'Images', desc: 'Create, edit with up to ten references, cut out with a real alpha channel.', view: 'image', lane: 'image', maker: 'qwen'},
   [VIDEO_UNIT]: {title: 'MiniMax-H3', kind: 'Video with sound', desc: 'Video and audio made together, from a prompt or from keyframes.', view: 'video', lane: 'video', maker: 'minimax'}};
 // a lane's maker's mark, as an image the stylesheet sizes (the marks belong to their owners, img/logos/NOTICE.md)
@@ -108,24 +110,29 @@ function makerMark(unit, cls = 'mark'){
 // How long each lane takes to answer after a start, before the box has seen one of its
 // boots (measured on the reference box). Once a lane booted in front of the cockpit, the
 // median of its own boots replaces these.
-const READY_DEFAULT = {[U27]: 540, [UFLASH]: 780, [IMAGE_UNIT]: 70, [VIDEO_UNIT]: 720};
+const READY_DEFAULT = {[U27]: 540, [UFLASH]: 780, [KOLIBRI_UNIT]: 520, [IMAGE_UNIT]: 70, [VIDEO_UNIT]: 720};
 const TARGET_SHORT = {stock: 'stock', uncensored: 'uncensored', fp8: 'FP8', 'uncensored-fp8': 'FP8 uncensored',
-                      flash: '', 'flash-uncensored': 'uncensored', 'flash-nvda': 'NVIDIA export', image: '2.1', 'image-turbo': 'Turbo', video: 'H3'};
-const TARGET_UNIT = t => t === 'image' || t === 'image-turbo' ? IMAGE_UNIT : t === 'video' ? VIDEO_UNIT : String(t).startsWith('flash') ? UFLASH : U27;
+                      flash: '', 'flash-uncensored': 'uncensored', 'flash-nvda': 'NVIDIA export', image: '2.1', 'image-turbo': 'Turbo', video: 'H3',
+                      kolibri: 'FP8', 'kolibri-nvfp4': 'NVFP4'};
+const TARGET_UNIT = t => t === 'image' || t === 'image-turbo' ? IMAGE_UNIT : t === 'video' ? VIDEO_UNIT
+  : String(t).startsWith('kolibri') ? KOLIBRI_UNIT : String(t).startsWith('flash') ? UFLASH : U27;
 const LANE_TARGETS = {[U27]: ['stock', 'uncensored', 'fp8', 'uncensored-fp8'], [UFLASH]: ['flash', 'flash-uncensored', 'flash-nvda'],
-                      [IMAGE_UNIT]: ['image', 'image-turbo'], [VIDEO_UNIT]: ['video']};
+                      [KOLIBRI_UNIT]: ['kolibri', 'kolibri-nvfp4'], [IMAGE_UNIT]: ['image', 'image-turbo'], [VIDEO_UNIT]: ['video']};
 const TARGET_NAME = {stock: '27B stock, NVFP4', uncensored: '27B uncensored, NVFP4', fp8: '27B FP8, Qwen official',
                      'uncensored-fp8': '27B FP8 uncensored', flash: 'flash 176B, NVFP4', 'flash-uncensored': 'flash 176B uncensored',
-                     'flash-nvda': 'flash 176B, NVIDIA export', image: 'Qwen-Image 2.1', 'image-turbo': 'Qwen-Image 2.1 Turbo', video: 'MiniMax-H3'};
+                     'flash-nvda': 'flash 176B, NVIDIA export', image: 'Qwen-Image 2.1', 'image-turbo': 'Qwen-Image 2.1 Turbo', video: 'MiniMax-H3',
+                     kolibri: 'Kolibri-1, Aleph Alpha FP8', 'kolibri-nvfp4': 'Kolibri-1, NVFP4 experts'};
 // A version's name on its button in Lanes, and the line that tells it apart once chosen. A
 // target is declared in the tables of this block: a page test fails when one lacks a name or a line.
 const TARGET_SHORT_NAME = {stock: 'Stock', uncensored: 'Uncensored', fp8: 'FP8', 'uncensored-fp8': 'FP8 uncensored',
-  flash: 'Standard', 'flash-uncensored': 'Uncensored', 'flash-nvda': 'NVIDIA export', image: 'Base', 'image-turbo': 'Turbo', video: 'H3'};
+  flash: 'Standard', 'flash-uncensored': 'Uncensored', 'flash-nvda': 'NVIDIA export', image: 'Base', 'image-turbo': 'Turbo', video: 'H3',
+  kolibri: 'FP8', 'kolibri-nvfp4': 'NVFP4'};
 const TARGET_LINE = {
   stock: 'The default: smallest and fastest', uncensored: 'Refusals removed, same size and speed',
   fp8: "Qwen's own weights: the most faithful, and heavier", 'uncensored-fp8': 'Refusals removed, and heavier',
   flash: 'The default', 'flash-uncensored': 'Refusals removed', 'flash-nvda': "NVIDIA's own export",
-  image: '40 steps, the most detail', 'image-turbo': '8 steps, about 4.5 times faster', video: 'The one version'};
+  image: '40 steps, the most detail', 'image-turbo': '8 steps, about 4.5 times faster', video: 'The one version',
+  kolibri: "Aleph Alpha's own weights: the reference", 'kolibri-nvfp4': '4-bit experts: faster under load, French a little weaker'};
 const TARGET_NOTE = {
   stock: 'The NVFP4 quantization this repo pins by default: smallest and fastest of the 27B targets.',
   uncensored: 'The abliterated NVFP4 checkpoint: same size and speed as stock, refusals removed.',
@@ -136,13 +143,15 @@ const TARGET_NOTE = {
   'flash-nvda': 'NVIDIA’s own mixed-precision export of the same model, served with a pinned MoE runner. The first switch downloads about 124 GB.',
   image: 'Text to image, editing with up to ten references, native RGBA. 31 GB of weights that do not fit beside a text lane.',
   'image-turbo': 'Qwen’s eight-step distillation of the same model, for the same three uses: a 1024 × 1024 image in 7.5 s against 34 s, at the same memory, the eight steps fixed by the checkpoint. The first switch downloads about 33 GB.',
-  video: 'Text to video with joint audio, plus first and last frame conditioning. The checkpoint does not fit beside a text lane.'};
+  video: 'Text to video with joint audio, plus first and last frame conditioning. The checkpoint does not fit beside a text lane.',
+  kolibri: 'Aleph Alpha’s official FP8 release, served as their model card says: vLLM 0.29 with their plugin, 262,144 tokens of context, temperature 1.0, top_p 0.97, top_k 128, reasoning on (effort low, medium, high or none per request). German and English are its languages. Measured on this box: 48 tokens/s alone, 166 at 8 requests.',
+  'kolibri-nvfp4': 'The same model with its routed experts in 4-bit NVFP4 (Quantinine), attention and everything else the official FP8 bit for bit: 53 tokens/s alone and 248 at 8 requests, in 42.8 GiB instead of 73.6. English and German text score level with the FP8; French measurably lower (about 4 % of perplexity). The first switch downloads about 46 GB.'};
 // What installs a lane this box does not have. Since v1.20 a plain ./install.sh installs
 // every lane, so one missing here was left out (--no-<lane>) or did not fit: --with-<lane>
 // brings it back beside the lane that serves, which keeps serving. A text lane comes with
 // its default target; the others download when they are loaded.
 const LANE_INSTALL = {[U27]: './install.sh --with-27b', [UFLASH]: './install.sh --with-flash', [IMAGE_UNIT]: './install.sh --with-image',
-                      [VIDEO_UNIT]: './install.sh --with-video'};
+                      [VIDEO_UNIT]: './install.sh --with-video', [KOLIBRI_UNIT]: './install.sh --with-kolibri'};
 
 // ── the facts every view shares (each guarded against missing data) ──────────
 const F = {life: null, units: {}, config: {}, job: null, load: {}, pool: null, window: 262144, ceiling: 0, usable: 0.92,
@@ -594,7 +603,7 @@ function askJourney(target, opts = {}){
   const serving = servingEngine();
   const warns = [];
   if (serving && serving[0] === UFLASH && TRANSITIONAL.has(serving[1].state)) warns.push('Flash is booting: stopping now throws that boot away, and the next start takes a whole boot again.');
-  if (serving && serving[0] !== unit && (serving[0] === U27 || serving[0] === UFLASH)) warns.push('Agent clients on :30001 lose their engine until a text lane answers again.');
+  if (serving && serving[0] !== unit && (serving[0] === U27 || serving[0] === UFLASH || serving[0] === KOLIBRI_UNIT)) warns.push('Agent clients on :30001 lose their engine until a text lane answers again.');
   // stopped for another lane, or restarted on its other checkpoint: either ends a generation
   if (serving && (serving[0] === IMAGE_UNIT || serving[0] === VIDEO_UNIT) && steps.some(s => s.name === 'unit' && s.params.unit === serving[0]))
     warns.push('A generation in flight on ' + laneLabel(serving[0]) + ' is lost.');
@@ -815,7 +824,7 @@ function renderBanners(state, errors){
   // A switch that is not restarted yet: the unit loads one checkpoint at its next start while
   // the engine serves another, and nothing else on the page said so.
   const sv = servingEngine();
-  if (sv && (sv[0] === U27 || sv[0] === UFLASH || sv[0] === IMAGE_UNIT) && sv[1].state === 'ready'){
+  if (sv && (sv[0] === U27 || sv[0] === UFLASH || sv[0] === KOLIBRI_UNIT || sv[0] === IMAGE_UNIT) && sv[1].state === 'ready'){
     const served = servedTarget(sv[0]), next = sv[1].target;
     if (served && next && served !== next)
       add('info', `${TARGET_NAME[served]} is serving, and the lane's next start loads ${TARGET_NAME[next]}.`,

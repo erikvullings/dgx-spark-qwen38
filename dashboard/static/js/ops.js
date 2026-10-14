@@ -333,7 +333,7 @@ function defaultLogSource(){
   const s = servingEngine(); const u = LOGS_WANT.src || (s ? s[0] : enabledUnit());
   const e = engines()[u] || {};
   if (u === IMAGE_UNIT || u === VIDEO_UNIT || u === PROXY_UNIT || e.state === 'failed' || e.restarting) return u;
-  return u === UFLASH ? 'qwen38-flash' : 'qwen38-sglang';
+  return u === UFLASH ? 'qwen38-flash' : u === KOLIBRI_UNIT ? 'qwen38-kolibri' : 'qwen38-sglang';
 }
 onShow('logs', () => {
   if (LOGS_WANT.src || !logTouched){ $('log-src').value = defaultLogSource(); LOGS_WANT.src = null; }
