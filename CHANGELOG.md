@@ -1,5 +1,179 @@
 # Changelog
 
+## v1.33.0 (2026-10-15): every lane but the one that serves installed on demand, and built at its first Load
+
+A first install downloaded every lane: about 460 GB and an hour and a half of work, for lanes a
+box may never load. It now installs the lane that serves (the 27B by default) and the units of
+every other lane, and the first Load of each from the cockpit builds it, as the user, with no
+sudo: about 38 GB of downloads on a new box (15 for the 27B's image, 23 for its checkpoint and
+its draft), 6 to 7 minutes at 100 MB/s. A box installed before this keeps every lane as it is.
+
+**What a first install puts in.** The lane MODEL_CHOICE names, whole, proved serving before the
+run ends; the keepalive proxy, the opencode wiring, the cockpit and its Agent view, as before;
+and every other lane's units: the other text lane (the flash beside the 27B, or the 27B beside a
+serving flash), the image, video and Kolibri lanes. `--all-weights` installs the whole box now
+(about 560 GB of disk) and proves each lane it builds, as every run did; `--with-<lane>` does
+that for one lane; `--no-<lane>` still leaves one out. A lane installed on demand takes no room
+at install.
+
+**The first Load.** The cockpit says which lanes are built: the venv and its wheel's note for
+the image and video lanes, which their installer writes once SGLang, its patches and its overlay
+are in (the video lane's Turbo adapter, fetched after it, stays best effort, as before); the
+image the Kolibri unit names, tagged once built; the image the flash launcher or the 27B unit
+runs (read on the line before the server command, whatever its form), with the flash lane's
+draft vocabulary and the 27B's DFlash2 draft, whole and its config set for the window the unit
+serves. A Load of a lane not built starts with one more step, `./prepare-lane.sh <lane>` (a
+closed list, no sudo), given the target the Load loads for the two text lanes: the image and
+video lanes' venv and SGLang, the video lane's Turbo adapter, Kolibri's image built; for the
+other text lane, its image pulled and tagged, the checkpoint of the target loaded fetched by the
+switch's own `--fetch`, and the flash lane's reduced draft vocabulary built from it, or the
+27B's draft fetched and its config set for the window. What it downloads is summed on each disk
+before the first byte, as install.sh sums its parts (the image at a pull's peak, the checkpoint
+and its caches, 10 GB once the target is whole, the 27B's draft in them, the flash lane's 47.7
+GiB PLE table), and each part checks its own room again as it comes; the video lane's switch
+counts its first-start caches with its checkpoint. A preparation waits for a lane that is
+starting or stopping, as a switch does. Then the journey goes on as before: the switch, the stop
+of the lane that serves, the start, and the cockpit reads the lanes again as each job that
+changes a lane ends, Library's next read of the caches fresh. The cards say "built at its first
+Load" and what that builds; Start, which starts a unit as it is, appears once a Load has
+switched to its lane (its checkpoint whole, its chat template there, the 27B's config set for
+its window); the window says a first Load downloads first, the line under each step saying how
+far it is.
+
+**Library downloads ahead.** Library lists every target a Load can switch to, its checkpoint on
+disk (whole for what its lane serves, as the fetch judges it), begun or not downloaded, with
+Download where its lane is built: `./switch-model.sh <target> --fetch`, the switch's own fetch,
+which changes nothing else. A lane not built yet says its first Load downloads it.
+
+**Each installer in two halves.** `install-image.sh`, `install-video.sh` and
+`install-kolibri.sh` take `--units-only` (the preflight and the service: what needs root) and
+`--prepare` (the runtime, as the user, with no sudo); install.sh's run for the other text lane
+takes QWEN38_UNITS_ONLY=1 (its unit and launcher, no image, no checkpoint, no room). A plain run
+of each is the whole install, as before.
+
+**Proved on the reference box (2026-10-15).** The image lane's runtime and checkpoint set aside,
+the cockpit of this branch at e88128e (live, in systemd's environment) said the lane is built at
+its first Load, with Load and no Start. Its Load from the page ran four steps: the runtime built
+in 2 min 30 (with pip's cache warm; the installer counts about 10 minutes on a new box), the
+checkpoint downloaded (33.1 GB in 5 min 30, about 100 MB/s), Kolibri stopped, the lane started;
+it answered within a minute and made the installer's 512x512 smoke image, which was looked at:
+about 9 minutes from the click to the image. Back to Kolibri by the page (its switch, the stop,
+the start), the key paths 24 of 24. The runtime it built runs the same SGLang commit with the
+same patches, and the checkpoint's 28 blobs are the same; the packages SGLang pulls in came in
+their newest versions, 56 of the 232 and one more, as on any new box (the lane pins SGLang and
+its source, not those). `./prepare-lane.sh flash` and `27b` also ran on the box against its own
+launcher and unit, with everything there: each read its image and its target, found the
+checkpoint whole, the vocabulary built and the draft's 1M config already applied, downloaded
+nothing and left the draft's config as it was.
+
+**Found on the way, before publication (2026-10-15).** A units-only run still asked for the
+whole lane's room (for the flash, 180 GB of checkpoint, 50 for the PLE table, 35 for its image),
+so on a small disk the lane did not even get its units: it takes none now. The flash lane's
+image was read with a pattern of the digest pins, so an image an operator named by tag read as
+not prepared: it is read on its own line now. Library offered Download for a lane not prepared,
+which failed: the download runs in what the first Load builds. The window said "4 steps, about
+90 s in all" over the 9 minutes above. In `--fetch` mode the switch still said "switching the
+serving lane". The image pulled by a first Load had no local tag, so a `docker image prune`
+would have deleted it: it is tagged as install.sh tags what it pulls (pin_tag, now in lanes.sh).
+
+**Found in review, before publication (2026-10-15).** Three rounds of reviews of this release,
+seventeen in all, each its own, found what the tests had not:
+
+- A first Load of a target other than the default (the flash lane's NVIDIA export, the 27B in
+  FP8) fetched the default first, 135 GB for the flash, then the switch fetched the one loaded,
+  or refused it for room after that: the preparation fetches the target the Load loads.
+- A preparation stopped on the way read as built. The image and video lanes' note came right
+  after the wheel, before the source, its patches and the overlay, and the next Load served the
+  bare wheel (an idle lane holding a CPU core, a Stop timing out); the 27B's draft read as built
+  before its config was set for the window, and the next Load started the 1M unit on a native
+  draft. The note is written last now, and only when it changes (its date is one of the
+  runtime's), and the cockpit asks the draft whole (every file its index names, a link counting
+  once its blob is there) and set for the window.
+- A Load stopped after its preparation (the page closed during it) left a Start on a lane never
+  switched to: its unit had no checkpoint or chat template yet, crash-looped, and its Conflicts=
+  stopped the lane that served on the way. Start appears once a Load has switched to the lane.
+- An update of a box installed before v1.24.0 (the image lane) or v1.25.0 (the video lane),
+  whose venv has no wheel's note, gave the lane its units only and left its runtime as it was: a
+  lane whose venv is there is updated whole, from any version, and a first Load that stopped on
+  the way is finished by the update.
+- `--all-weights` on a box installed on demand built every lane and proved none, a lane being
+  new to the proofs only when its unit was: one whose runtime was not there is new too.
+- The room asked before a pull was the image alone: 35 GB for the flash lane's 34 GB image, 40
+  for the 27B's, 23 for Kolibri's base. A pull's peak holds the download beside the image it
+  unpacks, and the containerd image store (Docker 29's default on a new install) keeps both: 49,
+  48 and 32 now, in install.sh, prepare-lane.sh and install-kolibri.sh, held by a test against
+  the sizes measured from the registry and on the box.
+- The video lane's preparation counted its first-start caches (17 GB) before its checkpoint, and
+  its switch the checkpoint alone: with about 146 to 163 GB free on one disk, both passed and
+  its first start filled the disk. The switch counts them with the checkpoint, on the disk they
+  share or on their own.
+- The preparation's job had 90 minutes, less than the switch's two hours for more work (the
+  flash lane's image and checkpoint): three hours now. Its two `docker run`, the draft's fetch
+  and the vocabulary's build, had no `--init`, so a job the cockpit stopped left its container
+  running.
+- The vocabulary was written in place, so a run stopped mid-write left one half written, which
+  install.sh and prepare-lane.sh then took for built and the launcher passed to the engine at
+  every start: it is written beside, read back, then put in place. Library counted a link to a
+  blob gone as a weight file, where the fetch did not.
+- What the scripts said: the preparation's preflight said "checkpoint already cached" on an
+  empty cache; a switch to a lane not built yet sent its user to re-run the whole installer
+  (sudo, the weights, a smoke that stops the lane that serves) and names `./prepare-lane.sh`
+  now; the summary told a lane that did not install that it "did not prove it serves", or that a
+  plain run tries it again (a lane named by `--with-<lane>` that stopped before its runtime gets
+  its units only), and a box with no cockpit to Load from it; a launcher edited by hand with no
+  image on its line failed its pull as if the internet were down, and one with an image named
+  with no tag passed its pull, then the switch the Load runs next died on a pin the box did not
+  have: both are refused before anything, as the switch reads an image.
+- A first Load downloaded part by part, each part checking its own room: on one disk with room
+  for the flash lane's image and checkpoint and not for the PLE table beside them, 150 GB came
+  before the refusal. What a first Load downloads is summed on each disk before its first byte
+  now, and a refusal names the disk by the folders of its parts. install.sh checked the flash
+  lane's PLE table and its image apart when the two share a disk that is not the cache's (the
+  cache on an SSD of its own, as on the reference box): 60 GB free passed 50 and 49; they add up
+  there now.
+- A flash lane whose first Load stopped after its image read as prepared to an update, which
+  finished it on the target its launcher named, the default; so did one whose Load stopped
+  before its switch (the page closed after the preparation), a checkpoint of 135 GB nobody
+  chose, and a 27B Load of fp8 stopped in its download was finished on stock. The other text
+  lane reads as prepared to an update once it is installed as its launcher or unit names it: its
+  image, the draft vocabulary its launcher waits for or the 27B's draft, and the checkpoint it
+  serves whole.
+- A preparation could run while a lane started, its pip and its pull beside a lane loading its
+  weights on the same unified memory: it waits as a switch does. `--all-weights` with
+  `--no-start` or `--no-service` did none or a part of what it says: it is refused at once, as
+  `--with-<lane>` is.
+- A target already whole in the cache was asked 180 GB less what its blobs held (54 for a whole
+  flash checkpoint) where install.sh asks 10, so a first Load after a Download from Library was
+  refused for room it did not need: it asks 10 as install.sh does, from one place (lanes.sh).
+  The 27B's draft is in its checkpoint's 45, as install.sh counts them: 5 more for it asked 98
+  GB where install.sh asks 93.
+- A job was seen ended a fraction of a millisecond before its lock was free (its audit and its
+  event in between), so a client that chained the next job at once was told busy, 138 times in
+  300: it is seen ended once its lock is free.
+- The numbers: a first install is 38 GB of downloads (it said 43), the whole box about 460 GB of
+  downloads and 560 of disk (530 and 540), the flash lane 206 GB with its 32 GiB image (203 and
+  29), the video lane 160 with its runtime and its caches (144, the checkpoint alone); the
+  README and the docs said every lane proves itself at install, and that `./switch-model.sh`
+  loads a lane not built yet.
+
+**Tests.** Each installer's two halves run whole with fakes for what acts on the machine; the
+parent run asks for the units only of a lane not prepared, and installs whole a lane prepared,
+named or under `--all-weights`; a units-only run of either text lane passes a disk a whole
+install is refused on; `prepare-lane.sh` run as written for each lane (the target a Load loads,
+the image pulled after its room is checked and tagged, the checkpoint by the switch's fetch, the
+flash lane's PLE room and vocabulary, the 27B's draft and its config for 1M and native, a token
+passed by its name only, what it cannot prepare refused); the switch's `--fetch` stops after its
+download and touches nothing else; the other text lane's run on demand runs whole to its last
+line, for the flash and for the 27B (docker only asked what it has, root only for the unit, the
+27B's 1M configs left to its first Load); the cockpit's built and startable states, its prepare
+and fetch actions, the journeys and the cards. Each fix found on the way or in review has a test
+that fails on the old code, and a mutant of each fix in review (83) fails its test.
+
+**What an update does.** An update restarts the cockpit, which runs the new code; the engines
+keep running. A lane whose runtime is on the box, as on every box installed before this, from
+any version, is updated whole as before; a box that had left a lane out for lack of room now
+gets that lane's units, its first Load building it.
+
 ## v1.32.0 (2026-10-15): a speech lane on the CPU, a cockpit update command that updates, and Library's stray checkpoints
 
 Three things, each reviewed and proved on the reference box: an opt-in speech lane, the update
