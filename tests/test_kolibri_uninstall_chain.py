@@ -9,8 +9,9 @@ and left that one naming a unit that was gone: the chain stopped at it, the imag
 uninstall found nothing to give the boot back to, and an update fell back to the 27B lane on
 a box that had been serving the flash lane.
 
-The script's own uninstall block runs here, whole, against a fake unit path and a fake
-config directory; sudo, systemctl and docker are stubs that write down every call.
+The script's own uninstall block runs here, whole, against a fake unit path, a fake
+config directory and a fake /etc/systemd/system (the box's own was read before, review of
+2026-10-14); sudo, systemctl and docker are stubs that write down every call.
 """
 import json
 import os
@@ -27,8 +28,14 @@ BLOCK = TEXT[START:END]
 
 
 class TheUninstallKeepsTheChain(unittest.TestCase):
-    def run_block(self, files, kolibri_at_boot=False, opencode=None):
+    def run_block(self, files, kolibri_at_boot=False, opencode=None, units=("qwen38-flash.service",
+                                                                          "qwen38-sglang.service")):
+        """units: the engine units the fake /etc/systemd/system holds."""
         d = pathlib.Path(tempfile.mkdtemp(prefix="kol-uninstall-"))
+        sd = d / "systemd"
+        sd.mkdir()
+        for u in units:
+            (sd / u).write_text("[Service]\n")
         self.home = d / "home"
         cfg = d / "cfg"
         cfg.mkdir()
@@ -41,7 +48,7 @@ class TheUninstallKeepsTheChain(unittest.TestCase):
             (cfg / name).write_text(value + "\n")
         bin_ = d / "bin"
         bin_.mkdir()
-        log = d / "calls.log"
+        log = self.log = d / "calls.log"
         for tool in ("sudo", "docker"):
             (bin_ / tool).write_text(f'#!/bin/bash\necho "{tool} $*" >> "{log}"\nexit 0\n')
         # is-enabled answers for Kolibri as the case wants, and no for every other unit
@@ -66,7 +73,7 @@ class TheUninstallKeepsTheChain(unittest.TestCase):
             "KOLIBRI_BASE_IMAGE=vllm/vllm-openai@sha256:0",
             "KOLIBRI_FP8_REPO=Aleph-Alpha/Kolibri-1",
             "KOLIBRI_NVFP4_REPO=Quantinine/Kolibri-1-NVFP4A16-FP8",
-            BLOCK,
+            BLOCK.replace("/etc/systemd/system/", f"{sd}/"),
         ])
         env = dict(os.environ, PATH=f"{bin_}:/usr/bin:/bin", HOME=str(self.home))
         r = subprocess.run(["bash", "-c", script], capture_output=True, text=True, env=env, timeout=30)
@@ -131,13 +138,47 @@ class TheUninstallKeepsTheChain(unittest.TestCase):
         self.assertEqual(left["model"], "qwen38/qwen3.8-27b")
         self.assertNotIn("kolibri", left["provider"])
 
+    def enabled(self):
+        return [ln.split()[-1] for ln in self.log.read_text().splitlines() if ln.startswith("sudo systemctl enable")]
+
     def test_kolibri_at_boot_still_gives_the_boot_back_to_its_own_lane(self):
         # the handover reads Kolibri's link before anything else touches it
         d_files = {"lane-before-kolibri": "qwen38-flash.service",
                    "lane-before-image": "qwen38-kolibri.service"}
         self.run_block(d_files, kolibri_at_boot=True)
+        self.assertEqual(self.enabled(), ["qwen38-flash.service"])
         at = BLOCK.index('BACK="$(cat "$CONFIG_DIR/lane-before-kolibri"')
         self.assertLess(at, BLOCK.index('rm -f "$CONFIG_DIR/lane-before-kolibri"'))
+
+    def test_the_boot_goes_back_past_a_side_lane_removed_since(self):
+        # flash, then image, then Kolibri; the image lane uninstalled: Kolibri's link named a unit
+        # that was gone, and its uninstall left no lane at boot (found in review, 2026-10-14)
+        self.run_block({"lane-before-kolibri": "qwen38-image.service",
+                        "lane-before-image": "qwen38-flash.service"}, kolibri_at_boot=True)
+        self.assertEqual(self.enabled(), ["qwen38-flash.service"])
+
+    def test_a_chain_that_ends_nowhere_enables_nothing(self):
+        self.run_block({"lane-before-kolibri": "qwen38-video.service"}, kolibri_at_boot=True)
+        self.assertEqual(self.enabled(), [])
+
+    def test_the_compaction_follows_the_default_put_back(self):
+        # sized from Kolibri's window, it stayed at 38,000 tokens on a 27B whose own table keeps
+        # far more (found in review, 2026-10-14)
+        conf = {"model": "kolibri/kolibri-1", "compaction": {"auto": True, "preserve_recent_tokens": 38000},
+                "provider": {"qwen38": {"options": {"baseURL": "http://127.0.0.1:30001/v1", "apiKey": "{file:/k/api-key}"},
+                                        "models": {"qwen3.8-27b": {"name": "qwen3.8-27b",
+                                                                   "limit": {"context": 529000, "output": 250000}}}},
+                             "kolibri": {"options": {"baseURL": "http://127.0.0.1:30001/v1", "apiKey": "{file:/k/api-key}"},
+                                         "models": {"kolibri-1": {"name": "kolibri-1",
+                                                                  "limit": {"context": 152000, "output": 32768}}}}}}
+        self.run_block({"lane-before-kolibri": "qwen38-sglang.service"}, opencode=conf)
+        want = int(subprocess.run([str(REPO / "oc-limits.sh"), "--preserve", "529000"],
+                                  capture_output=True, text=True, check=True).stdout)
+        self.assertNotEqual(want, 38000)
+        for path in (self.cfg / "opencode.json", self.home / ".config/opencode/opencode.json"):
+            left = json.loads(path.read_text())
+            self.assertEqual(left["model"], "qwen38/qwen3.8-27b", path)
+            self.assertEqual(left["compaction"]["preserve_recent_tokens"], want, path)
 
 
 if __name__ == "__main__":

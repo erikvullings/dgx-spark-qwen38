@@ -132,6 +132,18 @@ if [ "$ACTION" = uninstall ]; then
     # and removing this one would leave no engine at the next boot.
     if [ "$WAS_BOOT" -eq 1 ]; then
       BACK="$(cat "$CONFIG_DIR/lane-before-kolibri" 2>/dev/null || true)"
+      # Past a side lane removed since, along its own link: an image lane taken out after the
+      # switch to Kolibri left this one naming a unit that was gone, and the box was left with
+      # no lane at boot while opencode's default went on to the text lane (found in review,
+      # 2026-10-14).
+      for _ in 1 2 3; do
+        case "$BACK" in
+          qwen38-image.service|qwen38-video.service)
+            [ -f "/etc/systemd/system/$BACK" ] && break
+            SIDE="${BACK#qwen38-}"; BACK="$(cat "$CONFIG_DIR/lane-before-${SIDE%.service}" 2>/dev/null || true)" ;;
+          *) break ;;
+        esac
+      done
       if [ -n "$BACK" ] && [ -f "/etc/systemd/system/$BACK" ]; then
         sudo systemctl enable "$BACK"
         echo "$BACK is enabled at boot again, as it was before Kolibri; start it now with: sudo systemctl start $BACK   (or the cockpit)"
@@ -181,6 +193,26 @@ if [ "$ACTION" = uninstall ]; then
     if [ "$WAS_DEFAULT" -eq 1 ]; then
       python3 "$HERE/oc-point-default.py" "$OC_JSON" "$OC_LANE" "" "" \
         || echo "NOTE: could not point $OC_JSON at the $OC_LANE lane; set its \"model\" field yourself"
+      # The compaction with it, from the window of the model put back: sized from Kolibri's, it
+      # kept 38,000 tokens verbatim where a 27B at 1M keeps 132,000 (found in review, 2026-10-14).
+      OC_DEF_CTX="$(python3 - "$HERE/oc-merge-limits.py" "$OC_JSON" <<'PYCTX' || true
+import importlib.util, sys
+spec = importlib.util.spec_from_file_location("ocm", sys.argv[1])
+ocm = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(ocm)
+j = ocm.load(open(sys.argv[2], encoding="utf-8").read())
+prov, _, mid = str(j.get("model") or "").partition("/")
+entry = ((j.get("provider") or {}).get(prov) or {}).get("models", {}).get(mid) or {}
+ctx = (entry.get("limit") or {}).get("context") if isinstance(entry, dict) else None
+print(ctx if isinstance(ctx, int) and ctx > 0 else "")
+PYCTX
+)"
+      OC_DEF_KEEP=""
+      [ -n "$OC_DEF_CTX" ] && OC_DEF_KEEP="$("$HERE/oc-limits.sh" --preserve "$OC_DEF_CTX" 2>/dev/null || true)"
+      if [ -n "$OC_DEF_KEEP" ]; then
+        python3 "$HERE/oc-merge-limits.py" "$OC_JSON" --compaction "$OC_DEF_KEEP" \
+          || echo "NOTE: could not size the compaction of $OC_JSON for the $OC_LANE lane ($OC_DEF_KEEP tokens); set it yourself"
+      fi
     fi
   done
   if [ -d "$CONFIG_DIR/pi" ] || [ -d "$CONFIG_DIR/omp" ]; then
