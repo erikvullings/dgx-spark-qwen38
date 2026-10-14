@@ -1188,7 +1188,7 @@ if [ "$LANE" = "flash" ] && ! ls "$PLE_DIR"/ple_table_*.bin >/dev/null 2>&1; the
   # has to be there whether or not a previous boot left one behind, and on that disk:
   # it was counted against HF_CACHE's, which says nothing when PLE_DIR is elsewhere.
   PLE_PARENT="$PLE_DIR"; while [ ! -e "$PLE_PARENT" ]; do PLE_PARENT="$(dirname "$PLE_PARENT")"; done
-  if [ "$(stat -c %d "$PLE_PARENT")" = "$(stat -c %d "$HF_CACHE")" ]; then
+  if [ "$(stat -L -c %d "$PLE_PARENT")" = "$(stat -L -c %d "$HF_CACHE")" ]; then
     NEED_GB=$((NEED_GB + 50))
   else
     PLE_FREE_GB="$({ df -BG --output=avail "$PLE_PARENT" 2>/dev/null || true; } | tail -1 | tr -dc '0-9')"
@@ -1214,7 +1214,7 @@ fi
 # One disk for both, as on the reference box: the two needs add up there. Checked apart,
 # 45 GB free passed a first 27B install that needs 45 for the checkpoints and 40 for the
 # image on that same disk (found in review, 2026-09-24).
-HF_DEV="$(stat -c %d "$HF_CACHE" 2>/dev/null || true)"; DOCKER_DEV="$(stat -c %d "$DOCKER_ROOT" 2>/dev/null || true)"
+HF_DEV="$(stat -L -c %d "$HF_CACHE" 2>/dev/null || true)"; DOCKER_DEV="$(stat -L -c %d "$DOCKER_ROOT" 2>/dev/null || true)"
 if [ -n "$HF_DEV" ] && [ "$HF_DEV" = "$DOCKER_DEV" ]; then
   BOTH_GB=$((NEED_GB + DOCKER_NEED_GB))
   [ "${FREE_DISK_GB:-0}" -ge "$BOTH_GB" ] || die "Need ~${BOTH_GB} GB free on the disk that holds both $HF_CACHE and $DOCKER_ROOT (${NEED_GB} for the checkpoints and caches, ${DOCKER_NEED_GB} for the $IMG_LABEL); found ${FREE_DISK_GB:-unknown} GB. Free some space, or set HF_CACHE to another disk."

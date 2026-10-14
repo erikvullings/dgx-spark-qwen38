@@ -207,7 +207,7 @@ class TheSummarySaysWhatBecameOfEachOtherLane(unittest.TestCase):
 
 class OneDiskForBoth(unittest.TestCase):
     """HF_CACHE and Docker's root on one disk, as on a stock box: the needs add up there."""
-    START = TEXT.index('HF_DEV="$(stat -c %d "$HF_CACHE"')
+    START = TEXT.index('HF_DEV="$(stat -L -c %d "$HF_CACHE"')
     BLOCK = TEXT[START:TEXT.index("\nfi\n", START) + 4]
 
     def run_block(self, same_disk, free):
@@ -227,6 +227,21 @@ class OneDiskForBoth(unittest.TestCase):
 
     def test_two_disks_are_left_to_their_own_checks(self):
         self.assertIn("FITS", self.run_block(False, 60))
+
+    def test_a_cache_linked_to_another_disk_is_on_that_disk(self):
+        # ~/.cache/huggingface a symlink to an SSD, Docker on the home disk (the reference box
+        # since 2026-10-13): the link's own device is the home disk's, and the two needs were
+        # summed against the SSD's free space (found in review, 2026-10-14)
+        d = pathlib.Path(tempfile.mkdtemp(prefix="one-disk-link-"))
+        ssd = pathlib.Path(tempfile.mkdtemp(dir="/dev/shm", prefix="ssd-"))
+        self.addCleanup(__import__("shutil").rmtree, ssd, True)
+        (d / "docker").mkdir()
+        (d / "hf").symlink_to(ssd)
+        script = ("set -euo pipefail\ndie(){ echo \"DIE: $*\"; exit 1; }\n"
+                  f'HF_CACHE="{d}/hf"; DOCKER_ROOT="{d}/docker"; NEED_GB=45; DOCKER_NEED_GB=40; IMG_LABEL=img; '
+                  "FREE_DISK_GB=60\n" + self.BLOCK + "\necho FITS\n")
+        out = subprocess.run(["bash", "-c", script], capture_output=True, text=True, timeout=30).stdout
+        self.assertIn("FITS", out)
 
 
 

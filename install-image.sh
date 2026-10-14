@@ -185,7 +185,7 @@ HAVE_B="$({ du -s --apparent-size -B1 "$HF_CACHE/hub/models--${MODEL//\//--}/blo
 # what is left, in whole GB (a complete 30.86 GiB checkpoint is 0 left, not 1)
 WEIGHTS_NEED=$(( (WEIGHTS_GB * 1073741824 - ${HAVE_B:-0}) / 1073741824 )); [ "$WEIGHTS_NEED" -ge 0 ] || WEIGHTS_NEED=0
 FREE_W="$(free_gb "$HF_CACHE")"; FREE_R="$(free_gb "$LANE_DIR")"
-if [ "$(stat -c %d "$(existing "$HF_CACHE")")" = "$(stat -c %d "$(existing "$LANE_DIR")")" ]; then
+if [ "$(stat -L -c %d "$(existing "$HF_CACHE")")" = "$(stat -L -c %d "$(existing "$LANE_DIR")")" ]; then
   WANT=$((WEIGHTS_NEED + RUNTIME_GB))
   [ "${FREE_W:-0}" -ge "$WANT" ] \
     || die "${FREE_W:-?} GB free on the disk of $HF_CACHE and $LANE_DIR, this needs about $WANT GB ($WEIGHTS_NEED for the checkpoint, $RUNTIME_GB for the runtime and its build). Free some space, or point HF_CACHE or IMAGE_LANE_DIR at a bigger disk."

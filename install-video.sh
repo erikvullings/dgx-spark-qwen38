@@ -195,7 +195,7 @@ declare -A NEED_ON=() FREE_ON=() WHAT_ON=()
 for PART in "$HF_CACHE|$WEIGHTS_NEED|the checkpoint" "$LANE_DIR|$RUNTIME_GB|the runtime and its build" \
             "$SPILL_DIR|$SPILL_NEED|the runtime's transformed weights" "$DTYPE_DIR|$DTYPE_NEED|the decoder's converted weights"; do
   IFS='|' read -r WHERE GB WHAT <<< "$PART"
-  DEV="$(stat -c %d "$(existing "$WHERE")")"
+  DEV="$(stat -L -c %d "$(existing "$WHERE")")"
   NEED_ON[$DEV]=$(( ${NEED_ON[$DEV]:-0} + GB ))
   FREE_ON[$DEV]="$(free_gb "$WHERE")"
   WHAT_ON[$DEV]="${WHAT_ON[$DEV]:+${WHAT_ON[$DEV]}, }$GB for $WHAT ($WHERE)"
