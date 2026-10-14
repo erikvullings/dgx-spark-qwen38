@@ -13,6 +13,7 @@
 #   ./switch-model.sh video           # MiniMaxAI/MiniMax-H3 (SGLang Diffusion, own venv)
 #   ./switch-model.sh kolibri         # Aleph-Alpha/Kolibri-1, the official FP8 (vLLM + Aleph Alpha's plugin)
 #   ./switch-model.sh kolibri-nvfp4   # Quantinine/Kolibri-1-NVFP4A16-FP8, its experts in NVFP4
+#   ./switch-model.sh <target> --fetch  # that target's checkpoint only, into the cache; nothing else changes
 #
 # Within the 27B lane (stock, uncensored, fp8, uncensored-fp8) it does what it
 # always did:
@@ -48,7 +49,21 @@ _ENV_HF_CACHE="${HF_CACHE:-}"      # before the pins below give it install.sh's 
 # 27B lane and restarting what follows it, where the usage was all anyone wanted (found
 # in review, 2026-09-24). MODEL_CHOICE= still names one, as install.sh takes it.
 CHOICE="${1:-${MODEL_CHOICE:-}}"
-case "$CHOICE" in stock|uncensored|fp8|uncensored-fp8|flash|flash-nvda|flash-uncensored|image|image-turbo|video|kolibri|kolibri-nvfp4) ;; *) printf 'usage: ./switch-model.sh <stock|uncensored|fp8|uncensored-fp8|flash|flash-nvda|flash-uncensored|image|image-turbo|video|kolibri|kolibri-nvfp4>\n' >&2; [ -z "$CHOICE" ] && exit 2; die "unknown target: $CHOICE" ;; esac
+case "$CHOICE" in stock|uncensored|fp8|uncensored-fp8|flash|flash-nvda|flash-uncensored|image|image-turbo|video|kolibri|kolibri-nvfp4) ;; *) printf 'usage: ./switch-model.sh <stock|uncensored|fp8|uncensored-fp8|flash|flash-nvda|flash-uncensored|image|image-turbo|video|kolibri|kolibri-nvfp4> [--fetch]\n' >&2; [ -z "$CHOICE" ] && exit 2; die "unknown target: $CHOICE" ;; esac
+# --fetch: the target's checkpoint only, fetched as a switch fetches it (the cache first,
+# resumable, its room checked), and nothing else: no unit, no boot, no engine, no record.
+# Library's Download runs it, and a lane installed without its weights gets them so.
+FETCH_ONLY=0
+case "${2:-}" in
+  "") ;;
+  --fetch) FETCH_ONLY=1 ;;
+  *) die "unknown option: $2 (the one option is --fetch)" ;;
+esac
+fetched(){  # $1 what: in --fetch mode the checkpoint is in the cache, and the run ends here
+  [ "$FETCH_ONLY" -eq 1 ] || return 0
+  printf '\n\033[1;32m── %s is in the cache; nothing else was changed (--fetch)\033[0m\n' "$1"
+  exit 0
+}
 
 
 PINS="$(grep -E '^(IMAGE|STOCK_REPO|STOCK_REV|UNC_REPO|UNC_REV|FP8_REPO|FP8_REV|UNCFP8_REPO|UNCFP8_REV|FLASH_REPO|FLASH_REV|FLASH_NVDA_REPO|FLASH_NVDA_REV|FLASH_UNC_REPO|FLASH_UNC_REV|FLASH_IMAGE|FLASH_SERVE_IMAGE|SERVE_IMAGE|MODEL_CHOICE|HF_CACHE|CONFIG_DIR)=' "$REPO_DIR/install.sh" || true)"
@@ -85,7 +100,7 @@ dl_free_gb(){ local p="${1:-$HF_CACHE}"; while [ ! -e "$p" ]; do p="$(dirname "$
 # notes the SGLang text unit it takes the boot from, a switch to a text target notes its own.
 # shellcheck source=lanes.sh
 . "$REPO_DIR/lanes.sh"
-text_lane_migrate
+[ "$FETCH_ONLY" -eq 1 ] || text_lane_migrate
 
 # qwen38-llamacpp.service is the fifth serving unit: no installer here enables it,
 # but every lane template lists it in Conflicts=, so a box where an operator enabled
@@ -155,6 +170,7 @@ if [ "$CHOICE" = "kolibri" ] || [ "$CHOICE" = "kolibri-nvfp4" ]; then
     -v "$KOL_HF":/hf "$KOL_IMAGE" /opt/qwen38/ckpt-fetch.py "$KOL_MODEL" "$KOL_REV" --offline-first \
     --need-gb "$KOL_NEED_GB" --free-gb "$(dl_free_gb "$KOL_HF")" \
     || die "the Kolibri checkpoint could not be verified or fetched (re-run to resume; set HF_TOKEN if it stalls)"
+  fetched "$KOL_MODEL @ ${KOL_REV:0:12}"
   # The unit names one checkpoint, its revision and its memory share, on one line each; a
   # switch rewrites those and nothing else.
   KOL_CUR="$(grep -m1 -oE -- "[^ ]+ --revision [0-9a-f]{40}" "$KOLIBRI_UNIT" || true)"
@@ -324,6 +340,7 @@ if [ "$CHOICE" = "image" ] || [ "$CHOICE" = "image-turbo" ]; then
     "$IMG_PY" "$REPO_DIR/ckpt-fetch.py" "$IMG_MODEL" "$IMG_REV" --offline-first \
     --need-gb 34 --free-gb "$(dl_free_gb "${IMG_HF:-$HF_CACHE}")" --refs-main pin \
     || die "the image checkpoint could not be verified or fetched (re-run to resume; set HF_TOKEN if it stalls)"
+  fetched "$IMG_MODEL @ ${IMG_REV:0:12}"
   # The unit names one checkpoint; a switch between the lane's two rewrites that name and
   # nothing else.
   IMG_REWRITTEN=""
@@ -453,6 +470,7 @@ if [ "$CHOICE" = "video" ]; then
     HF_HUB_DISABLE_PROGRESS_BARS="$DL_NO_BARS" \
     "$VID_PY" "$REPO_DIR/ckpt-fetch.py" "$VID_MODEL" "$VID_REV" --allow "$VID_ALLOW" --offline-first --refs-main fill \
     || die "the video checkpoint could not be verified or fetched (re-run to resume; set HF_TOKEN if it stalls; if the pinned revision was removed upstream, ./install-video.sh VIDEO_MODEL_REV=main re-pins it)"
+  fetched "$VID_MODEL @ ${VID_REV:0:12}"
   # Which lane this box served, written down before it is disabled: install.sh
   # updates that lane on a later run, and enablement cannot tell it once all are off.
   for TEXT_UNIT_NAME in qwen38-sglang.service qwen38-flash.service; do
@@ -670,6 +688,7 @@ docker run --rm --init --network host --user "$(id -u):$(id -g)" \
   -v "$HF_CACHE":/hf \
   "$DL_IMAGE" /opt/qwen38/ckpt-fetch.py "$TARGET_REPO" "$TARGET_REV" --offline-first --refs-main fill \
   || die "download failed ($(dl_free_gb) GB left under $HF_CACHE; if that is near 0 the disk filled up, otherwise re-run to resume: HuggingFace throttles unauthenticated downloads, set HF_TOKEN=<your token> if it stalls)"
+fetched "$TARGET_REPO @ ${TARGET_REV:0:12}"
 
 # 2) 1M YaRN patch on the target's cached config.json (27B pair only, and only
 #    if its unit uses it; flash serves its native window)

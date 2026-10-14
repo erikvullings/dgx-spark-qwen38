@@ -29,6 +29,11 @@ _at = next(i for i, ln in enumerate(_lines) if ln.startswith("dl_free_gb(){"))
 DLFREE = "".join(_lines[_at:_at + 2])
 # and the library the block notes the text lane with (text_lane_note, lanes.sh)
 DLFREE += f'. "{REPO}/lanes.sh"\n'
+# and the --fetch stop the block calls after its download, as the script defines it (a switch
+# runs with FETCH_ONLY=0, so it returns at once)
+_ft = next(i for i, ln in enumerate(_lines) if ln.startswith("fetched(){"))
+_fe = next(i for i in range(_ft, len(_lines)) if _lines[i].rstrip() == "}")
+DLFREE += "FETCH_ONLY=0\n" + "".join(_lines[_ft:_fe + 1])
 PINS = dict(re.findall(r'^(IMAGE_MODEL_PIN|IMAGE_MODEL_PIN_REV|IMAGE_TURBO_PIN|IMAGE_TURBO_PIN_REV)="([^"]+)"',
                        (REPO / "install-image.sh").read_text(), re.M))
 BASE, TURBO = PINS["IMAGE_MODEL_PIN"], PINS["IMAGE_TURBO_PIN"]
