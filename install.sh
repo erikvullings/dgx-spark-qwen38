@@ -82,6 +82,15 @@ case "$SECONDARY" in
   ""|27b|flash) ;;
   *) echo "ERROR: QWEN38_SECONDARY names a text lane, 27b or flash (got: $SECONDARY)" >&2; exit 1 ;;
 esac
+# The flash lane installed on demand beside the lane that serves (the run that serves asks for
+# it when the flash lane's image is not on the box): its unit and launcher only, no image, no
+# checkpoint, no template, no draft vocabulary. Its first Load from the cockpit prepares it
+# (prepare-lane.sh flash), and that Load's switch writes its template.
+UNITS_ONLY=0
+if [ "${QWEN38_UNITS_ONLY:-0}" = 1 ]; then
+  [ "$SECONDARY" = flash ] || { echo "ERROR: QWEN38_UNITS_ONLY is for the flash lane installed beside another (QWEN38_SECONDARY=flash)" >&2; exit 1; }
+  UNITS_ONLY=1
+fi
 
 # ── Pinned, validated versions (override via env if you know what you do) ──
 # The 27B lane's image, and since v1.14 it is the official release, served
@@ -1099,6 +1108,13 @@ side_prepared(){  # $1 lane (image, video, kolibri)
     *) return 1 ;;
   esac
 }
+# The flash lane, installed beside the lane that serves, is on demand too: prepared when the image
+# its launcher names is on the box (every box installed before this).
+flash_prepared(){
+  local img
+  img="$({ grep -m1 -oE 'lmsysorg/sglang@sha256:[0-9a-f]{64}|qwen38-flash:[A-Za-z0-9._-]+' "$CONFIG_DIR/launch-flash.sh" 2>/dev/null || true; } | head -1)"
+  [ -n "$img" ] && docker image inspect "$img" >/dev/null 2>&1
+}
 side_mode(){  # $1 lane, $2 --with-<lane> given: the installer's option for this run
   if [ "$ALL_WEIGHTS" -eq 1 ] || [ "$2" -eq 1 ] || side_prepared "$1"; then echo --no-smoke; else echo --units-only; fi
 }
@@ -1273,7 +1289,10 @@ if [ "$NO_SERVICE" -eq 0 ] && ! sudo -n true 2>/dev/null; then
 fi
 echo "OK (aarch64, ${TOTAL_GB} GB RAM, ${FREE_DISK_GB} GB free)"
 
-if [ "$LANE" = "flash" ]; then
+if [ "$UNITS_ONLY" -eq 1 ]; then
+  step "2/10 The Flash-Next image: pulled at the lane's first Load"
+  PULLED_IMAGE="$PULL_TARGET"
+elif [ "$LANE" = "flash" ]; then
   step "2/10 Pulling the official SGLang Flash-Next image (~30 GB, one-time, resumable)"
   docker pull "$PULL_TARGET" || die "docker pull failed. Causes: no internet, Docker Hub rate limit (retry in a few minutes or 'docker login'), or the pinned digest was removed upstream: try FLASH_IMAGE=lmsysorg/sglang:dev-qwen38-next-local ./install.sh"
   PULLED_IMAGE="$PULL_TARGET"
@@ -1324,16 +1343,22 @@ if [ "$LANE" = "flash" ]; then pin_tag 27b "$IMAGE"; else pin_tag flash "$FLASH_
 unpin_stale "$LANE" "$PULLED_IMAGE" || true
 if [ "$LANE" = "flash" ]; then unpin_stale 27b "$IMAGE" || true; else unpin_stale flash "$FLASH_IMAGE" || true; fi
 
-step "3/10 Verifying the container can see the GPU"
-# --entrypoint: the image ships NVIDIA's own entrypoint script
-# (/opt/nvidia/nvidia_entrypoint.sh), which prints a banner and runs its argument;
-# overriding it is what makes this a plain nvidia-smi call with plain output.
-GPU_SEEN="$(docker run --rm --gpus all --entrypoint nvidia-smi "$PULLED_IMAGE" -L 2>/dev/null | grep -m1 '^GPU' || true)"
-[ -n "$GPU_SEEN" ] \
-  || die "'docker run --gpus all' cannot see the GPU (no GPU line from nvidia-smi -L in the container). The NVIDIA Container Toolkit is missing or unconfigured. Fix: sudo nvidia-ctk runtime configure --runtime=docker && sudo systemctl restart docker"
-echo "OK, container sees: $GPU_SEEN"
+if [ "$UNITS_ONLY" -eq 1 ]; then
+  step "3/10 The GPU from a container: seen by the run that serves (this lane's image comes later)"
+else
+  step "3/10 Verifying the container can see the GPU"
+  # --entrypoint: the image ships NVIDIA's own entrypoint script
+  # (/opt/nvidia/nvidia_entrypoint.sh), which prints a banner and runs its argument;
+  # overriding it is what makes this a plain nvidia-smi call with plain output.
+  GPU_SEEN="$(docker run --rm --gpus all --entrypoint nvidia-smi "$PULLED_IMAGE" -L 2>/dev/null | grep -m1 '^GPU' || true)"
+  [ -n "$GPU_SEEN" ] \
+    || die "'docker run --gpus all' cannot see the GPU (no GPU line from nvidia-smi -L in the container). The NVIDIA Container Toolkit is missing or unconfigured. Fix: sudo nvidia-ctk runtime configure --runtime=docker && sudo systemctl restart docker"
+  echo "OK, container sees: $GPU_SEEN"
+fi
 
-if [ "$LANE" = "flash" ]; then
+if [ "$UNITS_ONLY" -eq 1 ]; then
+  step "4/10 The Flash-Next checkpoint: fetched at the lane's first Load (~136 GB)"
+elif [ "$LANE" = "flash" ]; then
   step "4/10 Downloading the Flash-Next checkpoint (~136 GB, one-time, reuses/resumes any local copy)"
   echo "This is the big one: at 100 MB/s it takes ~25 min. Interrupting is safe, re-running resumes."
 else
@@ -1381,9 +1406,13 @@ dl_fetch(){  # $1 repo, $2 revision; an empty repo is a kept custom model (alrea
     "$PULLED_IMAGE" /opt/qwen38/ckpt-fetch.py "$1" "$2" --refs-main fill \
     || die "Checkpoint download failed. Causes: no internet, HuggingFace throttling of unauthenticated downloads (set HF_TOKEN=<your token>, or re-run: downloads resume), a pinned revision removed (try MODEL_REV=main DRAFT2_REV=main ./install.sh), or a permission error: if your $HF_CACHE contains root-owned files from other tools, fix with: sudo chown -R \$(id -u):\$(id -g) $HF_CACHE"
 }
-dl_fetch "$DL_MODEL_REPO" "$MODEL_REV"
-dl_fetch "$DL_DRAFT2_REPO" "$DRAFT2_REV"
-echo "checkpoints ready"
+if [ "$UNITS_ONLY" -eq 1 ]; then
+  echo "no checkpoint now: the lane's first Load fetches it"
+else
+  dl_fetch "$DL_MODEL_REPO" "$MODEL_REV"
+  dl_fetch "$DL_DRAFT2_REPO" "$DRAFT2_REV"
+  echo "checkpoints ready"
+fi
 
 # Say the image the unit will actually carry, not the pin it came from: those
 # are the same thing on a default install and different the moment someone
@@ -1401,12 +1430,12 @@ else
   # guarantee this tag existed is gone since v1.14. Without this check the
   # install completes green, writes and enables the unit, and the engine then
   # loops on an unpullable local tag for the full 20-minute health wait.
-  docker image inspect "$LANE_SERVE_IMAGE" >/dev/null 2>&1 \
+  [ "$UNITS_ONLY" -eq 1 ] || docker image inspect "$LANE_SERVE_IMAGE" >/dev/null 2>&1 \
     || die "serving image not present: $LANE_SERVE_IMAGE. Nothing pulls an override, so build or pull it first, or drop SERVE_IMAGE= to serve the pin ($LANE_PIN_IMAGE)."
 fi
 
 # The reduced draft vocabulary (lanes.sh: flash_token_map says how and why).
-if [ "$LANE" = "flash" ] && [ "${SPEC_TOKEN_MAP_SIZE:-0}" -gt 0 ]; then
+if [ "$LANE" = "flash" ] && [ "${SPEC_TOKEN_MAP_SIZE:-0}" -gt 0 ] && [ "$UNITS_ONLY" -eq 0 ]; then
   flash_token_map "$FLASH_IMAGE" "$HF_CACHE" "$MODEL_REPO" "$MODEL_REV" "$SPEC_TOKEN_MAP_SIZE" \
     "Re-run ./install.sh after the checkpoint is in place to build and serve it." \
     || die "building the reduced draft vocabulary failed. It is an optimization, not a requirement: re-run with SPEC_TOKEN_MAP_SIZE=0 to serve without it, and please open an issue with the output above."
@@ -1456,6 +1485,8 @@ if [ "$KEEP_MODEL_VERBATIM" -eq 1 ]; then
   [ -s "$TEMPLATE_OUT" ] \
     || die "custom model kept, but no patched template at $TEMPLATE_OUT. Pass MODEL_CHOICE=stock, uncensored, fp8 or uncensored-fp8 to regenerate it."
   echo "custom target model kept: existing patched template left untouched"
+elif [ "$UNITS_ONLY" -eq 1 ]; then
+  echo "the chat template comes from the checkpoint: the lane's first Load writes it (its switch)"
 else
   python3 "$REPO_DIR/patch-template.py" "$HF_CACHE" "$TEMPLATE_OUT" "$MODEL_REV" "$MODEL_REPO" \
     || die "Template patch failed (see message above). If the upstream template changed, please open an issue on this repo."
@@ -1525,7 +1556,7 @@ apply_context_configs(){
 # cache, the binds) goes over explicitly; what belongs to one lane (its target, revision
 # and context mode) does not: a MODEL_CHOICE given for this lane must not pick the other
 # one's. A lane not installed yet gets its default target; one installed keeps its own.
-SECOND_LANE=""; SECOND_UNIT=""; SECOND_FRESH=0; SECOND_STATE=""
+SECOND_LANE=""; SECOND_UNIT=""; SECOND_FRESH=0; SECOND_STATE=""; SECOND_UNITS=0
 if [ -z "$SECONDARY" ] && [ "$NO_SERVICE" -eq 0 ]; then
   if [ "$LANE" = "27b" ]; then
     SECOND_LANE=flash; SECOND_UNIT=qwen38-flash.service; SECOND_WANT="$WANT_FLASH"; SECOND_TARGET=flash
@@ -1537,11 +1568,17 @@ if [ -z "$SECONDARY" ] && [ "$NO_SERVICE" -eq 0 ]; then
     step "The ${SECOND_LANE/27b/27B} lane, installed beside the ${LANE/27b/27B} lane (it serves when it is loaded)"
     SECOND_ENV=()
     [ "$SECOND_FRESH" -eq 1 ] && SECOND_ENV=(MODEL_CHOICE="$SECOND_TARGET")
+    # The flash lane on demand: its units only, unless it is prepared, asked for by name, or
+    # --all-weights; its first Load from the cockpit prepares it.
+    SECOND_UNITS=0
+    if [ "$SECOND_LANE" = flash ] && [ "$ALL_WEIGHTS" -eq 0 ] && [ "$WITH_FLASH" -eq 0 ] && ! flash_prepared; then
+      SECOND_UNITS=1; SECOND_ENV+=(QWEN38_UNITS_ONLY=1)
+    fi
     if env -u MODEL_CHOICE -u MODEL_REV -u CONTEXT_MODE -u RESTART_ENGINE \
          QWEN38_SECONDARY="$SECOND_LANE" PORT="$PORT" HF_CACHE="$HF_CACHE" \
          ENGINE_BIND="$ENGINE_BIND" PROXY_BIND="$PROXY_BIND" PROXY_PORT="$PROXY_PORT" \
          ${SECOND_ENV[@]+"${SECOND_ENV[@]}"} bash "$REPO_DIR/install.sh"; then
-      SECOND_STATE=installed
+      SECOND_STATE=installed; [ "$SECOND_UNITS" -eq 1 ] && SECOND_STATE=units
     else
       SECOND_STATE=failed
       echo "NOTE: the ${SECOND_LANE/27b/27B} lane did not install (the lines above say why); the ${LANE/27b/27B} lane goes on."
@@ -2166,6 +2203,10 @@ case "$FLASH_TIER_ARGS" in
   *--speculative-algorithm*)
     if [ "${SPEC_TOKEN_MAP_SIZE:-0}" -gt 0 ] && [ -s "$CONFIG_DIR/$TOKEN_MAP_NAME" ]; then
       SPEC_TOKEN_MAP_LINE="TIER+=(--speculative-token-map /out/$TOKEN_MAP_NAME)"
+    elif [ "${SPEC_TOKEN_MAP_SIZE:-0}" -gt 0 ]; then
+      # Not built yet (a lane installed on demand, whose first Load builds it; a run with no
+      # snapshot yet): the launcher takes it at the first start after it is, with no new install.
+      SPEC_TOKEN_MAP_LINE="[ -s \"$CONFIG_DIR/$TOKEN_MAP_NAME\" ] && TIER+=(--speculative-token-map /out/$TOKEN_MAP_NAME)"
     fi ;;
 esac
 
@@ -2345,7 +2386,11 @@ rm -f "$CONFIG_DIR/warmup-claude-code.sh"
 sudo systemctl daemon-reload
 if [ -n "$SECONDARY" ]; then
   # Installed, not enabled and not started: the serving run proves it once it is new.
-  step "Done: installed as $UNIT_NAME ($MODEL_CHOICE), not enabled at boot"
+  if [ "$UNITS_ONLY" -eq 1 ]; then
+    step "Done: installed as $UNIT_NAME ($MODEL_CHOICE), not enabled at boot; its first Load prepares it"
+  else
+    step "Done: installed as $UNIT_NAME ($MODEL_CHOICE), not enabled at boot"
+  fi
   exit 0
 fi
 if [ "$IMAGE_BOOT" -eq 0 ] && [ "$VIDEO_BOOT" -eq 0 ] && [ "$KOLIBRI_BOOT" -eq 0 ]; then

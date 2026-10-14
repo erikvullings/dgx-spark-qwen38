@@ -314,17 +314,94 @@ class ItLeavesWhatIsSharedToItsParent(unittest.TestCase):
         end = TEXT.index('if [ -n "$SECONDARY" ]; then\n  # Installed, not enabled and not started')
         self.assertLess(TEXT.rindex("sudo systemctl daemon-reload", 0, end), end)
         self.assertLess(end, TEXT.index('  sudo systemctl enable "$UNIT_NAME"'))
-        self.assertIn("exit 0", TEXT[end:end + 300])
+        self.assertIn("exit 0", TEXT[end:TEXT.index("\nfi\n", end)])   # within the block, however long
+
+
+def branch_conditions(marker):
+    """The conditions of the if-chain whose branch holds the line of `marker` (an if/elif/else
+    chain at the indentation just under it), so a guard can be checked where it acts."""
+    lines = TEXT.splitlines()
+    i = next(n for n, ln in enumerate(lines) if marker in ln)
+    depth = len(lines[i]) - len(lines[i].lstrip())
+    j = i - 1
+    while j >= 0:
+        ln = lines[j]
+        ind = len(ln) - len(ln.lstrip())
+        if ln.strip() and ind < depth and ln.lstrip().startswith(("if ", "elif ", "else")):
+            break
+        j -= 1
+    head_ind = len(lines[j]) - len(lines[j].lstrip())
+    conds = [lines[j].strip()]
+    k = j - 1
+    while not lines[j].lstrip().startswith("if ") and k >= 0:      # walk up to the chain's if
+        ln = lines[k]
+        if len(ln) - len(ln.lstrip()) == head_ind and ln.lstrip().startswith(("if ", "elif ")):
+            conds.append(ln.strip())
+            if ln.lstrip().startswith("if "):
+                break
+        k -= 1
+    return " | ".join(conds)
+
+
+class TheFlashLaneOnDemand(unittest.TestCase):
+    """The flash lane installed beside the lane that serves, on demand (QWEN38_UNITS_ONLY=1): its
+    unit and launcher, and none of the image, the GPU check that needs it, the checkpoint, the
+    draft vocabulary or the template, which its first Load brings (prepare-lane.sh flash, then its
+    switch)."""
+
+    def test_each_heavy_step_is_behind_the_on_demand_guard(self):
+        for marker in ('docker pull "$PULL_TARGET" || die "docker pull failed. Causes: no internet, Docker Hub rate limit (retry in a few minutes or \'docker login\'), or the pinned digest was removed upstream: try FLASH',
+                       'GPU_SEEN="$(docker run', 'dl_fetch "$DL_MODEL_REPO" "$MODEL_REV"',
+                       'flash_token_map "$FLASH_IMAGE"', 'python3 "$REPO_DIR/patch-template.py"'):
+            with self.subTest(marker=marker[:40]):
+                self.assertIn("UNITS_ONLY", branch_conditions(marker))
+
+    def test_it_is_for_the_flash_lane_beside_another_only(self):
+        self.assertIn('[ "$SECONDARY" = flash ] || { echo "ERROR: QWEN38_UNITS_ONLY is for the flash lane', TEXT)
+
+    def map_line(self, size, built, tier="--speculative-algorithm NEXTN"):
+        block = between("SPEC_TOKEN_MAP_LINE=\"\"\ncase", "\nesac\n") + "\nesac\n"
+        cfg = tmp("map-line-")
+        if built:
+            (cfg / "token-map-65536.pt").write_text("map")
+        script = (f'set -euo pipefail\nCONFIG_DIR="{cfg}"; SPEC_TOKEN_MAP_SIZE={size}; TOKEN_MAP_NAME=token-map-65536.pt\n'
+                  f'FLASH_TIER_ARGS="{tier}"\n' + block + 'printf "%s" "$SPEC_TOKEN_MAP_LINE"\n')
+        r = subprocess.run(["bash", "-c", script], capture_output=True, text=True, timeout=30)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        return cfg, r.stdout
+
+    def test_a_vocabulary_not_built_yet_is_taken_at_the_first_start_after_it_is(self):
+        cfg, line = self.map_line(65536, built=False)
+        self.assertEqual(line, f'[ -s "{cfg}/token-map-65536.pt" ] && TIER+=(--speculative-token-map /out/token-map-65536.pt)')
+        # the launcher runs under set -e: a missing file leaves the tier as it is, a built one is taken
+        for built, want in ((False, "A"), (True, "A --speculative-token-map /out/token-map-65536.pt")):
+            if built:
+                (cfg / "token-map-65536.pt").write_text("map")
+            r = subprocess.run(["bash", "-c", f"set -euo pipefail\nTIER=(A)\n{line}\necho \"${{TIER[*]}}\""],
+                               capture_output=True, text=True, timeout=30)
+            self.assertEqual((r.returncode, r.stdout.strip()), (0, want), r.stderr)
+
+    def test_a_vocabulary_built_or_none_asked_is_as_before(self):
+        self.assertEqual(self.map_line(65536, built=True)[1], "TIER+=(--speculative-token-map /out/token-map-65536.pt)")
+        self.assertEqual(self.map_line(0, built=False)[1], "")
+        self.assertEqual(self.map_line(65536, built=False, tier="--mem-fraction-static 0.8")[1], "")
 
 
 class TheParentStartsIt(unittest.TestCase):
     """The block before step 7 that starts the run for the other lane, against a stub
     install.sh that prints what it was given."""
-    BLOCK = between('SECOND_LANE=""; SECOND_UNIT=""; SECOND_FRESH=0; SECOND_STATE=""\n',
+    BLOCK = between('SECOND_LANE=""; SECOND_UNIT=""; SECOND_FRESH=0; SECOND_STATE=""; SECOND_UNITS=0\n',
                     '\nif [ -n "$SECONDARY" ]; then\n  step "7/10')
+    PREPARED = between("flash_prepared(){", "\n}\n") + "\n}\n"
 
-    def parent(self, lane, want, unit_there, child_rc=0, no_service=0):
+    def parent(self, lane, want, unit_there, child_rc=0, no_service=0, flash_ready=False, all_weights=0, with_flash=0):
         t = tmp("lane-parent-")
+        # a flash lane prepared: the image its launcher names is on the box (the fake docker says so)
+        (t / "cfg").mkdir()
+        if flash_ready:
+            (t / "cfg" / "launch-flash.sh").write_text("docker run lmsysorg/sglang@sha256:" + "a" * 64 + "\n")
+        (t / "bin").mkdir()
+        stub(t / "bin" / "docker", "exit 0" if flash_ready else "exit 1")
         units = t / "units"
         units.mkdir()
         if unit_there:
@@ -334,28 +411,41 @@ class TheParentStartsIt(unittest.TestCase):
         stub(repo / "install.sh",
              'echo "CHILD SECONDARY=${QWEN38_SECONDARY:-} MODEL_CHOICE=${MODEL_CHOICE:-unset} '
              'MODEL_REV=${MODEL_REV:-unset} CONTEXT_MODE=${CONTEXT_MODE:-unset} PORT=${PORT:-} '
-             'HF_CACHE=${HF_CACHE:-} ENGINE_BIND=${ENGINE_BIND:-} PROXY_BIND=${PROXY_BIND:-} PROXY_PORT=${PROXY_PORT:-}"\n'
+             'HF_CACHE=${HF_CACHE:-} ENGINE_BIND=${ENGINE_BIND:-} PROXY_BIND=${PROXY_BIND:-} PROXY_PORT=${PROXY_PORT:-} '
+             'UNITS_ONLY=${QWEN38_UNITS_ONLY:-unset}"\n'
              f"exit {child_rc}")
         block = self.BLOCK.replace("/etc/systemd/system/", f"{units}/")
         script = ("set -euo pipefail\nstep(){ echo \"STEP $*\"; }\n"
-                  f'SECONDARY=""; NO_SERVICE={no_service}; LANE={lane}; REPO_DIR="{repo}"\n'
-                  f"WANT_FLASH={want}; WANT_27B={want}\n"
+                  f'SECONDARY=""; NO_SERVICE={no_service}; LANE={lane}; REPO_DIR="{repo}"; CONFIG_DIR="{t}/cfg"\n'
+                  f"WANT_FLASH={want}; WANT_27B={want}; ALL_WEIGHTS={all_weights}; WITH_FLASH={with_flash}\n"
+                  + self.PREPARED +
                   'PORT=31000; HF_CACHE=/data/hf; ENGINE_BIND=127.0.0.1; PROXY_BIND=0.0.0.0; PROXY_PORT=31001\n'
                   + block + '\necho "AFTER FRESH=$SECOND_FRESH STATE=$SECOND_STATE"\n')
-        env = {"PATH": "/usr/bin:/bin", "MODEL_CHOICE": "stock", "MODEL_REV": "main", "CONTEXT_MODE": "1m"}
+        env = {"PATH": f"{t}/bin:/usr/bin:/bin", "MODEL_CHOICE": "stock", "MODEL_REV": "main", "CONTEXT_MODE": "1m"}
         r = subprocess.run(["bash", "-c", script], capture_output=True, text=True, timeout=30, env=env)
         self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
         return r.stdout
 
     def test_a_new_flash_lane_gets_its_default_target_and_the_shared_settings_only(self):
+        # on demand: its units only, its first Load from the cockpit prepares it (2026-10-15)
         out = self.parent("27b", 1, unit_there=False)
         self.assertIn("CHILD SECONDARY=flash MODEL_CHOICE=flash MODEL_REV=unset CONTEXT_MODE=unset "
-                      "PORT=31000 HF_CACHE=/data/hf ENGINE_BIND=127.0.0.1 PROXY_BIND=0.0.0.0 PROXY_PORT=31001", out)
-        self.assertIn("AFTER FRESH=1 STATE=installed", out)
+                      "PORT=31000 HF_CACHE=/data/hf ENGINE_BIND=127.0.0.1 PROXY_BIND=0.0.0.0 PROXY_PORT=31001 "
+                      "UNITS_ONLY=1", out)
+        self.assertIn("AFTER FRESH=1 STATE=units", out)
+
+    def test_a_flash_lane_prepared_all_weights_or_named_is_installed_whole(self):
+        for kw in ({"flash_ready": True}, {"all_weights": 1}, {"with_flash": 1}):
+            with self.subTest(**kw):
+                out = self.parent("27b", 1, unit_there=False, **kw)
+                self.assertIn("UNITS_ONLY=unset", out)
+                self.assertIn("STATE=installed", out)
 
     def test_an_installed_27b_beside_flash_keeps_its_own_target(self):
+        # the 27B beside a serving flash is installed whole, as before: only the flash is on demand
         out = self.parent("flash", 1, unit_there=True)
         self.assertIn("CHILD SECONDARY=27b MODEL_CHOICE=unset", out)
+        self.assertIn("UNITS_ONLY=unset", out)
         self.assertIn("AFTER FRESH=0 STATE=installed", out)
 
     def test_a_lane_left_out_is_not_started(self):
