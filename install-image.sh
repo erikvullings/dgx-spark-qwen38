@@ -5,6 +5,8 @@
 #   ./install-image.sh                 first install, or update in place
 #   ./install-image.sh --no-smoke      skip the generation at the end
 #   ./install-image.sh --uninstall     remove the unit and the venv (weights kept)
+#   ./install-image.sh --units-only    the unit alone: no runtime, no weights (install.sh, on demand)
+#   ./install-image.sh --prepare       the runtime alone, no sudo: the cockpit's first Load runs it
 #
 # install.sh runs this on every plain install since v1.20: a box gets every lane. The
 # checkpoint is 31 GB and the runtime another 9 measured (7 for the venv and checkout,
@@ -35,10 +37,16 @@ if [ "$(id -u)" = "0" ] && [ "${ALLOW_ROOT:-0}" != "1" ]; then
   die "run this as the user who will use the box, not as root (everything it installs is addressed from \$HOME)."
 fi
 
-SMOKE=1; ACTION=install
+SMOKE=1; ACTION=install; MODE=full
 for a in "$@"; do case "$a" in
   --no-smoke) SMOKE=0 ;;
   --uninstall) ACTION=uninstall ;;
+  # The two halves of a lane installed on demand: --units-only puts in what needs root (the
+  # unit, its start script) and nothing heavy, and --prepare builds the runtime as the user,
+  # with no sudo, when the cockpit first loads the lane. The checkpoint comes with that Load's
+  # switch, as for any Load.
+  --units-only) [ "$MODE" = full ] || die "--units-only and --prepare are the two halves of an install: one at a time"; MODE=units ;;
+  --prepare) [ "$MODE" = full ] || die "--units-only and --prepare are the two halves of an install: one at a time"; MODE=prepare ;;
   -h|--help) sed -n '2,25p' "$0"; exit 0 ;;
   *) die "unknown option: $a" ;;
 esac; done
@@ -168,6 +176,60 @@ if [ "$ACTION" = uninstall ]; then
   exit 0
 fi
 
+# Step 5, the one part that needs root: the unit and its start script. A function, since a lane
+# installed on demand (--units-only) takes it straight after the preflight.
+install_service(){
+  step "5/6 Service"
+  # The unit runs engine-preflight.sh before every start: run on its own, this installer
+  # must put it in place, or the lane would never start.
+  mkdir -p "$CONFIG_DIR"
+  cmp -s "$HERE/engine-preflight.sh" "$CONFIG_DIR/engine-preflight.sh" \
+    || install -m 755 "$HERE/engine-preflight.sh" "$CONFIG_DIR/engine-preflight.sh"
+  RENDER="$(mktemp)"; trap 'rm -f "$RENDER"' EXIT
+  sed -e "s|__USER__|$(id -un)|g" -e "s|__GROUP__|$(id -gn)|g" \
+      -e "s|__IMAGE_LANE_DIR__|$LANE_DIR|g" -e "s|__IMAGE_VENV__|$VENV|g" \
+      -e "s|__IMAGE_MODEL__|$MODEL|g" -e "s|__IMAGE_PORT__|$PORT|g" \
+      -e "s|__IMAGE_BIND__|$IMAGE_BIND|g" -e "s|__HF_CACHE__|$HF_CACHE|g" \
+      -e "s|__HOME__|$HOME|g" \
+      "$HERE/$UNIT.template" > "$RENDER"
+  grep -q '__[A-Z][A-Z0-9_]*__' "$RENDER" && die "the unit template still holds an unsubstituted placeholder: $(grep -o '__[A-Z][A-Z0-9_]*__' "$RENDER" | sort -u | tr '\n' ' ')"
+  # 0644 like every other unit, and set explicitly: mktemp creates 0600 and cp keeps the
+  # mode, which left this unit readable by root alone. systemd did not mind; everything
+  # else that reads the unit did, and failed quietly. switch-model.sh could not find the
+  # runtime, and the cockpit's reads of the port, the bind and the model all fell back to
+  # their defaults, which happened to be right on the reference box and would not have been
+  # on one installed with IMAGE_PORT= or IMAGE_BIND=.
+  # A unit installed for another checkpoint than it named (IMAGE_MODEL=) is not the one
+  # ./switch-model.sh image-turbo left: the note of the way back from the Turbo goes, or a
+  # later `./switch-model.sh image` would bring back a checkpoint from before this install.
+  INSTALLED_MODEL="$(unit_flag --model-path)"
+  if [ -n "$INSTALLED_MODEL" ] && [ "$INSTALLED_MODEL" != "$MODEL" ]; then
+    rm -f "$CONFIG_DIR/image-model-before-turbo"
+  fi
+  if [ -f "$INSTALLED" ] && sudo cmp -s "$RENDER" "$INSTALLED"; then
+    echo "unit unchanged"
+    sudo chmod 644 "$INSTALLED"      # a unit installed before this fix is still 0600
+  else
+    sudo install -m 644 "$RENDER" "$INSTALLED"; sudo systemctl daemon-reload
+    echo "unit installed at $INSTALLED"
+  fi
+  # A lane that serves goes on serving the unit, the runtime and the start scripts it started with:
+  # said here when no proof follows to restart it, whether this run or an earlier update changed
+  # them (an update leaves a serving lane serving, and said nothing for the image and video lanes:
+  # found in review, 2026-10-14). The runtime's dates: runtime-changed, touched at each change
+  # since v1.30, and the notes of the wheel, which said the changes before.
+  LANE_FILES=("$INSTALLED" "$RUNTIME_NOTE" "$WHEEL_NOTE" "$CONFIG_DIR/engine-preflight.sh")
+  if [ "$SMOKE" -eq 0 ] && lane_serves_older "$UNIT" "${LANE_FILES[@]}"; then
+    echo "NOTE: The image lane runs older files than the ones installed now (its unit, its runtime or its start scripts); it runs these after: sudo systemctl restart $UNIT   (or Load it again from the cockpit)"
+  fi
+  # Installed, not switched to: the lane this box serves stays the lane it serves. The image
+  # lane becomes the boot lane the same way the other two do, by a switch, which is also
+  # what makes it come back after a reboot.
+  echo "installed as a lane of its own. Switch to it like any lane:"
+  echo "  the cockpit: Load on Qwen-Image 2.1 in the Lanes view (it switches, stops the serving lane, starts this one)"
+  echo "  a terminal : ./switch-model.sh image, then the two commands it prints"
+}
+
 step "1/6 Preflight"
 case "$(uname -m)" in aarch64|arm64) : ;; *) die "this lane is verified on the DGX Spark's ARM64 GB10 only (this box is $(uname -m))." ;; esac
 command -v nvidia-smi >/dev/null || die "nvidia-smi not found: this needs the NVIDIA driver."
@@ -193,8 +255,13 @@ free_gb(){ { df -BG --output=avail "$(existing "$1")" 2>/dev/null || true; } | t
 HAVE_B="$({ du -s --apparent-size -B1 "$HF_CACHE/hub/models--${MODEL//\//--}/blobs" 2>/dev/null || true; } | cut -f1)"
 # what is left, in whole GB (a complete 30.86 GiB checkpoint is 0 left, not 1)
 WEIGHTS_NEED=$(( (WEIGHTS_GB * 1073741824 - ${HAVE_B:-0}) / 1073741824 )); [ "$WEIGHTS_NEED" -ge 0 ] || WEIGHTS_NEED=0
+# --prepare builds the runtime only: the checkpoint's room is the switch's to check, as it
+# fetches it. --units-only downloads nothing.
+[ "$MODE" = prepare ] && WEIGHTS_NEED=0
 FREE_W="$(free_gb "$HF_CACHE")"; FREE_R="$(free_gb "$LANE_DIR")"
-if [ "$(stat -L -c %d "$(existing "$HF_CACHE")")" = "$(stat -L -c %d "$(existing "$LANE_DIR")")" ]; then
+if [ "$MODE" = units ]; then
+  :
+elif [ "$(stat -L -c %d "$(existing "$HF_CACHE")")" = "$(stat -L -c %d "$(existing "$LANE_DIR")")" ]; then
   WANT=$((WEIGHTS_NEED + RUNTIME_GB))
   [ "${FREE_W:-0}" -ge "$WANT" ] \
     || die "${FREE_W:-?} GB free on the disk of $HF_CACHE and $LANE_DIR, this needs about $WANT GB ($WEIGHTS_NEED for the checkpoint, $RUNTIME_GB for the runtime and its build). Free some space, or point HF_CACHE or IMAGE_LANE_DIR at a bigger disk."
@@ -203,6 +270,15 @@ else
     || die "${FREE_W:-?} GB free under HF_CACHE=$HF_CACHE, the checkpoint needs about $WEIGHTS_NEED GB more. Free some space, or point HF_CACHE at a bigger disk."
   [ "${FREE_R:-0}" -ge "$RUNTIME_GB" ] \
     || die "${FREE_R:-?} GB free under $LANE_DIR, the runtime and its build need about $RUNTIME_GB GB. Free some space, or point IMAGE_LANE_DIR at a bigger disk."
+fi
+if [ "$MODE" = units ]; then
+  echo "OK: $(uname -m), key present; the runtime and the checkpoint come with the lane's first Load"
+  install_service
+  step "Done: the image lane is installed; its first Load prepares it"
+  echo "  the cockpit: Load on Qwen-Image 2.1 in the Lanes view builds its runtime (about $RUNTIME_GB GB),"
+  echo "               fetches its checkpoint (about $WEIGHTS_GB GB), then starts it"
+  echo "  a terminal : ./install-image.sh --prepare, then ./switch-model.sh image and the commands it prints"
+  exit 0
 fi
 echo "OK: $(uname -m), key present, checkpoint $([ "$WEIGHTS_NEED" -eq 0 ] && echo 'already cached' || echo "$WEIGHTS_NEED GB to download") into $HF_CACHE"
 
@@ -333,6 +409,11 @@ if [ "$MODEL" = "$IMAGE_TURBO_PIN" ]; then
   echo "   the runtime samples on the Turbo's eight-step sigma grid"
 fi
 
+if [ "$MODE" = prepare ]; then
+  step "Done: the image lane's runtime is ready; its Load fetches the checkpoint and starts it"
+  exit 0
+fi
+
 step "4/6 Checkpoint ($MODEL at ${MODEL_REV:0:12}, ~31 GB, one-time, resumable)"
 # The same two lessons the LLM lane learned the hard way: the Hub's Xet backend stalls
 # silently on this box (0-8 MB/s against 89 on the classic CDN), and an unauthenticated
@@ -345,55 +426,7 @@ HF_HOME="$HF_CACHE" HF_HUB_DOWNLOAD_TIMEOUT=30 HF_HUB_DISABLE_XET=1 \
   "$VENV/bin/python" "$HERE/ckpt-fetch.py" "$MODEL" "$MODEL_REV" --refs-main pin \
   || die "checkpoint download failed. Causes: no internet, HuggingFace throttling an unauthenticated download (set HF_TOKEN=<your token>), a pinned revision removed upstream (IMAGE_MODEL_REV=main serves the current one), or a permission error in the cache. Re-running resumes."
 
-step "5/6 Service"
-# The unit runs engine-preflight.sh before every start: run on its own, this installer
-# must put it in place, or the lane would never start.
-mkdir -p "$CONFIG_DIR"
-cmp -s "$HERE/engine-preflight.sh" "$CONFIG_DIR/engine-preflight.sh" \
-  || install -m 755 "$HERE/engine-preflight.sh" "$CONFIG_DIR/engine-preflight.sh"
-RENDER="$(mktemp)"; trap 'rm -f "$RENDER"' EXIT
-sed -e "s|__USER__|$(id -un)|g" -e "s|__GROUP__|$(id -gn)|g" \
-    -e "s|__IMAGE_LANE_DIR__|$LANE_DIR|g" -e "s|__IMAGE_VENV__|$VENV|g" \
-    -e "s|__IMAGE_MODEL__|$MODEL|g" -e "s|__IMAGE_PORT__|$PORT|g" \
-    -e "s|__IMAGE_BIND__|$IMAGE_BIND|g" -e "s|__HF_CACHE__|$HF_CACHE|g" \
-    -e "s|__HOME__|$HOME|g" \
-    "$HERE/$UNIT.template" > "$RENDER"
-grep -q '__[A-Z][A-Z0-9_]*__' "$RENDER" && die "the unit template still holds an unsubstituted placeholder: $(grep -o '__[A-Z][A-Z0-9_]*__' "$RENDER" | sort -u | tr '\n' ' ')"
-# 0644 like every other unit, and set explicitly: mktemp creates 0600 and cp keeps the
-# mode, which left this unit readable by root alone. systemd did not mind; everything
-# else that reads the unit did, and failed quietly. switch-model.sh could not find the
-# runtime, and the cockpit's reads of the port, the bind and the model all fell back to
-# their defaults, which happened to be right on the reference box and would not have been
-# on one installed with IMAGE_PORT= or IMAGE_BIND=.
-# A unit installed for another checkpoint than it named (IMAGE_MODEL=) is not the one
-# ./switch-model.sh image-turbo left: the note of the way back from the Turbo goes, or a
-# later `./switch-model.sh image` would bring back a checkpoint from before this install.
-INSTALLED_MODEL="$(unit_flag --model-path)"
-if [ -n "$INSTALLED_MODEL" ] && [ "$INSTALLED_MODEL" != "$MODEL" ]; then
-  rm -f "$CONFIG_DIR/image-model-before-turbo"
-fi
-if [ -f "$INSTALLED" ] && sudo cmp -s "$RENDER" "$INSTALLED"; then
-  echo "unit unchanged"
-  sudo chmod 644 "$INSTALLED"      # a unit installed before this fix is still 0600
-else
-  sudo install -m 644 "$RENDER" "$INSTALLED"; sudo systemctl daemon-reload
-  echo "unit installed at $INSTALLED"
-fi
-# A lane that serves goes on serving the unit, the runtime and the start scripts it started with:
-# said here when no proof follows to restart it, whether this run or an earlier update changed
-# them (an update leaves a serving lane serving, and said nothing for the image and video lanes:
-# found in review, 2026-10-14). The runtime's dates: runtime-changed, touched at each change
-# since v1.30, and the notes of the wheel, which said the changes before.
-LANE_FILES=("$INSTALLED" "$RUNTIME_NOTE" "$WHEEL_NOTE" "$CONFIG_DIR/engine-preflight.sh")
-if [ "$SMOKE" -eq 0 ] && lane_serves_older "$UNIT" "${LANE_FILES[@]}"; then
-  echo "NOTE: The image lane runs older files than the ones installed now (its unit, its runtime or its start scripts); it runs these after: sudo systemctl restart $UNIT   (or Load it again from the cockpit)"
-fi
-# Installed, not switched to: the lane this box serves stays the lane it serves. The image
-# lane becomes the boot lane the same way the other two do, by a switch, which is also
-# what makes it come back after a reboot.
-echo "installed as a lane of its own. Switch to it like any lane:"
-echo "  the cockpit: Load on Qwen-Image 2.1 in the Lanes view (it switches, stops the serving lane, starts this one)"
-echo "  a terminal : ./switch-model.sh image, then the two commands it prints"
+install_service
 
 if [ "$SMOKE" -eq 0 ]; then step "Done (smoke test skipped)"; exit 0; fi
 

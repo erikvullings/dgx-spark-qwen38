@@ -31,9 +31,11 @@ FILES_OF = {"install-image.sh": ("runtime-changed", "sglang-wheel", "cfg/engine-
 
 def blocks(script):
     text = (REPO / script).read_text()
-    files = re.search(r'\nLANE_FILES=\([^\n]*\)\n', text)
-    note = re.search(r'\nif \[ "\$SMOKE" -eq 0 \] && lane_serves_older "\$UNIT" "\$\{LANE_FILES\[@\]\}"; then\n'
-                     r'  echo "NOTE: [^\n]*\nfi\n', text)
+    # the service step is a function since the on-demand install (--units-only takes it alone):
+    # its lines are indented there, and read the same
+    files = re.search(r'\n *LANE_FILES=\([^\n]*\)\n', text)
+    note = re.search(r'\n( *)if \[ "\$SMOKE" -eq 0 \] && lane_serves_older "\$UNIT" "\$\{LANE_FILES\[@\]\}"; then\n'
+                     r'\1  echo "NOTE: [^\n]*\n\1fi\n', text)
     proof = re.search(r'\nif \[ "\$%s" -eq 1 \] && lane_serves_older "\$UNIT" "\$\{LANE_FILES\[@\]\}"; then\n.*?\nfi\n'
                       % LANES_OF[script], text, re.S)
     assert files and note and proof, f"{script}: its files, its note or its proof's start moved"

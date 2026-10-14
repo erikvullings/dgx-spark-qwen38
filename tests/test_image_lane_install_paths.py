@@ -62,9 +62,9 @@ class TheCacheItServesFrom(unittest.TestCase):
 
 
 class TheSpaceWhereItLands(unittest.TestCase):
-    SPACE = block('existing(){ local p="$1"', 'echo "OK: $(uname -m), key present')
+    SPACE = block('existing(){ local p="$1"', 'echo "OK: $(uname -m), key present, checkpoint')
 
-    def run_space(self, have_gib, free_w, free_r=None):
+    def run_space(self, have_gib, free_w, free_r=None, mode="full"):
         d = pathlib.Path(tempfile.mkdtemp(prefix="img-space-"))
         blobs = d / "hf/hub/models--Qwen--Qwen-Image-2.1/blobs"
         blobs.mkdir(parents=True)
@@ -80,7 +80,8 @@ class TheSpaceWhereItLands(unittest.TestCase):
             f.chmod(0o755)
         (d / "lane").mkdir()
         script = ('set -euo pipefail\ndie(){ echo "DIE: $*"; exit 1; }\n'
-                  f'HF_CACHE="{d}/hf"; LANE_DIR="{d}/lane"; MODEL=Qwen/Qwen-Image-2.1; WEIGHTS_GB=31; RUNTIME_GB=11\n'
+                  f'HF_CACHE="{d}/hf"; LANE_DIR="{d}/lane"; MODEL=Qwen/Qwen-Image-2.1; WEIGHTS_GB=31; RUNTIME_GB=11; MODE={mode}\n'
+                  'step(){ echo "STEP $*"; }\ninstall_service(){ echo SERVICE; }\n'
                   + self.SPACE)
         return bash(script, {"HOME": str(d)}, [stub])
 
@@ -93,6 +94,19 @@ class TheSpaceWhereItLands(unittest.TestCase):
         rc, out = self.run_space(have_gib=30.86, free_w=20)
         self.assertEqual(rc, 0, out)
         self.assertIn("already cached", out)
+
+    def test_a_prepare_needs_room_for_the_runtime_only(self):
+        # the checkpoint is the Load's switch's to fetch, and to measure (on demand, 2026-10-14)
+        rc, out = self.run_space(have_gib=0.0, free_w=20, mode="prepare")
+        self.assertEqual(rc, 0, out)
+        rc, out = self.run_space(have_gib=0.0, free_w=5, mode="prepare")
+        self.assertEqual(rc, 1, out)
+
+    def test_units_only_measures_nothing_and_installs_the_unit(self):
+        rc, out = self.run_space(have_gib=0.0, free_w=0, mode="units")
+        self.assertEqual(rc, 0, out)
+        self.assertIn("SERVICE", out)
+        self.assertNotIn("DIE:", out)
 
     def test_each_disk_is_measured_for_its_own_part(self):
         rc, out = self.run_space(have_gib=0.0, free_w=500, free_r=5)
@@ -182,7 +196,7 @@ class TheSwitchNoteAndAnInstall(unittest.TestCase):
     """./switch-model.sh image-turbo writes down the checkpoint of the unit's own it leaves,
     for `image` to bring back. An install that points the unit at another checkpoint makes
     that note a stale one: `image` would then bring back a checkpoint from before it."""
-    BLOCK = block("# A unit installed for another checkpoint", 'fi\nif [ -f "$INSTALLED" ] && sudo cmp -s "$RENDER"')
+    BLOCK = block("# A unit installed for another checkpoint", '  fi\n  if [ -f "$INSTALLED" ] && sudo cmp -s "$RENDER"')
 
     def run_block(self, installed_model, model):
         d = pathlib.Path(tempfile.mkdtemp(prefix="img-note-"))
