@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Keepalive proxy in front of SGLang or vLLM (v6.37). No content logging, and the only
+"""Keepalive proxy in front of SGLang or vLLM (v6.38). No content logging, and the only
 rewriting is the tool-schema guard (role 4); one route, POST /v1/systemone, is answered
 here instead of relayed (role 5).
 
@@ -39,6 +39,12 @@ Six roles, nothing else:
    answer and its unit (PROXY_HOLD_UNITS) is on its way back waits for it, at most
    PROXY_HOLD_MAX_S, instead of failing at once. A streamed one hears from the proxy at
    once (200, then the keepalives of role 1); see "Holding a request" below.
+
+v6.38: the client's key reaches the engine without the whitespace around it. The spaces around
+a header's value are not part of it (RFC 9110, section 5.5), and SGLang reads it so: a key sent
+as "Bearer <key> " passed on a Qwen lane. The proxy forwarded the header as it came, and vLLM's
+own check, like the Kolibri lane's (vllm_engine_auth.py), compares the value exactly: the same
+client got a 401 there (the production checks after v1.29.0, 2026-10-14).
 
 v6.37: the Kolibri lane serves on vLLM behind this door, and four things SGLang does that vLLM
 does not are now asked of the engine instead of assumed. Its /v1/models says which one serves
@@ -615,7 +621,10 @@ def _upstream_auth(handler):
     """
     if CLIENT_KEYS and UPSTREAM_API_KEY:
         return "Bearer " + UPSTREAM_API_KEY
-    return handler.headers.get("Authorization")
+    value = handler.headers.get("Authorization")
+    # v6.38: without the whitespace around it, which is not part of a header's value (RFC 9110,
+    # 5.5): SGLang reads it so, vLLM compares the value as it comes
+    return value.strip(" \t") if value else value
 
 
 # The one route the identity wall leaves open: monitoring. Every other route needs a
@@ -4275,7 +4284,7 @@ if __name__ == "__main__":
     holds = (f"holds requests up to {HOLD_MAX_S:.0f}s while {' or '.join(HOLD_UNITS)} comes back"
              if HOLD_UNITS and HOLD_MAX_S > 0 else "holds nothing")
     # one f-string: the cockpit's tests render this line from the source
-    log(f"v6.37 on {BIND}:{port} -> {UPSTREAM} (keepalive {KEEPALIVE_S:.0f}s, max silence {MAX_SILENCE_S:.0f}s, {holds})")
+    log(f"v6.38 on {BIND}:{port} -> {UPSTREAM} (keepalive {KEEPALIVE_S:.0f}s, max silence {MAX_SILENCE_S:.0f}s, {holds})")
     if FLASH_PROMPT_CEILING_TOKENS > 0:
         log(f"one-prompt ceiling {FLASH_PROMPT_CEILING_TOKENS} tokens while the flash lane serves"
             + (f", {PROMPT_CEILING_TOKENS} on any lane" if PROMPT_CEILING_TOKENS > 0 else ""))

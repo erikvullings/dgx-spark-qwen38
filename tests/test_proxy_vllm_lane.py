@@ -69,8 +69,21 @@ class FakeVllm(http.server.BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(out)
 
+    def refused(self, path):
+        """vLLM's key check (and the Kolibri lane's middleware): the value as it comes, compared
+        exactly; /health and /metrics open."""
+        if path in ("/health", "/metrics"):
+            return False
+        scheme, _, param = (self.headers.get("Authorization") or "").partition(" ")
+        if scheme.lower() == "bearer" and param == KEY:
+            return False
+        self._json(401, {"error": "Unauthorized"})
+        return True
+
     def do_GET(self):
         path = self.path.split("?")[0]
+        if self.refused(path):
+            return
         if path == "/metrics" and FakeVllm.metrics_fail:
             self._json(500, {"detail": "Internal Server Error"})
         elif path == "/metrics":
@@ -91,6 +104,8 @@ class FakeVllm(http.server.BaseHTTPRequestHandler):
     def do_POST(self):
         path = self.path.split("?")[0]
         raw = self.rfile.read(int(self.headers.get("Content-Length") or 0))
+        if self.refused(path):
+            return
         if path == "/abort_request":
             with FakeVllm.lock:
                 FakeVllm.aborts.append(raw)
@@ -255,10 +270,10 @@ class ThroughTheProxy(unittest.TestCase):
             FakeVllm.bodies.clear(); FakeVllm.aborts.clear(); FakeVllm.closed_at.clear()
         self.mod.invalidate_pool()
 
-    def post(self, body, read_all=True):
+    def post(self, body, read_all=True, auth=None):
         raw = json.dumps(body).encode()
         s = socket.create_connection(("127.0.0.1", self.port), timeout=20)
-        s.sendall(f"POST /v1/chat/completions HTTP/1.1\r\nHost: p\r\nAuthorization: Bearer {KEY}\r\n"
+        s.sendall(f"POST /v1/chat/completions HTTP/1.1\r\nHost: p\r\nAuthorization: {auth or 'Bearer ' + KEY}\r\n"
                   f"Content-Type: application/json\r\nContent-Length: {len(raw)}\r\n\r\n".encode() + raw)
         if not read_all:
             return s
@@ -440,6 +455,20 @@ class ThroughTheProxy(unittest.TestCase):
                            "messages": [{"role": "user", "content": "none of that"}]})
                 self.assertEqual(FakeVllm.bodies[-1]["reasoning_effort"], level)
                 self.assertNotIn("chat_template_kwargs", FakeVllm.bodies[-1])
+
+    def test_a_key_sent_with_spaces_around_it_reaches_vllm(self):
+        # the spaces around a header's value are not part of it (RFC 9110, 5.5): SGLang read
+        # "Bearer <key> " as the key, vLLM compares the value as it comes, and the proxy forwarded
+        # it untouched: the same client got a 401 on the Kolibri lane only (the production checks
+        # after v1.29.0, 2026-10-14)
+        for auth in (f"Bearer {KEY} ", f"Bearer {KEY}\t"):
+            with self.subTest(auth=repr(auth[-1])):
+                got = self.post({"model": "kolibri-1", "stream": True,
+                                 "messages": [{"role": "user", "content": "hi"}]}, auth=auth)
+                self.assertTrue(got.startswith(b"HTTP/1.1 200"), got[:160])
+        got = self.post({"model": "kolibri-1", "messages": [{"role": "user", "content": "hi"}]},
+                        auth=f"Bearer  {KEY}")
+        self.assertTrue(got.startswith(b"HTTP/1.1 401"), "two spaces inside are still not the key")
 
     def test_on_sglang_a_foreign_name_goes_as_it_came(self):
         FakeVllm.served, FakeVllm.owner = "qwen3.8-27b", "sglang"
