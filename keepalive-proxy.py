@@ -744,6 +744,7 @@ class _LoggedOnce:
 _pattern_drop_logged = _LoggedOnce()
 _effort_move_logged = _LoggedOnce()
 _model_rename_logged = _LoggedOnce()
+_effort_off_logged = _LoggedOnce()
 
 
 def _prune_patterns(node, dropped, depth=0, abandoned=None):
@@ -842,6 +843,43 @@ def route_reasoning_effort(body, path):
         return json.dumps(j).encode(), eff, None
     except Exception:
         return body, None, None
+
+
+def qwen_effort_none(body, path):
+    """(the body to forward, True when changed). v6.37: on a Qwen lane (SGLang serves it), a
+    reasoning effort of "none" becomes enable_thinking false, which is how the Qwen chat
+    templates turn thinking off: they refuse "none" itself ("Unexpected reasoning effort none",
+    a 400), and the clients set up for the Kolibri lane send it for "off" (pi, opencode's none
+    variant, omp's minimal), so a client left on kolibri-1 broke on the next Qwen lane (found
+    in review, 2026-10-14). Kolibri's template takes "none": on vLLM, and on any doubt, the
+    body goes as it came."""
+    if not body or not path.split("?", 1)[0] == "/v1/chat/completions":
+        return body, False
+    if b'"none"' not in body or b'"reasoning_effort"' not in body or _SERVED["engine"] != "sglang":
+        return body, False
+    try:
+        j = json.loads(body)
+    except Exception:
+        return body, False
+    if not isinstance(j, dict):
+        return body, False
+    kw = j.get("chat_template_kwargs")
+    if kw is None:
+        kw = {}
+    elif not isinstance(kw, dict):
+        return body, False
+    # the level the template reads: SGLang takes the chat_template_kwargs copy first
+    level = kw["reasoning_effort"] if kw.get("reasoning_effort") is not None else j.get("reasoning_effort")
+    if level != "none":
+        return body, False
+    kw.pop("reasoning_effort", None)
+    kw["enable_thinking"] = False
+    j.pop("reasoning_effort", None)
+    j["chat_template_kwargs"] = kw
+    try:
+        return json.dumps(j).encode(), True
+    except Exception:
+        return body, False
 
 
 # OpenAI documents top_logprobs as "an integer between 0 and 20". SGLang declares it
@@ -3818,13 +3856,17 @@ class H(BaseHTTPRequestHandler):
             self._done("503 engine unreachable"); return
 
     def _served_name(self, body):
-        """The body as the engine that serves now takes it (route_model_name), the rename
-        said once per name."""
+        """The body as the engine that serves now takes it (route_model_name, qwen_effort_none),
+        each change said once."""
         body, renamed = route_model_name(body, self.path)
         if renamed and _model_rename_logged.first(renamed):   # once per name, not per request
             shown = repr(renamed[:60]) + ("..." if len(renamed) > 60 else "")
             log(f"{self._peer} model {shown} is not what this lane serves (vLLM answers 404 to it): "
                 f"relayed as {(_SERVED['names'] or ('?',))[0]}")
+        body, off = qwen_effort_none(body, self.path)
+        if off and _effort_off_logged.first("none"):
+            log(f"{self._peer} reasoning_effort none is not a level the Qwen template takes: "
+                f"relayed as enable_thinking false")
         return body
 
     def _forward(self, body, count_only):

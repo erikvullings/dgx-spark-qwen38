@@ -411,6 +411,36 @@ class ThroughTheProxy(unittest.TestCase):
         self.mod.pool_tokens()
         self.assertEqual(self.mod._VOCAB["size"], 0, "the pool's read of vLLM's facts")
 
+    def test_effort_none_turns_thinking_off_on_a_qwen_lane_and_stays_none_on_kolibri(self):
+        # the clients set up for Kolibri send "none" for "off", and the Qwen templates refuse
+        # it with a 400: a client left on kolibri-1 broke on the next Qwen lane (found in
+        # review, 2026-10-14)
+        for owner, served in (("sglang", "qwen3.8-flash-next"), ("vllm", "kolibri-1")):
+            for how in ({"reasoning_effort": "none"}, {"chat_template_kwargs": {"reasoning_effort": "none"}}):
+                with self.subTest(owner=owner, how=how):
+                    FakeVllm.served, FakeVllm.owner = served, owner
+                    self.mod.invalidate_pool()
+                    self.mod.served_models()
+                    got = self.post(dict({"model": "kolibri-1", "stream": True,
+                                          "messages": [{"role": "user", "content": "hi"}]}, **how))
+                    self.assertTrue(got.startswith(b"HTTP/1.1 200"), got[:200])
+                    sent = FakeVllm.bodies[-1]
+                    if owner == "sglang":
+                        self.assertNotIn("reasoning_effort", sent)
+                        self.assertEqual(sent["chat_template_kwargs"], {"enable_thinking": False})
+                    else:
+                        self.assertEqual({k: sent[k] for k in how}, how, "Kolibri's template takes none")
+
+    def test_other_levels_go_as_they_came_on_a_qwen_lane(self):
+        FakeVllm.served, FakeVllm.owner = "qwen3.8-flash-next", "sglang"
+        self.mod.served_models()
+        for level in ("low", "high", "minimal"):
+            with self.subTest(level=level):
+                self.post({"model": "qwen3.8-flash-next", "stream": True, "reasoning_effort": level,
+                           "messages": [{"role": "user", "content": "none of that"}]})
+                self.assertEqual(FakeVllm.bodies[-1]["reasoning_effort"], level)
+                self.assertNotIn("chat_template_kwargs", FakeVllm.bodies[-1])
+
     def test_on_sglang_a_foreign_name_goes_as_it_came(self):
         FakeVllm.served, FakeVllm.owner = "qwen3.8-27b", "sglang"
         self.mod.served_models()
