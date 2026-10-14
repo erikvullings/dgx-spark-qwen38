@@ -110,7 +110,9 @@ function renderLanes(){
     // the verbs that make sense now
     c.load.hidden = !has || (seated && sameTarget);
     setText(c.load, seated || LANE_TARGETS[unit].length > 1 ? `Load ${TARGET_NAME[target]}` : `Load ${LANE_NAME[unit]}`);
-    c.start.hidden = !has || on || !!(s && s[0] !== unit);
+    // installed on demand and not prepared yet: only its Load, which prepares it, can start it
+    const unbuilt = has && SIDE_LANE[unit] && (F.lanesReady || {})[SIDE_LANE[unit]] === false;
+    c.start.hidden = !has || on || !!(s && s[0] !== unit) || !!unbuilt;
     setText(c.start, `Start ${LANE_NAME[unit]} as installed`);
     c.stop.hidden = !has || !on;
     setText(c.stop, st === 'stopping' ? 'Stopping…' : `Stop ${LANE_NAME[unit]}`);

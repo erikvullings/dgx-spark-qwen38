@@ -90,6 +90,21 @@ class LoadingIt(unittest.TestCase):
         self.assertNotIn("The next step fetches", r["desc"])
         self.assertEqual(r["cmd"], "bash prepare-lane.sh flash")
 
+    def test_a_lane_not_prepared_offers_its_load_and_no_start(self):
+        # Start as installed would start a unit with nothing to run (the flash lane's launcher
+        # would pull its 30 GB image inside the start, then find no checkpoint): its Load
+        # prepares it first, and that is the one verb it offers
+        r = run(self, lanes("stopped", "image") + r"""
+        feed({lanes_ready: {image: false, video: true, kolibri: null, flash: false}});
+        showView('lanes');
+        const st = u => { const c = LCARDS.get(u); return {start: !c.start.hidden, load: !c.load.hidden}; };
+        report({image: st(IMAGE_UNIT), flash: st(UFLASH), video: st(VIDEO_UNIT), text: st(U27)});
+        """)
+        self.assertEqual(r["image"], {"start": False, "load": True})
+        self.assertEqual(r["flash"], {"start": False, "load": True})
+        self.assertEqual(r["video"], {"start": True, "load": True})
+        self.assertEqual(r["text"], {"start": True, "load": True})
+
     def test_a_prepared_lane_loads_as_before(self):
         r = run(self, lanes("stopped", "image", text_state="ready") + r"""
         feed({lanes_ready: {image: true, video: true, kolibri: null}});
