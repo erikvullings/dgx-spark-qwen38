@@ -144,6 +144,15 @@ def side_pins(text):
     return out
 
 
+class TheCachesTheUnitsName(unittest.TestCase):
+    def test_a_mount_and_an_hf_home_are_read_once_each(self):
+        texts = ["ExecStart=/usr/bin/docker run -v /data/hf:/root/.cache/huggingface -v /x:/y img",
+                 "docker run --rm \\\n  -v /data/hf:/root/.cache/huggingface \\\n  img",
+                 "Environment=HF_HOME=/data/hf\nEnvironment=HF_HOME=/other/hf",
+                 "Environment=PYTHONUNBUFFERED=1", ""]
+        self.assertEqual(rg.cache_dirs(texts), ["/data/hf", "/other/hf"])
+
+
 class PinModelsCoversEveryLane(unittest.TestCase):
     """The registry knew the text lanes' checkpoints only: the image, video and Kolibri
     lanes' weights read as "other models", with no pin and no status, so nothing could say

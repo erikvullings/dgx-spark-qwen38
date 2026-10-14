@@ -4131,11 +4131,28 @@ def registry_snapshot(max_age: float = 300.0) -> dict:
                 pins.update(rg.parse_pins((REPO_DIR / f).read_text()))
             except OSError:
                 pass
-        try:
-            models = rg.classify(rg.scan_hf_cache(
-                Path.home() / ".cache/huggingface/hub"), pins)
-        except OSError:
-            models = []
+        # Every cache a lane reads, as its unit names it (install.sh takes HF_CACHE), once
+        # each by where it really is: ~/.cache/huggingface alone left a box installed with
+        # another cache an empty Library (found in review, 2026-10-14).
+        texts = []
+        for path in (UNIT_PATHS["qwen38-sglang.service"], UNIT_PATHS["qwen38-flash.service"],
+                     KOLIBRI_UNIT_PATH, IMAGE_UNIT_PATH, VIDEO_UNIT_PATH):
+            try:
+                texts.append(path.read_text(errors="replace"))
+            except OSError:
+                pass
+        caches, real = [], set()
+        for d in rg.cache_dirs(texts) + [str(Path.home() / ".cache/huggingface")]:
+            r = os.path.realpath(d)
+            if r not in real and os.path.isdir(os.path.join(r, "hub")):
+                real.add(r)
+                caches.append(d)
+        models = []
+        for d in caches:
+            try:
+                models += [{**m, "cache": d} for m in rg.classify(rg.scan_hf_cache(Path(d) / "hub"), pins)]
+            except OSError:
+                pass
         # Both shapes: a tag is how a built image is named, a digest is how a
         # pinned one is. The flash lane serves a digest since v1.8, and asking
         # docker only for repo:tag reported it as missing. The digest pass needs
@@ -4148,7 +4165,7 @@ def registry_snapshot(max_age: float = 300.0) -> dict:
             + run(["docker", "images", "-a", "--digests", "--format",
                    "{{.Repository}}@{{.Digest}} {{.Size}} {{.ID}}"],
                   timeout=10).splitlines())
-        data = {"pins": pins, "managed_repos": sorted(set(rg.PIN_MODELS.values())),
+        data = {"pins": pins, "managed_repos": sorted(set(rg.PIN_MODELS.values())), "caches": caches,
                 "models": [m for m in models if m["managed"]],
                 "other_models": [{"repo_id": m["repo_id"],
                                   "disk_bytes": m["disk_bytes"]}

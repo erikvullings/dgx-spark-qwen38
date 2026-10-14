@@ -134,6 +134,30 @@ class TheUpdateCommand(Base):
         self.assertEqual(t["update_stack"], f"cd {REPO} && ./install.sh")
 
 
+class TheRegistryReadsEveryCache(Base):
+    def test_a_cache_a_unit_names_is_scanned(self):
+        # install.sh takes HF_CACHE, and the registry scanned ~/.cache/huggingface alone, so
+        # a box installed with another cache read an empty Library (found in review,
+        # 2026-10-14). The units say where each lane's cache is.
+        cache = self.tmp / "elsewhere"
+        snap = cache / "hub" / "models--Aleph-Alpha--Kolibri-1" / "snapshots" / ("a" * 40)
+        snap.mkdir(parents=True)
+        (snap / "model.safetensors").write_bytes(b"x")
+        unit = self.tmp / "qwen38-kolibri.service"
+        unit.write_text(f"ExecStart=/usr/bin/docker run --rm -v {cache}:/root/.cache/huggingface img\n")
+        saved = self.cp.KOLIBRI_UNIT_PATH
+        self.cp.KOLIBRI_UNIT_PATH = unit
+        self.box({})
+        try:
+            data = self.cp.registry_snapshot(max_age=0.0)
+        finally:
+            self.cp.KOLIBRI_UNIT_PATH = saved
+            self.cp.registry_snapshot(max_age=0.0)
+        self.assertIn(str(cache), data["caches"])
+        got = [m for m in data["models"] if m["repo_id"] == "Aleph-Alpha/Kolibri-1" and m["cache"] == str(cache)]
+        self.assertEqual(len(got), 1, data["models"])
+
+
 class Parse(Base):
     def test_units_reads_systemctl_show(self):
         self.box({"systemctl show": fixture("systemctl-show.txt")})

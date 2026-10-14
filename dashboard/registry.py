@@ -47,6 +47,22 @@ ENGINE_IMAGE_RE = re.compile(
     r"^(lmsysorg/sglang|qwen38-flash|qwen38-dflash2|qwen38-sglang|vllm)")
 
 
+# Where a lane's unit or launcher says its Hugging Face cache is: a text lane mounts it into
+# its container, the image and video lanes set HF_HOME. install.sh takes HF_CACHE.
+CACHE_RE = re.compile(r"-v\s+(\S+?):/root/\.cache/huggingface\b|HF_HOME=(\S+)")
+
+
+def cache_dirs(texts) -> list[str]:
+    """The Hugging Face caches the given unit and launcher texts name, in order, once each."""
+    out: list[str] = []
+    for t in texts:
+        for m in CACHE_RE.finditer(t or ""):
+            d = (m.group(1) or m.group(2)).strip("\"'")
+            if d not in out:
+                out.append(d)
+    return out
+
+
 def parse_pins(text: str) -> dict[str, str]:
     """VAR=<40-hex> pairs from shell text (default-expansions included)."""
     return {m.group(1): m.group(2) for m in PIN_RE.finditer(text)}
