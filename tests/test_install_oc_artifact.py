@@ -126,7 +126,7 @@ class TheLaneNotInstalledKeepsItsCheckpointsName(unittest.TestCase):
 
 class ABoxBootingKolibri(unittest.TestCase):
     """Kolibri serving at boot: opencode's default is Kolibri, and the compaction block, global,
-    is sized from its window (38,000 kept of its 153,000 threshold), not from the 27B's (132,000
+    is sized from its window (46,000 kept of its 185,000 threshold), not from the 27B's (132,000
     on a 1M 27B, and opencode compacted again every step or two: found in review, 2026-10-14)."""
 
     def test_the_default_and_the_compaction_are_kolibris(self):
@@ -134,7 +134,19 @@ class ABoxBootingKolibri(unittest.TestCase):
                      kolibri_unit=True, kolibri_boot=True, doc=True)
         self.assertEqual(d["model"], "kolibri/kolibri-1")
         self.assertIn("kolibri", d["provider"])
-        self.assertEqual(d["compaction"]["preserve_recent_tokens"], 38000)
+        self.assertEqual(d["compaction"]["preserve_recent_tokens"], 46000)
+
+    def test_kolibris_pair_compacts_late_and_still_fits_its_window(self):
+        # 173,000 + 64,000 compacted at 153,000 tokens, its 64,000 of answer unused (the longest
+        # reply of a session on the reference box was 1,742 tokens): 205,000 + 32,000, the same
+        # rule, compacts at 185,000 (Hasan, 2026-10-14)
+        for target in ("kolibri", "kolibri-nvfp4"):
+            ctx, out, *_ = subprocess.run([str(REPO / "oc-limits.sh"), target], capture_output=True,
+                                          text=True, check=True).stdout.split()
+            ctx, out = int(ctx), int(out)
+            self.assertEqual((ctx, out), (205000, 32000), target)
+            self.assertLessEqual(ctx - 20000 + 43863 + out, 262144, "threshold + worst step + answer fit the window")
+            self.assertGreaterEqual(ctx - 20000, 185000)
 
     def test_with_kolibri_installed_but_not_at_boot_the_27b_keeps_its_own(self):
         d = generate("27b", "1m", unit_ctx=1010000, pair=("551000", "160000"), kolibri_unit=True, doc=True)
