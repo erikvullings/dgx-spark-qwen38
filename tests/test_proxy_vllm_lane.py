@@ -53,6 +53,7 @@ class FakeVllm(http.server.BaseHTTPRequestHandler):
     served = "kolibri-1"
     owner = "vllm"
     metrics_fail = False   # /metrics answering 500, as a read of the pool that fails
+    info_hits = []         # SGLang's info routes asked of it (it has none: 404)
     bodies = []            # every chat body it received, parsed
     closed_at = {}         # prompt -> when the proxy closed a stream it was writing
     aborts = []            # /abort_request calls (vLLM has none: 404)
@@ -96,6 +97,10 @@ class FakeVllm(http.server.BaseHTTPRequestHandler):
         elif path == "/v1/models":
             self._json(200, {"object": "list", "data": [{"id": FakeVllm.served, "object": "model",
                                                         "owned_by": FakeVllm.owner, "max_model_len": 262144}]})
+        elif path in ("/server_info", "/get_server_info") and FakeVllm.owner == "vllm":
+            with FakeVllm.lock:
+                FakeVllm.info_hits.append(path)
+            self._json(404, {"detail": "Not Found"})
         elif path == "/server_info" and FakeVllm.owner == "sglang":
             self._json(200, {"max_total_num_tokens": 863644, "max_req_input_len": 262138})
         else:
@@ -469,6 +474,21 @@ class ThroughTheProxy(unittest.TestCase):
         got = self.post({"model": "kolibri-1", "messages": [{"role": "user", "content": "hi"}]},
                         auth=f"Bearer  {KEY}")
         self.assertTrue(got.startswith(b"HTTP/1.1 401"), "two spaces inside are still not the key")
+
+    def test_vllm_is_not_asked_sglangs_info_routes_twice(self):
+        # every read of the pool began with /server_info and /get_server_info, two 404s, and the
+        # hold's probe asked /server_info each time (found in review, 2026-10-14)
+        with FakeVllm.lock:
+            FakeVllm.info_hits.clear()
+        self.assertEqual(self.mod.pool_tokens(), 2014877)
+        first = len(FakeVllm.info_hits)
+        self.mod._POOL["ts"] = 0.0                    # the pool's 600 s are over
+        self.assertEqual(self.mod.pool_tokens(), 2014877)
+        self.assertTrue(self.mod.engine_answers())
+        self.assertEqual((first, len(FakeVllm.info_hits)), (2, 2), FakeVllm.info_hits)
+        self.mod.invalidate_pool()                    # a new engine is asked again
+        self.mod.pool_tokens()
+        self.assertEqual(len(FakeVllm.info_hits), 4)
 
     def test_on_sglang_a_foreign_name_goes_as_it_came(self):
         FakeVllm.served, FakeVllm.owner = "qwen3.8-27b", "sglang"

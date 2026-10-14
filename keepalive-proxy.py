@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Keepalive proxy in front of SGLang or vLLM (v6.38). No content logging, and the only
+"""Keepalive proxy in front of SGLang or vLLM (v6.39). No content logging, and the only
 rewriting is the tool-schema guard (role 4); one route, POST /v1/systemone, is answered
 here instead of relayed (role 5).
 
@@ -39,6 +39,12 @@ Six roles, nothing else:
    answer and its unit (PROXY_HOLD_UNITS) is on its way back waits for it, at most
    PROXY_HOLD_MAX_S, instead of failing at once. A streamed one hears from the proxy at
    once (200, then the keepalives of role 1); see "Holding a request" below.
+
+v6.39: an engine that has neither of SGLang's info routes is not asked them again. Every read of
+the pool on the Kolibri lane (vLLM) began with /server_info and /get_server_info, two 404s, and the
+hold's probe asked /server_info each time it looked: the proxy notes that this engine has none,
+reads vLLM's own facts at once, and probes /health there, which on vLLM generates nothing. A new
+engine (any restart, any lane switch) is asked again (found in review, 2026-10-14).
 
 v6.38: the client's key reaches the engine without the whitespace around it. The spaces around
 a header's value are not part of it (RFC 9110, section 5.5), and SGLang reads it so: a key sent
@@ -414,7 +420,9 @@ def engine_answers():
         headers = {"Authorization": f"Bearer {_api_key()}"}
     except OSError:
         headers = {}                    # a 401 still says an engine is there
-    req = urllib.request.Request(UPSTREAM + _INFO_ROUTE["path"], headers=headers)
+    # v6.39: an engine without SGLang's info routes (vLLM) is probed on /health, which there
+    # generates nothing
+    req = urllib.request.Request(UPSTREAM + (_INFO_ROUTE["path"] or "/health"), headers=headers)
     try:
         urllib.request.urlopen(req, timeout=10).read()
         return True
@@ -1496,6 +1504,8 @@ def _server_info(key, timeout):
         except urllib.error.HTTPError as e:
             if e.code == 404 and attempt != "/get_server_info":
                 continue
+            if e.code == 404:
+                _INFO_ROUTE["path"] = None    # v6.39: neither route, as on vLLM: not asked again
             raise
         _INFO_ROUTE["path"] = attempt
         return info
@@ -1565,6 +1575,9 @@ def pool_tokens():
         return _POOL["tokens"]
     try:
         try:
+            if _INFO_ROUTE["path"] is None:
+                # v6.39: this engine has neither of SGLang's info routes (vLLM): its own facts
+                raise urllib.error.HTTPError(UPSTREAM, 404, "no SGLang info route", None, None)
             info = _server_info(_api_key(), POOL_READ_TIMEOUT_S)
         except urllib.error.HTTPError as e:
             if e.code != 404:
@@ -4284,7 +4297,7 @@ if __name__ == "__main__":
     holds = (f"holds requests up to {HOLD_MAX_S:.0f}s while {' or '.join(HOLD_UNITS)} comes back"
              if HOLD_UNITS and HOLD_MAX_S > 0 else "holds nothing")
     # one f-string: the cockpit's tests render this line from the source
-    log(f"v6.38 on {BIND}:{port} -> {UPSTREAM} (keepalive {KEEPALIVE_S:.0f}s, max silence {MAX_SILENCE_S:.0f}s, {holds})")
+    log(f"v6.39 on {BIND}:{port} -> {UPSTREAM} (keepalive {KEEPALIVE_S:.0f}s, max silence {MAX_SILENCE_S:.0f}s, {holds})")
     if FLASH_PROMPT_CEILING_TOKENS > 0:
         log(f"one-prompt ceiling {FLASH_PROMPT_CEILING_TOKENS} tokens while the flash lane serves"
             + (f", {PROMPT_CEILING_TOKENS} on any lane" if PROMPT_CEILING_TOKENS > 0 else ""))
