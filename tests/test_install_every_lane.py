@@ -360,6 +360,7 @@ class TheOtherLanesAndTheirProofs(unittest.TestCase):
                   "stale_since(){ return 1; }\n"
                   f'prove_text_lane(){{ echo "prove $*" >> "{log}"; case "$1" in {prove_fail or "__none__"}) return 1 ;; esac; }}\n'
                   f'REPO_DIR="{repo}"; CONFIG_DIR="{t}"; LANE=27b; UNIT_NAME=qwen38-sglang.service; SMOKE_MODEL=qwen3.8-27b\n'
+                  f'KOLIBRI_UNIT_PATH="{unit_dir}/qwen38-kolibri.service"\n'
                   'KEEPALIVE_UNIT=qwen38-keepalive.service; PORT=30000; PROXY_PORT=30001; CONTEXT_MODE=1m; OPENCODE=1; KA_CHANGED=0\n'
                   f"WANT_IMAGE={want_image}; WANT_VIDEO={want_video}; WITH_IMAGE={with_image}; WITH_VIDEO={with_video}\n"
                   f"WITH_FLASH={with_flash}; WITH_27B=0; WANT_KOLIBRI={want_kolibri}; WITH_KOLIBRI={with_kolibri}\n"

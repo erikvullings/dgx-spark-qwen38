@@ -73,6 +73,22 @@ index names is there. A round trip between side lanes (image, then Kolibri, then
 cockpit) left each naming the other as the lane before it, and an update took the 27B for the text lane
 of a box that served the flash; a switch now closes such a loop, image and video included.
 
+**Tested.** Every fix of this release has a test that fails on the code before it, and the local CI
+ran in full, no step skipped (the coverage, fuzz and property steps on their own interpreter). On the
+reference box: a fresh install from the one-liner, with the box's own install moved aside and then put
+back identical to the byte (287,388 files compared), installed and proved every lane in 92 minutes with
+the weights already cached (Kolibri: a reply and a parsed tool call, and the key in none of its journal
+lines); an update over v1.28.2 took 46 s. The cockpit loaded Kolibri, switched it to the NVFP4
+checkpoint and back, and gave the box back to the image lane, through its own actions. Through the
+proxy, the OpenAI and Anthropic SDKs, LiteLLM, fetch under Node and Bun, Claude Code, opencode, Hermes
+and pi answered, with the model named `kolibri-1` or a Qwen name; a request sent under the 27B's name
+while Kolibri booted was held 568 s and then answered; a 423 KiB prompt (96,252 tokens) was answered in
+37 s, and a client that left during its prefill was dropped by vLLM 17.6 s later, at the proxy's second
+missed keepalive, where the proxy before the fix held the connection until the first token (32.5 s). On
+the engine's own port, `/invocations`, `/tokenize`, `/detokenize`, `/version` and `/v1/models` answer 401
+without the key. pi 1.2.0, against a capture: `kolibri-1` is sent `high` by default, `none` for "off",
+`low` for "minimal" and `high` for "xhigh".
+
 ## v1.28.2 (2026-10-13): a load window can be put away while its steps run, and long opencode sessions keep their cache
 
 **A window that held the page.** Loading a lane runs its steps one after the other (point the boot
