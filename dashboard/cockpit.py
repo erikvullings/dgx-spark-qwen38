@@ -4126,7 +4126,7 @@ def registry_snapshot(max_age: float = 300.0) -> dict:
         if REGISTRY_CACHE["data"] and time.time() - REGISTRY_CACHE["ts"] < max_age:
             return REGISTRY_CACHE["data"]
         pins = {}
-        for f in ("switch-model.sh", "run.sh", "install.sh"):
+        for f in rg.PIN_FILES:
             try:
                 pins.update(rg.parse_pins((REPO_DIR / f).read_text()))
             except OSError:

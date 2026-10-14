@@ -24,7 +24,20 @@ PIN_MODELS = {
     "FLASH_UNC_REV": "dealignai/Qwen3.8-Flash-Next-ABLITERATED-NVFP4",
     "DRAFT_REV": "RadixArk/Qwen3.8-27B-DSpark",
     "DRAFT2_REV": "maurienne-ai/Qwen3.8-27B-DFlash2-NVFP4-RTNcal",
+    # The other lanes, each pinned by its own installer. Until 2026-10-14 their weights read
+    # as "other models", with no pin and no status.
+    "IMAGE_MODEL_PIN_REV": "Qwen/Qwen-Image-2.1",
+    "IMAGE_TURBO_PIN_REV": "Qwen/Qwen-Image-2.1-Turbo",
+    "VIDEO_MODEL_PIN_REV": "MiniMaxAI/MiniMax-H3",
+    "VIDEO_TURBO_REV": "larryvrh/MiniMax-H3-Turbo-Lora",
+    "KOLIBRI_FP8_REV": "Aleph-Alpha/Kolibri-1",
+    "KOLIBRI_NVFP4_REV": "Quantinine/Kolibri-1-NVFP4A16-FP8",
 }
+
+# Where the pins are written: the text lanes' in the switch and the installer, every other
+# lane's in its own installer.
+PIN_FILES = ("switch-model.sh", "run.sh", "install.sh",
+             "install-image.sh", "install-video.sh", "install-kolibri.sh")
 
 PIN_RE = re.compile(r'^\s*([A-Z][A-Z0-9_]*REV)="?\$?\{?[A-Z0-9_:-]*?([0-9a-f]{40})',
                     re.MULTILINE)

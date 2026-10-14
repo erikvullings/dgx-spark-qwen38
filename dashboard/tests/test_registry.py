@@ -117,7 +117,8 @@ class PinModelsCoversInstaller(unittest.TestCase):
                 self.assertEqual(rg.PIN_MODELS[var], repo)
 
     def test_pin_models_names_nothing_the_installer_dropped(self):
-        text = (REPO / "install.sh").read_text()
+        # every lane's installer since the side lanes' pins joined it (2026-10-14)
+        text = "\n".join((REPO / f).read_text() for f in rg.PIN_FILES)
         for var, repo in rg.PIN_MODELS.items():
             with self.subTest(var):
                 # re.M explicitly: assertRegex anchors at the start of the whole
@@ -125,6 +126,52 @@ class PinModelsCoversInstaller(unittest.TestCase):
                 self.assertTrue(re.search(rf"^{var}=", text, re.M),
                                 f"{var} is gone from install.sh")
                 self.assertTrue(repo in text, f"{repo} is gone from install.sh")
+
+
+SIDE_INSTALLERS = ("install-image.sh", "install-video.sh", "install-kolibri.sh")
+
+
+def side_pins(text):
+    """{<P>_REV: repo} of a side installer: a 40-hex <P>_REV beside the repo it pins, named
+    <P>_REPO or <P> itself (IMAGE_MODEL_PIN beside IMAGE_MODEL_PIN_REV)."""
+    repos = dict(re.findall(r'^([A-Z0-9_]+)="([A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+)"', text, re.M))
+    out = {}
+    for var in re.findall(r'^([A-Z0-9_]+_REV)="[0-9a-f]{40}"', text, re.M):
+        p = var[:-len("_REV")]
+        repo = repos.get(p + "_REPO") or repos.get(p)
+        if repo:
+            out[var] = repo
+    return out
+
+
+class PinModelsCoversEveryLane(unittest.TestCase):
+    """The registry knew the text lanes' checkpoints only: the image, video and Kolibri
+    lanes' weights read as "other models", with no pin and no status, so nothing could say
+    which of their revisions a lane serves and which is stray (found building the models
+    view, 2026-10-14)."""
+
+    def test_every_side_installer_pin_is_in_pin_models(self):
+        seen = 0
+        for f in SIDE_INSTALLERS:
+            for var, repo in side_pins((REPO / f).read_text()).items():
+                seen += 1
+                with self.subTest(f=f, var=var):
+                    self.assertEqual(rg.PIN_MODELS.get(var), repo)
+        self.assertEqual(seen, 6)   # the image and its Turbo, the video and its adapter, Kolibri twice
+
+    def test_the_pins_are_read_where_every_lane_writes_them(self):
+        self.assertTrue({"install.sh", "switch-model.sh", *SIDE_INSTALLERS} <= set(rg.PIN_FILES), rg.PIN_FILES)
+        for var in rg.PIN_MODELS:
+            with self.subTest(var):
+                self.assertTrue(any(re.search(rf"^\s*{var}=", (REPO / f).read_text(), re.M) for f in rg.PIN_FILES),
+                                f"{var} is pinned in none of {rg.PIN_FILES}")
+
+    def test_a_side_lane_revision_is_pinned_or_stray(self):
+        pins = rg.parse_pins((REPO / "install-kolibri.sh").read_text())
+        models = rg.classify([{"repo_id": "Aleph-Alpha/Kolibri-1", "disk_bytes": 1,
+                               "revisions": [{"rev": pins["KOLIBRI_FP8_REV"]}, {"rev": "f" * 40}]}], pins)
+        self.assertTrue(models[0]["managed"])
+        self.assertEqual([r["status"] for r in models[0]["revisions"]], ["pinned", "stray"])
 
 
 if __name__ == "__main__":
