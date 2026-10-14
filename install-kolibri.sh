@@ -315,9 +315,12 @@ if [ -f "$INSTALLED" ] && sudo cmp -s "$RENDER" "$INSTALLED"; then
 else
   sudo install -m 644 "$RENDER" "$INSTALLED"; sudo systemctl daemon-reload
   echo "unit installed at $INSTALLED"
-  if systemctl is-active --quiet "$UNIT" 2>/dev/null; then
-    echo "NOTE: Kolibri is serving the unit it started with; it serves this one after: sudo systemctl restart $UNIT"
-  fi
+fi
+# A lane that serves goes on serving the unit it started with: said here, whether this run or an
+# earlier update changed it (an update leaves a serving lane serving, and said nothing for the
+# image and video lanes: found in review, 2026-10-14).
+if lane_serves_older_unit "$UNIT" "$INSTALLED"; then
+  echo "NOTE: Kolibri serves the unit it started with; it serves this one after: sudo systemctl restart $UNIT   (or Load it again from the cockpit)"
 fi
 # Images of this lane built from older pins, once the unit names this one: removed before
 # the checkpoint came, a failed download left the unit naming an image that was gone.
@@ -352,7 +355,14 @@ trap restore_lane EXIT
 KEY="$(head -1 "$CONFIG_DIR/api-key")"
 SINCE="$(date '+%Y-%m-%d %H:%M:%S')"
 R0="$(systemctl show -p NRestarts --value "$UNIT" 2>/dev/null | tr -dc '0-9')"
-[ "$WAS_KOLIBRI" -eq 1 ] || sudo systemctl start "$UNIT"
+# A lane that serves an older unit than the one installed now restarts for the proof: the engine
+# that runs proved nothing about the unit this run installed (found in review, 2026-10-14).
+if [ "$WAS_KOLIBRI" -eq 1 ] && lane_serves_older_unit "$UNIT" "$INSTALLED"; then
+  echo "Kolibri serves the unit it started with, older than the one installed now: it restarts to prove this one"
+  sudo systemctl restart "$UNIT"
+elif [ "$WAS_KOLIBRI" -eq 0 ]; then
+  sudo systemctl start "$UNIT"
+fi
 READY=0
 for i in $(seq 1 150); do
   curl -fsS -m 3 "http://127.0.0.1:$PORT/health" >/dev/null 2>&1 && { READY=1; break; }

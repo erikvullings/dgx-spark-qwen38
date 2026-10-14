@@ -64,3 +64,10 @@ text_lane_back(){  # [$1 the side lane at boot]: the text unit to give the boot 
   done
   return 0
 }
+
+lane_serves_older_unit(){  # $1 unit, $2 its unit file: true when it serves and that file is newer than its start
+  local started
+  [ "$(systemctl show -p ActiveState --value "$1" 2>/dev/null)" = active ] || return 1
+  started="$(systemctl show -p ExecMainStartTimestamp --value --timestamp=unix "$1" 2>/dev/null | tr -dc '0-9')"
+  [ -n "$started" ] && [ -e "$2" ] && [ "$(stat -L -c %Y "$2")" -gt "$started" ]
+}

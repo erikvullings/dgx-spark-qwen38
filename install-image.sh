@@ -396,6 +396,12 @@ else
   sudo install -m 644 "$RENDER" "$INSTALLED"; sudo systemctl daemon-reload
   echo "unit installed at $INSTALLED"
 fi
+# A lane that serves goes on serving the unit it started with: said here, whether this run or an
+# earlier update changed it (an update leaves a serving lane serving, and said nothing for the
+# image and video lanes: found in review, 2026-10-14).
+if lane_serves_older_unit "$UNIT" "$INSTALLED"; then
+  echo "NOTE: The image lane serves the unit it started with; it serves this one after: sudo systemctl restart $UNIT   (or Load it again from the cockpit)"
+fi
 # Installed, not switched to: the lane this box serves stays the lane it serves. The image
 # lane becomes the boot lane the same way the other two do, by a switch, which is also
 # what makes it come back after a reboot.
@@ -432,13 +438,20 @@ restore_text_lane() {
   rm -f "$RENDER" "${OUT:-}"
 }
 trap restore_text_lane EXIT
-sudo systemctl start "$UNIT"
+# A lane that serves an older unit than the one installed now restarts for the proof: the engine
+# that runs proved nothing about the unit this run installed (found in review, 2026-10-14).
+if [ "$WAS_IMAGE" -eq 1 ] && lane_serves_older_unit "$UNIT" "$INSTALLED"; then
+  echo "The image lane serves the unit it started with, older than the one installed now: it restarts to prove this one"
+  sudo systemctl restart "$UNIT"
+else
+  sudo systemctl start "$UNIT"
+fi
 READY=0
 for i in $(seq 1 90); do
   curl -fsS -m 5 "http://$IMAGE_BIND:$PORT/health" >/dev/null 2>&1 && { READY=1; break; }
   sleep 10
 done
-[ "$READY" -eq 1 ] || { sudo journalctl -u "$UNIT" -n 40 --no-pager; die "the lane did not answer /health within 15 min. The journal above says why."; }
+[ "$READY" -eq 1 ] || { sudo journalctl -u "$UNIT" -n 40 --no-pager || true; die "the lane did not answer /health within 15 min. The journal above says why."; }
 echo "up after ~$(( (i - 1) * 10 )) s; generating a 512x512 image"   # the first probe comes before any wait
 OUT="$(mktemp)"
 # `|| true`: a transport failure (the lane dying mid-request, the 300 s passing) made curl

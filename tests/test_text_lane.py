@@ -128,6 +128,21 @@ class TheLibrary(unittest.TestCase):
         self.assertEqual(Box(units=("flash",)).run("text_lane_back"), "qwen38-flash.service")
         self.assertEqual(Box(units=("image",)).run("text_lane_back image"), "")
 
+    def test_a_lane_serving_an_older_unit_is_told(self):
+        b = Box()
+        unit = b.units / "qwen38-image.service"
+        started = int(time.time()) - 100
+        (b.bin / "systemctl").write_text(
+            "#!/bin/bash\n"
+            'case "$*" in *ActiveState*) echo "${STATE:-active}";; '
+            f'*ExecMainStartTimestamp*) echo "@{started}";; esac\n')
+        os.utime(unit, (started - 50, started - 50))
+        self.assertEqual(b.run(f'lane_serves_older_unit qwen38-image.service "{unit}" && echo OLDER || echo SAME'), "SAME")
+        os.utime(unit, (started + 50, started + 50))
+        self.assertEqual(b.run(f'lane_serves_older_unit qwen38-image.service "{unit}" && echo OLDER || echo SAME'), "OLDER")
+        self.assertEqual(b.run(f'STATE=inactive lane_serves_older_unit qwen38-image.service "{unit}" && echo OLDER || echo SAME'),
+                         "SAME", "a lane that does not serve serves nothing older")
+
 
 class EverySequenceOfSwitches(unittest.TestCase):
     """Every sequence of lanes up to six long (1,364) that starts on a text lane (the box's first
