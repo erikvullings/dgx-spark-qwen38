@@ -2007,6 +2007,14 @@ python3 "$REPO_DIR/oc-point-default.py" "$CONFIG_DIR/opencode.json" "$OC_POINT_L
 if [ -f "$OC_USER_CFG" ]; then
   python3 "$REPO_DIR/oc-point-default.py" "$OC_USER_CFG" "$OC_POINT_LANE" "$OC_POINT_CHOICE" "$OC_POINT_WINDOW" || true
 fi
+# pi and omp (docs/pi.md): their files are regenerated from the opencode.json written above, as
+# switch-model.sh does after a switch (block 4f), and only on a box that asked for them once
+# (./pi-gen.py made the directories). An update left them behind it: v1.30.0's changed Kolibri's
+# pair in opencode.json and not in pi's models.json, until the next switch (found 2026-10-14).
+if [ -d "$CONFIG_DIR/pi" ] || [ -d "$CONFIG_DIR/omp" ]; then
+  python3 "$REPO_DIR/pi-gen.py" --config "$CONFIG_DIR/opencode.json" --out "$CONFIG_DIR" \
+    || echo "NOTE: could not regenerate the pi/omp artifacts; run ./pi-gen.py by hand"
+fi
 # Every opencode.json this install touches has been written by now, except the limits
 # a 1m install fits to the pool once the engine is up (step 9, which restarts it again),
 # so the server that reads them can be restarted. It parses opencode.json ONCE at startup and

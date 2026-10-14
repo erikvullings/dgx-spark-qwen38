@@ -11,7 +11,7 @@ pi (`~/.pi/agent`) and omp (`~/.omp/agent`) keep their default model, provider n
 ~/.config/qwen38/omp/models.yml      ~/.config/qwen38/omp/config.yml
 ```
 
-Run `./pi-gen.py` once to create them. From then on `./switch-model.sh` (block 4f) and a fit (`oc-fit-limits.py`, the cockpit's button) regenerate them; a box that never ran it gets no such files. `python3 pi-gen.py --dry-run` shows what a regeneration would change.
+Run `./pi-gen.py` once to create them. From then on an update (`./install.sh`, since v1.31), `./switch-model.sh` (block 4f) and a fit (`oc-fit-limits.py`, the cockpit's button) regenerate them; a box that never ran it gets no such files. `python3 pi-gen.py --dry-run` shows what a regeneration would change.
 
 **The repo never writes into `~/.pi` or `~/.omp`;** installing is your copy. On an agent with no config of its own yet:
 

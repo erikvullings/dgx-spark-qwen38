@@ -246,5 +246,25 @@ class PiGen(unittest.TestCase):
             self.assertIn('apiKey: "!cat /keys/api-key"', f.read())
 
 
+
+class AnUpdateRegeneratesThemToo(unittest.TestCase):
+    """install.sh regenerates pi's and omp's files as switch-model.sh does after a switch (block
+    4f): v1.30.0's update changed Kolibri's pair in opencode.json and left pi's models.json at the
+    old one until the next switch (found 2026-10-14)."""
+    BLOCK = ('if [ -d "$CONFIG_DIR/pi" ] || [ -d "$CONFIG_DIR/omp" ]; then\n'
+             '  python3 "$REPO_DIR/pi-gen.py" --config "$CONFIG_DIR/opencode.json" --out "$CONFIG_DIR" \\\n')
+
+    def test_install_and_the_switch_run_it_the_same_way(self):
+        for script in ("install.sh", "switch-model.sh"):
+            with self.subTest(script):
+                self.assertEqual((REPO / script).read_text().count(self.BLOCK), 1)
+
+    def test_install_runs_it_once_opencode_json_is_written(self):
+        text = (REPO / "install.sh").read_text()
+        at = text.index(self.BLOCK)
+        self.assertLess(text.rindex('python3 "$REPO_DIR/oc-point-default.py" "$CONFIG_DIR/opencode.json"'), at,
+                        "after the last write of the artifact it reads")
+        self.assertLess(at, text.index('echo "opencode-web.service restarted so it reads the new limits"'))
+
 if __name__ == "__main__":
     unittest.main()
