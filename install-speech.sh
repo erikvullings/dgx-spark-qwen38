@@ -215,9 +215,13 @@ fetch(){  # $1 url, $2 file, $3 sha256: download once, check, keep only a file t
   if [ -f "$out" ] && [ "$(sha256sum "$out" | cut -d' ' -f1)" = "$sha" ]; then
     echo "   $2: present"; return 0
   fi
-  local auth=()
-  [ -n "${HF_TOKEN:-}" ] && case "$url" in https://huggingface.co/*) auth=(-H "Authorization: Bearer $HF_TOKEN") ;; esac
-  curl -fL --retry 3 --retry-delay 5 -C - "${auth[@]}" -o "$out.part" "$url" \
+  # The token goes to Hugging Face only, and on curl's standard input: a process's arguments
+  # are any local user's to read (ps).
+  local auth=() header=""
+  if [ -n "${HF_TOKEN:-}" ]; then
+    case "$url" in https://huggingface.co/*) auth=(-H @-); header="Authorization: Bearer $HF_TOKEN" ;; esac
+  fi
+  curl -fL --retry 3 --retry-delay 5 -C - "${auth[@]}" -o "$out.part" "$url" <<< "$header" \
     || die "could not download $2 from $url (no internet, or HuggingFace throttling: set HF_TOKEN). Re-running resumes."
   [ "$(sha256sum "$out.part" | cut -d' ' -f1)" = "$sha" ] \
     || { rm -f "$out.part"; die "$2 does not match its pinned sha256: not keeping it."; }

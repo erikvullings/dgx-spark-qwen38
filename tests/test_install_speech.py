@@ -5,6 +5,7 @@ The speech lane runs on the CPU alone, on the small cores, beside whichever lane
 (docs/speech-lane.md). These read the installer's own lines and run its functions in bash
 against fake lscpu output and fake paths: nothing is installed, nothing is downloaded.
 """
+import hashlib
 import pathlib
 import re
 import subprocess
@@ -53,6 +54,35 @@ class Pins(unittest.TestCase):
             self.assertTrue(sha.startswith("$") and sha.endswith("_SHA"), sha)
             if "huggingface.co" in url:
                 self.assertIn("/resolve/$ASR_REV/", url)
+
+    def test_the_token_never_reaches_curls_arguments(self):
+        # Any user of the box reads a process's arguments (ps), and the token was one of
+        # curl's (found in review, 2026-10-14): it goes on curl's standard input, and only to
+        # Hugging Face.
+        d = pathlib.Path(tempfile.mkdtemp())
+        self.addCleanup(subprocess.run, ["rm", "-rf", str(d)])
+        (d / "bin").mkdir()
+        (d / "models").mkdir()
+        stub = d / "bin" / "curl"
+        stub.write_text('#!/bin/bash\nprintf "%s\\n" "$@" > "$SEEN/argv"; cat > "$SEEN/stdin"\n'
+                        'while [ $# -gt 0 ]; do [ "$1" = -o ] && { printf weights > "$2"; break; }; shift; done\n')
+        stub.chmod(0o755)
+        sha = hashlib.sha256(b"weights").hexdigest()
+        token = "hf_" + "Q" * 34
+        for url, to_hf in (("https://huggingface.co/ggml-org/Qwen3-ASR-0.6B-GGUF/resolve/" + "0" * 40 + "/a.gguf", True),
+                           ("https://github.com/thewh1teagle/kokoro-onnx/releases/download/model-files-v1.0/a.gguf", False)):
+            with self.subTest(url=url):
+                for f in ("argv", "stdin", "models/a.gguf"):
+                    (d / f).unlink(missing_ok=True)
+                code, _, err = bash(f'export PATH="{d}/bin:$PATH" SEEN="{d}" HF_TOKEN="{token}"\n'
+                                    f'MODELS="{d}/models"; CHANGED=0\ndie(){{ echo "$*" >&2; exit 1; }}\n'
+                                    + function("fetch") + f'fetch "{url}" a.gguf {sha}\n')
+                self.assertEqual(code, 0, err)
+                argv = (d / "argv").read_text()
+                self.assertNotIn(token, argv)
+                self.assertEqual("@-" in argv.split(), to_hf)
+                self.assertEqual(f"Authorization: Bearer {token}" in (d / "stdin").read_text(), to_hf)
+                self.assertEqual((d / "models" / "a.gguf").read_text(), "weights")
 
     def test_a_file_that_does_not_match_is_not_kept(self):
         fetch = function("fetch")
