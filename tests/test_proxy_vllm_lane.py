@@ -20,9 +20,11 @@ import importlib.util
 import io
 import json
 import os
+import select
 import socket
 import sys
 import threading
+import tempfile
 import time
 import unittest
 from contextlib import redirect_stderr
@@ -107,6 +109,17 @@ class FakeVllm(http.server.BaseHTTPRequestHandler):
         self.send_header("Content-Type", "text/event-stream")
         self.send_header("Connection", "close")
         self.end_headers()
+        self.wfile.flush()
+        if prompt.startswith("prefill"):
+            # vLLM sends a stream's headers before its prefill, then nothing until the first
+            # token: here 5 s, watching for the end of the connection as vLLM does
+            end = time.time() + 5
+            while time.time() < end:
+                r, _, _ = select.select([self.connection], [], [], 0.05)
+                if r and not self.connection.recv(1, socket.MSG_PEEK):
+                    with FakeVllm.lock:
+                        FakeVllm.closed_at[prompt] = time.time()
+                    return
         n = 200 if prompt.startswith("slow") else 2
         try:
             for i in range(n):
@@ -162,7 +175,7 @@ class PureParts(unittest.TestCase):
         out, was = self.mod.route_model_name(self.body(), "/v1/chat/completions")
         self.assertEqual(was, "qwen3.8-27b")
         self.assertEqual(json.loads(out)["model"], "kolibri-1")
-        for path in ("/v1/messages", "/v1/messages/count_tokens", "/v1/completions", "/tokenize"):
+        for path in ("/v1/messages", "/v1/messages/count_tokens", "/v1/completions", "/tokenize", "/invocations"):
             self.assertEqual(json.loads(self.mod.route_model_name(self.body(), path)[0])["model"], "kolibri-1", path)
 
     def test_a_served_name_a_foreign_route_or_a_doubt_go_as_they_came(self):
@@ -213,8 +226,12 @@ class ThroughTheProxy(unittest.TestCase):
                           CLIENT_IO_S="5", PROMPT_CEILING_TOKENS="0", FLASH_PROMPT_CEILING_TOKENS="0")
         cls.mod = load_proxy("kproxy_vllm_lane")
         cls.mod._api_key = lambda: KEY
-        cls.log = io.StringIO()
-        cls.err = redirect_stderr(cls.log)
+        # this proxy's own lines only: stderr is the process's, and a drain left running by
+        # another module's proxy wrote its line into this one's (the full unittest run, 2026-10-14)
+        cls.lines = []
+        cls.mod.log = lambda msg: cls.lines.append(f"[proxy] {msg}")
+        cls.log = type("Lines", (), {"getvalue": staticmethod(lambda: "\n".join(cls.lines) + "\n")})()
+        cls.err = redirect_stderr(io.StringIO())
         cls.err.__enter__()
         cls.proxy = cls.mod.Server(("127.0.0.1", 0), cls.mod.H)
         threading.Thread(target=cls.proxy.serve_forever, daemon=True).start()
@@ -286,6 +303,43 @@ class ThroughTheProxy(unittest.TestCase):
         # and no SGLang advice in a vLLM lane's journal (it did, on the reference box)
         self.assertNotIn("SGLANG_ENABLE_REQUEST_HEADER_OVERRIDES", self.log.getvalue())
 
+    def test_a_client_that_leaves_during_the_prefill_is_seen_by_the_engine_at_once(self):
+        # close() waited for the stream's next byte, the first token after a long prefill
+        # (48.5 s at 128K): the engine computed it for nobody (found in review, 2026-10-14)
+        s = self.post({"model": "kolibri-1", "stream": True,
+                       "messages": [{"role": "user", "content": "prefill long"}]}, read_all=False)
+        s.settimeout(10)
+        s.recv(4096)                     # the headers, then the proxy's keepalives
+        t0 = time.time()
+        s.close()
+        end = time.time() + 8
+        while time.time() < end and "prefill long" not in FakeVllm.closed_at:
+            time.sleep(0.05)
+        self.assertIn("prefill long", FakeVllm.closed_at, "the engine never saw its connection end")
+        self.assertLess(FakeVllm.closed_at["prefill long"] - t0, 2.0)
+        self.assertEqual(FakeVllm.aborts, [])
+
+    def test_the_engine_a_request_went_to_decides_how_it_ends(self):
+        # the lane's facts dropped while the stream ran (a pool read that failed): an abandoned
+        # Kolibri stream took SGLang's way, an /abort_request answered 404, and a drain
+        since = len(self.lines)
+        s = self.post({"model": "kolibri-1", "stream": True,
+                       "messages": [{"role": "user", "content": "slow and dropped"}]}, read_all=False)
+        s.settimeout(10)
+        s.recv(4096)
+        self.mod.invalidate_pool()
+        t0 = time.time()
+        s.close()
+        end = time.time() + 5
+        while time.time() < end and "slow and dropped" not in FakeVllm.closed_at:
+            time.sleep(0.05)
+        self.assertLess(FakeVllm.closed_at.get("slow and dropped", 1e12) - t0, 2.0)
+        self.assertEqual(FakeVllm.aborts, [], "vLLM has no /abort_request")
+        time.sleep(0.3)
+        mine = "\n".join(self.lines[since:])
+        self.assertNotIn("drained an abandoned", mine)
+        self.assertNotIn("SGLANG_ENABLE_REQUEST_HEADER_OVERRIDES", mine, "SGLang's advice on a vLLM request")
+
     def test_the_vocabulary_is_read_in_vllms_words_with_the_served_name(self):
         self.mod.pool_tokens()                       # names known, as on any prompt
         self.assertEqual(self.mod.served_vocab(), 128000)
@@ -297,6 +351,109 @@ class ThroughTheProxy(unittest.TestCase):
         got = self.post({"model": "my-alias", "stream": True, "messages": [{"role": "user", "content": "hi"}]})
         self.assertTrue(got.startswith(b"HTTP/1.1 200"), got[:200])
         self.assertEqual(FakeVllm.bodies[-1]["model"], "my-alias")
+
+
+
+
+class ALaneSwitch(unittest.TestCase):
+    """The proxy in front of a Kolibri unit that boots, then serves: a systemctl that reads the
+    unit's state and its start's invocation id from files, and the fake engine on the port."""
+
+    def setUp(self):
+        self.t = Path(tempfile.mkdtemp(prefix="vllm-switch-"))
+        (self.t / "bin").mkdir()
+        self.state, self.inv = self.t / "state", self.t / "inv"
+        self.state.write_text("activating\n")
+        self.inv.write_text("start-1\n")
+        (self.t / "bin/systemctl").write_text(
+            "#!/bin/sh\n"
+            f'case "$*" in *InvocationID*) cat "{self.inv}"; exit 0;; esac\n'
+            f'if [ "$1" = show ]; then cat "{self.state}"; exit 0; fi\n'
+            "exit 3\n")
+        (self.t / "bin/systemctl").chmod(0o755)
+        with socket.socket() as sk:
+            sk.bind(("127.0.0.1", 0))
+            self.engine_port = sk.getsockname()[1]
+        saved, saved_argv = dict(os.environ), list(sys.argv)
+        self.addCleanup(lambda: (os.environ.clear(), os.environ.update(saved), setattr(sys, "argv", saved_argv)))
+        os.environ.update(UPSTREAM=f"http://127.0.0.1:{self.engine_port}", KEEPALIVE_S="0.4",
+                          PROXY_HOLD_UNITS="qwen38-kolibri.service", PROXY_HOLD_MAX_S="30",
+                          PROXY_HOLD_POLL_S="0.2", PROMPT_CEILING_TOKENS="0", FLASH_PROMPT_CEILING_TOKENS="0",
+                          PATH=f"{self.t / 'bin'}:{os.environ.get('PATH', '')}")
+        self.mod = load_proxy(f"kproxy_switch_{time.time_ns()}")
+        self.mod._api_key = lambda: KEY
+        self.lines = []
+        self.mod.log = self.lines.append
+        self.proxy = self.mod.Server(("127.0.0.1", 0), self.mod.H)
+        threading.Thread(target=self.proxy.serve_forever, daemon=True).start()
+        self.addCleanup(lambda: (self.proxy.shutdown(), self.proxy.server_close()))
+        self.engine = None
+        FakeVllm.served, FakeVllm.owner = "kolibri-1", "vllm"
+        with FakeVllm.lock:
+            FakeVllm.bodies.clear(); FakeVllm.aborts.clear(); FakeVllm.closed_at.clear()
+
+    def start_engine(self):
+        self.engine = http.server.ThreadingHTTPServer(("127.0.0.1", self.engine_port), FakeVllm)
+        self.engine.daemon_threads = True
+        threading.Thread(target=self.engine.serve_forever, daemon=True).start()
+        self.addCleanup(lambda: (self.engine.shutdown(), self.engine.server_close()))
+
+    def started_again(self):
+        """The unit's next start, as systemd says it; the proxy looks at most every 2 s."""
+        self.inv.write_text("start-2\n")
+        self.mod._STARTS["ts"] = -1e9
+
+    def ask(self, model, out):
+        raw = json.dumps({"model": model, "stream": True,
+                          "messages": [{"role": "user", "content": "hi"}]}).encode()
+        s = socket.create_connection(("127.0.0.1", self.proxy.server_address[1]), timeout=40)
+        s.sendall(f"POST /v1/chat/completions HTTP/1.1\r\nHost: p\r\nAuthorization: Bearer {KEY}\r\n"
+                  f"Content-Type: application/json\r\nContent-Length: {len(raw)}\r\n\r\n".encode() + raw)
+        got = b""
+        while True:
+            c = s.recv(65536)
+            if not c:
+                break
+            got += c
+        s.close()
+        out.append(got)
+
+    def test_a_request_held_through_the_boot_reaches_kolibri_by_its_name(self):
+        out = []
+        th = threading.Thread(target=self.ask, args=("qwen3.8-27b", out), daemon=True)
+        th.start()
+        time.sleep(1.0)                  # held: the port is closed, the unit is activating
+        self.start_engine()
+        self.state.write_text("active\n")
+        th.join(30)
+        self.assertTrue(out, "no answer")
+        self.assertIn(b"t1 ", out[0], out[0][-300:])
+        self.assertEqual([b["model"] for b in FakeVllm.bodies if not b.get("logit_bias")], ["kolibri-1"])
+
+    def test_the_first_request_after_a_switch_nobody_asked_about_is_renamed(self):
+        FakeVllm.served, FakeVllm.owner = "qwen3.8-27b", "sglang"
+        self.state.write_text("active\n")
+        self.start_engine()
+        self.mod.served_models()                       # the 27B, read and cached for 600 s
+        self.assertEqual(self.mod._SERVED["engine"], "sglang")
+        FakeVllm.served, FakeVllm.owner = "kolibri-1", "vllm"   # the cockpit loads Kolibri
+        self.started_again()
+        out = []
+        self.ask("qwen3.8-27b", out)
+        self.assertIn(b"t1 ", out[0], out[0][:300])
+        self.assertEqual(FakeVllm.bodies[-1]["model"], "kolibri-1")
+
+    def test_a_unit_that_started_again_drops_the_vocabulary(self):
+        self.state.write_text("active\n")
+        self.start_engine()
+        self.mod.follow_engine_restarts()              # the first start, as the proxy first sees it
+        self.mod._VOCAB.update(size=128000, ts=time.time())   # learned on Kolibri
+        self.mod._rid_override_honoured = False
+        self.started_again()                           # the cockpit loads the 27B
+        FakeVllm.served, FakeVllm.owner = "qwen3.8-27b", "sglang"
+        self.mod.served_vocab()
+        self.assertTrue(any(b.get("logit_bias") for b in FakeVllm.bodies), "learned again, not kept")
+        self.assertIsNone(self.mod._rid_override_honoured)
 
 
 if __name__ == "__main__":

@@ -53,8 +53,14 @@ serve (404) where SGLang answers any name: a body naming another model is given 
 so a client keeps working across a lane switch as it always did. And what was learned of one
 engine is dropped with it: the vocabulary (Kolibri's is 128,000 tokens, every Qwen lane's
 248,320; the probe now names the served model, which vLLM requires, and reads vLLM's wording
-too) and whether the engine honours x-override-rid. System One needs a Qwen lane (its labels
-are measured on the Qwen tokenizer) and says so on Kolibri, a 400, where it failed as a 502.
+too) and whether the engine honours x-override-rid, once its unit starts again. The name is
+given again on every attempt (a request held through Kolibri's boot went with its old one), and
+after a switch nobody asked about (the last lane's facts stayed 600 s). The connection of a
+client that left is shut down, not only closed: a close waited for the stream's next byte,
+which during a long prefill is its first token. And the engine a request went to is noted when
+it goes: a dropped fact made an abandoned Kolibri stream take SGLang's /abort_request and drain.
+System One needs a Qwen lane (its labels are measured on the Qwen tokenizer) and says so on
+Kolibri, a 400, where it failed as a 502.
 v6.36: a path under /ready passes the door without a key, as the engine leaves it open (its
 auth rule opens /health, /ready and /metrics; the door had /health and /metrics only, so a
 readiness probe got 401 here and 200 from the engine, found 2026-10-11).
@@ -1418,6 +1424,10 @@ def follow_engine_restarts():
         if seen is None or ids == seen:
             return False
         invalidate_pool()
+        # v6.37: and what was learned of it, which note_engine drops only once the new engine
+        # named itself: on a Qwen lane the sampling guard reads the vocabulary first, and
+        # Kolibri's 128,000 refused token ids the 27B serves for up to an hour.
+        forget_engine_rules()
     log("an engine unit started since the engine's pool and names were read (systemd): "
         "they are read again")
     return True
@@ -1551,6 +1561,7 @@ def served_vocab():
     A failure is cached as hard as a success, for a shorter time. Without that, a busy
     engine turns every request carrying one of these fields into another 8-second probe,
     and a guard against a denial of service becomes one."""
+    follow_engine_restarts()            # v6.37: a lane switch drops the last engine's vocabulary
     if time.time() - _VOCAB["ts"] < (3600 if _VOCAB["size"] else 60):
         return _VOCAB["size"]
     _VOCAB["ts"] = time.time()          # claimed before the probe, so a failure counts
@@ -2430,17 +2441,23 @@ def served_models():
 _ENGINE_SEEN = {"names": (), "engine": ""}
 
 
+def forget_engine_rules():
+    """Drop the vocabulary and the x-override-rid verdict learned of the engine: the next
+    request that needs either learns it again, on the engine that serves now."""
+    global _rid_override_honoured
+    _VOCAB.update(size=0, ts=0.0)
+    _rid_override_honoured = None
+
+
 def note_engine(names, owner):
     """Drop what was learned of the engine before, once another one names itself: its
     vocabulary (Kolibri's is 128,000 tokens, the Qwen lanes' 248,320) and whether it takes
     x-override-rid (vLLM takes no rid from the caller). Kept, the next engine was judged by
     the last one's. The same engine back after a restart, same names, keeps both."""
-    global _rid_override_honoured
     if (names, owner) == (_ENGINE_SEEN["names"], _ENGINE_SEEN["engine"]):
         return
     if _ENGINE_SEEN["names"]:
-        _VOCAB.update(size=0, ts=0.0)
-        _rid_override_honoured = None
+        forget_engine_rules()
         log(f"the engine now serves {', '.join(names)[:120]} ({owner or 'unnamed engine'}): "
             f"what was learned of the one before (vocabulary, request ids) is dropped")
     _ENGINE_SEEN.update(names=names, engine=owner)
@@ -2448,7 +2465,8 @@ def note_engine(names, owner):
 
 # v6.37: the routes whose JSON body names a model vLLM checks against what it serves.
 VLLM_MODEL_ROUTES = ("/v1/chat/completions", "/v1/completions", "/v1/messages",
-                     "/v1/messages/count_tokens", "/v1/responses", "/tokenize", "/detokenize")
+                     "/v1/messages/count_tokens", "/v1/responses", "/tokenize", "/detokenize",
+                     "/invocations")
 
 
 def route_model_name(body, path):
@@ -2458,6 +2476,9 @@ def route_model_name(body, path):
     between the Qwen lanes. Untouched on any doubt, and on SGLang always."""
     if not body or path.split("?", 1)[0] not in VLLM_MODEL_ROUTES or b'"model"' not in body:
         return body, None
+    # A switch with no request since kept the last lane's engine for up to 600 s: the first
+    # request after it reached vLLM with its old name, and a 404 (found in review, 2026-10-14).
+    follow_engine_restarts()
     if not _SERVED["engine"]:
         # What every prompt reads anyway, cached: on an engine without SGLang's info routes
         # that read names it too (_vllm_facts). It costs a Qwen lane no request it did not make.
@@ -2938,11 +2959,13 @@ class H(BaseHTTPRequestHandler):
         req = urllib.request.Request(UPSTREAM + self.path, data=body,
                                      headers=self._hdrs(), method=self.command)
         self._upstream_req = req            # _watch_client ends req.upstream
+        self._upstream_engine = _SERVED["engine"]   # v6.37: whose request this is (_abort_upstream)
         # GETs are metadata and always fast; a generation may legitimately take
         # tens of minutes before its first byte (cold giant prefill).
         timeout = UPSTREAM_GET_TIMEOUT_S if self.command == "GET" else None
         try:
-            return _UPSTREAM_OPENER.open(req, timeout=timeout), None, None
+            self._upstream_resp = _UPSTREAM_OPENER.open(req, timeout=timeout)
+            return self._upstream_resp, None, None
         except urllib.error.HTTPError as e:
             return None, e, None
         except (urllib.error.URLError, OSError) as e:
@@ -3103,7 +3126,7 @@ class H(BaseHTTPRequestHandler):
                             _rid_override_honoured = (rid == forced)
                             # v6.37: on vLLM the rid is never used (closing stops it), and the
                             # SGLang advice below was a wrong lead in its journal
-                            if _SERVED["engine"] != "vllm":
+                            if (getattr(self, "_upstream_engine", "") or _SERVED["engine"]) != "vllm":
                                 log("this engine honours x-override-rid: an abandoned request "
                                     "can be aborted before it produces anything"
                                     if _rid_override_honoured else
@@ -3159,11 +3182,17 @@ class H(BaseHTTPRequestHandler):
         which is the caller's signal to drain instead of orphaning the generation."""
         if getattr(self, "_aborted", False):
             return True
-        if _SERVED["engine"] == "vllm":
-            # v6.37: vLLM stops a request whose connection closes, the stream and the plain
-            # answer alike (measured 2026-10-14): closing is the abort, and draining would only
-            # keep its generation going for nobody.
+        # v6.37: the engine this request was sent to, noted when it was (_open): the lane's
+        # facts can be dropped meanwhile (a pool read that failed), and an abandoned Kolibri
+        # stream then took SGLang's way, an /abort_request vLLM answers 404 and a drain.
+        if (getattr(self, "_upstream_engine", "") or _SERVED["engine"]) == "vllm":
+            # vLLM stops a request whose connection closes, the stream and the plain answer
+            # alike (measured 2026-10-14): closing is the abort, and draining would only keep
+            # its generation going for nobody. The socket is shut down here, before any
+            # close(): close() waits for the pump's read, which on a stream still prefilling
+            # returns with the first token only (48.5 s at 128K), and vLLM saw nothing until.
             self._aborted = True
+            self._shut_upstream()
             log(f"closing the upstream: vLLM stops what it generates for it ({why})")
             return True
         rid = self._abortable_rid()
@@ -3182,6 +3211,27 @@ class H(BaseHTTPRequestHandler):
         except Exception as e:
             log(f"abort_request failed for rid={rid}: {e}")
             return False
+
+    def _shut_upstream(self):
+        """End the connection to the engine now, from any thread: shutdown() wakes a read
+        blocked on it and the engine reads the end at once. Through the answer's own file
+        descriptor (a duplicate of it), since an answer that says Connection: close (urllib
+        asks for one) takes the socket from its HTTPConnection when it arrives."""
+        resp = getattr(self, "_upstream_resp", None)
+        try:
+            fd = resp.fileno() if resp is not None else -1
+        except Exception:
+            fd = -1
+        try:
+            if fd >= 0:
+                with socket.socket(fileno=os.dup(fd)) as dup:
+                    dup.shutdown(socket.SHUT_RDWR)
+                return
+            up = getattr(getattr(getattr(self, "_upstream_req", None), "upstream", None), "sock", None)
+            if up is not None:
+                up.shutdown(socket.SHUT_RDWR)
+        except OSError:
+            pass
 
     def _relay(self, resp):
         """A client that vanishes before the relay can start (30/08: a request that
@@ -3707,11 +3757,8 @@ class H(BaseHTTPRequestHandler):
             if _pattern_drop_logged.first(pat):
                 log(f"{self._peer} tool schema: dropped a 'pattern' Python's re cannot "
                     f"compile (the engine would 400 the request): {pat[:120]}")
-        body, renamed = route_model_name(body, self.path)
-        if renamed and _model_rename_logged.first(renamed):   # once per name, not per request
-            shown = repr(renamed[:60]) + ("..." if len(renamed) > 60 else "")
-            log(f"{self._peer} model {shown} is not what this lane serves (vLLM answers 404 to it): "
-                f"relayed as {(_SERVED['names'] or ('?',))[0]}")
+        asked = body
+        body = self._served_name(asked)
         if self.command == "POST" and self.path.split("?")[0] == SYSTEMONE_PATH:
             self._systemone(body); return
         # A count generates nothing, so there is no scheduler for it to wedge, and it is how
@@ -3728,7 +3775,10 @@ class H(BaseHTTPRequestHandler):
                 return
             kind, why, detail = gone
             if self._hold(why, streamed):
-                continue                    # the engine answers again: the request goes now
+                # the engine answers again: the request goes now, named for the engine that
+                # answers (held through Kolibri's boot, it went with its old name, and a 404)
+                body = self._served_name(asked)
+                continue
             if getattr(self, "_caller_left", False):
                 self._done("CLIENT GONE during hold"); return
             if kind == "warming":
@@ -3738,6 +3788,16 @@ class H(BaseHTTPRequestHandler):
             if kind == "upstream":
                 self._done(f"503 engine unreachable (upstream {detail})"); return
             self._done("503 engine unreachable"); return
+
+    def _served_name(self, body):
+        """The body as the engine that serves now takes it (route_model_name), the rename
+        said once per name."""
+        body, renamed = route_model_name(body, self.path)
+        if renamed and _model_rename_logged.first(renamed):   # once per name, not per request
+            shown = repr(renamed[:60]) + ("..." if len(renamed) > 60 else "")
+            log(f"{self._peer} model {shown} is not what this lane serves (vLLM answers 404 to it): "
+                f"relayed as {(_SERVED['names'] or ('?',))[0]}")
+        return body
 
     def _forward(self, body, count_only):
         """The request from the size guard to its answer. None once it is answered. When the
