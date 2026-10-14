@@ -63,6 +63,7 @@ unit_flag(){ { grep -m1 -oE -- "$1 [^ \\\\']+" "$INSTALLED" 2>/dev/null || true;
 # (v0.29.0, its arm64 manifest), the plugin's wheel, and the two checkpoints at the
 # revisions measured on the reference box on 2026-10-14.
 KOLIBRI_BASE_IMAGE="vllm/vllm-openai@sha256:18372a7224938643461b846fb64c5c9d3d6e9727e82caf2dc3043e620c9d4d7a"
+KOLIBRI_PLUGIN_VERSION="1.0.0"
 KOLIBRI_PLUGIN_URL="https://files.pythonhosted.org/packages/b0/d7/1eda35b6ee0293f2a52d7a653cf5a4d54c93f21e2e359fe70a7e7b87a851/aleph_alpha_inference-1.0.0-py3-none-any.whl"
 KOLIBRI_PLUGIN_SHA256="5a0ca118e67924f10c4f9c04dd64bef117007a17dd820233a8841b9cb8d6f211"
 KOLIBRI_FP8_REPO="Aleph-Alpha/Kolibri-1"
@@ -70,8 +71,13 @@ KOLIBRI_FP8_REV="258cae8ffffc8c12db670bdbc6ac01bcf8826c87"
 KOLIBRI_NVFP4_REPO="Quantinine/Kolibri-1-NVFP4A16-FP8"
 KOLIBRI_NVFP4_REV="4a8406455c474fd0fb2bd523c352cc99803eb492"
 # The local image: the base and the wheel, nothing else. Its tag names both, so a change of
-# either pin is a new tag, and a box never serves an image built from older pins.
-LOCAL_IMAGE="qwen38-kolibri:vllm0.29.0-aai1.0.0-${KOLIBRI_BASE_IMAGE##*:}"
+# either pin is a new tag, and a box never serves an image built from older pins. The wheel
+# is named by its version, which PyPI never lets a file change under (the tag said 1.0.0
+# whatever the URL pinned, and a box that had it built kept it: found in review, 2026-10-14).
+PLUGIN_WHEEL="aleph_alpha_inference-${KOLIBRI_PLUGIN_VERSION}-py3-none-any.whl"
+[ "${KOLIBRI_PLUGIN_URL##*/}" = "$PLUGIN_WHEEL" ] \
+  || die "KOLIBRI_PLUGIN_URL names ${KOLIBRI_PLUGIN_URL##*/}, not the $PLUGIN_WHEEL of KOLIBRI_PLUGIN_VERSION (repo bug: please open an issue)"
+LOCAL_IMAGE="qwen38-kolibri:vllm0.29.0-aai${KOLIBRI_PLUGIN_VERSION}-${KOLIBRI_BASE_IMAGE##*:}"
 LOCAL_IMAGE="${LOCAL_IMAGE:0:52}"
 
 # The checkpoint: the installed unit's, or KOLIBRI_VARIANT (fp8, the default, or nvfp4).
@@ -237,10 +243,10 @@ else
   docker image inspect "$KOLIBRI_BASE_IMAGE" >/dev/null 2>&1 || docker pull "$KOLIBRI_BASE_IMAGE" \
     || die "docker pull of $KOLIBRI_BASE_IMAGE failed. Causes: no internet, a Docker Hub rate limit (retry in a few minutes, or docker login), or the digest removed upstream."
   BUILD="$(mktemp -d)"
-  curl -fsSL --retry 3 -o "$BUILD/aleph_alpha_inference-1.0.0-py3-none-any.whl" "$KOLIBRI_PLUGIN_URL" \
+  curl -fsSL --retry 3 -o "$BUILD/$PLUGIN_WHEEL" "$KOLIBRI_PLUGIN_URL" \
     || { rm -rf "$BUILD"; die "could not download the aleph-alpha-inference wheel from PyPI ($KOLIBRI_PLUGIN_URL)"; }
-  echo "$KOLIBRI_PLUGIN_SHA256  $BUILD/aleph_alpha_inference-1.0.0-py3-none-any.whl" | sha256sum -c --quiet - \
-    || { rm -rf "$BUILD"; die "the aleph-alpha-inference wheel does not match the sha256 PyPI published for 1.0.0; refusing to build."; }
+  echo "$KOLIBRI_PLUGIN_SHA256  $BUILD/$PLUGIN_WHEEL" | sha256sum -c --quiet - \
+    || { rm -rf "$BUILD"; die "the aleph-alpha-inference wheel does not match the sha256 PyPI published for $KOLIBRI_PLUGIN_VERSION; refusing to build."; }
   # Aleph Alpha's own Dockerfile (aleph-alpha-inference, 1.0.0): the base image plus the
   # wheel with --no-deps, so pip never replaces the vLLM, torch and transformers the base
   # carries. The last line proves vLLM will see the plugin: its entry point is how vLLM
@@ -248,8 +254,8 @@ else
   cat > "$BUILD/Dockerfile" <<'DEOF'
 ARG BASE_IMAGE
 FROM ${BASE_IMAGE}
-COPY aleph_alpha_inference-1.0.0-py3-none-any.whl /tmp/
-RUN pip install --no-deps /tmp/aleph_alpha_inference-1.0.0-py3-none-any.whl && rm /tmp/*.whl \
+COPY *.whl /tmp/
+RUN pip install --no-deps /tmp/*.whl && rm /tmp/*.whl \
  && python3 -c "from importlib.metadata import entry_points; assert [e for e in entry_points(group='vllm.general_plugins') if e.name.startswith('aleph')], 'the plugin entry point is missing'"
 DEOF
   docker build -q --build-arg BASE_IMAGE="$KOLIBRI_BASE_IMAGE" -t "$LOCAL_IMAGE" "$BUILD" >/dev/null \
