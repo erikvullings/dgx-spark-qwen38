@@ -232,6 +232,35 @@ class WhatItDoesNotHave(Base):
             self.serving(None)
         self.assertIn("no route that aborts", str(e.exception))
 
+    def test_the_memory_floor_never_claims_an_abort_it_could_not_make(self):
+        # the belt counted an abort before trying it, and on this lane, which has no abort route,
+        # the page said "every generation was aborted" while nothing stopped (review, 2026-10-14)
+        ck, saved = self.ck, {}
+        for name in ("DRY_RUN", "kolibri_load", "mem_available_gib", "add_event", "audit"):
+            saved[name] = getattr(ck, name)
+        events = []
+        ck.DRY_RUN = False
+        ck.kolibri_load = lambda timeout=3: [{"num_reqs": 2, "num_waiting_reqs": 0}]
+        ck.mem_available_gib = lambda: 0.5
+        ck.add_event = lambda kind, text: events.append((kind, text))
+        ck.audit = lambda rec: None
+        ck.MEM_FLOOR.update(last_abort=None, aborts=0, last_try=None)
+        self.serving("ready")
+        try:
+            ck.collect_engine_fast()
+            first = dict(ck.MEM_FLOOR)
+            ck.collect_engine_fast()                 # within the cooldown: not tried again
+        finally:
+            self.serving(None)
+            for name, value in saved.items():
+                setattr(ck, name, value)
+        self.assertEqual((first["aborts"], first["last_abort"]), (0, None))
+        self.assertIsNotNone(first["last_try"])
+        tried = [e for e in events if e[0] == "mem_floor"]
+        self.assertEqual(len(tried), 1, events)
+        self.assertIn("abort failed", tried[0][1])
+        self.assertIn("no route that aborts", tried[0][1])
+
     def test_system_one_points_at_the_qwen_lanes(self):
         self.serving("ready")
         try:

@@ -390,6 +390,13 @@ function actionPhrase(action, params){
 const cap1 = s => String(s).charAt(0).toUpperCase() + String(s).slice(1);
 // these three talk to the text engine: without one they can only fail
 const NEEDS_ENGINE = new Set(['flush_cache', 'abort_all', 'smoke']);
+// what the Kolibri lane's vLLM has no route for: offered there, these could only fail (found in
+// review, 2026-10-14). The fit reads SGLang's /server_info, and Kolibri's limits are its own.
+const KOLIBRI_CANNOT = {
+  flush_cache: 'The Kolibri lane has no cache flush route: vLLM evicts its prefix cache by itself.',
+  abort_all: 'The Kolibri lane has no route that aborts its generations: stopping the lane stops them.',
+  fit_opencode: 'Kolibri\'s opencode limits are its own, set when it is loaded: there is nothing to fit to its pool.'};
+function cannotWhy(name){ const s = servingEngine(); return s && s[0] === KOLIBRI_UNIT ? (KOLIBRI_CANNOT[name] || '') : ''; }
 function noEngineWhy(){
   if (textReady()) return '';
   if (imageServing()) return 'The image lane is serving: this talks to the text engine, which is not running.';
@@ -514,6 +521,7 @@ function askAction(name, params, warns, opts = {}){
   if (offline) return toast('The cockpit is unreachable right now: nothing can be started.', 'err');
   if (loadRunning()) return toast(LOAD_RUNNING, 'warn');
   if (NEEDS_ENGINE.has(name) && !textReady()) return toast(noEngineWhy(), 'warn');
+  if (cannotWhy(name)) return toast(cannotWhy(name), 'warn');
   if (F.job && F.job.current) return toast(busyWhy(), 'warn');
   if (!$('scrim').hidden) return;
   const p = params || {};
@@ -917,7 +925,10 @@ const livePool = (unit, e) => {
   return !!(s && s[0] === unit && textReady() && F.pool && (!F.target || !e || !e.target || F.target === e.target));
 };
 function lanePool(unit, e){ return livePool(unit, e) ? F.pool : (e && e.pools && e.pools.last) || null; }
-const singleLimit = () => F.pool ? (F.ceiling > 0 ? Math.min(Math.round(F.pool * F.usable), F.ceiling) : Math.round(F.pool * F.usable)) : null;
+// The engine's own window caps it too: on Kolibri, a 2.2M-token pool and no proxy ceiling read
+// "about 1.8M tokens" while vLLM refuses a prompt past 262,144 (found in review, 2026-10-14).
+const singleLimit = () => F.pool ? Math.min(Math.round(F.pool * F.usable), F.ceiling > 0 ? F.ceiling : Infinity,
+                                            F.window > 0 ? F.window : Infinity) : null;
 // physical pool occupancy: the engine dedupes shared prefixes, so the requests' summed
 // lengths ("logical") can read past the pool while the pool never overflows
 const physTokens = l => (l.num_used_tokens != null ? l.num_used_tokens : l.num_tokens) || 0;
@@ -1012,8 +1023,10 @@ function openMenu(){
   const box = $('menu-list'); clear(box);
   MENU_ITEMS.forEach(([act, t, d]) => {
     const b = el('button', 'btn block'); b.style.cssText = 'justify-content:flex-start; flex-direction:column; align-items:flex-start; min-height:58px; padding:10px 14px; gap:2px';
-    b.dataset.act = act; b.dataset.title = d;
-    b.append(el('span', null, t)); const s = el('span', 'faint', d); s.style.cssText = 'font-weight:450; font-size:13px; white-space:normal; text-align:left'; b.append(s);
+    const no = cannotWhy(act);
+    b.dataset.act = act; b.dataset.title = no || d;
+    if (no) b.setAttribute('aria-disabled', 'true');
+    b.append(el('span', null, t)); const s = el('span', 'faint', no || d); s.style.cssText = 'font-weight:450; font-size:13px; white-space:normal; text-align:left'; b.append(s);
     b.addEventListener('click', () => { closeMenu(); askAction(act, {}, []); });
     box.append(b);
   });

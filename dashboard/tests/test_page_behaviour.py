@@ -98,6 +98,58 @@ class AWedgeSaysWhatHappensNext(unittest.TestCase):
         self.assertIn("2 min", r["banner"])
 
 
+
+class TheKolibriLaneIsSaidAsItIs(unittest.TestCase):
+    """The Kolibri lane in the page (review of 2026-10-14): one prompt is capped by the engine's
+    window as well as by the pool (a 2.2M-token pool read "about 1.8M tokens" where vLLM refuses
+    past 262,144), and the actions its vLLM has no route for are refused with why, not offered
+    to fail."""
+
+    KOLIBRI = r"""
+    const U = JSON.parse(JSON.stringify(UNITS));
+    U.units['qwen38-sglang.service'] = {active: 'inactive', enabled: 'disabled'};
+    U.units['qwen38-kolibri.service'] = {active: 'active', enabled: 'enabled'};
+    feed({config: CONFIG, units: U, lifecycle: life({'qwen38-kolibri.service': eng('ready', {target: 'kolibri'})})});
+    """
+
+    def test_one_prompt_is_capped_by_the_engines_window(self):
+        r = run(self, r"""
+        F.pool = 2168247; F.ceiling = 0; F.window = 262144; const kolibri = singleLimit();
+        F.pool = 888000; F.window = 1010000; const q1m = singleLimit();
+        F.pool = 420000; F.ceiling = 250000; F.window = 262144; const flash = singleLimit();
+        report({kolibri, q1m, flash});
+        """)
+        self.assertEqual((r["kolibri"], r["q1m"], r["flash"]), (262144, round(888000 * 0.92), 250000))
+
+    def test_what_its_vllm_has_no_route_for_is_refused_with_why(self):
+        r = run(self, self.KOLIBRI + r"""
+        askAction('abort_all', {}, []);
+        report({toast: toastText(), flush: cannotWhy('flush_cache'), fit: cannotWhy('fit_opencode'),
+                smoke: cannotWhy('smoke'), sheet: !$('scrim').hidden});
+        """)
+        self.assertIn("no route that aborts", r["toast"])
+        self.assertIn("no cache flush route", r["flush"])
+        self.assertIn("nothing to fit", r["fit"])
+        self.assertEqual(r["smoke"], "", "the smoke probe works there")
+        self.assertFalse(r["sheet"], "no confirmation sheet opened for an action that can only fail")
+
+    def test_traffic_says_kolibri_serves_and_reads_its_own_cache(self):
+        r = run(self, self.KOLIBRI + r"""
+        feed({engine_fast: {load: [{num_reqs: 1, num_waiting_reqs: 0, num_tokens: 2000000, num_used_tokens: 500000}]}});
+        feed({metrics: {lane: null}, decode: {lane: 'qwen38-kolibri', decode: null, usage: {}}});
+        report({verdict: txt('wm-verdict'), acc: txt('tr-acc'), kv: txt('tr-kv')});
+        """)
+        self.assertIn("serves on vLLM", r["verdict"])
+        self.assertNotIn("No text engine is serving", r["verdict"])
+        self.assertEqual((r["acc"], r["kv"]), ("no draft model", "25.0 %"))
+
+    def test_on_a_qwen_lane_nothing_is_refused(self):
+        r = run(self, r"""
+        feed({config: CONFIG, units: UNITS, lifecycle: life({'qwen38-sglang.service': eng('ready')})});
+        report({abort: cannotWhy('abort_all'), flush: cannotWhy('flush_cache')});
+        """)
+        self.assertEqual((r["abort"], r["flush"]), ("", ""))
+
 class TheProbeLineIsNotAStaleOk(unittest.TestCase):
     """With no text engine serving (stopped, or a diffusion lane up) the canary skips, and
     the page kept its last success on screen as "ok, 0.4 s (skipped this round: busy)"."""

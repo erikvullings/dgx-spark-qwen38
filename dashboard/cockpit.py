@@ -427,7 +427,7 @@ def collect_containers():
 
 
 MEM_FLOOR_GIB = float(os.environ.get("COCKPIT_MEM_FLOOR_GIB", "3.0"))
-MEM_FLOOR = {"last_abort": None, "aborts": 0, "last_reason": ""}
+MEM_FLOOR = {"last_abort": None, "aborts": 0, "last_reason": "", "last_try": None}
 
 
 def mem_available_gib() -> float | None:
@@ -583,10 +583,13 @@ def collect_engine_fast():
     healthy = HEALTH["ok"]
     avail = mem_available_gib()
     abort, reason = lc.decide_mem_floor(avail_gib=avail, floor_gib=MEM_FLOOR_GIB, num_reqs=num_reqs,
-                                        last_abort_ts=MEM_FLOOR["last_abort"], now=time.time())
+                                        last_abort_ts=MEM_FLOOR["last_try"], now=time.time())
     if abort:
-        MEM_FLOOR["last_abort"] = time.time()
-        MEM_FLOOR["aborts"] += 1
+        # The cooldown runs from the attempt; the count and the time the page shows ("every
+        # generation was aborted N ago") from an abort that was made. On the Kolibri lane, which
+        # has no abort route, they were counted anyway and the page said so while nothing
+        # stopped (found in review, 2026-10-14).
+        MEM_FLOOR["last_try"] = time.time()
         MEM_FLOOR["last_reason"] = reason
         # A dry run shows the belt acting, as it shows every other: said and audited, not sent.
         # It raised instead, and the floor's decision was a failed audit line with no event
@@ -594,6 +597,8 @@ def collect_engine_fast():
         try:
             if not DRY_RUN:
                 engine_abort_all()
+            MEM_FLOOR["last_abort"] = MEM_FLOOR["last_try"]
+            MEM_FLOOR["aborts"] += 1
             audit({"kind": "mem_floor", "avail_gib": avail, "num_reqs": num_reqs, "ok": True,
                    **({"dry_run": True} if DRY_RUN else {})})
             add_event("mem_floor", f"memory floor: {reason}; "

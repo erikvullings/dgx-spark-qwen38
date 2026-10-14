@@ -22,6 +22,14 @@ afterApply(() => {
 on('decode', d => {
   const t = d.decode, u = d.usage || {};
   if (!d.lane){ setText('tr-acc', 'none'); setText('tr-kv', 'none'); return; }
+  if (d.lane === 'qwen38-kolibri'){
+    // vLLM writes none of SGLang's scheduler lines these read: Kolibri runs no draft model, and
+    // its cache's use is the engine's own count (kolibri_load). Both read "idle" while it served.
+    const l = F.load || {};
+    setText('tr-acc', 'no draft model');
+    setText('tr-kv', l.num_tokens ? (100 * (l.num_used_tokens || 0) / l.num_tokens).toFixed(1) + ' %' : 'idle');
+    return;
+  }
   setText('tr-acc', t ? t.accept_len.toFixed(2) : 'idle');
   setText('tr-kv', t ? (100 * t.token_usage).toFixed(1) + ' %' : u.tokens ? (100 * u.tokens).toFixed(0) + ' %' : 'idle');
 });
@@ -33,8 +41,12 @@ on('decode', d => {
 // CHANGELOG.md have the measurements).
 on('metrics', d => {
   if (!d.lane){
-    cap('wm-cap', 'no text engine', ''); setText('wm-note', '');
-    setText('wm-verdict', 'No text engine is serving: there is nothing to count.');
+    // The Kolibri lane serves on vLLM, whose counters are not SGLang's: "no text engine is
+    // serving" was said while it served (found in review, 2026-10-14)
+    const kolibri = (servingEngine() || [])[0] === KOLIBRI_UNIT;
+    cap('wm-cap', kolibri ? 'Kolibri: vLLM' : 'no text engine', ''); setText('wm-note', '');
+    setText('wm-verdict', kolibri ? 'The Kolibri lane serves on vLLM, and these counters are SGLang\'s: there are none here for it. Its running and waiting requests are above.'
+                                  : 'No text engine is serving: there is nothing to count.');
     facts($('wm-facts'), []); return;
   }
   if (d.requests == null){
