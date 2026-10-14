@@ -177,10 +177,11 @@ discussion, not a disclosure.
   above); the metrics endpoint adds counters to it, not a new surface to
   authenticate against. The image and video lanes export no metrics.
 - **The speech lane's routes take no key.** Like the image and video lanes, the speech
-  lane (opt-in, `:30024`) serves its routes with no key on loopback, and the cockpit is
-  the door. `SPEECH_BIND` puts them on another address, and the installer says what that
-  costs: anyone who reaches it can transcribe and speak with the box's CPU. Its recognizer
-  (`:30025`) binds loopback whatever is set.
+  lane (opt-in, `:30024`) serves its routes with no key on loopback, and neither the
+  cockpit nor the proxy relays them: programs on the box reach them, another machine
+  through an SSH tunnel. `SPEECH_BIND` puts them on another address, and the installer
+  says what that costs: anyone who reaches it can transcribe and speak with the box's
+  CPU. Its recognizer (`:30025`) binds loopback whatever is set.
 - **Each engine opens its own coordination port on every interface.** The API of a
   lane binds where it is told (loopback by default), but the engine process also runs
   PyTorch's distributed store, and torch binds that listener to all interfaces with no

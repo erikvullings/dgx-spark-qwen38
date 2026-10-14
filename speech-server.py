@@ -13,7 +13,8 @@
   GET  /v1/models, /v1/voices, /health
 
 The qwen38-speech unit runs it (install-speech.sh), on loopback by default: there is no
-key here, the cockpit is the door, as for the image and video lanes. Measured and designed
+key here, as for the image and video lanes, and neither the cockpit nor the proxy relays
+it (programs on the box reach it, another machine through an SSH tunnel). Measured and designed
 in docs/speech-lane.md: no GPU (the launcher hides it), the small cores only, one speech
 request at a time, since two would share the same five cores and both slow down.
 """

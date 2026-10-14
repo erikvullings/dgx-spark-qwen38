@@ -86,14 +86,15 @@ KOKORO_MODEL_FILE="kokoro-v1.0.onnx"; KOKORO_MODEL_SHA="7d5df8ecf7d4b1878015a326
 KOKORO_VOICES_FILE="voices-v1.0.bin";  KOKORO_VOICES_SHA="bca610b8308e8d99f32e6fe4197e7ec01679264efed0cac9140fe9c29f1fbf7d"
 RUNTIME_GB=2   # llama.cpp's source and build, and the venv (168 MB)
 
-# Loopback: the routes have no key, as for the image and video lanes; the cockpit is the
-# door. SPEECH_BIND overrides it for someone who means to, and is told what it costs.
+# Loopback: the routes have no key, as for the image and video lanes, and neither the cockpit
+# nor the proxy relays them: programs on the box reach them, another machine through an SSH
+# tunnel. SPEECH_BIND overrides it for someone who means to, and is told what it costs.
 BIND="${SPEECH_BIND:-$(launcher_flag --host)}"; BIND="${BIND:-127.0.0.1}"
 case "$BIND" in
   127.0.0.1|localhost) ;;
   *) echo "WARNING: binding $BIND. These routes have no API key, so anyone who can reach that"
-     echo "         address can transcribe and speak on this box. Loopback plus the cockpit is the"
-     echo "         intended shape." ;;
+     echo "         address can transcribe and speak on this box. Loopback, and an SSH tunnel from"
+     echo "         another machine, is the intended shape." ;;
 esac
 case "$BIND" in
   *[!0-9.]*|""|*..*) [ "$BIND" = localhost ] || die "SPEECH_BIND takes an IPv4 address, got: $BIND" ;;

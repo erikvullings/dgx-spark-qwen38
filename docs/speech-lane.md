@@ -29,10 +29,11 @@ Start and stop it like any unit: `sudo systemctl start qwen38-speech.service`.
 
 ## Using it
 
-Port 30024, on loopback and without a key, like the image and video lanes: the cockpit is
-the door, and `SPEECH_BIND` binds another address for someone who means to (the installer
-says what it costs). `SPEECH_PORT` moves it; the recognizer takes the port after it, on
-loopback only.
+Port 30024, on loopback and without a key, like the image and video lanes, but neither the
+cockpit nor the proxy relays it: programs on the box reach it, and another machine through
+an SSH tunnel (`ssh -N -L 30024:127.0.0.1:30024 <box>`). `SPEECH_BIND` binds another address
+for someone who means to (the installer says what it costs). `SPEECH_PORT` moves it; the
+recognizer takes the port after it, on loopback only.
 
 ```bash
 # transcribe anything ffmpeg reads: a phone's m4a, a browser's webm or ogg, wav, mp3, flac
