@@ -8,9 +8,13 @@ in the chain wrote two files naming each other: on the reference box, flash, the
 Kolibri and image again (Load from the cockpit, 2026-10-14) left image and Kolibri naming
 each other, and an update took the 27B for the text lane of a box that served the flash.
 switch-model.sh's close_lane_loop runs before a lane's own link is written, and these
-replay switches with it and install.sh's own resolution lines.
+replay switches through switch-model.sh's own loops (each side lane's, with a systemctl that
+answers which unit is enabled at boot), then install.sh's own resolution lines. They wrote
+the links themselves until the review of 2026-10-14, which removed a close_lane_loop call
+from the script and saw them pass.
 """
 import pathlib
+import re
 import subprocess
 import tempfile
 import unittest
@@ -20,6 +24,17 @@ SWITCH = (REPO / "switch-model.sh").read_text()
 INSTALL = (REPO / "install.sh").read_text()
 _at = SWITCH.index("close_lane_loop(){")
 HELPER = SWITCH[_at:SWITCH.index("\n}\n", _at) + 3]
+
+
+def _loop(lane):
+    """switch-model.sh's loop that writes lane-before-<lane>, as the script has it."""
+    m = re.search(r"\n  for (\w+) in [^\n]*; do\n    if systemctl is-enabled --quiet \"\$\1\" 2>/dev/null; then\n"
+                  r"      close_lane_loop %s [^\n]*\n[^\n]*\n    fi\n  done\n" % lane, SWITCH)
+    assert m, f"switch-model.sh's loop for the {lane} lane moved"
+    return m.group(0)
+
+
+LOOPS = {lane: _loop(lane) for lane in ("image", "video", "kolibri")}
 _r = INSTALL.index('LANE_BEFORE_IMAGE="$(cat "$CONFIG_DIR/lane-before-image"')
 RESOLVE = INSTALL[_r:INSTALL.index('if [ "$FLASH_READABLE" -eq 1 ] && [ "$FLASH_ENABLED" -eq 1 ] && [ "$SGL_ENABLED" -eq 1 ]', _r)]
 UNIT = {"flash": "qwen38-flash.service", "27b": "qwen38-sglang.service", "image": "qwen38-image.service",
@@ -30,18 +45,25 @@ def replay(*lanes):
     """Switch through the lanes in order, as switch-model.sh writes the links, then read the
     text lane install.sh resolves for the side lane the box ends on."""
     d = pathlib.Path(tempfile.mkdtemp(prefix="lane-loops-"))
+    cfg, bin_ = d / "cfg", d / "bin"
+    cfg.mkdir()
+    bin_.mkdir()
+    (d / "enabled").write_text(UNIT[lanes[0]])
+    (bin_ / "systemctl").write_text(f'#!/bin/bash\n[ "$1" = is-enabled ] && [ "$(cat "{d}/enabled")" = "${{@: -1}}" ]\n')
+    (bin_ / "systemctl").chmod(0o755)
     steps = []
-    for prev, nxt in zip(lanes, lanes[1:]):
-        if nxt in ("image", "video", "kolibri"):
-            steps.append(f'close_lane_loop {nxt} "{UNIT[prev]}"\n'
-                         f'printf \'%s\\n\' "{UNIT[prev]}" > "$CONFIG_DIR/lane-before-{nxt}"\n')
+    for nxt in lanes[1:]:
+        if nxt in LOOPS:
+            steps.append(LOOPS[nxt])
+        steps.append(f'printf %s "{UNIT[nxt]}" > "{d}/enabled"\n')    # the switch's own enable
     last = lanes[-1]
-    script = (f'set -euo pipefail\nCONFIG_DIR="{d}"\n' + HELPER + "".join(steps) + RESOLVE
+    script = (f'set -euo pipefail\nCONFIG_DIR="{cfg}"\n' + HELPER + "".join(steps) + RESOLVE
               + f'case "{last}" in image) echo "$LANE_BEFORE_IMAGE";; video) echo "$LANE_BEFORE_VIDEO";; '
                 f'kolibri) echo "$LANE_BEFORE_KOLIBRI";; esac\n')
-    r = subprocess.run(["bash", "-c", script], capture_output=True, text=True, timeout=30)
+    r = subprocess.run(["bash", "-c", script], capture_output=True, text=True, timeout=30,
+                       env={"PATH": f"{bin_}:/usr/bin:/bin"})
     assert r.returncode == 0, r.stdout + r.stderr
-    files = {p.name: p.read_text().strip() for p in d.iterdir()}
+    files = {p.name: p.read_text().strip() for p in cfg.iterdir()}
     return r.stdout.strip(), files
 
 

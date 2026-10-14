@@ -246,7 +246,27 @@ class ABoxBootingKolibri(unittest.TestCase):
         self.assertNotIn("The Kolibri lane is this box's boot lane", out)
 
     def test_the_run_that_takes_the_boot_back_disables_it(self):
-        self.assertIn('if [ -z "$SECONDARY" ] && [ "$KOLIBRI_BOOT" -eq 0 ] && systemctl is-enabled --quiet qwen38-kolibri.service', TEXT)
+        # install.sh's own lines, run: they were only looked for, and the review of 2026-10-14
+        # took the disable out of the script with every test still passing
+        at = TEXT.index("# The Kolibri lane is the fifth, under the same rule.\n")
+        block = TEXT[at:TEXT.index('KEEPALIVE_UNIT="qwen38-keepalive.service"', at)]
+
+        def disabled(secondary, kolibri_boot):
+            d = pathlib.Path(tempfile.mkdtemp(prefix="kol-disable-"))
+            log = d / "calls.log"
+            (d / "sudo").write_text(f'#!/bin/bash\necho "sudo $*" >> "{log}"\n')
+            (d / "systemctl").write_text('#!/bin/bash\n[ "$1" = is-enabled ] && [ "${@: -1}" = qwen38-kolibri.service ]\n')
+            for f in ("sudo", "systemctl"):
+                (d / f).chmod(0o755)
+            r = subprocess.run(["bash", "-c", f'set -euo pipefail\nSECONDARY="{secondary}"; KOLIBRI_BOOT={kolibri_boot}\n'
+                                + block], capture_output=True, text=True, timeout=30,
+                               env={"PATH": f"{d}:/usr/bin:/bin"})
+            self.assertEqual(r.returncode, 0, r.stderr)
+            return log.read_text().splitlines() if log.exists() else []
+
+        self.assertEqual(disabled("", 0), ["sudo systemctl disable qwen38-kolibri.service"])
+        self.assertEqual(disabled("", 1), [], "the run that keeps Kolibri at boot")
+        self.assertEqual(disabled("flash", 0), [], "the run for the other text lane")
 
 
 class ItLeavesWhatIsSharedToItsParent(unittest.TestCase):
