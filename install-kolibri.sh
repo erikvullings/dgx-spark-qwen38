@@ -47,10 +47,16 @@ if [ "$(id -u)" = "0" ] && [ "${ALLOW_ROOT:-0}" != "1" ]; then
   die "run this as the user who will use the box, not as root (everything it installs is addressed from \$HOME)."
 fi
 
-SMOKE=1; ACTION=install
+SMOKE=1; ACTION=install; MODE=full
 for a in "$@"; do case "$a" in
   --no-smoke) SMOKE=0 ;;
   --uninstall) ACTION=uninstall ;;
+  # The two halves of a lane installed on demand, as for the image and video lanes:
+  # --units-only puts in what needs root (the unit, its start scripts) and nothing heavy, and
+  # --prepare builds the lane's image as the user, with no sudo, when the cockpit first loads
+  # the lane. The checkpoint comes with that Load's switch, as for any Load.
+  --units-only) [ "$MODE" = full ] || die "--units-only and --prepare are the two halves of an install: one at a time"; MODE=units ;;
+  --prepare) [ "$MODE" = full ] || die "--units-only and --prepare are the two halves of an install: one at a time"; MODE=prepare ;;
   -h|--help) sed -n '2,36p' "$0"; exit 0 ;;
   *) die "unknown option: $a" ;;
 esac; done
@@ -214,6 +220,53 @@ PYCTX
   exit 0
 fi
 
+# Step 4, the one part that needs root: the unit and its start scripts. A function, since a
+# lane installed on demand (--units-only) takes it straight after the preflight.
+install_service(){
+  step "4/5 Service"
+  mkdir -p "$CONFIG_DIR" "$CONFIG_DIR/kolibri-cache"
+  # The unit runs both before every start: run on its own, this installer puts them in place.
+  cmp -s "$HERE/engine-preflight.sh" "$CONFIG_DIR/engine-preflight.sh" \
+    || install -m 755 "$HERE/engine-preflight.sh" "$CONFIG_DIR/engine-preflight.sh"
+  cmp -s "$HERE/engine-secrets.sh" "$CONFIG_DIR/engine-secrets.sh" \
+    || install -m 755 "$HERE/engine-secrets.sh" "$CONFIG_DIR/engine-secrets.sh"
+  # The middleware that asks the key on every route of the engine (see vllm_engine_auth.py),
+  # in a directory of its own: the unit mounts that one, read-only, on the module path.
+  mkdir -p "$CONFIG_DIR/vllm-auth"
+  cmp -s "$HERE/vllm_engine_auth.py" "$CONFIG_DIR/vllm-auth/vllm_engine_auth.py" \
+    || install -m 644 "$HERE/vllm_engine_auth.py" "$CONFIG_DIR/vllm-auth/vllm_engine_auth.py"
+  RENDER="$(mktemp)"; trap 'rm -f "$RENDER"' EXIT
+  sed -e "s|__USER__|$(id -un)|g" -e "s|__GROUP__|$(id -gn)|g" -e "s|__HOME__|$HOME|g" \
+      -e "s|__IMAGE__|$LOCAL_IMAGE|g" -e "s|__MODEL__|$MODEL|g" -e "s|__REV__|$MODEL_REV|g" \
+      -e "s|__GMU__|$GMU|g" -e "s|__HF_CACHE__|$HF_CACHE|g" \
+      -e "s|__ENGINE_BIND__|$ENGINE_BIND|g" -e "s|__PORT__|$PORT|g" \
+      "$HERE/$UNIT.template" > "$RENDER"
+  grep -q '__[A-Z][A-Z0-9_]*__' "$RENDER" && die "the unit template still holds an unsubstituted placeholder: $(grep -o '__[A-Z][A-Z0-9_]*__' "$RENDER" | sort -u | tr '\n' ' ')"
+  if [ -f "$INSTALLED" ] && sudo cmp -s "$RENDER" "$INSTALLED"; then
+    echo "unit unchanged"
+  else
+    sudo install -m 644 "$RENDER" "$INSTALLED"; sudo systemctl daemon-reload
+    echo "unit installed at $INSTALLED"
+  fi
+  # A lane that serves goes on serving the unit, the runtime and the start scripts it started with:
+  # said here when no proof follows to restart it, whether this run or an earlier update changed
+  # them (an update leaves a serving lane serving, and said nothing for the image and video lanes:
+  # found in review, 2026-10-14).
+  LANE_FILES=("$INSTALLED" "$CONFIG_DIR/vllm-auth/vllm_engine_auth.py" "$CONFIG_DIR/engine-preflight.sh" "$CONFIG_DIR/engine-secrets.sh")
+  if [ "$SMOKE" -eq 0 ] && lane_serves_older "$UNIT" "${LANE_FILES[@]}"; then
+    echo "NOTE: Kolibri runs older files than the ones installed now (its unit, its runtime or its start scripts); it runs these after: sudo systemctl restart $UNIT   (or Load it again from the cockpit)"
+  fi
+  # Images of this lane built from older pins, once the unit names this one: removed before
+  # the checkpoint came, a failed download left the unit naming an image that was gone.
+  for img in $(docker images --format '{{.Repository}}:{{.Tag}}' 'qwen38-kolibri' 2>/dev/null); do
+    [ "$img" = "$LOCAL_IMAGE" ] || { docker rmi "$img" >/dev/null 2>&1 && echo "removed the older build $img"; }
+  done
+  # Installed, not switched to: the lane this box serves stays the lane it serves.
+  echo "installed as a lane of its own. Switch to it like any lane:"
+  echo "  the cockpit: Load on Kolibri-1 in the Lanes view"
+  echo "  a terminal : ./switch-model.sh kolibri (or kolibri-nvfp4), then the commands it prints"
+}
+
 step "1/5 Preflight ($VARIANT: $MODEL @ ${MODEL_REV:0:12})"
 case "$(uname -m)" in aarch64|arm64) : ;; *) die "this lane is verified on the DGX Spark's ARM64 GB10 only (this box is $(uname -m))." ;; esac
 command -v nvidia-smi >/dev/null || die "nvidia-smi not found: this needs the NVIDIA driver."
@@ -229,6 +282,8 @@ existing(){ local p="$1"; while [ ! -e "$p" ]; do p="$(dirname "$p")"; done; pri
 free_gb(){ { df -BG --output=avail "$(existing "$1")" 2>/dev/null || true; } | tail -1 | tr -dc '0-9'; }
 HAVE_B="$({ du -s --apparent-size -B1 -L "$HF_CACHE/hub/models--${MODEL//\//--}/blobs" 2>/dev/null || true; } | cut -f1)"
 WEIGHTS_NEED=$(( (WEIGHTS_GB * 1000000000 - ${HAVE_B:-0}) / 1000000000 )); [ "$WEIGHTS_NEED" -ge 0 ] || WEIGHTS_NEED=0
+# --prepare: the checkpoint is the Load's switch's to fetch, and to measure
+[ "$MODE" = prepare ] && WEIGHTS_NEED=0
 DOCKER_ROOT="$(docker info --format '{{.DockerRootDir}}' 2>/dev/null || echo /var/lib/docker)"
 IMAGE_NEED="$IMAGE_GB"
 docker image inspect "$LOCAL_IMAGE" >/dev/null 2>&1 && IMAGE_NEED=0
@@ -236,7 +291,15 @@ docker image inspect "$KOLIBRI_BASE_IMAGE" >/dev/null 2>&1 && IMAGE_NEED=0
 FREE_W="$(free_gb "$HF_CACHE")"; FREE_D="$(free_gb "$DOCKER_ROOT")"
 # -L: a cache moved to another disk behind a symlink (~/.cache/huggingface on an SSD) is on
 # that disk; the link's own device is the home directory's, which skipped Docker's check.
-if [ "$(stat -L -c %d "$(existing "$HF_CACHE")")" = "$(stat -L -c %d "$(existing "$DOCKER_ROOT")")" ]; then
+if [ "$MODE" = units ]; then
+  echo "OK: $(uname -m), key present; the image and the checkpoint come with the lane's first Load"
+  install_service
+  step "Done: the Kolibri lane is installed; its first Load prepares it"
+  echo "  the cockpit: Load on Kolibri-1 in the Lanes view builds its image (about $IMAGE_GB GB),"
+  echo "               fetches its checkpoint (about $WEIGHTS_GB GB), then starts it"
+  echo "  a terminal : ./install-kolibri.sh --prepare, then ./switch-model.sh kolibri and the commands it prints"
+  exit 0
+elif [ "$(stat -L -c %d "$(existing "$HF_CACHE")")" = "$(stat -L -c %d "$(existing "$DOCKER_ROOT")")" ]; then
   WANT=$((WEIGHTS_NEED + IMAGE_NEED))
   [ "${FREE_W:-0}" -ge "$WANT" ] \
     || die "${FREE_W:-?} GB free on the disk of $HF_CACHE and $DOCKER_ROOT, this needs about $WANT GB ($WEIGHTS_NEED for the checkpoint, $IMAGE_NEED for the image). Free some space, or ./install.sh --no-kolibri to leave this lane out."
@@ -276,6 +339,11 @@ DEOF
   echo "built from $KOLIBRI_BASE_IMAGE and the plugin's wheel"
 fi
 
+if [ "$MODE" = prepare ]; then
+  step "Done: the Kolibri lane's image is ready; its Load fetches the checkpoint and starts it"
+  exit 0
+fi
+
 step "3/5 Checkpoint ($MODEL @ ${MODEL_REV:0:12}, resumable)"
 mkdir -p "$HF_CACHE"
 DL_TOKEN_ARGS=()
@@ -295,48 +363,7 @@ docker run --rm --network host --user "$(id -u):$(id -g)" --entrypoint python3 \
   -v "$HF_CACHE":/hf "$LOCAL_IMAGE" /opt/qwen38/ckpt-fetch.py "$MODEL" "$MODEL_REV" --offline-first \
   || die "checkpoint download failed. Causes: no internet, HuggingFace throttling an unauthenticated download (set HF_TOKEN=<your token>), a pinned revision removed upstream, or a permission error in $HF_CACHE. Re-running resumes."
 
-step "4/5 Service"
-mkdir -p "$CONFIG_DIR" "$CONFIG_DIR/kolibri-cache"
-# The unit runs both before every start: run on its own, this installer puts them in place.
-cmp -s "$HERE/engine-preflight.sh" "$CONFIG_DIR/engine-preflight.sh" \
-  || install -m 755 "$HERE/engine-preflight.sh" "$CONFIG_DIR/engine-preflight.sh"
-cmp -s "$HERE/engine-secrets.sh" "$CONFIG_DIR/engine-secrets.sh" \
-  || install -m 755 "$HERE/engine-secrets.sh" "$CONFIG_DIR/engine-secrets.sh"
-# The middleware that asks the key on every route of the engine (see vllm_engine_auth.py),
-# in a directory of its own: the unit mounts that one, read-only, on the module path.
-mkdir -p "$CONFIG_DIR/vllm-auth"
-cmp -s "$HERE/vllm_engine_auth.py" "$CONFIG_DIR/vllm-auth/vllm_engine_auth.py" \
-  || install -m 644 "$HERE/vllm_engine_auth.py" "$CONFIG_DIR/vllm-auth/vllm_engine_auth.py"
-RENDER="$(mktemp)"; trap 'rm -f "$RENDER"' EXIT
-sed -e "s|__USER__|$(id -un)|g" -e "s|__GROUP__|$(id -gn)|g" -e "s|__HOME__|$HOME|g" \
-    -e "s|__IMAGE__|$LOCAL_IMAGE|g" -e "s|__MODEL__|$MODEL|g" -e "s|__REV__|$MODEL_REV|g" \
-    -e "s|__GMU__|$GMU|g" -e "s|__HF_CACHE__|$HF_CACHE|g" \
-    -e "s|__ENGINE_BIND__|$ENGINE_BIND|g" -e "s|__PORT__|$PORT|g" \
-    "$HERE/$UNIT.template" > "$RENDER"
-grep -q '__[A-Z][A-Z0-9_]*__' "$RENDER" && die "the unit template still holds an unsubstituted placeholder: $(grep -o '__[A-Z][A-Z0-9_]*__' "$RENDER" | sort -u | tr '\n' ' ')"
-if [ -f "$INSTALLED" ] && sudo cmp -s "$RENDER" "$INSTALLED"; then
-  echo "unit unchanged"
-else
-  sudo install -m 644 "$RENDER" "$INSTALLED"; sudo systemctl daemon-reload
-  echo "unit installed at $INSTALLED"
-fi
-# A lane that serves goes on serving the unit, the runtime and the start scripts it started with:
-# said here when no proof follows to restart it, whether this run or an earlier update changed
-# them (an update leaves a serving lane serving, and said nothing for the image and video lanes:
-# found in review, 2026-10-14).
-LANE_FILES=("$INSTALLED" "$CONFIG_DIR/vllm-auth/vllm_engine_auth.py" "$CONFIG_DIR/engine-preflight.sh" "$CONFIG_DIR/engine-secrets.sh")
-if [ "$SMOKE" -eq 0 ] && lane_serves_older "$UNIT" "${LANE_FILES[@]}"; then
-  echo "NOTE: Kolibri runs older files than the ones installed now (its unit, its runtime or its start scripts); it runs these after: sudo systemctl restart $UNIT   (or Load it again from the cockpit)"
-fi
-# Images of this lane built from older pins, once the unit names this one: removed before
-# the checkpoint came, a failed download left the unit naming an image that was gone.
-for img in $(docker images --format '{{.Repository}}:{{.Tag}}' 'qwen38-kolibri' 2>/dev/null); do
-  [ "$img" = "$LOCAL_IMAGE" ] || { docker rmi "$img" >/dev/null 2>&1 && echo "removed the older build $img"; }
-done
-# Installed, not switched to: the lane this box serves stays the lane it serves.
-echo "installed as a lane of its own. Switch to it like any lane:"
-echo "  the cockpit: Load on Kolibri-1 in the Lanes view"
-echo "  a terminal : ./switch-model.sh kolibri (or kolibri-nvfp4), then the commands it prints"
+install_service
 
 if [ "$SMOKE" -eq 0 ]; then step "Done (proof skipped)"; exit 0; fi
 

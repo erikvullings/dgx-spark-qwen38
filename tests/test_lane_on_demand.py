@@ -143,5 +143,40 @@ class TheVideoLaneInTwoHalves(TheImageLaneInTwoHalves):
         self.assertIn("python - larryvrh/MiniMax-H3-Turbo-Lora", "\n".join(calls))
 
 
+
+class TheKolibriLaneInTwoHalves(unittest.TestCase):
+    """Kolibri's runtime is an image built on the box: --prepare builds it as the user (docker,
+    no sudo). Here the image is already built, as the fake docker says; the build itself is
+    the step's own lines, which call no sudo."""
+
+    def box(self, **kw):
+        box = Box("install-kolibri.sh", **kw)
+        (box.bin / "docker").write_text(RECORD + 'case "$1" in info|images) exit 0 ;; image) exit 0 ;; esac\nexit 1\n')
+        for f in ("engine-secrets.sh", "vllm_engine_auth.py", "qwen38-kolibri.service.template"):
+            assert (box.script.parent / f).exists(), f
+        return box
+
+    def test_units_only_puts_in_the_unit_and_builds_nothing(self):
+        box = self.box(root_ok=True)
+        rc, out, calls = box.run("--units-only")
+        self.assertEqual(rc, 0, out)
+        self.assertTrue((box.units / "qwen38-kolibri.service").exists(), out)
+        self.assertFalse([c for c in calls if c.startswith(("docker build", "docker pull", "docker run"))], calls)
+        self.assertIn("first Load", out)
+
+    def test_prepare_readies_the_image_with_no_sudo_and_no_unit(self):
+        box = self.box()
+        rc, out, calls = box.run("--prepare")
+        self.assertEqual(rc, 0, out)
+        self.assertFalse([c for c in calls if c.startswith(("sudo ", "systemctl ", "docker run"))], calls)
+        self.assertFalse((box.units / "qwen38-kolibri.service").exists())
+        self.assertIn("image is ready", out)
+
+    def test_the_build_step_calls_no_sudo(self):
+        text = (REPO / "install-kolibri.sh").read_text()
+        build = text[text.index('step "2/5 Image ($LOCAL_IMAGE)"'):text.index('step "3/5 Checkpoint')]
+        self.assertNotRegex(build, r"(^|[;&|(]\s*)sudo\b")
+
+
 if __name__ == "__main__":
     unittest.main()
