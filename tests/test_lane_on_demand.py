@@ -80,7 +80,8 @@ class Box:
         for name, body in (("python3", FAKE_PY), ("git", FAKE_GIT), ("sudo", FAKE_SUDO),
                            ("systemctl", RECORD + '[ "$1" = daemon-reload ] && exit 0\nexit 1\n'),
                            ("docker", RECORD + "exit 1\n"),
-                           ("nvidia-smi", RECORD + "exit 0\n"), ("uname", "#!/bin/sh\necho aarch64\n")):
+                           ("nvidia-smi", RECORD + "exit 0\n"), ("uname", "#!/bin/sh\necho aarch64\n"),
+                           ("ffmpeg", RECORD + "exit 0\n"), ("ffprobe", RECORD + "exit 0\n")):
             (self.bin / name).write_text(body)
             (self.bin / name).chmod(0o755)
         self.calls = self.t / "calls"
@@ -127,6 +128,19 @@ class TheImageLaneInTwoHalves(unittest.TestCase):
         rc, out, calls = Box(self.INSTALLER).run("--units-only", "--prepare")
         self.assertNotEqual(rc, 0)
         self.assertEqual(calls, [])
+
+
+
+class TheVideoLaneInTwoHalves(TheImageLaneInTwoHalves):
+    INSTALLER = "install-video.sh"
+    LANE = ".local/share/qwen38-video"
+    UNIT = "qwen38-video.service"
+
+    def test_prepare_fetches_the_turbo_adapter_and_not_the_checkpoint(self):
+        # the switch fetches the checkpoint; the adapter is the installer's alone to fetch
+        rc, out, calls = Box(self.INSTALLER).run("--prepare")
+        self.assertEqual(rc, 0, out)
+        self.assertIn("python - larryvrh/MiniMax-H3-Turbo-Lora", "\n".join(calls))
 
 
 if __name__ == "__main__":

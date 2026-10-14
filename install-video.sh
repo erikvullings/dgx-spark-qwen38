@@ -41,10 +41,16 @@ if [ "$(id -u)" = "0" ] && [ "${ALLOW_ROOT:-0}" != "1" ]; then
   die "run this as the user who will use the box, not as root (everything it installs is addressed from \$HOME)."
 fi
 
-SMOKE=1; ACTION=install
+SMOKE=1; ACTION=install; MODE=full
 for a in "$@"; do case "$a" in
   --no-smoke) SMOKE=0 ;;
   --uninstall) ACTION=uninstall ;;
+  # The two halves of a lane installed on demand, as for the image lane: --units-only puts
+  # in what needs root (the unit, its start script) and nothing heavy, and --prepare builds
+  # the runtime and fetches the Turbo adapter as the user, with no sudo, when the cockpit
+  # first loads the lane. The checkpoint comes with that Load's switch, as for any Load.
+  --units-only) [ "$MODE" = full ] || die "--units-only and --prepare are the two halves of an install: one at a time"; MODE=units ;;
+  --prepare) [ "$MODE" = full ] || die "--units-only and --prepare are the two halves of an install: one at a time"; MODE=prepare ;;
   -h|--help) sed -n '2,30p' "$0"; exit 0 ;;
   *) die "unknown option: $a" ;;
 esac; done
@@ -168,6 +174,55 @@ if [ "$ACTION" = uninstall ]; then
   exit 0
 fi
 
+# Step 5, the one part that needs root: the unit, its outputs folder and its start script.
+# A function, since a lane installed on demand (--units-only) takes it after the preflight.
+install_service(){
+  step "5/6 Service"
+  # The lane's own output directory: the download needs the file to still be there,
+  # so the server writes every MP4 here instead of a temp dir it deletes. Old videos
+  # stay until deleted by hand; uninstall.sh leaves them alone.
+  mkdir -p "$LANE_DIR/outputs"
+  # The unit runs engine-preflight.sh before every start: run on its own, this installer
+  # must put it in place, or the lane would never start.
+  mkdir -p "$CONFIG_DIR"
+  cmp -s "$HERE/engine-preflight.sh" "$CONFIG_DIR/engine-preflight.sh" \
+    || install -m 755 "$HERE/engine-preflight.sh" "$CONFIG_DIR/engine-preflight.sh"
+  RENDER="$(mktemp)"; trap 'rm -f "$RENDER"' EXIT
+  sed -e "s|__USER__|$(id -un)|g" -e "s|__GROUP__|$(id -gn)|g" \
+      -e "s|__VIDEO_LANE_DIR__|$LANE_DIR|g" -e "s|__VIDEO_VENV__|$VENV|g" \
+      -e "s|__VIDEO_MODEL__|$MODEL|g" -e "s|__VIDEO_VARIANT__|$VARIANT|g" \
+      -e "s|__VIDEO_PORT__|$PORT|g" \
+      -e "s|__VIDEO_BIND__|$VIDEO_BIND|g" -e "s|__HF_CACHE__|$HF_CACHE|g" \
+      -e "s|__HOME__|$HOME|g" \
+      "$HERE/$UNIT.template" > "$RENDER"
+  grep -q '__[A-Z][A-Z0-9_]*__' "$RENDER" && die "the unit template still holds an unsubstituted placeholder: $(grep -o '__[A-Z][A-Z0-9_]*__' "$RENDER" | sort -u | tr '\n' ' ')"
+  # 0644 like every other unit, and set explicitly: mktemp creates 0600 and cp keeps the
+  # mode, which left the image unit readable by root alone until this fix. Everything
+  # that reads the unit (switch-model.sh, the cockpit) failed quietly on a 0600 unit.
+  if [ -f "$INSTALLED" ] && sudo cmp -s "$RENDER" "$INSTALLED"; then
+    echo "unit unchanged"
+    sudo chmod 644 "$INSTALLED"      # a unit installed before this fix is still 0600
+  else
+    sudo install -m 644 "$RENDER" "$INSTALLED"; sudo systemctl daemon-reload
+    echo "unit installed at $INSTALLED"
+  fi
+  # A lane that serves goes on serving the unit, the runtime and the start scripts it started with:
+  # said here when no proof follows to restart it, whether this run or an earlier update changed
+  # them (an update leaves a serving lane serving, and said nothing for the image and video lanes:
+  # found in review, 2026-10-14). The runtime's dates: runtime-changed, touched at each change
+  # since v1.30, and the notes of the wheel and of the source, which said the changes before.
+  LANE_FILES=("$INSTALLED" "$RUNTIME_NOTE" "$WHEEL_NOTE" "$SOURCE_NOTE" "$CONFIG_DIR/engine-preflight.sh")
+  if [ "$SMOKE" -eq 0 ] && lane_serves_older "$UNIT" "${LANE_FILES[@]}"; then
+    echo "NOTE: The video lane runs older files than the ones installed now (its unit, its runtime or its start scripts); it runs these after: sudo systemctl restart $UNIT   (or Load it again from the cockpit)"
+  fi
+  # Installed, not switched to: the lane this box serves stays the lane it serves. The
+  # video lane becomes the boot lane the same way the other lanes do, by a switch, which
+  # is also what makes it come back after a reboot.
+  echo "installed as a lane of its own. Switch to it like any lane:"
+  echo "  the cockpit: Load on MiniMax-H3 in the Lanes view (it switches, stops the serving lane, starts this one)"
+  echo "  a terminal : ./switch-model.sh video, then the two commands it prints"
+}
+
 step "1/6 Preflight"
 case "$(uname -m)" in aarch64|arm64) : ;; *) die "this lane is verified on the DGX Spark's ARM64 GB10 only (this box is $(uname -m))." ;; esac
 command -v nvidia-smi >/dev/null || die "nvidia-smi not found: this needs the NVIDIA driver."
@@ -183,6 +238,15 @@ python3 -c 'import venv, ensurepip' 2>/dev/null || die "python3-venv is missing 
 # headers (PyPI has no aarch64 wheel of it), and DGX OS installs python3-pip without them.
 [ -f "$(python3 -c 'import sysconfig; print(sysconfig.get_paths()["include"])')/Python.h" ] || die "python3-dev is missing (xatlas, which this lane needs, is built here against Python's headers). Fix: sudo apt-get install -y python3-dev"
 [ -s "$CONFIG_DIR/api-key" ] || die "no API key at $CONFIG_DIR/api-key. Run ./install.sh first: the cockpit is the authenticated door in front of this lane, and it reads that file."
+if [ "$MODE" = units ]; then
+  echo "OK: $(uname -m), key present; the runtime and the checkpoint come with the lane's first Load"
+  install_service
+  step "Done: the video lane is installed; its first Load prepares it"
+  echo "  the cockpit: Load on MiniMax-H3 in the Lanes view builds its runtime (about $RUNTIME_GB GB),"
+  echo "               fetches its checkpoint (about $WEIGHTS_GB GB), then starts it"
+  echo "  a terminal : ./install-video.sh --prepare, then ./switch-model.sh video and the commands it prints"
+  exit 0
+fi
 # Measured where each part lands, by bytes in the blobs: the folder alone says nothing,
 # since huggingface_hub creates it before the first byte.
 existing(){ local p="$1"; while [ ! -e "$p" ]; do p="$(dirname "$p")"; done; printf '%s\n' "$p"; }
@@ -190,6 +254,8 @@ free_gb(){ { df -BG --output=avail "$(existing "$1")" 2>/dev/null || true; } | t
 HAVE_B="$({ du -s --apparent-size -B1 "$HF_CACHE/hub/models--${MODEL//\//--}/blobs" 2>/dev/null || true; } | cut -f1)"
 # what is left, in whole GB (a complete checkpoint is 0 left, not 1)
 WEIGHTS_NEED=$(( (WEIGHTS_GB * 1073741824 - ${HAVE_B:-0}) / 1073741824 )); [ "$WEIGHTS_NEED" -ge 0 ] || WEIGHTS_NEED=0
+# --prepare: the checkpoint is the Load's switch's to fetch, and to measure
+[ "$MODE" = prepare ] && WEIGHTS_NEED=0
 # Two caches of the runtime's own, written at the lane's first start and reused after, on the
 # disk of $HOME and outside the lane's folder (counted nowhere before this check, 2026-10-10):
 # copies of 52 transformed DiT weights (fused q/k/v, reordered rows) as file mappings, 11.2
@@ -351,7 +417,8 @@ echo "fetching with allow: ${ALLOW:-(whole repo)} (variant $VARIANT, model $MODE
 # byte count). The unit serves the repo by name with HF_HUB_OFFLINE=1, which resolves
 # refs/main, and a download by commit writes no ref: --refs-main pin points main at the
 # pinned commit, which is what is served.
-HF_HOME="$HF_CACHE" HF_HUB_DOWNLOAD_TIMEOUT=30 HF_HUB_DISABLE_XET=1 \
+[ "$MODE" = prepare ] && echo "the checkpoint is left to the Load's switch, which fetches it; the Turbo adapter only, here"
+[ "$MODE" = prepare ] || HF_HOME="$HF_CACHE" HF_HUB_DOWNLOAD_TIMEOUT=30 HF_HUB_DISABLE_XET=1 \
   "$VENV/bin/python" "$HERE/ckpt-fetch.py" "$MODEL" "$MODEL_REV" --allow "$ALLOW" --refs-main pin \
   || die "checkpoint download failed. Causes: no internet, HuggingFace throttling an unauthenticated download (set HF_TOKEN=<your token>), a pinned revision removed upstream (VIDEO_MODEL_REV=main serves the current one), a disk too small for the partition served, or a permission error in the cache. Re-running resumes."
 # The Turbo adapter, for the FL2VA weights it was trained on; a ref2va lane has no Turbo.
@@ -367,51 +434,12 @@ repo, rev, name = sys.argv[1:4]
 print("   Turbo adapter: " + hf_hub_download(repo, name, revision=rev), flush=True)
 PY
 fi
+if [ "$MODE" = prepare ]; then
+  step "Done: the video lane's runtime is ready; its Load fetches the checkpoint and starts it"
+  exit 0
+fi
 
-step "5/6 Service"
-# The lane's own output directory: the download needs the file to still be there,
-# so the server writes every MP4 here instead of a temp dir it deletes. Old videos
-# stay until deleted by hand; uninstall.sh leaves them alone.
-mkdir -p "$LANE_DIR/outputs"
-# The unit runs engine-preflight.sh before every start: run on its own, this installer
-# must put it in place, or the lane would never start.
-mkdir -p "$CONFIG_DIR"
-cmp -s "$HERE/engine-preflight.sh" "$CONFIG_DIR/engine-preflight.sh" \
-  || install -m 755 "$HERE/engine-preflight.sh" "$CONFIG_DIR/engine-preflight.sh"
-RENDER="$(mktemp)"; trap 'rm -f "$RENDER"' EXIT
-sed -e "s|__USER__|$(id -un)|g" -e "s|__GROUP__|$(id -gn)|g" \
-    -e "s|__VIDEO_LANE_DIR__|$LANE_DIR|g" -e "s|__VIDEO_VENV__|$VENV|g" \
-    -e "s|__VIDEO_MODEL__|$MODEL|g" -e "s|__VIDEO_VARIANT__|$VARIANT|g" \
-    -e "s|__VIDEO_PORT__|$PORT|g" \
-    -e "s|__VIDEO_BIND__|$VIDEO_BIND|g" -e "s|__HF_CACHE__|$HF_CACHE|g" \
-    -e "s|__HOME__|$HOME|g" \
-    "$HERE/$UNIT.template" > "$RENDER"
-grep -q '__[A-Z][A-Z0-9_]*__' "$RENDER" && die "the unit template still holds an unsubstituted placeholder: $(grep -o '__[A-Z][A-Z0-9_]*__' "$RENDER" | sort -u | tr '\n' ' ')"
-# 0644 like every other unit, and set explicitly: mktemp creates 0600 and cp keeps the
-# mode, which left the image unit readable by root alone until this fix. Everything
-# that reads the unit (switch-model.sh, the cockpit) failed quietly on a 0600 unit.
-if [ -f "$INSTALLED" ] && sudo cmp -s "$RENDER" "$INSTALLED"; then
-  echo "unit unchanged"
-  sudo chmod 644 "$INSTALLED"      # a unit installed before this fix is still 0600
-else
-  sudo install -m 644 "$RENDER" "$INSTALLED"; sudo systemctl daemon-reload
-  echo "unit installed at $INSTALLED"
-fi
-# A lane that serves goes on serving the unit, the runtime and the start scripts it started with:
-# said here when no proof follows to restart it, whether this run or an earlier update changed
-# them (an update leaves a serving lane serving, and said nothing for the image and video lanes:
-# found in review, 2026-10-14). The runtime's dates: runtime-changed, touched at each change
-# since v1.30, and the notes of the wheel and of the source, which said the changes before.
-LANE_FILES=("$INSTALLED" "$RUNTIME_NOTE" "$WHEEL_NOTE" "$SOURCE_NOTE" "$CONFIG_DIR/engine-preflight.sh")
-if [ "$SMOKE" -eq 0 ] && lane_serves_older "$UNIT" "${LANE_FILES[@]}"; then
-  echo "NOTE: The video lane runs older files than the ones installed now (its unit, its runtime or its start scripts); it runs these after: sudo systemctl restart $UNIT   (or Load it again from the cockpit)"
-fi
-# Installed, not switched to: the lane this box serves stays the lane it serves. The
-# video lane becomes the boot lane the same way the other lanes do, by a switch, which
-# is also what makes it come back after a reboot.
-echo "installed as a lane of its own. Switch to it like any lane:"
-echo "  the cockpit: Load on MiniMax-H3 in the Lanes view (it switches, stops the serving lane, starts this one)"
-echo "  a terminal : ./switch-model.sh video, then the two commands it prints"
+install_service
 
 # The smoke body is t2va on MiniMax-H3's fl2va weights: the ref2va weights take no
 # unconditioned call, and another model's id the smoke does not name. Asking for

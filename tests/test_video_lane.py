@@ -291,9 +291,9 @@ class TheInstaller(unittest.TestCase):
             with open(blobs / "b", "wb") as f:
                 f.truncate(cached_bytes or cached_gib * 2**30)
         start = self.text.index("existing(){")
-        end = self.text.index('echo "OK: $(uname -m)')
+        end = self.text.index('echo "OK: $(uname -m), key present, checkpoint')
         script = ('set -euo pipefail\ndie(){ echo "DIE: $*"; exit 1; }\n'
-                  f'HOME="{d}/home"; HF_CACHE="{d}/hf"; LANE_DIR="{d}/lane"; MODEL=MiniMaxAI/MiniMax-H3\n'
+                  f'HOME="{d}/home"; HF_CACHE="{d}/hf"; LANE_DIR="{d}/lane"; MODEL=MiniMaxAI/MiniMax-H3; MODE=full\n'
                   + "\n".join(ln for ln in self.text.splitlines() if ln.startswith(("WEIGHTS_GB=",)))
                   + "\n" + self.text[start:end] + 'echo "NEED=$WEIGHTS_NEED"; echo ROOM-OK\n')
         r = subprocess.run(["bash", "-c", script], capture_output=True, text=True, timeout=30,
