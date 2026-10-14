@@ -2825,7 +2825,13 @@ except Exception as e:
       case "$2" in
         proved)    echo "  $1: installed and proved it serves; Load it from the cockpit's Lanes view (or ./switch-model.sh $4)" ;;
         installed) echo "  $1: installed and up to date; Load it from the cockpit's Lanes view (or ./switch-model.sh $4)" ;;
-        failed)    echo "  $1: NOT ready, see its NOTE above; a plain ./install.sh tries again (it resumes what it did)" ;;
+        failed)    if [ -f "$6" ]; then
+                     # installed, then its proof failed: a plain run updates it and proves nothing
+                     # (it is no longer new), so the line said a retry that never came (review, 2026-10-14)
+                     echo "  $1: NOT ready, see its NOTE above; it is installed but did not prove it serves: ./install.sh --with-$3 proves it again"
+                   else
+                     echo "  $1: NOT ready, see its NOTE above; a plain ./install.sh tries again (it resumes what it did)"
+                   fi ;;
         off)       if [ -f "$6" ]; then
                      echo "  $1: left out by --no-$3, so not updated; ./install.sh --with-$3 brings it back"
                    else

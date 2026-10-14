@@ -197,6 +197,13 @@ class TheSummarySaysWhatBecameOfEachOtherLane(unittest.TestCase):
         self.assertIn("installed and up to date", self.line("installed", True))
         self.assertIn("a plain ./install.sh tries again", self.line("failed", False))
 
+    def test_a_lane_installed_whose_proof_failed_is_told_how_to_prove_it(self):
+        # its unit is on the box, so the next plain run finds it not new, updates it and proves
+        # nothing: the line promised a retry that never came (found in review, 2026-10-14)
+        out = self.line("failed", True)
+        self.assertIn("./install.sh --with-image proves it again", out)
+        self.assertNotIn("a plain ./install.sh tries again", out)
+
 
 class OneDiskForBoth(unittest.TestCase):
     """HF_CACHE and Docker's root on one disk, as on a stock box: the needs add up there."""
