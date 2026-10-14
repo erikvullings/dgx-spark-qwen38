@@ -16,6 +16,7 @@ import pathlib
 import subprocess
 import sys
 import tempfile
+import time
 import unittest
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -222,6 +223,8 @@ class ATextLaneBeforeBothSideLanes(unittest.TestCase):
         cfg.mkdir(parents=True)
         (cfg / "text-lane").write_text("qwen38-flash.service\n")
         (cfg / "lane-before-video").write_text("qwen38-sglang.service\n")
+        stale = time.time() - 60                  # left by an older version, before the record
+        os.utime(cfg / "lane-before-video", (stale, stale))
         (cfg / "launch-flash.sh").write_text(self.LAUNCHER)
         units = {"qwen38-sglang.service": SGL_UNIT, "qwen38-flash.service": self.FLASH_UNIT,
                  "qwen38-image.service": "[Service]\n", "qwen38-video.service": "[Service]\n"}

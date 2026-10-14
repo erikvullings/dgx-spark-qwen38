@@ -15,6 +15,7 @@ import os
 import pathlib
 import subprocess
 import tempfile
+import time
 import unittest
 
 REPO = pathlib.Path(__file__).resolve().parents[1]
@@ -43,6 +44,11 @@ class TheUninstallKeepsTheChain(unittest.TestCase):
         self.cfg = cfg
         for name, value in files.items():
             (cfg / name).write_text(value + "\n")
+            if name.startswith("lane-before-"):
+                # older than any record, as on a box: only a version before v1.30 wrote links
+                # (a link newer than the record is read again, test_text_lane)
+                t = time.time() - 60
+                os.utime(cfg / name, (t, t))
         bin_ = d / "bin"
         bin_.mkdir()
         log = self.log = d / "calls.log"

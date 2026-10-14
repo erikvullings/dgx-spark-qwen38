@@ -174,7 +174,7 @@ if [ "$CHOICE" = "kolibri" ] || [ "$CHOICE" = "kolibri-nvfp4" ]; then
   # Kolibri lane later gives the boot back to it (install-kolibri.sh --uninstall).
   for TEXT_UNIT_NAME in qwen38-sglang.service qwen38-flash.service; do
     if systemctl is-enabled --quiet "$TEXT_UNIT_NAME" 2>/dev/null; then
-      text_lane_note "$TEXT_UNIT_NAME"
+      text_lane_note "$TEXT_UNIT_NAME"; break   # both enabled: the 27B, as install.sh follows it
     fi
   done
   # The loop variable ends in UNIT_NAME on purpose: CI checks every
@@ -387,7 +387,7 @@ PYIMG
   # updates that lane on a later run, and enablement cannot tell it once both are off.
   for TEXT_UNIT_NAME in qwen38-sglang.service qwen38-flash.service; do
     if systemctl is-enabled --quiet "$TEXT_UNIT_NAME" 2>/dev/null; then
-      text_lane_note "$TEXT_UNIT_NAME"
+      text_lane_note "$TEXT_UNIT_NAME"; break   # both enabled: the 27B, as install.sh follows it
     fi
   done
   # The loop variable ends in UNIT_NAME on purpose: CI checks every
@@ -535,7 +535,7 @@ PYVID
   # updates that lane on a later run, and enablement cannot tell it once all are off.
   for TEXT_UNIT_NAME in qwen38-sglang.service qwen38-flash.service; do
     if systemctl is-enabled --quiet "$TEXT_UNIT_NAME" 2>/dev/null; then
-      text_lane_note "$TEXT_UNIT_NAME"
+      text_lane_note "$TEXT_UNIT_NAME"; break   # both enabled: the 27B, as install.sh follows it
     fi
   done
   # The loop variable ends in UNIT_NAME on purpose: CI checks every

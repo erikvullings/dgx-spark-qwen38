@@ -1,3 +1,4 @@
+# shellcheck shell=bash
 # lanes.sh: what switch-model.sh and the installers share about the lanes. Sourced, never run;
 # it needs CONFIG_DIR, and reads LANES_UNIT_DIR (the units' directory, /etc/systemd/system).
 #
@@ -17,19 +18,25 @@ text_lane_note(){  # $1 unit: the box's text lane is this one; anything but an S
   esac
 }
 
-text_lane_last(){  # [$1 the side lane at boot]: the text lane noted, else the one the links of v1.29 lead to
-  local noted cur side
-  noted="$(cat "$CONFIG_DIR/text-lane" 2>/dev/null || true)"
-  case "$noted" in qwen38-sglang.service|qwen38-flash.service) echo "$noted"; return 0 ;; esac
+text_lane_last(){  # [$1 the side lane at boot] [$2 a file]: the text lane noted, else the one the links of v1.29 lead to
+  # With $2, the record is not read, and only the links newer than that file are followed: the
+  # record knows better than a link written before it (text_lane_migrate's second reading).
+  local noted cur side ref="${2:-}"
+  if [ -z "$ref" ]; then
+    noted="$(cat "$CONFIG_DIR/text-lane" 2>/dev/null || true)"
+    case "$noted" in qwen38-sglang.service|qwen38-flash.service) echo "$noted"; return 0 ;; esac
+  fi
   # A box switched before v1.30 has only the links: they are followed from the side lane at boot
   # first (the others may be older than its switch), at most once through each side lane.
   for side in ${1:+"$1"} image video kolibri; do
-    cur="$(cat "$CONFIG_DIR/lane-before-$side" 2>/dev/null || true)"
-    for _ in 1 2 3; do
+    cur="qwen38-$side.service"
+    for _ in 1 2 3 4; do               # its own link, then each other side lane's once
       case "$cur" in
         qwen38-sglang.service|qwen38-flash.service) echo "$cur"; return 0 ;;
         qwen38-image.service|qwen38-video.service|qwen38-kolibri.service)
-          cur="${cur#qwen38-}"; cur="$(cat "$CONFIG_DIR/lane-before-${cur%.service}" 2>/dev/null || true)" ;;
+          cur="${cur#qwen38-}"; cur="$CONFIG_DIR/lane-before-${cur%.service}"
+          if [ -n "$ref" ] && ! [ "$cur" -nt "$ref" ]; then break; fi
+          cur="$(cat "$cur" 2>/dev/null || true)" ;;
         *) break ;;
       esac
     done
@@ -38,18 +45,29 @@ text_lane_last(){  # [$1 the side lane at boot]: the text lane noted, else the o
 }
 
 text_lane_migrate(){  # once, on a box switched before v1.30: what its links say becomes the record
-  [ -s "$CONFIG_DIR/text-lane" ] && return 0
-  local u="" side t
+  local u="" side t f was="" ref=""
+  if [ -s "$CONFIG_DIR/text-lane" ]; then
+    # A link newer than the record was written after it by a version before v1.30 (the box
+    # went back to one): it says what that version saw, so the links newer than the record are
+    # read again, and the record answers where they lead to an older one (found in review,
+    # 2026-10-14). v1.30 writes no link.
+    for f in "$CONFIG_DIR/lane-before-image" "$CONFIG_DIR/lane-before-video" "$CONFIG_DIR/lane-before-kolibri"; do
+      if [ -e "$f" ] && [ "$f" -nt "$CONFIG_DIR/text-lane" ]; then was="$(cat "$CONFIG_DIR/text-lane")"; fi
+    done
+    [ -n "$was" ] || return 0
+    ref="$CONFIG_DIR/text-lane"
+  fi
   # a text lane at boot is the text lane; else the links, from the side lane at boot first
   for t in qwen38-sglang.service qwen38-flash.service; do
     systemctl is-enabled --quiet "$t" 2>/dev/null && { u="$t"; break; }
   done
   if [ -z "$u" ]; then
     for side in image video kolibri; do
-      if systemctl is-enabled --quiet "qwen38-$side.service" 2>/dev/null; then u="$(text_lane_last "$side")"; break; fi
+      if systemctl is-enabled --quiet "qwen38-$side.service" 2>/dev/null; then u="$(text_lane_last "$side" "$ref")"; break; fi
     done
   fi
-  [ -n "$u" ] || u="$(text_lane_last)"
+  [ -n "$u" ] || u="$(text_lane_last "" "$ref")"
+  [ -n "$u" ] || u="$was"              # links that lead nowhere new: the record stays what it said
   [ -z "$u" ] || text_lane_note "$u"
   return 0
 }

@@ -35,7 +35,7 @@ def side_note(lane):
             "kolibri": 'if [ "$CHOICE" = "kolibri" ] || [ "$CHOICE" = "kolibri-nvfp4" ]; then'}[lane]
     at = SWITCH.index(head)
     m = re.compile(r"\n  for TEXT_UNIT_NAME in [^\n]*; do\n    if systemctl is-enabled --quiet \"\$TEXT_UNIT_NAME\" "
-                   r"2>/dev/null; then\n      text_lane_note \"\$TEXT_UNIT_NAME\"\n    fi\n  done\n").search(SWITCH, at)
+                   r"2>/dev/null; then\n      text_lane_note \"\$TEXT_UNIT_NAME\"(; break[^\n]*)?\n    fi\n  done\n").search(SWITCH, at)
     assert m, f"switch-model.sh's note for the {lane} lane moved"
     return m.group(0)
 
@@ -101,6 +101,19 @@ class TheLibrary(unittest.TestCase):
         self.assertEqual(b.run("text_lane_last image"), "qwen38-flash.service")
         self.assertEqual(b.run("text_lane_last video"), "qwen38-sglang.service")
 
+    def test_a_chain_through_every_side_lane_is_followed(self):
+        # video named Kolibri, Kolibri the image lane, the image lane the flash: three links, each
+        # side lane once, and the same when they are read again after a record older than them
+        b = Box().files(lane_before_video="qwen38-kolibri.service", lane_before_kolibri="qwen38-image.service",
+                        lane_before_image="qwen38-flash.service")
+        self.assertEqual(b.run("text_lane_last video"), "qwen38-flash.service")
+        b = TheLibrary.dated(("text-lane", "qwen38-sglang.service", 400), ("lane-before-image", "qwen38-flash.service", 300),
+                             ("lane-before-kolibri", "qwen38-image.service", 200),
+                             ("lane-before-video", "qwen38-kolibri.service", 100))
+        b.boot("video")
+        b.run("text_lane_migrate")
+        self.assertEqual((b.cfg / "text-lane").read_text(), "qwen38-flash.service\n")
+
     def test_links_that_loop_or_lead_nowhere_say_nothing(self):
         b = Box().files(lane_before_image="qwen38-kolibri.service", lane_before_kolibri="qwen38-image.service")
         self.assertEqual(b.run("text_lane_last image"), "")
@@ -113,6 +126,77 @@ class TheLibrary(unittest.TestCase):
         b.run("text_lane_migrate")
         self.assertEqual((b.cfg / "text-lane").read_text(), "qwen38-flash.service\n")
         b.boot("video")                       # later runs never read the links again
+        b.run("text_lane_migrate")
+        self.assertEqual((b.cfg / "text-lane").read_text(), "qwen38-flash.service\n")
+
+    def test_both_text_lanes_at_boot_note_the_27b(self):
+        # install.sh follows the 27B first when both are enabled, and so does the note: it noted
+        # the flash, the last one the loop met (found in review, 2026-10-14)
+        for lane in SIDES:
+            with self.subTest(lane=lane):
+                b = Box()
+                (b.d / "enabled").write_text("qwen38-sglang.service\nqwen38-flash.service\n")
+                b.run(NOTES[lane])
+                self.assertEqual((b.cfg / "text-lane").read_text(), "qwen38-sglang.service\n")
+
+    def test_links_newer_than_the_record_are_read_again(self):
+        # the box went back to v1.29, which switched from the 27B to the image lane and wrote its
+        # link, then came to v1.30 again: the record says what v1.30 saw before (found in review,
+        # 2026-10-14)
+        b = Box().files(text_lane="qwen38-flash.service", lane_before_image="qwen38-sglang.service")
+        now = time.time()
+        os.utime(b.cfg / "text-lane", (now - 100, now - 100))
+        os.utime(b.cfg / "lane-before-image", (now - 50, now - 50))
+        b.boot("image")
+        b.run("text_lane_migrate")
+        self.assertEqual((b.cfg / "text-lane").read_text(), "qwen38-sglang.service\n")
+        self.assertEqual(b.run("text_lane_back image"), "qwen38-sglang.service")
+
+    def test_a_newer_link_through_an_older_one_keeps_the_record(self):
+        # v1.29 switched the 27B to images (an old link), v1.30 noted the flash before going to
+        # images again, then v1.29 went from images to video: the video lane's link is newer than
+        # the record and leads to the image lane's, which is older, and the record knows better
+        # than that one (found in review, 2026-10-14)
+        b = self.dated(("lane-before-image", "qwen38-sglang.service", 300), ("text-lane", "qwen38-flash.service", 200),
+                       ("lane-before-video", "qwen38-image.service", 100))
+        b.boot("video")
+        b.run("text_lane_migrate")
+        self.assertEqual((b.cfg / "text-lane").read_text(), "qwen38-flash.service\n")
+        self.assertEqual(b.run("text_lane_back video"), "qwen38-flash.service")
+
+    def test_a_newer_link_through_a_newer_one_is_followed(self):
+        # the same, with v1.29 back on the 27B and then images after the record: both links newer
+        b = self.dated(("text-lane", "qwen38-flash.service", 300), ("lane-before-image", "qwen38-sglang.service", 200),
+                       ("lane-before-video", "qwen38-image.service", 100))
+        b.boot("video")
+        b.run("text_lane_migrate")
+        self.assertEqual((b.cfg / "text-lane").read_text(), "qwen38-sglang.service\n")
+
+    @staticmethod
+    def dated(*files):
+        """A box whose config holds these (name, value, age in seconds)."""
+        b = Box()
+        now = time.time()
+        for name, value, age in files:
+            (b.cfg / name).write_text(value + "\n")
+            os.utime(b.cfg / name, (now - age, now - age))
+        return b
+
+    def test_links_older_than_the_record_are_not(self):
+        b = Box().files(text_lane="qwen38-flash.service", lane_before_image="qwen38-sglang.service")
+        now = time.time()
+        os.utime(b.cfg / "lane-before-image", (now - 100, now - 100))
+        os.utime(b.cfg / "text-lane", (now - 50, now - 50))
+        b.boot("image")
+        b.run("text_lane_migrate")
+        self.assertEqual((b.cfg / "text-lane").read_text(), "qwen38-flash.service\n")
+
+    def test_newer_links_that_lead_nowhere_keep_the_record(self):
+        b = Box().files(text_lane="qwen38-flash.service", lane_before_image="qwen38-video.service")
+        now = time.time()
+        os.utime(b.cfg / "text-lane", (now - 100, now - 100))
+        os.utime(b.cfg / "lane-before-image", (now - 50, now - 50))
+        b.boot("image")
         b.run("text_lane_migrate")
         self.assertEqual((b.cfg / "text-lane").read_text(), "qwen38-flash.service\n")
 
