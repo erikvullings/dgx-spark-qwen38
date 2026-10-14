@@ -107,7 +107,7 @@ function s1Problem(){
 function s1Sync(){
   const b = $('s1-run'); if (!b) return;
   const wait = laneWorkWaits();
-  const why = wait || (s1Available === false ? 'System One is not served right now: it needs a text lane.' : s1Running ? '' : s1Problem());
+  const why = wait || (s1Available === false ? 'System One is not served right now: the 27B or the flash lane answers it.' : s1Running ? '' : s1Problem());
   b.disabled = !!wait || s1Available === false || s1Running || !!s1Problem();
   show('s1-why', !!why && !s1Running); setText('s1-why', why);
 }

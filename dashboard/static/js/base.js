@@ -176,8 +176,9 @@ function textReady(){ const s = servingEngine(); return servingReady() && !!s &&
 const imageServing = () => { const s = servingEngine(); return !!s && s[0] === IMAGE_UNIT; };
 const videoServing = () => { const s = servingEngine(); return !!s && s[0] === VIDEO_UNIT; };
 function bootSeconds(unit){
-  const b = ((engines()[unit] || {}).boots || []).slice().sort((a, c) => a - c);
-  return b.length ? b[Math.floor(b.length / 2)] : (READY_DEFAULT[unit] || 540);
+  const b = ((engines()[unit] || {}).boots || []).slice().sort((a, c) => a - c), n = b.length;
+  // the median: the middle boot, or the mean of the two middle ones for an even count
+  return n ? (n % 2 ? b[(n - 1) / 2] : Math.round((b[n / 2 - 1] + b[n / 2]) / 2)) : (READY_DEFAULT[unit] || 540);
 }
 const readyIn = unit => 'about ' + fmtDur(bootSeconds(unit));
 // the text engine's served target, when it is one of this unit's

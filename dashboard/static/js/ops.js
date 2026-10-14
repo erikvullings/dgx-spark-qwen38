@@ -121,7 +121,9 @@ on('reqguard', d => {
   cap('zg-cap', d.state === 'err' ? 'leaking' : d.state === 'warn' ? 'check' : 'holding', d.state === 'err' ? 'err' : d.state === 'warn' ? 'warn' : 'ok');
   setText('zg-verdict', `${cap1(d.verdict || '')} (last ${d.window || '10m'}${d.lane ? ', ' + d.lane : ''}).`);
   setText('zg-ver', g.version ? 'v' + g.version : 'no banner in the journal');
-  setText('zg-override', d.override === true ? 'yes' : d.override === false ? 'no' : d.lane ? 'unknown (docker did not answer)' : 'no engine');
+  // an SGLang setting, which the guard reads on the SGLang lanes only
+  setText('zg-override', d.override === true ? 'yes' : d.override === false ? 'no' : d.lane ? 'unknown (docker did not answer)'
+    : (servingEngine() || [])[0] === KOLIBRI_UNIT ? 'not on the Kolibri lane (an SGLang setting)' : 'no engine');
   const acted = [];
   if (g.aborted) acted.push(`${g.aborted} aborted`);
   if (g.drained) acted.push(`${g.drained} drained${g.drain_max_s != null ? `, longest ${g.drain_max_s.toFixed(0)} s` : ''}`);
@@ -228,7 +230,7 @@ function recipeRow(tb, row){
     const ul = el('ul'); ul.style.cssText = 'margin:6px 0 0 16px; font-size:12px';
     row.drift.forEach(x => ul.append(el('li', 'num', `${x.key}: recipe ${JSON.stringify(x.recipe)}, installed ${JSON.stringify(x.installed)}`))); det.append(ul); cd.append(det); }
 }
-const LOADED = {recipes: false};
+const LOADED = {recipes: false, registry: false};
 async function loadRecipes(){
   const b = $('rcp-btn'); setText(b, 'Loading…'); b.disabled = true;
   try{
@@ -247,11 +249,13 @@ async function loadRecipes(){
   }catch(e){ setText('rcp-line', 'Could not load the recipes: ' + e.message); setText(b, 'Retry'); }
   finally{ b.disabled = false; }
 }
-async function scanRegistry(){
+// fresh: Scan reads the cache again; opening the view shows the server's own read, which the
+// recipes' load has just refreshed
+async function scanRegistry(fresh = true){
   const b = $('reg-btn'); setText(b, 'Scanning…'); b.disabled = true;
   try{
-    const r = await fetch('/api/registry?refresh=1'); if (r.status === 401) return login(); if (!r.ok) throw new Error('HTTP ' + r.status);
-    const d = await r.json();
+    const r = await fetch(fresh ? '/api/registry?refresh=1' : '/api/registry'); if (r.status === 401) return login(); if (!r.ok) throw new Error('HTTP ' + r.status);
+    const d = await r.json(); LOADED.registry = true;
     const tb = $('reg-models').tBodies[0]; clear(tb);
     const offered = [];
     (d.models || []).forEach(m => (m.revisions || []).forEach((rv, i) => {
@@ -334,15 +338,19 @@ async function scanInventory(){
 }
 on('job_finished', j => { if (j.action === 'switch' || j.action === 'unit'){ LOADED.recipes = false; if (activeView === 'library') loadRecipes(); }
   if ((j.action === 'delete_strays' || j.action === 'fetch') && activeView === 'library') scanRegistry(); });
-onShow('library', () => { if (!LOADED.recipes) loadRecipes(); });
+// the registry with them: the checkpoints, what each lane can load (its Download), the images
+// and the other models waited for a Scan, below recipes the same opening had read (2026-10-15)
+onShow('library', async () => { if (!LOADED.recipes) await loadRecipes(); if (!LOADED.registry) scanRegistry(false); });
 
 // ── Logs ──────────────────────────────────────────────────────────────────────
 const LOGS_WANT = {src: null};
 let followTimer = null, logTouched = false, logLines = [];
 // What the box asks its own engine, dimmed so the engine's words stand out: the cockpit's
 // load every second and its engine read every 30 s (current routes and the legacy ones),
-// the health probes, the video poll. The load alone filled the whole view (2026-10-02).
-const POLLED = /GET \/(health|v1\/videos|v1\/loads|server_info|get_load|get_server_info)/;
+// the health probes, the video poll. The load alone filled the whole view (2026-10-02). The
+// Kolibri engine logs every request: its metrics read every few seconds, its version and its
+// model list were the whole of its journal (2026-10-15).
+const POLLED = /GET \/(health|v1\/videos|v1\/loads|server_info|get_load|get_server_info|metrics|version|v1\/models)/;
 function drawLog(){
   const v = $('log-view'), q = $('log-filter').value.trim().toLowerCase();
   clear(v);
@@ -473,7 +481,7 @@ afterApply(() => { setText('ck-ceiling', !textReady() ? 'set when a text lane se
 function wireOps(){
   $('st-copy').addEventListener('click', () => copyText($('st-update').textContent));
   $('rcp-btn').addEventListener('click', loadRecipes);
-  $('reg-btn').addEventListener('click', scanRegistry);
+  $('reg-btn').addEventListener('click', () => scanRegistry(true));
   $('reg-del').addEventListener('click', () => askAction('delete_strays', {}, [], {danger: true}));
   $('up-btn').addEventListener('click', checkUpstream);
   $('inv-btn').addEventListener('click', scanInventory);
