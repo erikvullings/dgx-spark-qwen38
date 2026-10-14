@@ -24,7 +24,8 @@ CALLS = {
     "install.sh, the text lanes":
         ("install.sh", '"$PULLED_IMAGE" /opt/qwen38/ckpt-fetch.py "$1" "$2" --refs-main fill'),
     "switch-model.sh, the text lanes":
-        ("switch-model.sh", '"$DL_IMAGE" /opt/qwen38/ckpt-fetch.py "$TARGET_REPO" "$TARGET_REV" --refs-main fill'),
+        ("switch-model.sh", '"$DL_IMAGE" /opt/qwen38/ckpt-fetch.py "$TARGET_REPO" "$TARGET_REV" --offline-first '
+                            '--refs-main fill'),
     "install-image.sh":
         ("install-image.sh", '"$VENV/bin/python" "$HERE/ckpt-fetch.py" "$MODEL" "$MODEL_REV" --refs-main pin'),
     "switch-model.sh, the image lane":

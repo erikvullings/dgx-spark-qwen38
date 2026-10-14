@@ -655,7 +655,10 @@ fi
 # --init the container outlived the TERM and then a SIGKILL of its docker client, and
 # went on downloading with nobody attached; with it, both were gone within 6 s.
 # ckpt-fetch.py, the one fetch of every lane's checkpoint (resumed attempts, the Xet exception
-# the flash checkpoint's 53.7 GB n-gram table needs, the byte count). Offline serving resolves
+# the flash checkpoint's 53.7 GB n-gram table needs, the byte count). The cache first, as the
+# other lanes' switches ask it: a checkpoint every shard of which is there answers without
+# the network, so a cockpit Load of a text lane works offline or with the Hub throttling
+# (until v1.31 it asked the Hub every time, and died without it). Offline serving resolves
 # "main" via refs/main, which a pinned-sha download never writes: --refs-main fill writes it
 # where it is missing and never moves one the box serves.
 docker run --rm --init --network host --user "$(id -u):$(id -g)" \
@@ -665,7 +668,7 @@ docker run --rm --init --network host --user "$(id -u):$(id -g)" \
   "${DL_TOKEN_ARGS[@]}" "${DL_PROGRESS_ARGS[@]}" \
   -v "$REPO_DIR/ckpt-fetch.py:/opt/qwen38/ckpt-fetch.py:ro" \
   -v "$HF_CACHE":/hf \
-  "$DL_IMAGE" /opt/qwen38/ckpt-fetch.py "$TARGET_REPO" "$TARGET_REV" --refs-main fill \
+  "$DL_IMAGE" /opt/qwen38/ckpt-fetch.py "$TARGET_REPO" "$TARGET_REV" --offline-first --refs-main fill \
   || die "download failed ($(dl_free_gb) GB left under $HF_CACHE; if that is near 0 the disk filled up, otherwise re-run to resume: HuggingFace throttles unauthenticated downloads, set HF_TOKEN=<your token> if it stalls)"
 
 # 2) 1M YaRN patch on the target's cached config.json (27B pair only, and only

@@ -79,6 +79,14 @@ class TheSwitchFollowsTheInstalledCache(unittest.TestCase):
         self.assertIn("-v /data/hf:/hf", runs[0])
         self.assertNotIn(".cache/huggingface:/hf", runs[0])
 
+    def test_the_cache_is_asked_before_the_hub(self):
+        # as the image, video and Kolibri switches do: a cockpit Load of a text lane whose
+        # checkpoint the cache holds whole needs no network (v1.31; it asked the Hub every time)
+        rc, out, runs = Box("/data/hf").switch("stock")
+        self.assertEqual(len(runs), 1, out)
+        self.assertIn("/opt/qwen38/ckpt-fetch.py RadixArk/Qwen3.8-27B-NVFP4 ", runs[0])
+        self.assertIn(" --offline-first --refs-main fill", runs[0])
+
     def test_an_explicit_hf_cache_still_wins(self):
         box = Box("/data/hf")
         _, out, runs = box.switch("uncensored", HF_CACHE="/elsewhere/hf")
