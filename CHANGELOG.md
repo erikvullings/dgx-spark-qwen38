@@ -1,8 +1,19 @@
 # Changelog
 
-## v1.30.0 (2026-10-14): one record of the text lane, and each lane proved on the unit installed
+## v1.30.0 (2026-10-14): Kolibri compacts at 185,000 tokens, one record of the text lane, and each lane proved on what is installed
 
-What the review of v1.29.0 left as proposals, done.
+Kolibri's opencode limits, and what the review of v1.29.0 left as proposals, done.
+
+**Kolibri compacts at 185,000 tokens in opencode, not 153,000.** Its limits were the native
+27B's, 173,000 of context and 64,000 for each answer, which fit the same 262,144-token window,
+the one vLLM holds prompt and answer to together. opencode compacts 20,000 tokens before its
+context limit, so a session compacted at 153,000 while the 64,000 kept for the answer went unused:
+the longest of 26 replies in a session on the reference box was 1,742 tokens, reasoning included
+(median 386). The pair is 205,000 and 32,000 now, the flash lane's answer, by the same rule (the
+threshold, the largest agent step measured and the answer fit the window: 185,000 + 43,863 +
+32,000 = 260,863), and with Kolibri as opencode's default the compaction keeps the last 46,000
+tokens verbatim. An update writes the pair into opencode.json; pi and omp take it at the next
+switch or fit, as their files always do (docs/pi.md).
 
 **One record of the text lane the box comes back to.** A switch to a side lane (image, video,
 Kolibri) disables the text lane's unit, so the box has to remember which text lane it used. Until
@@ -13,17 +24,22 @@ lane removed left another's link naming a unit that was gone, and the image and 
 uninstalls then left the box with no lane at boot. One record now, `~/.config/qwen38/text-lane`,
 the 27B's or the flash's unit, written by every switch and by install.sh and read by all of them
 through one library, `lanes.sh`. There is no chain left to follow or to close. A box switched
-before keeps its answer: its links are read once, while its side lane is still the one at boot. An
-uninstall whose text lane is gone gives the boot to the text lane installed, the 27B first, where
-a link that led nowhere left nothing. The boot goes back to the text lane, not to another side
-lane the box served in between (Kolibri, then images, then the image lane removed: the flash or
-the 27B serves, and Kolibri is one Load away).
+before keeps its answer: its links are read once, while its side lane is still the one at boot,
+and again if a version before this one switched after the record was written (a box taken back to
+v1.29 and updated again). A box with both text lanes enabled at boot notes the 27B, the one
+install.sh follows. An uninstall whose text lane is gone gives the boot to the text lane
+installed, the 27B first, where a link that led nowhere left nothing. The boot goes back to the
+text lane, not to another side lane the box served in between (Kolibri, then images, then the
+image lane removed: the flash or the 27B serves, and Kolibri is one Load away).
 
-**Each lane's proof proves the unit installed.** ./install-image.sh, ./install-video.sh and
+**Each lane's proof proves what is installed.** ./install-image.sh, ./install-video.sh and
 ./install-kolibri.sh, run while their lane served, proved the engine that ran: an update of the
-unit (that run's, or an update's, which leaves a serving lane serving) had not reached it. Each
-installer now says when its lane serves an older unit than the one installed, and its proof
-restarts such a lane to prove the new one.
+unit (that run's, or an update's, which leaves a serving lane serving) had not reached it, nor a
+new runtime (the image and video lanes' venv and SGLang source, as their installers note them, and
+Kolibri's key middleware) or a new start script. Each proof now restarts a lane that runs older
+files than the ones installed, and a run without a proof (--no-smoke) says the lane needs a
+restart. Kolibri's proof counts the unit's own restarts from its start, not from before it: a
+unit that had restarted on its own before let as many crashes of the new one go unseen.
 
 **One fetch of Kolibri's checkpoint.** install-kolibri.sh and switch-model.sh each had their own,
 and only the switch checked that every shard of the index is in the cache before it trusts a
@@ -33,16 +49,22 @@ found both checkpoints whole in under a second, with no network at all.
 
 **The cockpit learns a lane's boot time per checkpoint.** Kolibri's FP8 boots in 8 min 40 s to
 10 min 03 s and its NVFP4 in 6 min 34 s to 7 min 10 s, and one median of both told neither, in the
-load window's countdown and on the Lanes view. A box's history from before goes on serving until a
+load window's countdown and on the Lanes view. A boot counts for the checkpoint it started on, even
+when the unit is rewritten while it boots. A box's history from before goes on serving until a
 checkpoint has boots of its own.
 
 **The proxy (v6.39) stops asking vLLM SGLang's routes.** Every read of the pool on the Kolibri lane
 began with two 404s (/server_info, /get_server_info), and the hold's probe asked /server_info each
-time: the proxy now notes that the engine has neither, until an engine starts again.
+time: the proxy now notes that the engine has neither, until an engine starts again. When
+another engine takes that port with no start the proxy saw (a proxy told no unit to watch), the
+first read that finds it is not vLLM drops what was read from the vLLM engine, its pool among
+them, and asks SGLang's routes again.
 
 **Tested.** Every change has a test that fails on v1.29.1, and every sequence of switches up to six
 lanes long (1,364) holds the one truth: the text lane is the last one served. The local CI ran in
-full, no step skipped. An update restarts the proxy and the cockpit; the engines keep running.
+full, no step skipped. An update restarts the proxy and the cockpit, and opencode-web on a box
+with Kolibri installed, whose limits change (a turn the Agent tab is in ends); the engines keep
+running.
 
 ## v1.29.1 (2026-10-14): a key with a space after it reaches the Kolibri lane too
 
