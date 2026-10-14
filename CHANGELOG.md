@@ -1,5 +1,90 @@
 # Changelog
 
+## v1.32.0 (2026-10-15): a speech lane on the CPU, a cockpit update command that updates, and Library's stray checkpoints
+
+Three things, each reviewed and proved on the reference box: an opt-in speech lane, the update
+command the cockpit gives, and a Library that knows every lane's checkpoints and deletes the
+ones no lane uses.
+
+**A speech lane.** Asked for in
+[discussion #38](https://github.com/hasso5703/dgx-spark-qwen38/discussions/38): speech
+recognition and speech synthesis on the box, behind OpenAI's audio routes. Opt-in, and a
+script of its own: `./install-speech.sh` installs it from a clone where `./install.sh` ran, and
+the one command neither installs it nor updates it (run the script again after an update).
+
+**What it is.** Qwen3-ASR (0.6B, or 1.7B with `SPEECH_ASR=1.7b`) in llama.cpp's `llama-server`,
+built for the CPU at a pinned commit, and Kokoro-82M through onnxruntime, behind
+`/v1/audio/transcriptions`, `/v1/audio/speech`, `/v1/models` and `/v1/voices` on
+`127.0.0.1:30024`, with no key, as the image and video lanes have none; neither the cockpit nor
+the proxy relays it, so programs on the box reach it, and another machine through an SSH tunnel.
+It hears 30 languages and speaks seven with 41 voices; the Japanese and Mandarin voices are
+refused rather than spoken wrong (espeak reads every kanji as "Chinese letter", and gives
+Mandarin no tones: 21% of the characters came back wrong). It reads any audio ffmpeg reads and
+cuts a long recording into pieces of 30 s at its quiet moments: sent whole, 582 s came back cut
+with a 200. Every download is pinned: the llama.cpp commit, the recognizer's GGUF at a revision,
+each file by sha256, and the Python runtime by exact versions, wheels only.
+
+**Why the CPU, and what it costs.** Measured on the reference box (2026-10-05): on the GPU a busy
+speech lane took 45% of the flash lane's decode, and beside flash a new CUDA context failed to
+start; on the small cores, each engine on cores of its own, the flash lane's decode stayed at
+47.5 tok/s. It holds no GPU memory, about 2.5 GB of host memory at rest, and 0.01 of a core at
+rest; French WER 9.7% end to end on 291 s, in half of real time (the 1.7B: 6.3%, in about real
+time). It is not started at boot unless `SPEECH_BOOT=1`.
+
+**Found in its review before publication (2026-10-14).** The Hugging Face token went to curl as
+an argument, which any user of the box reads while a download runs (ps): it goes on curl's
+standard input now, to Hugging Face only. A speech request whose voice was a list or an object
+dropped the connection with no answer: it is a 400. The docs said the cockpit was the lane's
+door, and nothing relays it: they say how to reach it. And they said nothing of updates.
+
+**Tests.** The installer's pins, core split, renders and guards, the token kept out of curl's
+arguments, and the routes (speech, transcription in pieces, the formats, the refusals), each fix
+failing on the old code. The lane installed again on the reference box from this branch over
+the one there since 2026-10-05: the round trip spoke a sentence and heard it back word for word,
+up in about 3 s, 0.01 of a core and 2.5 GiB resident at rest, then stopped as it was found.
+OSV knows no vulnerability in the thirteen pinned packages, and llama.cpp's advisories all
+predate its pinned commit.
+
+**The cockpit's update command updates.** Settings' "Update the serving stack" gave `cd <repo>
+&& ./install.sh`, and install.sh fetches nothing: run after the banner said a release was out,
+it installed again the release the box already ran. The banner gave `git pull && ./install.sh`,
+which updates but skips get.sh's guards (main only, no modified tracked file, no local commit).
+Both now give the README's one command, run from the checkout so that get.sh updates that clone
+wherever it is, and Settings has a Copy button. Library's release line compared the installed and
+the latest tag as strings, so a box ahead of the newest release was told "an update is out": it
+says which way by number now, as the banner does.
+
+**Library knows every lane's checkpoints, and deletes the stray ones.** The registry knew the text
+lanes' nine checkpoints only, so the image, video and Kolibri lanes' weights read as "other
+models", with no pin and no status; and it scanned `~/.cache/huggingface` alone, so a box
+installed with another `HF_CACHE` read an empty Library. It now reads the six other pins from
+the lanes' installers and every cache the lanes' units name. Each stray revision (one no pin
+names) says what deleting it frees, or why it stays: an installed unit names it (a custom target
+serves a revision no pin names), or a ref does (a load by name reads it). One button deletes the
+ones it offers, after a sheet that names each: the job scans again, plans each revision again,
+removes the blobs only that revision links to and its snapshot folder, never a blob another
+revision shares, and says what it kept. The page sends no name and no path, so every action's
+parameters stay a small closed set. On the reference box Library lists fourteen managed repos,
+every served revision pinned, and one stray, the DSpark drafter's b9a5dbdf03, kept because
+refs/main names it.
+
+**Tests.** Each fix and each new behaviour has a test that fails on the old code: the speech
+lane's installer (pins, core split, renders, guards, the token kept out of curl's arguments) and
+routes; the cockpit's update command (the config it sends, the banner, the Setup line, Settings,
+the Copy button, and the headless-browser banner check, 9 of 12 on the old code); the release
+line by number; the registry (every lane's pins, the caches the units name, what a delete
+removes and refuses); the delete itself, run live on a cache of the test's own (a stray revision
+goes with only its own blob, the shared one and the pinned revision stay, a ref- or unit-named
+one is kept and named, nothing the client sends is read), and the page's line, button and sheet.
+The speech lane installed on the reference box from this release, and Library seen on a dev
+cockpit of it (dry run, loopback), captures looked at.
+
+**What an update does.** An update restarts the cockpit, which runs the new code; the engines keep
+running, and no unit or config of a lane changes. The speech lane is not installed by it, nor
+updated: run `./install-speech.sh` again after an update on a box that has it. `./uninstall.sh`
+lists the speech lane and removes it with the other lanes, its models kept with the command that
+reclaims them.
+
 ## v1.31.0 (2026-10-14): one fetch for every lane's checkpoint, and a text Load that needs no network
 
 **One fetch for every lane's checkpoint.** Seven copies of the download had grown in install.sh,
