@@ -447,6 +447,8 @@ WITH_FLASH=0
 NO_FLASH=0
 WITH_27B=0
 NO_27B=0
+WITH_KOLIBRI=0
+NO_KOLIBRI=0
 for arg in "$@"; do
   case "$arg" in
     --no-start) NO_START=1 ;;
@@ -463,6 +465,8 @@ for arg in "$@"; do
     --no-flash) NO_FLASH=1 ;;
     --with-27b) WITH_27B=1 ;;
     --no-27b) NO_27B=1 ;;
+    --with-kolibri) WITH_KOLIBRI=1 ;;
+    --no-kolibri) NO_KOLIBRI=1 ;;
     --with-claude-warmup)
       echo "NOTE: --with-claude-warmup was removed in v1.3 (the repo's client story moved to opencode)."
       echo "      The flag is ignored; an installed warmup drop-in from an earlier version is cleaned up." ;;
@@ -471,7 +475,7 @@ for arg in "$@"; do
 Usage: ./install.sh [--no-start] [--no-service] [--no-opencode | --with-opencode]
                    [--no-cockpit | --with-cockpit] [--no-image | --with-image]
                    [--no-video | --with-video] [--no-flash | --with-flash]
-                   [--no-27b | --with-27b]
+                   [--no-27b | --with-27b] [--no-kolibri | --with-kolibri]
 
 Run it as yourself. Never with sudo in front: it calls sudo itself for the
 privileged steps, and under sudo every path it writes moves to /root (see the
@@ -479,12 +483,13 @@ refusal at the top of this file).
 
 A plain run installs the whole box: both text lanes (the one MODEL_CHOICE names
 serves, the 27B by default, and the other is installed beside it, ready to
-load), the image lane, the video lane, the keepalive proxy with its typed
-decision endpoint, the opencode wiring, the cockpit and its Agent view. Each
-lane a run installs for the first time proves it serves before the run ends.
-All of it takes about 440 GB of disk (27B 54, flash 203, image 40, video 144):
-a little over an hour of work on the box, plus the downloads (about 75 minutes
-at 100 MB/s). A lane that does not fit on the disk is left out and named at the
+load), the image lane, the video lane, the Kolibri lane (Aleph Alpha's
+Kolibri-1, on vLLM), the keepalive proxy with its typed decision endpoint, the
+opencode wiring, the cockpit and its Agent view. Each lane a run installs for
+the first time proves it serves before the run ends. All of it takes about
+540 GB of disk (27B 54, flash 203, image 40, video 144, Kolibri 102): about an
+hour and a half of work on the box, plus the downloads (about 90 minutes at
+100 MB/s). A lane that does not fit on the disk is left out and named at the
 end, with the command that adds it later. When it finishes it prints the
 cockpit URL, and from there you start, stop, switch, watch and benchmark
 without a terminal.
@@ -513,6 +518,9 @@ without a terminal.
   --no-27b              leave the 27B lane out when it is not the one serving
                         (54 GB), remembered the same way
   --with-27b            bring it back after a --no-27b
+  --no-kolibri          leave the Kolibri-1 lane out (vLLM, 102 GB), remembered
+                        the same way (./install-kolibri.sh --uninstall removes it)
+  --with-kolibri        bring it back after a --no-kolibri
 
 Re-running over an existing install keeps the operator's choices: the target
 model (any of the seven), the context mode (native/1m), the flash serving tier,
@@ -682,17 +690,35 @@ if [ -z "$SECONDARY" ] && systemctl is-enabled --quiet qwen38-video.service 2>/d
     echo "without making it the boot lane again. Switch back to text from the cockpit when you want it."
   fi
 fi
+# The Kolibri lane is a lane of its own too (vLLM, its own unit and installer), under the
+# same promise: a plain re-run on a box booting Kolibri must not enable a SGLang unit beside it.
+KOLIBRI_BOOT=0
+if [ -z "$SECONDARY" ] && systemctl is-enabled --quiet qwen38-kolibri.service 2>/dev/null \
+   && [ "$SGL_ENABLED" -eq 0 ] && [ "$FLASH_ENABLED" -eq 0 ]; then
+  if [ -n "$_ENV_MODEL_CHOICE" ]; then
+    echo "MODEL_CHOICE=$_ENV_MODEL_CHOICE given on a box booting the Kolibri lane: making that text lane the boot lane again."
+  else
+    KOLIBRI_BOOT=1
+    echo "The Kolibri lane is this box's boot lane: this run brings the other lanes up to date"
+    echo "without making one of them the boot lane again. Switch from the cockpit when you want another."
+  fi
+fi
 # Which text lane to bring up to date on that path. Both text units can be on disk with
 # neither enabled, since a switch to images disables both, so enablement cannot say which
 # one was in use; the switch writes it down instead, and without it the 27B lane is the
 # fallback, the same one the code below picks when nothing is enabled.
 LANE_BEFORE_IMAGE="$(cat "$CONFIG_DIR/lane-before-image" 2>/dev/null || true)"
 LANE_BEFORE_VIDEO="$(cat "$CONFIG_DIR/lane-before-video" 2>/dev/null || true)"
+LANE_BEFORE_KOLIBRI="$(cat "$CONFIG_DIR/lane-before-kolibri" 2>/dev/null || true)"
 # A switch from one side lane to the other writes the side lane it leaves (the installers
 # of those lanes go back to it): the text lane is then the one written before it. The
 # reference box went flash, image, video, and its update took the 27B (2026-10-06).
 [ "$LANE_BEFORE_VIDEO" = "qwen38-image.service" ] && LANE_BEFORE_VIDEO="$LANE_BEFORE_IMAGE"
 [ "$LANE_BEFORE_IMAGE" = "qwen38-video.service" ] && LANE_BEFORE_IMAGE="$LANE_BEFORE_VIDEO"
+[ "$LANE_BEFORE_KOLIBRI" = "qwen38-image.service" ] && LANE_BEFORE_KOLIBRI="$LANE_BEFORE_IMAGE"
+[ "$LANE_BEFORE_KOLIBRI" = "qwen38-video.service" ] && LANE_BEFORE_KOLIBRI="$LANE_BEFORE_VIDEO"
+[ "$LANE_BEFORE_IMAGE" = "qwen38-kolibri.service" ] && LANE_BEFORE_IMAGE="$LANE_BEFORE_KOLIBRI"
+[ "$LANE_BEFORE_VIDEO" = "qwen38-kolibri.service" ] && LANE_BEFORE_VIDEO="$LANE_BEFORE_KOLIBRI"
 if [ "$FLASH_READABLE" -eq 1 ] && [ "$FLASH_ENABLED" -eq 1 ] && [ "$SGL_ENABLED" -eq 1 ]; then
   echo "NOTE: both qwen38-sglang and qwen38-flash are enabled (only one can serve the port)."
   echo "      Following the 27B unit; run ./switch-model.sh to resolve this cleanly."
@@ -703,6 +729,8 @@ elif [ "$IMAGE_BOOT" -eq 1 ] && [ "$LANE_BEFORE_IMAGE" = "qwen38-flash.service" 
   INSTALLED_CHOICE=flash          # the text lane this box used before it switched to images
 elif [ "$VIDEO_BOOT" -eq 1 ] && [ "$LANE_BEFORE_VIDEO" = "qwen38-flash.service" ] && [ "$FLASH_READABLE" -eq 1 ]; then
   INSTALLED_CHOICE=flash          # the text lane this box used before it switched to video
+elif [ "$KOLIBRI_BOOT" -eq 1 ] && [ "$LANE_BEFORE_KOLIBRI" = "qwen38-flash.service" ] && [ "$FLASH_READABLE" -eq 1 ]; then
+  INSTALLED_CHOICE=flash          # the text lane this box used before it switched to Kolibri
 elif [ "$SGL_READABLE" -eq 1 ]; then
   INSTALLED_CHOICE=27b
 elif [ "$FLASH_READABLE" -eq 1 ]; then
@@ -982,6 +1010,9 @@ fi
 if [ "$NO_27B" -eq 1 ] && [ "$WITH_27B" -eq 1 ]; then
   printf -- '--no-27b and --with-27b contradict each other (drop one flag)\n' >&2; exit 1
 fi
+if [ "$NO_KOLIBRI" -eq 1 ] && [ "$WITH_KOLIBRI" -eq 1 ]; then
+  printf -- '--no-kolibri and --with-kolibri contradict each other (drop one flag)\n' >&2; exit 1
+fi
 
 # --no-start and --no-service both return before the image step, so the flag would be
 # accepted and silently do nothing. Say so here rather than at the end of a long install.
@@ -993,6 +1024,11 @@ fi
 if [ "$WITH_VIDEO" -eq 1 ] && { [ "$NO_START" -eq 1 ] || [ "$NO_SERVICE" -eq 1 ]; }; then
   printf -- '--with-video needs the full install: it installs a systemd unit and proves it serves.\n' >&2
   printf -- 'Run ./install.sh without --no-start/--no-service, or ./install-video.sh on its own.\n' >&2
+  exit 1
+fi
+if [ "$WITH_KOLIBRI" -eq 1 ] && { [ "$NO_START" -eq 1 ] || [ "$NO_SERVICE" -eq 1 ]; }; then
+  printf -- '--with-kolibri needs the full install: it installs a systemd unit and proves it serves.\n' >&2
+  printf -- 'Run ./install.sh without --no-start/--no-service, or ./install-kolibri.sh on its own.\n' >&2
   exit 1
 fi
 # Since v1.12 the cockpit is part of a plain install: the one-liner has to leave
@@ -1032,12 +1068,13 @@ lane_wanted(){  # $1 lane (image, video, flash, 27b), $2 --no-$1 given, $3 --wit
     echo "Leaving the $1 lane out (your earlier --no-$1). Pass --with-$1 to bring it back."
   fi
 }
-WANT_IMAGE=0; WANT_VIDEO=0; WANT_FLASH=0; WANT_27B=0
+WANT_IMAGE=0; WANT_VIDEO=0; WANT_FLASH=0; WANT_27B=0; WANT_KOLIBRI=0
 if [ -z "$SECONDARY" ]; then
   lane_wanted image "$NO_IMAGE" "$WITH_IMAGE"; WANT_IMAGE="$WANT"
   lane_wanted video "$NO_VIDEO" "$WITH_VIDEO"; WANT_VIDEO="$WANT"
   lane_wanted flash "$NO_FLASH" "$WITH_FLASH"; WANT_FLASH="$WANT"
   lane_wanted 27b "$NO_27B" "$WITH_27B"; WANT_27B="$WANT"
+  lane_wanted kolibri "$NO_KOLIBRI" "$WITH_KOLIBRI"; WANT_KOLIBRI="$WANT"
 fi
 
 if [ "$NO_SERVICE" -eq 1 ] && [ "$CONTEXT_MODE" = "1m" ]; then
@@ -1191,6 +1228,8 @@ if [ -z "$SECONDARY" ] && ss -tlnH 2>/dev/null | awk '{print $4}' | grep -q ":$P
   elif docker inspect qwen38-flash --format '{{join .Args " "}}' 2>/dev/null | grep -qE -- "--port ${PORT}(\s|$)" \
        || docker inspect qwen38-flash --format '{{json .HostConfig.PortBindings}}' 2>/dev/null | grep -q "\"${PORT}\""; then
     echo "Note: qwen38-flash is already running on :$PORT, installing over it ($([ "$LANE" = 27b ] && echo 'lane switch at the final step' || echo 'converging config'))."
+  elif docker inspect qwen38-kolibri --format '{{join .Args " "}}' 2>/dev/null | grep -qE -- "--port ${PORT}(\s|$)"; then
+    echo "Note: the Kolibri lane is serving on :$PORT; this run updates the lanes beside it."
   else
     die "Port $PORT is already in use by another program (see: ss -tlnp | grep :$PORT). Free it, or install with PORT=<other> ./install.sh"
   fi
@@ -2229,6 +2268,11 @@ if [ -z "$SECONDARY" ] && [ "$VIDEO_BOOT" -eq 0 ] && systemctl is-enabled --quie
   echo "disabling the video lane at boot (unit kept, switch back anytime from the cockpit)"
   sudo systemctl disable qwen38-video.service
 fi
+# The Kolibri lane is the fifth, under the same rule.
+if [ -z "$SECONDARY" ] && [ "$KOLIBRI_BOOT" -eq 0 ] && systemctl is-enabled --quiet qwen38-kolibri.service 2>/dev/null; then
+  echo "disabling the Kolibri lane at boot (unit kept, switch back anytime from the cockpit)"
+  sudo systemctl disable qwen38-kolibri.service
+fi
 KEEPALIVE_UNIT="qwen38-keepalive.service"
 KA_CHANGED=0      # whether this run changed what the proxy runs (see its restart below)
 # The proxy, its code and its unit are the serving run's (see the secondary run above).
@@ -2308,7 +2352,7 @@ if [ -n "$SECONDARY" ]; then
   step "Done: installed as $UNIT_NAME ($MODEL_CHOICE), not enabled at boot"
   exit 0
 fi
-if [ "$IMAGE_BOOT" -eq 0 ] && [ "$VIDEO_BOOT" -eq 0 ]; then
+if [ "$IMAGE_BOOT" -eq 0 ] && [ "$VIDEO_BOOT" -eq 0 ] && [ "$KOLIBRI_BOOT" -eq 0 ]; then
   sudo systemctl enable "$UNIT_NAME"
 else
   # Updated, not switched to. Starting it would stop the lane that is serving, and
@@ -2337,7 +2381,13 @@ else
     "$REPO_DIR/install-video.sh" --no-smoke \
       || echo "NOTE: the video lane did not install or update; retry with ./install-video.sh --no-smoke"
   fi
-  if [ "$VIDEO_BOOT" -eq 1 ]; then SERVING_LANE="video"; else SERVING_LANE="image"; fi
+  if [ "$WANT_KOLIBRI" -eq 1 ]; then
+    "$REPO_DIR/install-kolibri.sh" --no-smoke \
+      || echo "NOTE: the Kolibri lane did not install or update; retry with ./install-kolibri.sh --no-smoke"
+  fi
+  SERVING_LANE="image"
+  [ "$VIDEO_BOOT" -eq 1 ] && SERVING_LANE="video"
+  [ "$KOLIBRI_BOOT" -eq 1 ] && SERVING_LANE="Kolibri"
   step "Done: the text lane is up to date; the $SERVING_LANE lane stays this box's serving lane"
   echo "  text lane : installed as $UNIT_NAME, not enabled at boot"
   # The first target the hint names is the standard one: the project advises the standard
@@ -2608,10 +2658,11 @@ except Exception as e:
     # before the run says it is done. A routine update proves nothing twice: it updates
     # the lanes it finds and leaves this one serving. A lane that does not install (a
     # disk too small for it, a download that fails) is said, and the rest goes on.
-    IMAGE_FRESH=0; VIDEO_FRESH=0
+    IMAGE_FRESH=0; VIDEO_FRESH=0; KOLIBRI_FRESH=0
     [ -f /etc/systemd/system/qwen38-image.service ] || IMAGE_FRESH=1
     [ -f /etc/systemd/system/qwen38-video.service ] || VIDEO_FRESH=1
-    IMAGE_STATE=off; VIDEO_STATE=off
+    [ -f /etc/systemd/system/qwen38-kolibri.service ] || KOLIBRI_FRESH=1
+    IMAGE_STATE=off; VIDEO_STATE=off; KOLIBRI_STATE=off
     if [ "$WANT_IMAGE" -eq 1 ]; then
       step "Qwen-Image 2.1 lane (text-to-image, editing, native RGBA)"
       if "$REPO_DIR/install-image.sh" --no-smoke; then IMAGE_STATE=installed; else
@@ -2626,16 +2677,24 @@ except Exception as e:
         echo "NOTE: the video lane did not install (the lines above say why); the rest goes on."
       fi
     fi
+    if [ "$WANT_KOLIBRI" -eq 1 ]; then
+      step "Kolibri-1 lane (Aleph Alpha's German and English reasoning model, on vLLM)"
+      if "$REPO_DIR/install-kolibri.sh" --no-smoke; then KOLIBRI_STATE=installed; else
+        KOLIBRI_STATE=failed
+        echo "NOTE: the Kolibri lane did not install (the lines above say why); the rest goes on."
+      fi
+    fi
     # What to prove: what this run installed for the first time, or what was asked for
     # by name (--with-<lane>, which also proves a lane already there).
     SECOND_WITH=0
     { [ "$SECOND_LANE" = flash ] && [ "$WITH_FLASH" -eq 1 ]; } && SECOND_WITH=1
     { [ "$SECOND_LANE" = 27b ] && [ "$WITH_27B" -eq 1 ]; } && SECOND_WITH=1
-    PROVE_SECOND=0; PROVE_IMAGE=0; PROVE_VIDEO=0
+    PROVE_SECOND=0; PROVE_IMAGE=0; PROVE_VIDEO=0; PROVE_KOLIBRI=0
     { [ "$SECOND_STATE" = installed ] && { [ "$SECOND_FRESH" -eq 1 ] || [ "$SECOND_WITH" -eq 1 ]; }; } && PROVE_SECOND=1
     { [ "$IMAGE_STATE" = installed ] && { [ "$IMAGE_FRESH" -eq 1 ] || [ "$WITH_IMAGE" -eq 1 ]; }; } && PROVE_IMAGE=1
     { [ "$VIDEO_STATE" = installed ] && { [ "$VIDEO_FRESH" -eq 1 ] || [ "$WITH_VIDEO" -eq 1 ]; }; } && PROVE_VIDEO=1
-    if [ $((PROVE_SECOND + PROVE_IMAGE + PROVE_VIDEO)) -gt 0 ]; then
+    { [ "$KOLIBRI_STATE" = installed ] && { [ "$KOLIBRI_FRESH" -eq 1 ] || [ "$WITH_KOLIBRI" -eq 1 ]; }; } && PROVE_KOLIBRI=1
+    if [ $((PROVE_SECOND + PROVE_IMAGE + PROVE_VIDEO + PROVE_KOLIBRI)) -gt 0 ]; then
       step "Proving the new lanes serve: the ${LANE/27b/27B} lane stops meanwhile, then comes back"
       sudo systemctl stop "$UNIT_NAME"
       if [ "$PROVE_SECOND" -eq 1 ]; then
@@ -2649,6 +2708,9 @@ except Exception as e:
       fi
       if [ "$PROVE_VIDEO" -eq 1 ]; then
         if "$REPO_DIR/install-video.sh"; then VIDEO_STATE=proved; else VIDEO_STATE=failed; fi
+      fi
+      if [ "$PROVE_KOLIBRI" -eq 1 ]; then
+        if "$REPO_DIR/install-kolibri.sh"; then KOLIBRI_STATE=proved; else KOLIBRI_STATE=failed; fi
       fi
       step "The ${LANE/27b/27B} lane again"
       prove_text_lane "$UNIT_NAME" "$SMOKE_MODEL" \
@@ -2737,6 +2799,7 @@ except Exception as e:
     fi
     lane_line "Images     " "$IMAGE_STATE" image image "40 GB" /etc/systemd/system/qwen38-image.service
     lane_line "Videos     " "$VIDEO_STATE" video video "144 GB" /etc/systemd/system/qwen38-video.service
+    lane_line "Kolibri-1  " "$KOLIBRI_STATE" kolibri kolibri "102 GB" /etc/systemd/system/qwen38-kolibri.service
     [ "$LANE" = "27b" ] && echo "  Benchmark  : ./bench.sh"
     exit 0
   fi

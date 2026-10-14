@@ -11,6 +11,8 @@
 #   ./switch-model.sh image           # Qwen/Qwen-Image-2.1 (SGLang Diffusion, own venv)
 #   ./switch-model.sh image-turbo     # Qwen/Qwen-Image-2.1-Turbo, its eight-step distillation
 #   ./switch-model.sh video           # MiniMaxAI/MiniMax-H3 (SGLang Diffusion, own venv)
+#   ./switch-model.sh kolibri         # Aleph-Alpha/Kolibri-1, the official FP8 (vLLM + Aleph Alpha's plugin)
+#   ./switch-model.sh kolibri-nvfp4   # Quantinine/Kolibri-1-NVFP4A16-FP8, its experts in NVFP4
 #
 # Within the 27B lane (stock, uncensored, fp8, uncensored-fp8) it does what it
 # always did:
@@ -46,7 +48,7 @@ _ENV_HF_CACHE="${HF_CACHE:-}"      # before the pins below give it install.sh's 
 # 27B lane and restarting what follows it, where the usage was all anyone wanted (found
 # in review, 2026-09-24). MODEL_CHOICE= still names one, as install.sh takes it.
 CHOICE="${1:-${MODEL_CHOICE:-}}"
-case "$CHOICE" in stock|uncensored|fp8|uncensored-fp8|flash|flash-nvda|flash-uncensored|image|image-turbo|video) ;; *) printf 'usage: ./switch-model.sh <stock|uncensored|fp8|uncensored-fp8|flash|flash-nvda|flash-uncensored|image|image-turbo|video>\n' >&2; [ -z "$CHOICE" ] && exit 2; die "unknown target: $CHOICE" ;; esac
+case "$CHOICE" in stock|uncensored|fp8|uncensored-fp8|flash|flash-nvda|flash-uncensored|image|image-turbo|video|kolibri|kolibri-nvfp4) ;; *) printf 'usage: ./switch-model.sh <stock|uncensored|fp8|uncensored-fp8|flash|flash-nvda|flash-uncensored|image|image-turbo|video|kolibri|kolibri-nvfp4>\n' >&2; [ -z "$CHOICE" ] && exit 2; die "unknown target: $CHOICE" ;; esac
 
 
 PINS="$(grep -E '^(IMAGE|STOCK_REPO|STOCK_REV|UNC_REPO|UNC_REV|FP8_REPO|FP8_REV|UNCFP8_REPO|UNCFP8_REV|FLASH_REPO|FLASH_REV|FLASH_NVDA_REPO|FLASH_NVDA_REV|FLASH_UNC_REPO|FLASH_UNC_REV|FLASH_IMAGE|FLASH_SERVE_IMAGE|SERVE_IMAGE|MODEL_CHOICE|HF_CACHE|CONFIG_DIR)=' "$REPO_DIR/install.sh" || true)"
@@ -88,6 +90,157 @@ disable_rollback_lane(){
       || echo "         (not disabled: this box's sudoers file predates the line; the boot conflict resolves against it anyway)"
   fi
 }
+
+# ── The Kolibri lane: a text lane on vLLM, switched to the way the image lane is ────
+# For the proxy and its clients Kolibri is a text lane like the 27B and the flash: the same
+# port, the same key. But nothing in the four hundred lines below is about it: they rewrite
+# SGLang units, patch Qwen chat templates and move Qwen prompt ceilings. So it is handled
+# here, whole, and exits, with the image lane's contract: verify the checkpoint (the first
+# switch to a variant fetches it), name it in the unit, make it the one unit enabled at
+# boot, never start or stop anything, print the exact commands.
+KOLIBRI_UNIT="/etc/systemd/system/qwen38-kolibri.service"
+KOLIBRI_UNIT_NAME="qwen38-kolibri.service"
+# Rewritten with sudo between its two checkpoints, so staged at a fixed path the cockpit's
+# exact-argv sudoers allowlist names, as the image unit is.
+KOL_STAGE="$CONFIG_DIR/qwen38-kolibri.service.switch-stage"
+if [ "$CHOICE" = "kolibri" ] || [ "$CHOICE" = "kolibri-nvfp4" ]; then
+  [ -f "$KOLIBRI_UNIT" ] || die "the Kolibri lane is not installed on this box (no $KOLIBRI_UNIT). Install it once: ./install.sh --with-kolibri (about 102 GB)"
+  # The lane's two checkpoints and their pinned revisions, from install-kolibri.sh, the one
+  # place they are declared.
+  eval "$(grep -E '^(KOLIBRI_FP8_REPO|KOLIBRI_FP8_REV|KOLIBRI_NVFP4_REPO|KOLIBRI_NVFP4_REV)=' "$REPO_DIR/install-kolibri.sh" || true)"
+  for _v in KOLIBRI_FP8_REPO KOLIBRI_FP8_REV KOLIBRI_NVFP4_REPO KOLIBRI_NVFP4_REV; do
+    eval "[ -n \"\${$_v:-}\" ]" || die "install-kolibri.sh no longer defines $_v (repo layout changed?)"
+  done
+  unset _v
+  # Each checkpoint's memory share, the same as install-kolibri.sh's (it says why).
+  if [ "$CHOICE" = "kolibri-nvfp4" ]; then
+    KOL_MODEL="$KOLIBRI_NVFP4_REPO"; KOL_REV="$KOLIBRI_NVFP4_REV"; KOL_GMU=0.55; KOL_NEED_GB=46
+  else
+    KOL_MODEL="$KOLIBRI_FP8_REPO"; KOL_REV="$KOLIBRI_FP8_REV"; KOL_GMU=0.80; KOL_NEED_GB=79
+  fi
+  KOL_IMAGE="$(grep -m1 -oE 'qwen38-kolibri:[^ ]+' "$KOLIBRI_UNIT" || true)"
+  [ -n "$KOL_IMAGE" ] && docker image inspect "$KOL_IMAGE" >/dev/null 2>&1 \
+    || die "the Kolibri lane's image (${KOL_IMAGE:-none named in its unit}) is missing: re-run ./install-kolibri.sh --no-smoke, it builds it again"
+  KOL_HF="$(grep -m1 -oE -- '-v [^ :]+:/root/\.cache/huggingface' "$KOLIBRI_UNIT" | sed -e 's/^-v //' -e 's|:/root/\.cache/huggingface$||' || true)"
+  KOL_HF="${KOL_HF:-$HF_CACHE}"
+  printf '\n\033[1;36m── Verifying %s @ %s in the cache (resumable)\033[0m\n' "$KOL_MODEL" "${KOL_REV:0:12}"
+  KOL_TOKEN_ARGS=()
+  # by name: docker takes the value from its own environment, so the token is in no argv
+  if [ -n "${HF_TOKEN:-}" ]; then export HF_TOKEN; KOL_TOKEN_ARGS=(-e HF_TOKEN); fi
+  KOL_PROGRESS_ARGS=()
+  if [ -f "$REPO_DIR/hf-progress.py" ]; then
+    KOL_PROGRESS_ARGS=(-v "$REPO_DIR/hf-progress.py:/opt/qwen38/hf-progress.py:ro" -e QWEN38_REPO_DIR=/opt/qwen38)
+  fi
+  # In the lane's own image, as the text lanes fetch theirs in their serving image; --init
+  # for the same reason as below: a cockpit job stopped past its timeout stops this too.
+  docker run --rm -i --init --network host --user "$(id -u):$(id -g)" --entrypoint python3 \
+    -e HF_HOME=/hf -e HF_HUB_DOWNLOAD_TIMEOUT=30 -e HF_HUB_DISABLE_XET=1 \
+    -e HF_HUB_DISABLE_PROGRESS_BARS="$DL_NO_BARS" \
+    -e KOL_MODEL="$KOL_MODEL" -e KOL_REV="$KOL_REV" \
+    -e KOL_NEED_GB="$KOL_NEED_GB" -e KOL_FREE_GB="$(dl_free_gb "$KOL_HF")" \
+    "${KOL_TOKEN_ARGS[@]}" "${KOL_PROGRESS_ARGS[@]}" \
+    -v "$KOL_HF":/hf "$KOL_IMAGE" - <<'PYKOL' || die "the Kolibri checkpoint could not be verified or fetched (re-run to resume; set HF_TOKEN if it stalls)"
+import contextlib
+import importlib.util
+import os
+import time
+from huggingface_hub import constants, snapshot_download
+
+
+def reporting(*args, **kwargs):
+    """hf-progress.py's byte count while the rest comes; a progress line is never worth a download."""
+    try:
+        spec = importlib.util.spec_from_file_location(
+            "hf_progress", os.path.join(os.environ["QWEN38_REPO_DIR"], "hf-progress.py"))
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+        return mod.reporting(*args, **kwargs)
+    except Exception:
+        return contextlib.nullcontext()
+
+
+repo, rev = os.environ["KOL_MODEL"], os.environ["KOL_REV"]
+try:
+    path = snapshot_download(repo, revision=rev, local_files_only=True)
+except Exception:
+    # Refused before the first byte rather than stopped by a full disk halfway. What the
+    # cache already holds of the repo comes off the need: a fetch that stopped resumes.
+    blobs = os.path.join(constants.HF_HUB_CACHE, "models--" + repo.replace("/", "--"), "blobs")
+    have = sum(e.stat().st_size for e in os.scandir(blobs) if e.is_file()) if os.path.isdir(blobs) else 0
+    free = int(os.environ.get("KOL_FREE_GB") or 0)
+    need = max(int(os.environ["KOL_NEED_GB"]) - have // 10**9, 1)
+    if free and free < need:
+        raise SystemExit(f"{free} GB free in the cache, and {repo} needs about {need} GB more: free some space first")
+    print("not complete in the cache, fetching the rest", flush=True)
+    with reporting(repo, revision=rev):
+        for attempt in range(1, 6):  # a new attempt keeps every file already whole
+            try:
+                path = snapshot_download(repo, revision=rev)
+                break
+            except Exception as e:
+                if attempt == 5:
+                    raise
+                print(f"download interrupted ({type(e).__name__}), resuming ({attempt}/5)...", flush=True)
+                time.sleep(10)
+print(path)
+PYKOL
+  # The unit names one checkpoint, its revision and its memory share, on one line each; a
+  # switch rewrites those and nothing else.
+  KOL_CUR="$(grep -m1 -oE -- "[^ ]+ --revision [0-9a-f]{40}" "$KOLIBRI_UNIT" || true)"
+  KOL_CUR_GMU="$(grep -m1 -oE -- "--gpu-memory-utilization [0-9.]+" "$KOLIBRI_UNIT" || true)"
+  [ -n "$KOL_CUR" ] && [ -n "$KOL_CUR_GMU" ] || die "the Kolibri unit names no checkpoint or memory share where this expects it (hand-edited unit?): re-run ./install-kolibri.sh --no-smoke"
+  KOL_WANT="$KOL_MODEL --revision $KOL_REV"; KOL_WANT_GMU="--gpu-memory-utilization $KOL_GMU"
+  KOL_REWRITTEN=""
+  if [ "$KOL_CUR" != "$KOL_WANT" ] || [ "$KOL_CUR_GMU" != "$KOL_WANT_GMU" ]; then
+    KOL_TEXT="$(cat "$KOLIBRI_UNIT")"
+    KOL_TEXT="${KOL_TEXT//"$KOL_CUR"/"$KOL_WANT"}"
+    printf '%s\n' "${KOL_TEXT//"$KOL_CUR_GMU"/"$KOL_WANT_GMU"}" > "$KOL_STAGE"
+    if ! grep -q -- "$KOL_WANT " "$KOL_STAGE" || ! grep -q -- "$KOL_WANT_GMU " "$KOL_STAGE"; then
+      rm -f "$KOL_STAGE"; die "the Kolibri unit's rewrite to $KOL_MODEL failed (hand-edited unit?): re-run ./install-kolibri.sh --no-smoke"
+    fi
+    diff "$KOL_STAGE" "$KOLIBRI_UNIT" || true   # show exactly what changes
+    sudo install -m 644 "$KOL_STAGE" "$KOLIBRI_UNIT"
+    rm -f "$KOL_STAGE"
+    KOL_REWRITTEN=1
+  fi
+  # Which lane this box served at boot, written down before it is disabled: removing the
+  # Kolibri lane later gives the boot back to it (install-kolibri.sh --uninstall).
+  for TEXT_UNIT_NAME in qwen38-sglang.service qwen38-flash.service qwen38-image.service qwen38-video.service; do
+    if systemctl is-enabled --quiet "$TEXT_UNIT_NAME" 2>/dev/null; then
+      printf '%s\n' "$TEXT_UNIT_NAME" > "$CONFIG_DIR/lane-before-kolibri"
+    fi
+  done
+  # The loop variable ends in UNIT_NAME on purpose: CI checks every
+  # `sudo systemctl <verb> "$..UNIT_NAME"` against the cockpit's sudoers allowlist.
+  for TEXT_UNIT_NAME in qwen38-sglang.service qwen38-flash.service qwen38-image.service qwen38-video.service; do
+    if systemctl is-enabled --quiet "$TEXT_UNIT_NAME" 2>/dev/null; then
+      echo "disabling $TEXT_UNIT_NAME at boot (unit file kept for switching back)"
+      sudo systemctl disable "$TEXT_UNIT_NAME"
+    fi
+  done
+  disable_rollback_lane
+  sudo systemctl enable "$KOLIBRI_UNIT_NAME" >/dev/null 2>&1 || sudo systemctl enable "$KOLIBRI_UNIT_NAME"
+  sudo systemctl daemon-reload
+  RUNNING=""
+  for u in qwen38-sglang.service qwen38-flash.service qwen38-image.service qwen38-video.service qwen38-llamacpp.service; do
+    systemctl is-active --quiet "$u" 2>/dev/null && RUNNING="$u"
+  done
+  printf '\n\033[1;32mSwitch queued: %s (%s)\033[0m\n' "$KOL_MODEL" "$KOLIBRI_UNIT_NAME"
+  if [ -n "$RUNNING" ]; then
+    echo "Effective after:  sudo systemctl stop $RUNNING && sudo systemctl start $KOLIBRI_UNIT_NAME   (or next reboot)"
+  elif systemctl is-active --quiet "$KOLIBRI_UNIT_NAME" 2>/dev/null; then
+    if [ -n "$KOL_REWRITTEN" ]; then
+      echo "Effective after:  sudo systemctl restart $KOLIBRI_UNIT_NAME   (it serves the previous checkpoint until then)"
+    else
+      echo "Its unit already named this checkpoint. Started before it did, the lane serves what it loaded: sudo systemctl restart $KOLIBRI_UNIT_NAME"
+    fi
+  else
+    echo "Effective after:  sudo systemctl start $KOLIBRI_UNIT_NAME   (or next reboot; ready in about 9 min)"
+  fi
+  echo "Clients reach it through the proxy on :30001 with the box's key, as model kolibri-1."
+  echo "Switch back:      ./switch-model.sh stock   (or any other target)"
+  exit 0
+fi
 
 # ── The image lane: a third lane, switched to the same way as the other two ─────
 # Same contract as a cross-lane switch: verify the checkpoint, make it the one unit
@@ -225,7 +378,7 @@ PYIMG
   fi
   # Which text lane this box served, written down before it is disabled: install.sh
   # updates that lane on a later run, and enablement cannot tell it once both are off.
-  for TEXT_UNIT_NAME in qwen38-flash.service qwen38-sglang.service qwen38-video.service; do
+  for TEXT_UNIT_NAME in qwen38-flash.service qwen38-sglang.service qwen38-video.service qwen38-kolibri.service; do
     if systemctl is-enabled --quiet "$TEXT_UNIT_NAME" 2>/dev/null; then
       printf '%s\n' "$TEXT_UNIT_NAME" > "$CONFIG_DIR/lane-before-image"
     fi
@@ -233,7 +386,7 @@ PYIMG
   # The loop variable ends in UNIT_NAME on purpose: CI checks every
   # `sudo systemctl <verb> "$..UNIT_NAME"` against the cockpit's sudoers allowlist,
   # and a variable called $u would have walked straight past it.
-  for TEXT_UNIT_NAME in qwen38-sglang.service qwen38-flash.service qwen38-video.service; do
+  for TEXT_UNIT_NAME in qwen38-sglang.service qwen38-flash.service qwen38-video.service qwen38-kolibri.service; do
     if systemctl is-enabled --quiet "$TEXT_UNIT_NAME" 2>/dev/null; then
       echo "disabling $TEXT_UNIT_NAME at boot (unit file kept for switching back)"
       sudo systemctl disable "$TEXT_UNIT_NAME"
@@ -243,7 +396,7 @@ PYIMG
   sudo systemctl enable "$IMAGE_UNIT_NAME" >/dev/null 2>&1 || sudo systemctl enable "$IMAGE_UNIT_NAME"
   sudo systemctl daemon-reload
   RUNNING=""
-  for u in qwen38-sglang.service qwen38-flash.service qwen38-video.service qwen38-llamacpp.service; do
+  for u in qwen38-sglang.service qwen38-flash.service qwen38-video.service qwen38-kolibri.service qwen38-llamacpp.service; do
     systemctl is-active --quiet "$u" 2>/dev/null && RUNNING="$u"
   done
   printf '\n\033[1;32mSwitch queued: %s (%s)\033[0m\n' "$IMG_MODEL" "$IMAGE_UNIT_NAME"
@@ -373,7 +526,7 @@ if len(rev) == 40:
 PYVID
   # Which lane this box served, written down before it is disabled: install.sh
   # updates that lane on a later run, and enablement cannot tell it once all are off.
-  for OTHER_UNIT_NAME in qwen38-flash.service qwen38-sglang.service qwen38-image.service; do
+  for OTHER_UNIT_NAME in qwen38-flash.service qwen38-sglang.service qwen38-image.service qwen38-kolibri.service; do
     if systemctl is-enabled --quiet "$OTHER_UNIT_NAME" 2>/dev/null; then
       printf '%s\n' "$OTHER_UNIT_NAME" > "$CONFIG_DIR/lane-before-video"
     fi
@@ -381,7 +534,7 @@ PYVID
   # The loop variable ends in UNIT_NAME on purpose: CI checks every
   # `sudo systemctl <verb> "$..UNIT_NAME"` against the cockpit's sudoers allowlist,
   # and a variable called $u would have walked straight past it.
-  for OTHER_UNIT_NAME in qwen38-sglang.service qwen38-flash.service qwen38-image.service; do
+  for OTHER_UNIT_NAME in qwen38-sglang.service qwen38-flash.service qwen38-image.service qwen38-kolibri.service; do
     if systemctl is-enabled --quiet "$OTHER_UNIT_NAME" 2>/dev/null; then
       echo "disabling $OTHER_UNIT_NAME at boot (unit file kept for switching back)"
       sudo systemctl disable "$OTHER_UNIT_NAME"
@@ -391,7 +544,7 @@ PYVID
   sudo systemctl enable "$VIDEO_UNIT_NAME" >/dev/null 2>&1 || sudo systemctl enable "$VIDEO_UNIT_NAME"
   sudo systemctl daemon-reload
   RUNNING=""
-  for u in qwen38-sglang.service qwen38-flash.service qwen38-image.service qwen38-llamacpp.service; do
+  for u in qwen38-sglang.service qwen38-flash.service qwen38-image.service qwen38-kolibri.service qwen38-llamacpp.service; do
     systemctl is-active --quiet "$u" 2>/dev/null && RUNNING="$u"
   done
   printf '\n\033[1;32mSwitch queued: %s (%s)\033[0m\n' "$VID_MODEL" "$VIDEO_UNIT_NAME"
@@ -768,6 +921,11 @@ if [ -f "$VIDEO_UNIT" ] && systemctl is-enabled --quiet "$VIDEO_UNIT_NAME" 2>/de
   echo "disabling $VIDEO_UNIT_NAME at boot (unit file kept for switching back)"
   sudo systemctl disable "$VIDEO_UNIT_NAME"
 fi
+# The Kolibri lane is the fifth: the same reason.
+if [ -f "$KOLIBRI_UNIT" ] && systemctl is-enabled --quiet "$KOLIBRI_UNIT_NAME" 2>/dev/null; then
+  echo "disabling $KOLIBRI_UNIT_NAME at boot (unit file kept for switching back)"
+  sudo systemctl disable "$KOLIBRI_UNIT_NAME"
+fi
 disable_rollback_lane
 sudo systemctl enable "$TARGET_UNIT_NAME" >/dev/null 2>&1 || sudo systemctl enable "$TARGET_UNIT_NAME"
 sudo systemctl daemon-reload
@@ -897,6 +1055,7 @@ RUNNING=""
 systemctl is-active --quiet "$OTHER_UNIT_NAME" 2>/dev/null && RUNNING="$OTHER_UNIT_NAME"
 systemctl is-active --quiet "$IMAGE_UNIT_NAME" 2>/dev/null && RUNNING="$IMAGE_UNIT_NAME"
 systemctl is-active --quiet "$VIDEO_UNIT_NAME" 2>/dev/null && RUNNING="$VIDEO_UNIT_NAME"
+systemctl is-active --quiet "$KOLIBRI_UNIT_NAME" 2>/dev/null && RUNNING="$KOLIBRI_UNIT_NAME"
 systemctl is-active --quiet qwen38-llamacpp.service 2>/dev/null && RUNNING="qwen38-llamacpp.service"
 printf '\n\033[1;32mSwitch queued: %s (%s)\033[0m\n' "$TARGET_REPO" "$TARGET_UNIT_NAME"
 if [ -n "$RUNNING" ]; then

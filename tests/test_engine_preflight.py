@@ -27,7 +27,8 @@ UNITS = {"qwen38-sglang.service.template": "qwen38-sglang.service",
          "qwen38-sglang-1m.service.template": "qwen38-sglang.service",
          "qwen38-flash.service.template": "qwen38-flash.service",
          "qwen38-image.service.template": "qwen38-image.service",
-         "qwen38-video.service.template": "qwen38-video.service"}
+         "qwen38-video.service.template": "qwen38-video.service",
+         "qwen38-kolibri.service.template": "qwen38-kolibri.service"}
 # MemTotal minus every category the kernel accounts for: 1.35 GiB, the reference box's own
 # figure with no engine and a desktop session (1.1 GiB measured)
 MEMINFO = """MemTotal:       127535084 kB
@@ -47,15 +48,18 @@ Percpu:            20000 kB
 
 
 class Box:
-    """A fake /proc with three processes: 101 an SGLang scheduler, 102 SGLang's launcher
-    (a python3 whose command line names sglang), 103 somebody's own training script."""
+    """A fake /proc with five processes: 101 an SGLang scheduler, 102 SGLang's launcher
+    (a python3 whose command line names sglang), 103 somebody's own training script, 104
+    vLLM's engine core (the Kolibri lane), 105 vLLM's API server."""
 
     def __init__(self):
         self.t = pathlib.Path(tempfile.mkdtemp(prefix="preflight-"))
         self.proc = self.t / "proc"
         for pid, comm, cmd in (("101", "sglang::schedul", "x"),
                                ("102", "python3", "python3\0-m\0sglang.launch_server"),
-                               ("103", "python3", "python3\0train.py")):
+                               ("103", "python3", "python3\0train.py"),
+                               ("104", "VLLM::EngineCor", "VLLM::EngineCore"),
+                               ("105", "python3", "/usr/bin/python3\0/usr/local/bin/vllm\0serve\0Aleph-Alpha/Kolibri-1")):
             (self.proc / pid).mkdir(parents=True)
             (self.proc / pid / "comm").write_text(comm + "\n")
             (self.proc / pid / "cmdline").write_text(cmd + "\0")
@@ -108,6 +112,17 @@ class WhatBlocksAStart(unittest.TestCase):
     def test_the_launcher_and_a_pid_the_system_lost_are_remnants_too(self):
         for line, named in (('echo "102, python3, 40000"', "102 python3 40000 MiB"),
                             ('echo "999, python3, 30000"', "999 gone 30000 MiB")):
+            with self.subTest(named=named):
+                self.box.smi(line)
+                rc, out, _ = self.box.run()
+                self.assertEqual(rc, 1, out)
+                self.assertIn(named, out)
+
+    def test_what_is_left_of_a_vllm_engine_is_a_remnant_too(self):
+        """The Kolibri lane runs vLLM: its engine core and its API server hold the GPU like
+        SGLang's scheduler does, and a start on top of them is the same freeze."""
+        for line, named in (('echo "104, VLLM::EngineCore, 75000"', "104 VLLM::EngineCor 75000 MiB"),
+                            ('echo "105, python3, 3000"', "105 python3 3000 MiB")):
             with self.subTest(named=named):
                 self.box.smi(line)
                 rc, out, _ = self.box.run()
@@ -204,13 +219,14 @@ class WhereItRuns(unittest.TestCase):
     def test_every_installer_that_writes_such_a_unit_puts_it_in_place(self):
         """Run on its own, install-image.sh or install-video.sh would leave a unit naming a
         script that is not there, and the lane would never start."""
-        for inst, src in (("install.sh", "$REPO_DIR"), ("install-image.sh", "$HERE"), ("install-video.sh", "$HERE")):
+        for inst, src in (("install.sh", "$REPO_DIR"), ("install-image.sh", "$HERE"), ("install-video.sh", "$HERE"),
+                          ("install-kolibri.sh", "$HERE")):
             with self.subTest(inst=inst):
                 text = (REPO / inst).read_text()
                 self.assertIn(f'install -m 755 "{src}/engine-preflight.sh" "$CONFIG_DIR/engine-preflight.sh"', text)
                 # written only when it changed, so an unchanged run rewrites nothing
                 self.assertIn(f'cmp -s "{src}/engine-preflight.sh" "$CONFIG_DIR/engine-preflight.sh"', text)
-        for inst in ("install-image.sh", "install-video.sh"):
+        for inst in ("install-image.sh", "install-video.sh", "install-kolibri.sh"):
             text = (REPO / inst).read_text()
             # in place before the unit naming it is rendered ("$HERE/$UNIT.template")
             self.assertLess(text.index("engine-preflight.sh"), text.index('"$HERE/$UNIT.template"'), inst)

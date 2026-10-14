@@ -19,7 +19,7 @@ PYSPY_WRAPPER=/usr/local/bin/qwen38-pyspy-scheduler
 # installed with HF_CACHE=/data/hf had 22 to 126 GB of weights and the 48 GB PLE file
 # neither listed nor given a reclaim command (found in review, 2026-09-24).
 unit_mount(){  # $1 = the container path; prints the host side of every -v mounting it
-  grep -hoE -- "-v [^ :]+:$1( |\$|:)" "$SYSTEMD_DIR/qwen38-sglang.service" "$CONFIG_DIR/launch-flash.sh" 2>/dev/null \
+  grep -hoE -- "-v [^ :]+:$1( |\$|:)" "$SYSTEMD_DIR/qwen38-sglang.service" "$CONFIG_DIR/launch-flash.sh" "$SYSTEMD_DIR/qwen38-kolibri.service" 2>/dev/null \
     | sed -e 's/^-v //' -e "s|:$1.*\$||" || true
 }
 HF_CACHES="$( { printf '%s\n' "${HF_CACHE:-}"; unit_mount /root/.cache/huggingface
@@ -54,9 +54,9 @@ done
 # Local serving images built by install.sh across versions (any tag: v1.2,
 # v1.2.2, v1.4, v1.5, ...), plus the pinned base images, matched by tag AND by
 # digest: a digest pull leaves no tag behind.
-LOCAL_IMAGE_REPOS="qwen38-dflash2 qwen38-flash qwen38-pinned"  # qwen38-dflash2 is the pre-v1.14 27B overlay, retired but still deletable; qwen38-pinned (v1.18.6) tags the digest pulls
-BASE_IMAGES="lmsysorg/sglang:v0.5.21 lmsysorg/sglang@sha256:b1259f3ea3275f66237c498ea388919729018bc9f01c3d638391e06e2cf3f469 lmsysorg/sglang:v0.5.19 lmsysorg/sglang@sha256:d6e7288627be8b02be88e4bba38e73f6d50e2826869f753c13a4c4385ab3eda9 lmsysorg/sglang:qwen38-27b lmsysorg/sglang@sha256:febfb971c7352570fc445c466ebd6ffc9d896024958e544a60f2137fd85856b1 lmsysorg/sglang:qwen38flashnext lmsysorg/sglang@sha256:12d3392bdc8be8d35e9a95f191df6aef99c5114bdbefd41bfdc7e760e6d25ec1 lmsysorg/sglang@sha256:9d2a843c706c74bc259c0d9abf360551eb2734e1e7d255ab012a6965f10480b6 lmsysorg/sglang@sha256:cb6ed363800a5bea98ac90b4c6447e9ba66cef7db881ac1f108046b6622d22b8 lmsysorg/sglang@sha256:3e79541d1e2a6818979c4aa9ca1fa63d6961d7bc50120867953ea6baaf1d8f62 lmsysorg/sglang@sha256:616a3e97f45191af975896cfa644279096cb31bd408a071c2e99ca7209c3cafe vllm/vllm-openai:qwen38-flash-next vllm/vllm-openai@sha256:fc120ece0a388cc0aa1caad4a9f1cd92113484ab7ec2fd0efadd62585be05bf8"
-HF_REPOS="RadixArk/Qwen3.8-27B-NVFP4 edp1096/Huihui-RadixArk-Qwen3.8-27B-abliterated-NVFP4 Qwen/Qwen3.8-27B-FP8 edp1096/Huihui-Qwen3.8-27B-abliterated-FP8 RadixArk/Qwen3.8-27B-DSpark z-lab/Qwen3.8-27B-DFlash2 maurienne-ai/Qwen3.8-27B-DFlash2-NVFP4-RTNcal RadixArk/Qwen3.8-Flash-Next-NVFP4 nvidia/Qwen3.8-Flash-Next-NVFP4 dealignai/Qwen3.8-Flash-Next-ABLITERATED-NVFP4 Qwen/Qwen-Image-2.1 Qwen/Qwen-Image-2.1-Turbo MiniMaxAI/MiniMax-H3 larryvrh/MiniMax-H3-Turbo-Lora"
+LOCAL_IMAGE_REPOS="qwen38-dflash2 qwen38-flash qwen38-pinned qwen38-kolibri"  # qwen38-dflash2 is the pre-v1.14 27B overlay, retired but still deletable; qwen38-pinned (v1.18.6) tags the digest pulls; qwen38-kolibri is the Kolibri lane's vLLM image with Aleph Alpha's plugin (install-kolibri.sh)
+BASE_IMAGES="lmsysorg/sglang:v0.5.21 lmsysorg/sglang@sha256:b1259f3ea3275f66237c498ea388919729018bc9f01c3d638391e06e2cf3f469 lmsysorg/sglang:v0.5.19 lmsysorg/sglang@sha256:d6e7288627be8b02be88e4bba38e73f6d50e2826869f753c13a4c4385ab3eda9 lmsysorg/sglang:qwen38-27b lmsysorg/sglang@sha256:febfb971c7352570fc445c466ebd6ffc9d896024958e544a60f2137fd85856b1 lmsysorg/sglang:qwen38flashnext lmsysorg/sglang@sha256:12d3392bdc8be8d35e9a95f191df6aef99c5114bdbefd41bfdc7e760e6d25ec1 lmsysorg/sglang@sha256:9d2a843c706c74bc259c0d9abf360551eb2734e1e7d255ab012a6965f10480b6 lmsysorg/sglang@sha256:cb6ed363800a5bea98ac90b4c6447e9ba66cef7db881ac1f108046b6622d22b8 lmsysorg/sglang@sha256:3e79541d1e2a6818979c4aa9ca1fa63d6961d7bc50120867953ea6baaf1d8f62 lmsysorg/sglang@sha256:616a3e97f45191af975896cfa644279096cb31bd408a071c2e99ca7209c3cafe vllm/vllm-openai:qwen38-flash-next vllm/vllm-openai@sha256:fc120ece0a388cc0aa1caad4a9f1cd92113484ab7ec2fd0efadd62585be05bf8 vllm/vllm-openai@sha256:18372a7224938643461b846fb64c5c9d3d6e9727e82caf2dc3043e620c9d4d7a"
+HF_REPOS="RadixArk/Qwen3.8-27B-NVFP4 edp1096/Huihui-RadixArk-Qwen3.8-27B-abliterated-NVFP4 Qwen/Qwen3.8-27B-FP8 edp1096/Huihui-Qwen3.8-27B-abliterated-FP8 RadixArk/Qwen3.8-27B-DSpark z-lab/Qwen3.8-27B-DFlash2 maurienne-ai/Qwen3.8-27B-DFlash2-NVFP4-RTNcal RadixArk/Qwen3.8-Flash-Next-NVFP4 nvidia/Qwen3.8-Flash-Next-NVFP4 dealignai/Qwen3.8-Flash-Next-ABLITERATED-NVFP4 Qwen/Qwen-Image-2.1 Qwen/Qwen-Image-2.1-Turbo MiniMaxAI/MiniMax-H3 larryvrh/MiniMax-H3-Turbo-Lora Aleph-Alpha/Kolibri-1 Quantinine/Kolibri-1-NVFP4A16-FP8"
 
 FOUND_IMAGES=()   # "ref|size|every ref", deduplicated by image ID (a tag and its digest are one image)
 # Every reference Docker keeps for one image. A digest-pulled image carries its digest
@@ -97,7 +97,7 @@ rm_cmd() {
 }
 
 echo "── Inventory (everything any version of this repo may have left here) ──"
-for u in qwen38-sglang.service qwen38-flash.service qwen38-keepalive.service qwen38-dashboard.service qwen38-image.service qwen38-video.service opencode-web.service; do
+for u in qwen38-sglang.service qwen38-flash.service qwen38-keepalive.service qwen38-dashboard.service qwen38-image.service qwen38-video.service qwen38-kolibri.service opencode-web.service; do
   if [ -f "$SYSTEMD_DIR/$u" ]; then
     STATE="$(systemctl is-enabled "$u" 2>/dev/null || true)/$(systemctl is-active "$u" 2>/dev/null || true)"
     echo "  unit      $SYSTEMD_DIR/$u ($STATE)"
@@ -127,7 +127,7 @@ if [ -d "$CONFIG_DIR" ]; then
   [ -f "$CONFIG_DIR/claude-code.env" ] && echo "  legacy    $CONFIG_DIR/claude-code.env (pre-v1.3 client config, unmaintained)"
   [ -f "$CONFIG_DIR/opencode.off" ] && echo "  marker    $CONFIG_DIR/opencode.off (opencode integration disabled with --no-opencode)"
   [ -f "$CONFIG_DIR/cockpit.off" ] && echo "  marker    $CONFIG_DIR/cockpit.off (cockpit disabled with --no-cockpit)"
-  for _lane in image video flash 27b; do
+  for _lane in image video flash 27b kolibri; do
     [ -f "$CONFIG_DIR/$_lane.off" ] && echo "  marker    $CONFIG_DIR/$_lane.off ($_lane lane left out with --no-$_lane)"
   done
 fi
@@ -172,7 +172,7 @@ fi
 PRIV=0
 for f in "$SYSTEMD_DIR/qwen38-sglang.service" "$SYSTEMD_DIR/qwen38-flash.service" \
          "$SYSTEMD_DIR/qwen38-keepalive.service" "$SYSTEMD_DIR/qwen38-dashboard.service" \
-         "$SYSTEMD_DIR/qwen38-image.service" "$SYSTEMD_DIR/qwen38-video.service" "$SYSTEMD_DIR/opencode-web.service" \
+         "$SYSTEMD_DIR/qwen38-image.service" "$SYSTEMD_DIR/qwen38-video.service" "$SYSTEMD_DIR/qwen38-kolibri.service" "$SYSTEMD_DIR/opencode-web.service" \
          "$SYSTEMD_DIR/qwen38-sglang.service.d" "$SYSTEMD_DIR/qwen38-dashboard.service.d" \
          "$SYSTEMD_DIR/qwen38-keepalive.service.d" "$SUDOERS_FILE" "$PYSPY_WRAPPER"; do
   [ -e "$f" ] && PRIV=1
@@ -185,11 +185,11 @@ done
 PRIV_DONE=0
 if [ "$PRIV" -eq 1 ]; then
   if sudo -v; then
-    for u in qwen38-sglang qwen38-flash qwen38-keepalive qwen38-dashboard qwen38-image qwen38-video opencode-web; do
+    for u in qwen38-sglang qwen38-flash qwen38-keepalive qwen38-dashboard qwen38-image qwen38-video qwen38-kolibri opencode-web; do
       sudo systemctl disable --now "$u.service" 2>/dev/null || true
     done
-    docker rm -f qwen38-sglang qwen38-sglang-run qwen38-flash 2>/dev/null || true
-    sudo rm -f "$SYSTEMD_DIR/qwen38-sglang.service" "$SYSTEMD_DIR/qwen38-flash.service" "$SYSTEMD_DIR/qwen38-keepalive.service" "$SYSTEMD_DIR/qwen38-dashboard.service" "$SYSTEMD_DIR/qwen38-image.service" "$SYSTEMD_DIR/qwen38-video.service" "$SYSTEMD_DIR/opencode-web.service"
+    docker rm -f qwen38-sglang qwen38-sglang-run qwen38-flash qwen38-kolibri 2>/dev/null || true
+    sudo rm -f "$SYSTEMD_DIR/qwen38-sglang.service" "$SYSTEMD_DIR/qwen38-flash.service" "$SYSTEMD_DIR/qwen38-keepalive.service" "$SYSTEMD_DIR/qwen38-dashboard.service" "$SYSTEMD_DIR/qwen38-image.service" "$SYSTEMD_DIR/qwen38-video.service" "$SYSTEMD_DIR/qwen38-kolibri.service" "$SYSTEMD_DIR/opencode-web.service"
     sudo rm -rf "$SYSTEMD_DIR/qwen38-sglang.service.d" "$SYSTEMD_DIR/qwen38-dashboard.service.d" "$SYSTEMD_DIR/qwen38-keepalive.service.d"
     # The cockpit's privileged surface goes with it: a NOPASSWD allowlist left behind
     # after an uninstall is the one leftover that is not merely clutter.

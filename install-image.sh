@@ -119,7 +119,7 @@ if [ "$ACTION" = uninstall ]; then
     # disabled by that switch: removing it left no engine at all, the next boot included,
     # and said nothing (found in review, 2026-09-24). The lane before images comes back.
     TEXT_ENABLED=0
-    for u in qwen38-sglang.service qwen38-flash.service; do
+    for u in qwen38-sglang.service qwen38-flash.service qwen38-kolibri.service; do
       systemctl is-enabled --quiet "$u" 2>/dev/null && TEXT_ENABLED=1
     done
     if [ "$WAS_BOOT" -eq 1 ] && [ "$TEXT_ENABLED" -eq 0 ]; then
@@ -404,7 +404,7 @@ step "6/6 Proving it serves (one image, then the box goes back to the lane it wa
 # was serving on video with no engine at all after the smoke test (found in review,
 # 2026-09-26).
 WAS_LLM=""
-for u in qwen38-sglang.service qwen38-flash.service qwen38-video.service qwen38-llamacpp.service; do
+for u in qwen38-sglang.service qwen38-flash.service qwen38-video.service qwen38-kolibri.service qwen38-llamacpp.service; do
   systemctl is-active --quiet "$u" 2>/dev/null && WAS_LLM="$u"
 done
 # If this lane was already serving, the test leaves it serving: stopping it on the way out

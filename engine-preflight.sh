@@ -8,8 +8,8 @@
 # logged NV_ERR_NO_MEMORY and its lock seized, and the whole machine froze until a power
 # cycle, 9.5 h later. Waiting longer does not help there; not starting does. So this waits,
 # bounded, and refuses a start only when that is what it finds:
-#   - GPU memory still held by what is left of an engine: an SGLang process, or a process
-#     the driver still lists and the system no longer has;
+#   - GPU memory still held by what is left of an engine: an SGLang or a vLLM process, or a
+#     process the driver still lists and the system no longer has;
 #   - memory the driver keeps that no process accounts for: on this unified-memory machine
 #     a GPU allocation is in none of the kernel's own categories, so MemTotal minus all of
 #     them is what the driver holds (1.1 GiB with no engine and a desktop session, the
@@ -52,7 +52,10 @@ gpu_holders() {
     all=$((all + mib))
     comm="$(cat "$PROC/$pid/comm" 2>/dev/null)"
     cmd="$(tr '\0' ' ' < "$PROC/$pid/cmdline" 2>/dev/null)"
-    if [ ! -d "$PROC/$pid" ] || [[ "$comm" == sglang* ]] || [[ "$cmd" == *sglang* ]]; then
+    # SGLang's lanes, and the Kolibri lane's vLLM: its engine core is VLLM::EngineCore (the
+    # kernel keeps 15 characters of it) and its API server a python3 running vllm serve.
+    if [ ! -d "$PROC/$pid" ] || [[ "$comm" == sglang* ]] || [[ "$cmd" == *sglang* ]] \
+       || [[ "$comm" == VLLM::* ]] || [[ "$cmd" == *vllm\ serve* ]] || [[ "$cmd" == *vllm/* ]]; then
       eng=$((eng + mib)); rem+="$pid ${comm:-gone} $mib MiB; "
     else
       oth+="$pid ${comm:-$name} $mib MiB; "
