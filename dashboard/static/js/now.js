@@ -142,7 +142,9 @@ function renderRack(){
     if (unit === VIDEO_UNIT) fact('4 s clip', 'about 11 min');
     if (unit === IMAGE_UNIT) fact('1024 image', laneTarget(IMAGE_UNIT) === 'image-turbo' ? 'about 7.5 s' : 'about 34 s');
     const en = (F.units[unit] || {}).enabled;
-    setText(b.note, !has ? LANE_INSTALL[unit] : en === 'enabled' ? 'starts at boot' : en === '?' ? '' : 'manual start');
+    // installed on demand: a lane whose runtime is not built yet says its first Load builds it
+    const unbuilt = has && SIDE_LANE[unit] && (F.lanesReady || {})[SIDE_LANE[unit]] === false;
+    setText(b.note, !has ? LANE_INSTALL[unit] : unbuilt ? 'built at its first Load' : en === 'enabled' ? 'starts at boot' : en === '?' ? '' : 'manual start');
     setText(b.act, !has ? 'Not installed' : seated ? (st === 'ready' || st === 'degraded' ? `Open ${LANE_META[unit].view === 'agent' ? 'the agent' : LANE_META[unit].view}` : 'Details') : 'Load this lane');
     b.root.setAttribute('aria-label', `${LANE_META[unit].title}: ${!has ? 'not installed' : stateLabel(e)}. ${b.act.textContent}.`);
   });

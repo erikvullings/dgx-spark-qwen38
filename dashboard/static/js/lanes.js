@@ -151,6 +151,8 @@ function renderLanes(){
       ['Next start loads', pending ? TARGET_NAME[e.target] : null],
       ['At boot', has ? (en === 'enabled' ? 'starts' : en === '?' ? 'unknown' : 'manual start') : null],
       ['Boot takes', has ? readyIn(unit) : null],
+      // installed on demand: its runtime is built at its first Load (LANE_RUNTIME says what)
+      ['Runtime', has && SIDE_LANE[unit] && (F.lanesReady || {})[SIDE_LANE[unit]] === false ? `built at its first Load: ${LANE_RUNTIME[SIDE_LANE[unit]]}` : null],
       ['Up for', seated && e && e.elapsed && (st === 'ready' || st === 'degraded') ? fmtDur(e.elapsed) : null],
       ['Install', !has ? LANE_INSTALL[unit] : null, 'code']]);
     c.root.classList.toggle('seated-card', seated);

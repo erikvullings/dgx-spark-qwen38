@@ -391,7 +391,8 @@ const ACTION_PHRASE = {
   smoke: () => 'run a smoke generation', diag_bundle: () => 'write a diagnostics bundle',
   fit_opencode: () => 'fit the opencode limits to this engine',
   delete_strays: () => 'delete the stray revisions from the model caches',
-  fetch: p => `download the checkpoint of ${TARGET_NAME[p.target] || p.target || 'a target'}`};
+  fetch: p => `download the checkpoint of ${TARGET_NAME[p.target] || p.target || 'a target'}`,
+  prepare: p => `build the runtime of the ${p.lane || ''} lane`};
 function actionPhrase(action, params){
   const f = ACTION_PHRASE[action]; if (f) return f(params || {});
   const p = params || {}; return action + (Object.keys(p).length ? ' ' + Object.entries(p).map(([k, v]) => `${k} ${v}`).join(', ') : '');
@@ -442,6 +443,8 @@ const EXPLAIN = {
   fit_opencode: () => 'Reads the KV pool of the engine serving now and rewrites only opencode’s context and output limits, so a conversation can never outgrow it. A dated backup is written first. If the Agent server runs, it restarts to read them: a reply it is writing then is cut short.'};
 // the stray revisions the last scan of the checkpoints offered to delete (Library, scanRegistry)
 const REG_STRAYS = {list: [], bytes: 0};
+EXPLAIN.prepare = p => `prepare-lane.sh runs install-${p.lane}.sh --prepare, which builds the lane's runtime (${LANE_RUNTIME[p.lane] || 'its runtime'}) as the user, `
+  + 'with no sudo, and changes nothing else: no unit, no boot, no engine.';
 EXPLAIN.fetch = p => `switch-model.sh fetches the checkpoint of ${TARGET_NAME[p.target] || p.target} into the cache as a switch to it does: `
   + 'the cache first, resumable, its room checked before. It changes nothing else: no unit, no boot, no engine. The dock shows the bytes as they come.';
 EXPLAIN.delete_strays = () => {
@@ -454,12 +457,14 @@ const TITLE = {unit: p => `${cap1(p.verb)} ${laneLabel(p.unit)}`, switch: p => `
   flush_cache: () => 'Flush the engine cache', abort_all: () => 'Abort every generation in flight', smoke: () => 'Run a smoke generation',
   diag_bundle: () => 'Write a diagnostics bundle', fit_opencode: () => 'Fit the opencode limits',
   delete_strays: () => 'Delete the stray revisions',
-  fetch: p => `Download ${TARGET_NAME[p.target] || p.target}`};
+  fetch: p => `Download ${TARGET_NAME[p.target] || p.target}`,
+  prepare: p => `Build the ${p.lane} lane's runtime`};
 const VERB = {unit: p => cap1(p.verb) + ' ' + (LANE_NAME[p.unit] || laneLabel(p.unit)), switch: () => 'Point the boot', flush_cache: () => 'Flush',
   abort_all: () => 'Abort all', smoke: () => 'Run the probe', diag_bundle: () => 'Write the bundle', fit_opencode: () => 'Fit the limits',
-  delete_strays: () => 'Delete them', fetch: () => 'Download'};
+  delete_strays: () => 'Delete them', fetch: () => 'Download', prepare: () => 'Build it'};
 const argvFor = (name, p) => name === 'unit' ? ['sudo', '-n', '/usr/bin/systemctl', p.verb, p.unit]
-  : name === 'switch' ? ['bash', 'switch-model.sh', p.target] : name === 'fetch' ? ['bash', 'switch-model.sh', p.target, '--fetch'] : ['cockpit', name];
+  : name === 'switch' ? ['bash', 'switch-model.sh', p.target] : name === 'fetch' ? ['bash', 'switch-model.sh', p.target, '--fetch']
+  : name === 'prepare' ? ['bash', 'prepare-lane.sh', p.lane] : ['cockpit', name];
 
 let SHEET = null;   // {mode: 'one'|'journey', ...}
 // A dialog hands the focus back to what opened it: closing one left it on the body, so a
@@ -590,9 +595,19 @@ const IMG_INTERRUPTED_AT = {t: 0}, VID_INTERRUPTED_AT = {t: 0};
 // ── the lane journey: loading a lane is one path, each step its own job ───────
 // The server knows three moves (switch, stop, start) and refuses them out of order; the
 // page chains them, one job after the other, and says each command before it runs.
+// what a side lane's first Load builds before its switch fetches the checkpoint
+const LANE_RUNTIME = {image: 'a venv and SGLang Diffusion, about 11 GB, about 10 minutes',
+  video: 'a venv and SGLang Diffusion, about 11 GB, about 10 minutes, and the Turbo adapter',
+  kolibri: 'its vLLM image, about 23 GB, pulled and built here'};
+const SIDE_LANE = {[IMAGE_UNIT]: 'image', [VIDEO_UNIT]: 'video', [KOLIBRI_UNIT]: 'kolibri'};
 function laneJourneySteps(target){
   const unit = TARGET_UNIT(target);
   const steps = [];
+  // installed on demand: a lane whose runtime is not built yet builds it first, as the user
+  const lane = SIDE_LANE[unit];
+  if (lane && (F.lanesReady || {})[lane] === false)
+    steps.push({name: 'prepare', params: {lane}, title: `Build the runtime of ${LANE_NAME[unit]}`,
+      desc: `Its first Load: ${LANE_RUNTIME[lane]}, with no sudo. The next step fetches its checkpoint.`});
   const serving = servingEngine();
   // none enabled: the switch step makes this one the boot lane, as it does from any other
   const enabled = bootUnit();
@@ -922,6 +937,9 @@ on('units', d => { F.units = d.units || {}; });
 on('lifecycle', d => { F.life = d; });
 on('repo', d => { F.proxy = d.proxy || null; });
 on('update', d => { F.update = d || {}; });
+// which side lanes are prepared, their runtime built (installed on demand: units at install,
+// runtime at the first Load): true, false, or null for a lane not installed
+on('lanes_ready', d => { F.lanesReady = d || {}; });
 on('agent', d => { F.agent = d; });
 on('containers', d => { F.containers = d.containers || {}; });
 on('job', renderJob);

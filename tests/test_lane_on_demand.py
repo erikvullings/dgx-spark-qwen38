@@ -178,5 +178,32 @@ class TheKolibriLaneInTwoHalves(unittest.TestCase):
         self.assertNotRegex(build, r"(^|[;&|(]\s*)sudo\b")
 
 
+
+class TheDispatcher(unittest.TestCase):
+    """prepare-lane.sh, what the cockpit's prepare action runs: the lane is an argument of its
+    own (the cockpit never builds one argument out of a parameter), mapped to its installer's
+    --prepare, and nothing else is taken."""
+
+    def run_it(self, *args):
+        d = pathlib.Path(tempfile.mkdtemp(prefix="prepare-lane-"))
+        (d / "prepare-lane.sh").write_text((REPO / "prepare-lane.sh").read_text())
+        for lane in ("image", "video", "kolibri"):
+            (d / f"install-{lane}.sh").write_text(f'echo "install-{lane}.sh $*"\n')
+        r = subprocess.run(["bash", str(d / "prepare-lane.sh"), *args], capture_output=True, text=True, timeout=30)
+        return r.returncode, (r.stdout + r.stderr).strip()
+
+    def test_each_lane_runs_its_installers_prepare(self):
+        for lane in ("image", "video", "kolibri"):
+            with self.subTest(lane=lane):
+                self.assertEqual(self.run_it(lane), (0, f"install-{lane}.sh --prepare"))
+
+    def test_anything_else_is_refused(self):
+        for args in ((), ("flash",), ("../install",), ("image", "--uninstall"), ("",)):
+            with self.subTest(args=args):
+                rc, out = self.run_it(*args)
+                self.assertEqual(rc, 2, out)
+                self.assertIn("usage", out)
+
+
 if __name__ == "__main__":
     unittest.main()

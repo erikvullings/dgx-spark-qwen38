@@ -56,6 +56,34 @@ class LoadingIt(unittest.TestCase):
         """)
         self.assertEqual(r, ["switch", "unit:stop qwen38-sglang.service", "unit:start qwen38-image.service"])
 
+    def test_a_lane_not_prepared_yet_builds_its_runtime_first(self):
+        # installed on demand (2026-10-14): its units at install, its runtime at its first Load
+        r = run(self, lanes("stopped", "image", text_state="ready") + r"""
+        feed({lanes_ready: {image: false, video: true, kolibri: null}});
+        const steps = laneJourneySteps('image');
+        report({steps: steps.map(s => s.name + (s.params.verb ? ':' + s.params.verb : '') + (s.params.lane ? ' ' + s.params.lane : '')),
+                title: steps[0].title, cmd: argvFor(steps[0].name, steps[0].params).join(' ')});
+        """)
+        self.assertEqual(r["steps"], ["prepare image", "switch", "unit:stop", "unit:start"])
+        self.assertIn("runtime", r["title"])
+        self.assertEqual(r["cmd"], "bash prepare-lane.sh image")
+
+    def test_the_cards_say_its_first_load_builds_it(self):
+        r = run(self, lanes("stopped", "image", text_state="ready") + r"""
+        feed({lanes_ready: {image: false, video: true, kolibri: null}});
+        showView('now'); showView('lanes');
+        report({now: document.body.textContent.includes('built at its first Load'),
+                lanes: document.body.textContent.includes('built at its first Load: a venv and SGLang Diffusion')});
+        """)
+        self.assertEqual(r, {"now": True, "lanes": True})
+
+    def test_a_prepared_lane_loads_as_before(self):
+        r = run(self, lanes("stopped", "image", text_state="ready") + r"""
+        feed({lanes_ready: {image: true, video: true, kolibri: null}});
+        report(laneJourneySteps('image').map(s => s.name));
+        """)
+        self.assertNotIn("prepare", r)
+
     def test_already_serving_it_is_nothing_to_do(self):
         r = run(self, r"""
         feed({units: {units: Object.assign({}, UNITS.units, {'qwen38-sglang.service': {active: 'inactive', enabled: 'disabled'},

@@ -140,6 +140,8 @@ def job_phrase(action: str, params: dict) -> str:
         return "delete the stray revisions from the model caches"
     if action == "fetch":
         return f"download the {p.get('target', '')} checkpoint"
+    if action == "prepare":
+        return f"build the {p.get('lane', '')} lane's runtime"
     return action + (" " + ", ".join(f"{k} {v}" for k, v in p.items()) if p else "")
 
 
@@ -1966,6 +1968,33 @@ def collect_jobs():
     return job_snapshot()
 
 
+def lane_prepared(lane: str):
+    """Whether a side lane's runtime is on the box, as install.sh reads it: the venv and the
+    note of its wheel (written once the wheel is in) for the image and video lanes, the image
+    its unit names for Kolibri. None when the lane is not installed (no unit)."""
+    unit = {"image": IMAGE_UNIT_PATH, "video": VIDEO_UNIT_PATH, "kolibri": KOLIBRI_UNIT_PATH}[lane]
+    try:
+        text = unit.read_text(errors="replace")
+    except OSError:
+        return None
+    if lane == "kolibri":
+        m = re.search(r"qwen38-kolibri:\S+", text)
+        return bool(m) and run(["docker", "image", "inspect", "--format", "{{.Id}}", m.group(0)],
+                               timeout=10).strip().startswith("sha256:")
+    m = re.search(r"^WorkingDirectory=(.+)$", text, re.M)
+    d = Path(m.group(1).strip()) if m else Path.home() / ".local/share" / f"qwen38-{lane}"
+    try:
+        return (d / "venv/bin/python").exists() and (d / "sglang-wheel").stat().st_size > 0
+    except OSError:
+        return False
+
+
+@guard
+def collect_lanes_ready():
+    """30 s tier: which side lanes are prepared, for the Load journey (it builds a lane's
+    runtime first when it is not)."""
+    return {lane: lane_prepared(lane) for lane in ("image", "video", "kolibri")}
+
 TIERS = [
     (1.0, {"machine": collect_machine, "engine_fast": collect_engine_fast, "job": collect_jobs}),
     (2.0, {"lifecycle": collect_lifecycle}),
@@ -1977,6 +2006,7 @@ TIERS = [
     # and the units, the feed and the agent must not wait with it
     (5.0, {"metrics": collect_engine_metrics}),
     (30.0, {"engine_info": collect_engine_info, "repo": collect_repo, "kernel": collect_kernel,
+            "lanes_ready": collect_lanes_ready,
             "opencode": collect_opencode, "reqguard": collect_guard,
             "update": collect_update}),
 ]
@@ -2128,6 +2158,17 @@ ACTIONS["fetch"] = {
     "argv": lambda p: ["bash", str(REPO_DIR / "switch-model.sh"), p["target"], "--fetch"],
     "timeout": 7200,
 }
+# The image, video and Kolibri lanes are installed on demand: their units at install, their
+# runtime at their first Load, built as the user by their installer's --prepare (no sudo),
+# through prepare-lane.sh, which takes the lane as an argument of its own.
+ACTIONS["prepare"] = {
+    "danger": "low",
+    "params": {"lane": ["image", "kolibri", "video"]},
+    "argv": lambda p: ["bash", str(REPO_DIR / "prepare-lane.sh"), p["lane"]],
+    "timeout": 5400,
+}
+
+
 # Which pin each switch target serves (registry.PIN_MODELS names its repo).
 TARGET_PIN = {"stock": "STOCK_REV", "uncensored": "UNC_REV", "fp8": "FP8_REV", "uncensored-fp8": "UNCFP8_REV",
               "flash": "FLASH_REV", "flash-nvda": "FLASH_NVDA_REV", "flash-uncensored": "FLASH_UNC_REV",
