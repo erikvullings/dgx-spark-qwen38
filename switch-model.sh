@@ -76,6 +76,29 @@ VIDEO_UNIT_NAME="qwen38-video.service"
 dl_free_gb(){ local p="${1:-$HF_CACHE}"; while [ ! -e "$p" ]; do p="$(dirname "$p")"; done
               { df -BG --output=avail "$p" 2>/dev/null || true; } | tail -1 | tr -dc '0-9'; }
 
+# A side lane's lane-before file names the lane it took the boot from: its uninstall gives the
+# boot back there, and install.sh follows these links to the text lane. Coming back to a lane
+# already in that chain closed a loop that lost the text lane: image, Kolibri, then image again
+# left each naming the other, and an update took the 27B for the text lane of a box that served
+# the flash (the reference box, 2026-10-14, at every round trip from the cockpit). Called before a
+# lane's own link is written: the link that pointed back to it takes the one it had, so the chain
+# still ends at the text lane.
+close_lane_loop(){  # $1: the lane switched to (image|video|kolibri), $2: the unit it takes the boot from
+  local self="qwen38-$1.service" old cur side
+  old="$(cat "$CONFIG_DIR/lane-before-$1" 2>/dev/null || true)"
+  cur="$2"
+  for _ in 1 2 3; do
+    case "$cur" in qwen38-image.service|qwen38-video.service|qwen38-kolibri.service) ;; *) return 0 ;; esac
+    side="${cur#qwen38-}"; side="${side%.service}"
+    if [ "$(cat "$CONFIG_DIR/lane-before-$side" 2>/dev/null || true)" = "$self" ]; then
+      if [ -n "$old" ] && [ "$old" != "$cur" ]; then printf '%s\n' "$old" > "$CONFIG_DIR/lane-before-$side"
+      else rm -f "$CONFIG_DIR/lane-before-$side"; fi
+      return 0
+    fi
+    cur="$(cat "$CONFIG_DIR/lane-before-$side" 2>/dev/null || true)"
+  done
+}
+
 # qwen38-llamacpp.service is the fifth serving unit: no installer here enables it,
 # but every lane template lists it in Conflicts=, so a box where an operator enabled
 # it by hand would boot it beside the lane just switched to, one of the two boot
@@ -223,6 +246,7 @@ PYKOL
   # Kolibri lane later gives the boot back to it (install-kolibri.sh --uninstall).
   for TEXT_UNIT_NAME in qwen38-sglang.service qwen38-flash.service qwen38-image.service qwen38-video.service; do
     if systemctl is-enabled --quiet "$TEXT_UNIT_NAME" 2>/dev/null; then
+      close_lane_loop kolibri "$TEXT_UNIT_NAME"
       printf '%s\n' "$TEXT_UNIT_NAME" > "$CONFIG_DIR/lane-before-kolibri"
     fi
   done
@@ -436,6 +460,7 @@ PYIMG
   # updates that lane on a later run, and enablement cannot tell it once both are off.
   for TEXT_UNIT_NAME in qwen38-flash.service qwen38-sglang.service qwen38-video.service qwen38-kolibri.service; do
     if systemctl is-enabled --quiet "$TEXT_UNIT_NAME" 2>/dev/null; then
+      close_lane_loop image "$TEXT_UNIT_NAME"
       printf '%s\n' "$TEXT_UNIT_NAME" > "$CONFIG_DIR/lane-before-image"
     fi
   done
@@ -584,6 +609,7 @@ PYVID
   # updates that lane on a later run, and enablement cannot tell it once all are off.
   for OTHER_UNIT_NAME in qwen38-flash.service qwen38-sglang.service qwen38-image.service qwen38-kolibri.service; do
     if systemctl is-enabled --quiet "$OTHER_UNIT_NAME" 2>/dev/null; then
+      close_lane_loop video "$OTHER_UNIT_NAME"
       printf '%s\n' "$OTHER_UNIT_NAME" > "$CONFIG_DIR/lane-before-video"
     fi
   done

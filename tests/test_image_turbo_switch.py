@@ -27,6 +27,9 @@ BLOCK = TEXT[START:END]
 _lines = TEXT.splitlines(keepends=True)
 _at = next(i for i, ln in enumerate(_lines) if ln.startswith("dl_free_gb(){"))
 DLFREE = "".join(_lines[_at:_at + 2])
+# and the helper the block calls before it writes the lane it leaves (close_lane_loop)
+_h = TEXT.index("close_lane_loop(){")
+DLFREE += TEXT[_h:TEXT.index("\n}\n", _h) + 3]
 PINS = dict(re.findall(r'^(IMAGE_MODEL_PIN|IMAGE_MODEL_PIN_REV|IMAGE_TURBO_PIN|IMAGE_TURBO_PIN_REV)="([^"]+)"',
                        (REPO / "install-image.sh").read_text(), re.M))
 BASE, TURBO = PINS["IMAGE_MODEL_PIN"], PINS["IMAGE_TURBO_PIN"]

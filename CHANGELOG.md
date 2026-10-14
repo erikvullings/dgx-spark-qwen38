@@ -69,7 +69,9 @@ keeps the other side lanes' way back to that lane. The installer reads the whole
 for the key in it, follows a symlinked model cache to its disk, removes an older image only once the
 unit names the new one, and proves the tool call at effort none (at high, the reasoning parser misses a
 call on 1.9 to 3.5 % of such requests); a switch takes a cached checkpoint only when every shard its
-index names is there.
+index names is there. A round trip between side lanes (image, then Kolibri, then image again, from the
+cockpit) left each naming the other as the lane before it, and an update took the 27B for the text lane
+of a box that served the flash; a switch now closes such a loop, image and video included.
 
 ## v1.28.2 (2026-10-13): a load window can be put away while its steps run, and long opencode sessions keep their cache
 
