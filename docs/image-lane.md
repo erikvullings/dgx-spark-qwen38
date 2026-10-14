@@ -1,10 +1,11 @@
 # The image lane: Qwen-Image 2.1 on one Spark
 
-Text to image, image editing and native RGBA, served by SGLang Diffusion in its own
-venv, on its own port, driven from the cockpit's **Image** view. Every plain install
-includes it since v1.20 (40 GB: 31 checkpoint, 9 runtime), and proves it with one image the
-first time. `--no-image` leaves it out, and later runs remember that; `--with-image` brings
-it back:
+Text to image, image editing and native RGBA, served by SGLang Diffusion in its own venv, on
+its own port, driven from the cockpit's **Image** view. Every plain install includes it
+since v1.20, now on demand: a plain run puts its units on the box, and its first Load from
+the cockpit builds its runtime and fetches its checkpoint (40 GB: 31 checkpoint, 9 runtime).
+`--all-weights`, or `--with-image`, builds it at install and proves it with one image.
+`--no-image` leaves it out, and later runs remember that; `--with-image` brings it back:
 
 ```bash
 ./install.sh --with-image
