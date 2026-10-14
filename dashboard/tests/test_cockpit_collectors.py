@@ -909,6 +909,74 @@ class ACockpitRestartFacingAServingEngine(Base):
         self.assertEqual(d["engines"][self.U]["state"], "ready")
 
 
+
+class ABootLandsUnderTheCheckpointItBooted(Base):
+    """A boot is learned per checkpoint (v1.30.0), and the checkpoint is the one the activation
+    started on: the unit's file names the NEXT start's, and one rewritten while the lane boots
+    (an update, or a switch whose restart has not come yet) put the boot in that series (found
+    in review, 2026-10-14)."""
+    U = "qwen38-flash.service"
+    MILESTONES = ("[2026-10-14 15:00:01] Load weight begin. avail mem=113.93 GB\n"
+                  "[2026-10-14 15:02:00] Load weight end. elapsed=118.38 s, type=Qwen3_8NextForCausalLM\n"
+                  "[2026-10-14 15:02:06] KV Cache is allocated. dtype: torch.bfloat16, #tokens: 491136\n"
+                  "[2026-10-14 15:02:09] Capture cuda graph begin. This can take up to several minutes.\n")
+    FIRED = MILESTONES + "[2026-10-14 15:03:00] The server is fired up and ready to roll!\n"
+    NOW = 100_000.0
+
+    def setUp(self):
+        self.cp.BOOT_HEAD_READ.clear()
+        self.cp.BOOT_SEEN.clear()
+        self.cp.UNHEALTHY_TICKS.clear()
+        self.cp.LAST_PROGRESS["ts"] = None
+        with self.cp.LIFE_LOCK:
+            self.cp.LIFE["states"], self.cp.LIFE["witnessed"], self.cp.LIFE["enter"] = {}, {}, {}
+            self.cp.LIFE.pop("boot_target", None)
+        (self.tmp / self.cp.HISTORY_FILE_NAME).unlink(missing_ok=True)
+        self.addCleanup((self.tmp / self.cp.HISTORY_FILE_NAME).unlink, missing_ok=True)
+        self.addCleanup(setattr, self.cp, "monotonic_now", self.cp.monotonic_now)
+        self.cp.monotonic_now = lambda: self.NOW
+        self.addCleanup(setattr, self.cp, "unit_target", self.cp.unit_target)
+        self.target = "flash"
+        self.cp.unit_target = lambda unit: ({"model": "m", "target": self.target} if unit == self.U
+                                            else {"model": None, "target": None})
+
+    def tick(self, active, sub, enter_s, logs, healthy, now):
+        """One pass of the lifecycle tier at monotonic time `now`, the unit's activation at
+        `enter_s`."""
+        self.NOW = now
+        with self.cp.STATE_LOCK:
+            self.cp.STATE["engine_fast"] = {"data": {"healthy": healthy}}
+        self.box({f"systemctl show {self.U}": f"ActiveState={active}\nSubState={sub}\n"
+                                              f"ActiveEnterTimestampMonotonic={int(enter_s * 1e6)}\n",
+                  "docker ps -q -f name=^qwen38-flash$": "c0ffee\n",
+                  "docker logs --tail 300 qwen38-flash": logs,
+                  "docker logs --since": logs})
+        out = self.cp.collect_lifecycle()
+        return out.get("data", out)["engines"][self.U]["state"]
+
+    def boots(self):
+        path = self.tmp / self.cp.HISTORY_FILE_NAME
+        history = json.loads(path.read_text()) if path.exists() else {}
+        return {k: v for k, v in history.items() if ":boot:" in k}
+
+    def restart_and_boot(self, rewrite_during_boot):
+        old, new = 89_200.0, 100_010.0                 # the serving activation, then the new one
+        self.assertEqual(self.tick("active", "running", old, self.FIRED, True, now=100_000.0), "ready")
+        self.target = "flash-nvda"                     # ./switch-model.sh flash-nvda rewrites the unit
+        self.tick("deactivating", "stop-sigterm", old, self.FIRED, False, now=100_005.0)   # and restarts it
+        self.assertIn(self.tick("active", "running", new, self.MILESTONES, False, now=100_210.0),
+                      self.cp.lc.TRANSITIONAL)
+        if rewrite_during_boot:
+            self.target = "flash"                      # the unit rewritten again while it boots
+        self.assertEqual(self.tick("active", "running", new, self.FIRED, True, now=100_270.0), "ready")
+        return self.boots()
+
+    def test_a_unit_rewritten_during_the_boot_does_not_move_it(self):
+        self.assertEqual(self.restart_and_boot(True), {f"{self.U}:boot:flash-nvda": [260.0]})
+
+    def test_a_boot_with_its_unit_unchanged_lands_under_it(self):
+        self.assertEqual(self.restart_and_boot(False), {f"{self.U}:boot:flash-nvda": [260.0]})
+
 class AStopTimeoutIsNotACrash(Base):
     """A unit systemd killed because it did not stop in time ends "failed" with
     Result=timeout: that is how a Stop during a generation looked on 2026-09-23, and the

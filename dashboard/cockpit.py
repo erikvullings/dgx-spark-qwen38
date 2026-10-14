@@ -1570,6 +1570,19 @@ def collect_lifecycle():
             continue
         # the lanes the cockpit follows on their own facts, not the SGLang text belts
         own_facts = is_image or is_video or is_kolibri
+        # The checkpoint the unit names, read once per unit and per poll; and the one this
+        # activation booted, kept from its start: a switch during a boot rewrites the unit,
+        # whose file then names the NEXT start's checkpoint, and the boot landed in that
+        # series (found in review, 2026-10-14)
+        configured = unit_target(unit)
+        target = configured.get("target")
+        enter_now = d.get("ActiveEnterTimestampMonotonic", "0")
+        with LIFE_LOCK:
+            booted_on = LIFE.setdefault("boot_target", {})
+            seen_enter = LIFE["enter"].get(unit)
+            if seen_enter is None or (enter_now != seen_enter and enter_now != "0"):
+                booted_on[unit] = target        # a new activation, or the first one this cockpit sees
+            booted = booted_on.get(unit) or target
         boot = {"stage": None, "fired_up": False, "done": []}
         if is_image:
             st, boot, running = image_engine_state(
@@ -1658,7 +1671,7 @@ def collect_lifecycle():
                         age = monotonic_now() - mono_us / 1e6
                 except ValueError:
                     pass
-                usual = lc.eta_for(history, unit, unit_target(unit).get("target")) \
+                usual = lc.eta_for(history, unit, booted) \
                     or TEXT_BOOT_DEFAULT_S.get(unit, 780.0)
                 if watched or age is None or age <= usual + WARMUP_GRACE_S:
                     st["state"] = "warming-up"
@@ -1838,15 +1851,14 @@ def collect_lifecycle():
                 LAST_PROGRESS["ts"] = None
                 READY_SINCE.pop(unit, None)
             witnessed = LIFE["witnessed"].get(unit, False)
-        target = unit_target(unit).get("target")
-        eta = lc.eta_for(history, unit, target)
+        eta = lc.eta_for(history, unit, booted)
         overdue = bool(eta and elapsed and st["state"] in lc.TRANSITIONAL
                        and elapsed > 2 * eta)
         # the image engine's own answer to which checkpoint it serves (the unit's file says
         # what the NEXT start loads), read once per life of the unit
         served = image_served_model(enter_key) if is_image and st["state"] in ("ready", "degraded") else None
         engines[unit] = {"state": st["state"],
-                         **unit_target(unit),
+                         **configured,
                          "served_target": ("image-turbo" if served == IMAGE_TURBO_MODEL else "image") if served else None,
                          "stage_done": boot.get("done", []),
                          # which stage list this engine walks, and what it is loading
@@ -1870,8 +1882,8 @@ def collect_lifecycle():
                          "elapsed": round(elapsed, 1) if elapsed else None,
                          "state_elapsed": round(state_elapsed, 1) if state_elapsed is not None else None,
                          "eta": eta, "overdue": overdue,
-                         "boots": lc.boots_for(history, unit, target)[-5:],
-                         "pools": lc.pool_spread(history, unit, target)}
+                         "boots": lc.boots_for(history, unit, booted)[-5:],
+                         "pools": lc.pool_spread(history, unit, booted)}
         states[unit] = st["state"]
         # transitions: events + boot-duration learning
         was = prev.get(unit)
@@ -1879,7 +1891,7 @@ def collect_lifecycle():
             add_event("state", f"{unit.replace('.service', '')}: {was} \u2192 {st['state']}")
             if st["state"] == "ready" and elapsed and witnessed \
                     and was in lc.TRANSITIONAL:
-                history = lc.record_boot(history, unit, elapsed, target=target)
+                history = lc.record_boot(history, unit, elapsed, target=booted)
                 if own_facts:
                     # Neither diffusion lane has a KV pool, and ENGINE_BASE is the text lane's
                     # port: reading a pool here would record the wrong engine's, or nothing.
@@ -1899,7 +1911,7 @@ def collect_lifecycle():
                                        or {}).get("max_total_num_tokens") or 0)
                 except Exception:  # noqa: BLE001 (a slow first answer is not worth a crash here)
                     pass
-                history = lc.record_pool(history, unit, unit_target(unit).get("target"), served_pool)
+                history = lc.record_pool(history, unit, booted, served_pool)
                 save_history(history)
                 short = lc.pool_shortfall(pinned_pool(unit), served_pool)
                 if short:
