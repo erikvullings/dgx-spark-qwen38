@@ -136,6 +136,8 @@ def job_phrase(action: str, params: dict) -> str:
         return "write a diagnostics bundle"
     if action == "fit_opencode":
         return "fit the opencode limits to this engine"
+    if action == "delete_strays":
+        return "delete the stray revisions from the model caches"
     return action + (" " + ", ".join(f"{k} {v}" for k, v in p.items()) if p else "")
 
 
@@ -2031,6 +2033,19 @@ SERVING_UNITS = {"qwen38-sglang.service", "qwen38-flash.service",
                  "qwen38-video.service", "qwen38-kolibri.service", AGENT_UNIT}
 UNIT_VERBS = {"start", "stop", "restart"}
 
+def _lane_unit_texts() -> list[str]:
+    """What every lane's installed unit or launcher says (the caches it reads, the revisions it
+    serves), '' for one not installed."""
+    texts = []
+    for path in (UNIT_PATHS["qwen38-sglang.service"], UNIT_PATHS["qwen38-flash.service"],
+                 KOLIBRI_UNIT_PATH, IMAGE_UNIT_PATH, VIDEO_UNIT_PATH):
+        try:
+            texts.append(path.read_text(errors="replace"))
+        except OSError:
+            texts.append("")
+    return texts
+
+
 ACTIONS = {
     # systemd control (privileged: requires the sudoers drop-in, see
     # dashboard/sudoers-cockpit.template)
@@ -2085,6 +2100,14 @@ ACTIONS = {
         "params": {},
         "argv": None,
         "timeout": 60,
+    },
+    # delete the stray revisions from the caches the lanes read (the models view): what the
+    # scan offers, read again by the job; the page sends no name and no path
+    "delete_strays": {
+        "danger": "medium",
+        "params": {},
+        "argv": None,
+        "timeout": 600,
     },
     # health smoke: one canary through the proxy
     "smoke": {
@@ -3912,8 +3935,52 @@ def job_diag_bundle(job: Job):
         {"ok": True, "path": str(out), "bytes": size}
 
 
+def job_delete_strays(job: Job):
+    """Every stray revision the scan offers to delete, scanned again now: a revision of a
+    managed repo, in a cache a lane reads, that no pin, no installed unit or launcher and no
+    ref names (registry_snapshot and registry.deletion_plan). For each, the blobs only it
+    links to, then its snapshot folder (the links, never what they point at), planned again
+    just before; what the scan keeps is said, with why."""
+    reg = registry_snapshot(max_age=0.0)
+    lines, freed, gone = [], 0, 0
+    for m in reg.get("models", []):
+        for r in m["revisions"]:
+            d = r.get("delete")
+            if not d:
+                continue
+            if "refused" in d:
+                lines.append(f"kept {m['repo_id']} {r['rev'][:10]}: {d['refused']}")
+                continue
+            plan = rg.deletion_plan(Path(m["cache"]) / "hub" / ("models--" + m["repo_id"].replace("/", "--")),
+                                    r["rev"])
+            if "refused" in plan:
+                lines.append(f"kept {m['repo_id']} {r['rev'][:10]}: {plan['refused']}")
+                continue
+            for blob in plan["blobs"]:
+                try:
+                    os.unlink(blob)
+                except FileNotFoundError:
+                    pass
+            shutil.rmtree(plan["snapshot"])
+            freed += plan["bytes"]
+            gone += 1
+            lines.append(f"deleted {m['repo_id']} {r['rev'][:10]}: {len(plan['blobs'])} blobs, "
+                         f"{plan['bytes'] / 2**30:.2f} GiB")
+            audit({"kind": "revision_deleted", "repo": m["repo_id"], "rev": r["rev"], "cache": m["cache"],
+                   "blobs": len(plan["blobs"]), "bytes": plan["bytes"]})
+    with REGISTRY_LOCK:
+        REGISTRY_CACHE.update(ts=0.0, data=None)
+    lines.append(f"{gone} stray revision{'s' if gone != 1 else ''} deleted, {freed / 2**30:.2f} GiB freed"
+                 if gone else "no stray revision to delete")
+    return True, lines, {"ok": True, "deleted": gone, "bytes": freed}
+
+
 JOB_FUNCS = {"flush_cache": job_flush_cache, "abort_all": job_abort_all,
-             "smoke": job_smoke, "diag_bundle": job_diag_bundle}
+             "smoke": job_smoke, "diag_bundle": job_diag_bundle,
+             "delete_strays": job_delete_strays}
+
+
+
 
 
 def start_action(name: str, params: dict, origin: str = "ui") -> tuple[int, dict]:
@@ -4134,15 +4201,8 @@ def registry_snapshot(max_age: float = 300.0) -> dict:
         # Every cache a lane reads, as its unit names it (install.sh takes HF_CACHE), once
         # each by where it really is: ~/.cache/huggingface alone left a box installed with
         # another cache an empty Library (found in review, 2026-10-14).
-        texts = []
-        for path in (UNIT_PATHS["qwen38-sglang.service"], UNIT_PATHS["qwen38-flash.service"],
-                     KOLIBRI_UNIT_PATH, IMAGE_UNIT_PATH, VIDEO_UNIT_PATH):
-            try:
-                texts.append(path.read_text(errors="replace"))
-            except OSError:
-                pass
         caches, real = [], set()
-        for d in rg.cache_dirs(texts) + [str(Path.home() / ".cache/huggingface")]:
+        for d in rg.cache_dirs(_lane_unit_texts()) + [str(Path.home() / ".cache/huggingface")]:
             r = os.path.realpath(d)
             if r not in real and os.path.isdir(os.path.join(r, "hub")):
                 real.add(r)
@@ -4153,6 +4213,20 @@ def registry_snapshot(max_age: float = 300.0) -> dict:
                 models += [{**m, "cache": d} for m in rg.classify(rg.scan_hf_cache(Path(d) / "hub"), pins)]
             except OSError:
                 pass
+        # What the models view's delete would free for each stray revision, or why it keeps
+        # it (an installed unit or launcher names it, or a ref does): job_delete_strays acts
+        # on exactly this, scanned again.
+        named = "\n".join(_lane_unit_texts())
+        for m in models:
+            for r in m["revisions"]:
+                if r.get("status") != "stray":
+                    continue
+                if r["rev"] in named:
+                    r["delete"] = {"refused": "an installed unit or launcher names it"}
+                    continue
+                plan = rg.deletion_plan(Path(m["cache"]) / "hub" / ("models--" + m["repo_id"].replace("/", "--")),
+                                        r["rev"])
+                r["delete"] = {"refused": plan["refused"]} if "refused" in plan else {"bytes": plan["bytes"]}
         # Both shapes: a tag is how a built image is named, a digest is how a
         # pinned one is. The flash lane serves a digest since v1.8, and asking
         # docker only for repo:tag reported it as missing. The digest pass needs

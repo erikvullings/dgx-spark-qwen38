@@ -513,7 +513,7 @@
         </section>
         <div class="grid g2">
           <section class="panel">
-            <header><h2>Checkpoints on disk</h2><div class="btn-row"><span class="aside" id="reg-age"></span><button class="btn sm" id="reg-btn" type="button">Scan</button></div></header>
+            <header><h2>Checkpoints on disk</h2><div class="btn-row"><span class="aside" id="reg-age"></span><button class="btn sm danger" id="reg-del" type="button" hidden>Delete the stray revisions</button><button class="btn sm" id="reg-btn" type="button">Scan</button></div></header>
             <div class="scroll-x"><table class="tbl dense stack" id="reg-models"><thead><tr><th>Model</th><th>Revision</th><th class="r">Size</th><th class="r">On disk</th><th>Status</th></tr></thead><tbody><tr class="empty"><td colspan="5">Scan lists the checkpoints in the Hugging Face cache.</td></tr></tbody></table></div>
             <h3 style="font-size:var(--t-14); margin:var(--s-5) 0 var(--s-2)">Engine images</h3>
             <div class="scroll-x"><table class="tbl dense stack" id="reg-images"><thead><tr><th>Image</th><th class="r">Size</th><th class="r">ID</th></tr></thead><tbody><tr class="empty"><td colspan="3">Scan lists the engine images Docker holds.</td></tr></tbody></table></div>

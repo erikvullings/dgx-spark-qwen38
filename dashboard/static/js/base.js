@@ -389,7 +389,8 @@ const ACTION_PHRASE = {
   switch: p => `point the boot at ${TARGET_NAME[p.target] || p.target || 'a target'}`,
   flush_cache: () => 'flush the engine cache', abort_all: () => 'abort every generation in flight',
   smoke: () => 'run a smoke generation', diag_bundle: () => 'write a diagnostics bundle',
-  fit_opencode: () => 'fit the opencode limits to this engine'};
+  fit_opencode: () => 'fit the opencode limits to this engine',
+  delete_strays: () => 'delete the stray revisions from the model caches'};
 function actionPhrase(action, params){
   const f = ACTION_PHRASE[action]; if (f) return f(params || {});
   const p = params || {}; return action + (Object.keys(p).length ? ' ' + Object.entries(p).map(([k, v]) => `${k} ${v}`).join(', ') : '');
@@ -438,11 +439,21 @@ const EXPLAIN = {
   smoke: () => 'One real 200-token generation through the proxy, the way a client uses it.',
   diag_bundle: () => 'Collects logs, state and versions into a tarball in your home; the API key is masked everywhere.',
   fit_opencode: () => 'Reads the KV pool of the engine serving now and rewrites only opencode’s context and output limits, so a conversation can never outgrow it. A dated backup is written first. If the Agent server runs, it restarts to read them: a reply it is writing then is cut short.'};
+// the stray revisions the last scan of the checkpoints offered to delete (Library, scanRegistry)
+const REG_STRAYS = {list: [], bytes: 0};
+EXPLAIN.delete_strays = () => {
+  const s = REG_STRAYS;
+  return `Removes from the Hugging Face cache ${s.list.map(x => `${x.repo.split('/').pop()} ${x.rev.slice(0, 10)} (${fmtGiB(x.bytes)})`).join(', ')}`
+    + `, ${fmtGiB(s.bytes)} in all: each one's snapshot and the blobs only it links to. No pin, no installed unit and no ref names them, `
+    + 'so no lane reads them, and a blob another revision shares stays. The cockpit scans again when you confirm, and deletes only what is still stray.';
+};
 const TITLE = {unit: p => `${cap1(p.verb)} ${laneLabel(p.unit)}`, switch: p => `Point the boot at ${TARGET_NAME[p.target] || p.target}`,
   flush_cache: () => 'Flush the engine cache', abort_all: () => 'Abort every generation in flight', smoke: () => 'Run a smoke generation',
-  diag_bundle: () => 'Write a diagnostics bundle', fit_opencode: () => 'Fit the opencode limits'};
+  diag_bundle: () => 'Write a diagnostics bundle', fit_opencode: () => 'Fit the opencode limits',
+  delete_strays: () => 'Delete the stray revisions'};
 const VERB = {unit: p => cap1(p.verb) + ' ' + (LANE_NAME[p.unit] || laneLabel(p.unit)), switch: () => 'Point the boot', flush_cache: () => 'Flush',
-  abort_all: () => 'Abort all', smoke: () => 'Run the probe', diag_bundle: () => 'Write the bundle', fit_opencode: () => 'Fit the limits'};
+  abort_all: () => 'Abort all', smoke: () => 'Run the probe', diag_bundle: () => 'Write the bundle', fit_opencode: () => 'Fit the limits',
+  delete_strays: () => 'Delete them'};
 const argvFor = (name, p) => name === 'unit' ? ['sudo', '-n', '/usr/bin/systemctl', p.verb, p.unit]
   : name === 'switch' ? ['bash', 'switch-model.sh', p.target] : ['cockpit', name];
 

@@ -608,6 +608,54 @@ class TheReleaseLineSaysWhichWay(unittest.TestCase):
         self.assertIn("up to date", r[2])
 
 
+class TheModelsViewDeletesOnlyWhatItMay(unittest.TestCase):
+    """Library's checkpoints say, for each stray revision, what deleting it frees or why it is
+    kept; one button deletes the ones the scan offers, after a sheet that names each of them,
+    and sends no name and no path (the models view, 2026-10-14)."""
+
+    GIB = 2 ** 30
+    REG = {"images": [], "other_models": [], "caches": ["/c"],
+           "models": [{"repo_id": "RadixArk/Qwen3.8-27B-DSpark", "cache": "/c", "disk_bytes": 3 * GIB,
+                       "revisions": [{"rev": "a" * 40, "bytes": 2 * GIB, "status": "pinned", "pin": "DRAFT_REV"},
+                                     {"rev": "b" * 40, "bytes": GIB, "status": "stray", "pin": None,
+                                      "delete": {"bytes": GIB}},
+                                     {"rev": "c" * 40, "bytes": GIB, "status": "stray", "pin": None,
+                                      "delete": {"refused": "refs/main names it, and a load by name reads it"}}]}]}
+
+    def scan(self, reg, then=""):
+        return run(self, r"""
+        __fetch = async (url, init) => url.startsWith('/api/registry') ? __response(200, %s)
+          : url === '/api/csrf' ? __response(200, {token: 't'})
+          : url === '/api/action' ? __response(202, {job: 'j1', argv: null, warnings: [], dry_run: false})
+          : new Promise(() => {});
+        await scanRegistry();
+        const rows = [...$('reg-models').tBodies[0].rows].map(tr => tr.textContent);
+        const btn = {shown: !$('reg-del').hidden, text: txt('reg-del')};
+        %s
+        """ % (json.dumps(reg), then or "report({rows, btn});"))
+
+    def test_the_offered_strays_go_after_a_sheet_that_names_them(self):
+        r = self.scan(self.REG, r"""
+        $('reg-del').click(); await __settle();
+        const sheet = {title: txt('sh-title'), lede: txt('sh-lede'), open: !$('scrim').hidden};
+        $('sh-go').click(); await __settle();
+        const post = __fetches.find(f => f.url === '/api/action');
+        report({rows, btn, sheet, sent: post ? JSON.parse(post.init.body) : null});""")
+        self.assertIn("frees 1.0 GiB", r["rows"][1])
+        self.assertIn("kept: refs/main names it", r["rows"][2])
+        self.assertEqual(r["btn"], {"shown": True, "text": "Delete 1 stray revision, frees 1.0 GiB"})
+        self.assertTrue(r["sheet"]["open"])
+        self.assertIn("Qwen3.8-27B-DSpark bbbbbbbbbb (1.0 GiB)", r["sheet"]["lede"])
+        self.assertNotIn("cccccccccc", r["sheet"]["lede"])
+        self.assertEqual(r["sent"], {"name": "delete_strays", "params": {}, "csrf": "t"})
+
+    def test_no_deletable_stray_no_button(self):
+        reg = json.loads(json.dumps(self.REG))
+        reg["models"][0]["revisions"] = reg["models"][0]["revisions"][::2]     # the pinned one and the kept one
+        r = self.scan(reg)
+        self.assertFalse(r["btn"]["shown"])
+
+
 class ExampleNamesCountRight(unittest.TestCase):
     """U41: the "Twenty options" example had eight."""
 

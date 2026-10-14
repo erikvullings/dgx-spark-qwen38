@@ -120,6 +120,15 @@ marks and scripts are all served by the box: the page fetches nothing from elsew
   branch, head, a dirty working tree, and whether a newer release is out). There
   is no panel for the API key, which is what you log in with; the diagnostics
   bundle masks it.
+- **Checkpoints.** Library lists every lane's checkpoints, the text lanes', the image
+  and video lanes' and Kolibri's, in the caches the lanes read (each lane's unit says
+  which), each revision pinned or stray, with what it holds on disk. A stray revision
+  is one no pin, no installed unit and no ref names: the line says what deleting it
+  frees, or why it stays (a ref names it, and a load by name reads it), and one button
+  deletes the ones it offers, after a sheet that names each. Each goes with its
+  snapshot and the blobs only it links to, never a blob another revision shares; the
+  job scans again before it deletes, and the page sends no name and no path. It is the
+  one cleanup the page runs; the rest of the reclaim stays a command.
 
 On a phone the rail is a drawer behind the menu button, controls are 44 px
 targets, and the Agent view opens fullscreen (see "On a phone" below): the whole

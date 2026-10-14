@@ -253,13 +253,21 @@ async function scanRegistry(){
     const r = await fetch('/api/registry?refresh=1'); if (r.status === 401) return login(); if (!r.ok) throw new Error('HTTP ' + r.status);
     const d = await r.json();
     const tb = $('reg-models').tBodies[0]; clear(tb);
+    const offered = [];
     (d.models || []).forEach(m => (m.revisions || []).forEach((rv, i) => {
       const tr = tb.insertRow(); tr.insertCell().textContent = i ? '' : m.repo_id.split('/').pop();
       const a = tr.insertCell(); a.className = 'num'; a.textContent = rv.rev.slice(0, 10);
       const b2 = tr.insertCell(); b2.className = 'r num'; b2.textContent = fmtGiB(rv.bytes);
       const c = tr.insertCell(); c.className = 'r num'; c.textContent = i ? '' : fmtGiB(m.disk_bytes);
       const s = tr.insertCell(); s.append(tag(rv.status, rv.status === 'pinned' ? 'cool' : rv.status === 'stray' ? 'warn' : '')); if (rv.pin) s.append(' ', tag(rv.pin));
+      // a stray revision: what deleting it frees, or why it stays (the header's button deletes them)
+      const del = rv.delete;
+      if (del && del.bytes != null){ offered.push({repo: m.repo_id, rev: rv.rev, bytes: del.bytes}); s.append(' ', el('span', 'muted', `frees ${fmtGiB(del.bytes)}`)); }
+      else if (del && del.refused) s.append(' ', el('span', 'muted', `kept: ${del.refused}`));
     }));
+    REG_STRAYS.list = offered; REG_STRAYS.bytes = offered.reduce((a, x) => a + x.bytes, 0);
+    const rd = $('reg-del'); rd.hidden = !offered.length;
+    setText(rd, `Delete ${offered.length} stray revision${offered.length === 1 ? '' : 's'}, frees ${fmtGiB(REG_STRAYS.bytes)}`);
     if (!tb.rows.length) emptyRow(tb, 5, 'No managed model in the Hugging Face cache.');
     labelCells($('reg-models'));
     const ti = $('reg-images').tBodies[0]; clear(ti);
@@ -306,7 +314,8 @@ async function scanInventory(){
   }catch(e){ setText(b, 'Retry'); setText('inv-line', 'The scan failed: ' + e.message); }
   finally{ b.disabled = false; }
 }
-on('job_finished', j => { if (j.action === 'switch' || j.action === 'unit'){ LOADED.recipes = false; if (activeView === 'library') loadRecipes(); } });
+on('job_finished', j => { if (j.action === 'switch' || j.action === 'unit'){ LOADED.recipes = false; if (activeView === 'library') loadRecipes(); }
+  if (j.action === 'delete_strays' && activeView === 'library') scanRegistry(); });
 onShow('library', () => { if (!LOADED.recipes) loadRecipes(); });
 
 // ── Logs ──────────────────────────────────────────────────────────────────────
@@ -447,6 +456,7 @@ function wireOps(){
   $('st-copy').addEventListener('click', () => copyText($('st-update').textContent));
   $('rcp-btn').addEventListener('click', loadRecipes);
   $('reg-btn').addEventListener('click', scanRegistry);
+  $('reg-del').addEventListener('click', () => askAction('delete_strays', {}, [], {danger: true}));
   $('up-btn').addEventListener('click', checkUpstream);
   $('inv-btn').addEventListener('click', scanInventory);
   $('oc-fitbtn').dataset.act = 'fit_opencode';

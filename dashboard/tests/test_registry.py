@@ -153,11 +153,11 @@ class TheCachesTheUnitsName(unittest.TestCase):
         self.assertEqual(rg.cache_dirs(texts), ["/data/hf", "/other/hf"])
 
 
-def fake_repo(root, revs, shared=(), refs=None):
+def fake_repo(root, revs, shared=(), refs=None, name="models--o--m"):
     """A Hugging Face cache repo folder: each revision's snapshot links its files to blobs,
     a file named in shared links to the same blob in every revision."""
     import os
-    repo = root / "models--o--m"
+    repo = root / name
     (repo / "blobs").mkdir(parents=True)
     for rev, files in revs.items():
         snap = repo / "snapshots" / rev
