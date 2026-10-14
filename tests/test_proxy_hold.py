@@ -566,10 +566,11 @@ class TheTwoQuestionsItAsks(unittest.TestCase):
 
 
 class WhereItIsSwitchedOn(unittest.TestCase):
-    def test_the_installed_proxy_names_both_text_lanes(self):
-        """In a unit file, an unquoted value with a space is two assignments."""
+    def test_the_installed_proxy_names_every_text_lane(self):
+        """In a unit file, an unquoted value with a space is two assignments. Every lane
+        that serves text behind this proxy is named: the 27B, the flash and Kolibri."""
         tpl = (HERE.parents[1] / "qwen38-keepalive.service.template").read_text()
-        self.assertIn(f'Environment="PROXY_HOLD_UNITS={UNITS}"\n', tpl)
+        self.assertIn(f'Environment="PROXY_HOLD_UNITS={UNITS} qwen38-kolibri.service"\n', tpl)
 
     def test_its_startup_line_says_what_it_holds(self):
         box = Box(self)

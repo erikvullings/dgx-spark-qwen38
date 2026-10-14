@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Keepalive proxy in front of SGLang (v6.36). No content logging, and the only
+"""Keepalive proxy in front of SGLang or vLLM (v6.37). No content logging, and the only
 rewriting is the tool-schema guard (role 4); one route, POST /v1/systemone, is answered
 here instead of relayed (role 5).
 
@@ -40,6 +40,21 @@ Six roles, nothing else:
    PROXY_HOLD_MAX_S, instead of failing at once. A streamed one hears from the proxy at
    once (200, then the keepalives of role 1); see "Holding a request" below.
 
+v6.37: the Kolibri lane serves on vLLM behind this door, and four things SGLang does that vLLM
+does not are now asked of the engine instead of assumed. Its /v1/models says which one serves
+("owned_by": "vllm"). vLLM has neither /server_info nor /get_server_info: the pool and the
+window come from its /metrics (cache_config_info's kv_cache_size_tokens, the figure its boot
+log prints) and its /v1/models (max_model_len), where without them every body past 256 KiB was
+held as "not measured yet" for good. vLLM stops a request whose connection closes (measured
+2026-10-14: one running before the client left, none 0.5 s after, no token in the next 2 s, the
+stream and the plain answer alike): a client that leaves closes the upstream there, where it
+was drained up to DRAIN_MAX_S for want of an /abort_request. vLLM refuses a model it does not
+serve (404) where SGLang answers any name: a body naming another model is given the served one,
+so a client keeps working across a lane switch as it always did. And what was learned of one
+engine is dropped with it: the vocabulary (Kolibri's is 128,000 tokens, every Qwen lane's
+248,320; the probe now names the served model, which vLLM requires, and reads vLLM's wording
+too) and whether the engine honours x-override-rid. System One needs a Qwen lane (its labels
+are measured on the Qwen tokenizer) and says so on Kolibri, a 400, where it failed as a 502.
 v6.36: a path under /ready passes the door without a key, as the engine leaves it open (its
 auth rule opens /health, /ready and /metrics; the door had /health and /metrics only, so a
 readiness probe got 401 here and 200 from the engine, found 2026-10-11).
@@ -722,6 +737,7 @@ class _LoggedOnce:
 
 _pattern_drop_logged = _LoggedOnce()
 _effort_move_logged = _LoggedOnce()
+_model_rename_logged = _LoggedOnce()
 
 
 def _prune_patterns(node, dropped, depth=0, abandoned=None):
@@ -1358,7 +1374,7 @@ def invalidate_pool():
     drops the cache.
     """
     _POOL.update(tokens=None, window=None, ts=0.0)
-    _SERVED.update(names=(), ts=0.0)      # v6.19: the served model names are the same kind of fact
+    _SERVED.update(names=(), engine="", ts=0.0)  # v6.19: the served model names are the same kind of fact
     _INFO_ROUTE["path"] = "/server_info"  # v6.23: a new engine gets the current route first
 
 
@@ -1373,8 +1389,8 @@ def invalidate_pool():
 # every 2 s, as for a hold: an engine answers minutes after its unit starts, so nothing it
 # serves meets a fact read before it. With no unit named (a proxy run by hand, or by a test)
 # or no answer from systemd, the facts keep their 600 s, as before.
-# The vocabulary keeps its hour: every checkpoint a lane of this repo serves has the same
-# 248,320 tokens (checked 2026-10-08).
+# The vocabulary is dropped when another model answers (v6.37, see note_engine): the Qwen
+# lanes have 248,320 tokens and Kolibri 128,000.
 _STARTS = {"ts": -1e9, "ids": None}
 _STARTS_LOCK = threading.Lock()
 
@@ -1437,16 +1453,73 @@ def _server_info(key, timeout):
 POOL_READ_TIMEOUT_S = float(os.environ.get("POOL_READ_TIMEOUT_S", "20"))
 
 
+# v6.37: vLLM's KV pool, in tokens: the kv_cache_size_tokens label of its cache_config_info
+# gauge on /metrics, which is the "GPU KV cache size: N tokens" of its boot log (2,014,877 on
+# the reference box's Kolibri NVFP4, both). num_gpu_blocks times block_size is not the same
+# figure on a model whose layers keep two kinds of cache (2,157,040 there), so it is only read
+# where the label is missing.
+_VLLM_POOL_RE = re.compile(r'^vllm:cache_config_info\{([^}]*)\}', re.M)
+
+
+def vllm_pool_facts(metrics_text, models):
+    """(pool tokens, window) of a vLLM engine, from its /metrics text and its /v1/models
+    list; 0 for what is not there."""
+    pool = 0
+    m = _VLLM_POOL_RE.search(metrics_text or "")
+    if m:
+        labels = dict(re.findall(r'(\w+)="([^"]*)"', m.group(1)))
+        try:
+            pool = int(labels.get("kv_cache_size_tokens") or 0)
+        except ValueError:
+            pool = 0
+        if pool <= 0:
+            try:
+                pool = int(labels.get("num_gpu_blocks") or 0) * int(labels.get("block_size") or 0)
+            except ValueError:
+                pool = 0
+    window = 0
+    for row in models or []:
+        if isinstance(row, dict) and isinstance(row.get("max_model_len"), int):
+            window = row["max_model_len"]
+            break
+    return pool, window
+
+
+def _vllm_facts(key, timeout):
+    """The pool and the window of an engine without SGLang's info routes, and, read on the
+    way, its names and what it says it is (served_models' facts, kept as it keeps them)."""
+    req = urllib.request.Request(UPSTREAM + "/metrics", headers={"Authorization": f"Bearer {key}"})
+    text = urllib.request.urlopen(req, timeout=timeout).read().decode("utf-8", "replace")
+    req = urllib.request.Request(UPSTREAM + "/v1/models", headers={"Authorization": f"Bearer {key}"})
+    models = json.loads(urllib.request.urlopen(req, timeout=timeout).read().decode()).get("data")
+    rows = [m for m in (models or []) if isinstance(m, dict) and m.get("id")]
+    if rows:
+        owner = rows[0].get("owned_by")
+        owner = owner if isinstance(owner, str) else ""
+        names = tuple(m["id"] for m in rows)
+        note_engine(names, owner)
+        _SERVED.update(names=names, engine=owner, ts=time.time())
+    return vllm_pool_facts(text, models)
+
+
 def pool_tokens():
     follow_engine_restarts()
     if _POOL["tokens"] and time.time() - _POOL["ts"] < 600:
         return _POOL["tokens"]
     try:
-        info = _server_info(_api_key(), POOL_READ_TIMEOUT_S)
-        n = int(info.get("max_total_num_tokens") or 0)
-        if n > 0:
+        try:
+            info = _server_info(_api_key(), POOL_READ_TIMEOUT_S)
+        except urllib.error.HTTPError as e:
+            if e.code != 404:
+                raise
+            # v6.37: no SGLang info route at all, as on vLLM (the Kolibri lane), which says
+            # both on /metrics and /v1/models; an engine with neither stays unmeasured.
+            n, w = _vllm_facts(_api_key(), POOL_READ_TIMEOUT_S)
+        else:
+            n = int(info.get("max_total_num_tokens") or 0)
             # The longest prompt the engine itself accepts, read with the pool (v6.34).
             w = int(info.get("max_req_input_len") or info.get("context_length") or 0)
+        if n > 0:
             _POOL.update(tokens=n, window=w if w > 0 else None, ts=time.time())
     except Exception:
         # A read that fails is itself evidence the engine moved: never keep
@@ -1465,6 +1538,9 @@ def pool_tokens():
 # checkpoint's config.json to the digit on the reference box.
 _VOCAB = {"size": 0, "ts": 0.0}
 _VOCAB_RE = re.compile(r"keys in \[0,\s*(\d+)\]")
+# v6.37: vLLM's wording of the same refusal names the size itself ("token_id(s) [999999999] in
+# logit_bias contain out-of-vocab token ids. Vocabulary size: 128000", Kolibri, 2026-10-14).
+_VOCAB_RE_VLLM = re.compile(r"Vocabulary size:\s*(\d+)")
 
 
 def served_vocab():
@@ -1478,7 +1554,10 @@ def served_vocab():
     if time.time() - _VOCAB["ts"] < (3600 if _VOCAB["size"] else 60):
         return _VOCAB["size"]
     _VOCAB["ts"] = time.time()          # claimed before the probe, so a failure counts
-    body = json.dumps({"model": "probe", "messages": [{"role": "user", "content": "x"}],
+    # The served name when it is known: vLLM refuses any other with a 404 before it looks at
+    # logit_bias (SGLang takes any name, and took "probe").
+    model = (_SERVED["names"] or ("probe",))[0]
+    body = json.dumps({"model": model, "messages": [{"role": "user", "content": "x"}],
                        "max_tokens": 1, "logit_bias": {"999999999": 1}}).encode()
     try:
         key = _api_key()
@@ -1489,9 +1568,14 @@ def served_vocab():
             urllib.request.urlopen(req, timeout=8).read()
             return _VOCAB["size"]            # answered instead of refusing: learn nothing
         except urllib.error.HTTPError as e:
-            m = _VOCAB_RE.search(e.read().decode("utf-8", "replace"))
+            text = e.read().decode("utf-8", "replace")
+            m = _VOCAB_RE.search(text)
             if m:
                 _VOCAB.update(size=int(m.group(1)) + 1, ts=time.time())
+            else:
+                m = _VOCAB_RE_VLLM.search(text)
+                if m:
+                    _VOCAB.update(size=int(m.group(1)), ts=time.time())
     except Exception:
         pass
     return _VOCAB["size"]
@@ -2306,7 +2390,7 @@ def systemone_answer(question, probabilities):
             "legend": {key: desc for key, desc in options}, "probabilities": dist}
 
 
-_SERVED = {"names": (), "ts": 0.0}
+_SERVED = {"names": (), "engine": "", "ts": 0.0}
 
 
 def served_models():
@@ -2321,18 +2405,77 @@ def served_models():
         key = _api_key()
         req = urllib.request.Request(UPSTREAM + "/v1/models", headers={"Authorization": f"Bearer {key}"})
         data = json.loads(urllib.request.urlopen(req, timeout=4).read().decode())
-        ids = [m.get("id") for m in (data.get("data") or []) if isinstance(m, dict) and m.get("id")]
+        rows = [m for m in (data.get("data") or []) if isinstance(m, dict) and m.get("id")]
+        ids = [m["id"] for m in rows]
         if ids:
-            _SERVED.update(names=tuple(ids), ts=time.time())
+            # v6.37: which engine serves, as it says itself: "owned_by" is "vllm" on vLLM
+            # (the Kolibri lane) and "sglang" on SGLang (the Qwen lanes).
+            owner = rows[0].get("owned_by")
+            owner = owner if isinstance(owner, str) else ""
+            note_engine(tuple(ids), owner)
+            _SERVED.update(names=tuple(ids), engine=owner, ts=time.time())
     except urllib.error.HTTPError:
-        _SERVED.update(names=(), ts=0.0)          # it answered, just not with a list of names
+        _SERVED.update(names=(), engine="", ts=0.0)   # it answered, just not with a list of names
     except (urllib.error.URLError, OSError) as e:
         # Nothing on the other end: that is the relay path's 503, not "the lane is shy".
-        _SERVED.update(names=(), ts=0.0)
+        _SERVED.update(names=(), engine="", ts=0.0)
         raise EngineUnreachable(str(getattr(e, "reason", None) or e)) from e
     except Exception:
-        _SERVED.update(names=(), ts=0.0)
+        _SERVED.update(names=(), engine="", ts=0.0)
     return _SERVED["names"]
+
+
+# v6.37: the last engine that named itself, kept across invalidate_pool (which also runs when
+# one read of the pool fails, the engine unchanged).
+_ENGINE_SEEN = {"names": (), "engine": ""}
+
+
+def note_engine(names, owner):
+    """Drop what was learned of the engine before, once another one names itself: its
+    vocabulary (Kolibri's is 128,000 tokens, the Qwen lanes' 248,320) and whether it takes
+    x-override-rid (vLLM takes no rid from the caller). Kept, the next engine was judged by
+    the last one's. The same engine back after a restart, same names, keeps both."""
+    global _rid_override_honoured
+    if (names, owner) == (_ENGINE_SEEN["names"], _ENGINE_SEEN["engine"]):
+        return
+    if _ENGINE_SEEN["names"]:
+        _VOCAB.update(size=0, ts=0.0)
+        _rid_override_honoured = None
+        log(f"the engine now serves {', '.join(names)[:120]} ({owner or 'unnamed engine'}): "
+            f"what was learned of the one before (vocabulary, request ids) is dropped")
+    _ENGINE_SEEN.update(names=names, engine=owner)
+
+
+# v6.37: the routes whose JSON body names a model vLLM checks against what it serves.
+VLLM_MODEL_ROUTES = ("/v1/chat/completions", "/v1/completions", "/v1/messages",
+                     "/v1/messages/count_tokens", "/v1/responses", "/tokenize", "/detokenize")
+
+
+def route_model_name(body, path):
+    """(the body to forward, the name it replaced or None). On vLLM only, which answers 404
+    to a model it does not serve where SGLang answers any name: a body naming another model
+    gets the served one, so a client set up for one lane keeps working on another, as it does
+    between the Qwen lanes. Untouched on any doubt, and on SGLang always."""
+    if not body or path.split("?", 1)[0] not in VLLM_MODEL_ROUTES or b'"model"' not in body:
+        return body, None
+    if not _SERVED["engine"]:
+        # What every prompt reads anyway, cached: on an engine without SGLang's info routes
+        # that read names it too (_vllm_facts). It costs a Qwen lane no request it did not make.
+        pool_tokens()
+    if _SERVED["engine"] != "vllm":
+        return body, None
+    names = _SERVED["names"]
+    try:
+        j = json.loads(body)
+    except Exception:
+        return body, None
+    if not isinstance(j, dict) or not isinstance(j.get("model"), str) or not names or j["model"] in names:
+        return body, None
+    was, j["model"] = j["model"], names[0]
+    try:
+        return json.dumps(j).encode(), was
+    except Exception:
+        return body, None
 
 
 
@@ -2355,6 +2498,11 @@ def systemone_model(requested):
         # name its model is worse than a wait.
         raise SystemOneHold("this lane has not named itself yet: GET /v1/models did not answer, so no "
                             "answer here could say which model produced it; retry in a few seconds")
+    if _SERVED["engine"] == "vllm":
+        # v6.37: its option labels are measured on the Qwen tokenizer, and the Kolibri lane's
+        # engine caps top_logprobs far below the fan-out's (it failed as a 502 there).
+        raise SystemOneUsage(f"System One needs a Qwen lane (the 27B or the flash): this box serves "
+                             f"{names[0]} now. Load one of those lanes from the cockpit.", plain=False)
     if requested in SYSTEMONE_ALIASES or requested in names:
         return names[0] if requested in SYSTEMONE_ALIASES else requested
     raise SystemOneUsage(f"Unknown model: {requested}", plain=False)
@@ -3008,6 +3156,13 @@ class H(BaseHTTPRequestHandler):
         which is the caller's signal to drain instead of orphaning the generation."""
         if getattr(self, "_aborted", False):
             return True
+        if _SERVED["engine"] == "vllm":
+            # v6.37: vLLM stops a request whose connection closes, the stream and the plain
+            # answer alike (measured 2026-10-14): closing is the abort, and draining would only
+            # keep its generation going for nobody.
+            self._aborted = True
+            log(f"closing the upstream: vLLM stops what it generates for it ({why})")
+            return True
         rid = self._abortable_rid()
         if not rid:
             return False
@@ -3549,6 +3704,11 @@ class H(BaseHTTPRequestHandler):
             if _pattern_drop_logged.first(pat):
                 log(f"{self._peer} tool schema: dropped a 'pattern' Python's re cannot "
                     f"compile (the engine would 400 the request): {pat[:120]}")
+        body, renamed = route_model_name(body, self.path)
+        if renamed and _model_rename_logged.first(renamed):   # once per name, not per request
+            shown = repr(renamed[:60]) + ("..." if len(renamed) > 60 else "")
+            log(f"{self._peer} model {shown} is not what this lane serves (vLLM answers 404 to it): "
+                f"relayed as {(_SERVED['names'] or ('?',))[0]}")
         if self.command == "POST" and self.path.split("?")[0] == SYSTEMONE_PATH:
             self._systemone(body); return
         # A count generates nothing, so there is no scheduler for it to wedge, and it is how
@@ -3982,7 +4142,7 @@ if __name__ == "__main__":
     holds = (f"holds requests up to {HOLD_MAX_S:.0f}s while {' or '.join(HOLD_UNITS)} comes back"
              if HOLD_UNITS and HOLD_MAX_S > 0 else "holds nothing")
     # one f-string: the cockpit's tests render this line from the source
-    log(f"v6.36 on {BIND}:{port} -> {UPSTREAM} (keepalive {KEEPALIVE_S:.0f}s, max silence {MAX_SILENCE_S:.0f}s, {holds})")
+    log(f"v6.37 on {BIND}:{port} -> {UPSTREAM} (keepalive {KEEPALIVE_S:.0f}s, max silence {MAX_SILENCE_S:.0f}s, {holds})")
     if FLASH_PROMPT_CEILING_TOKENS > 0:
         log(f"one-prompt ceiling {FLASH_PROMPT_CEILING_TOKENS} tokens while the flash lane serves"
             + (f", {PROMPT_CEILING_TOKENS} on any lane" if PROMPT_CEILING_TOKENS > 0 else ""))

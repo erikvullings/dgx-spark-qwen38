@@ -1,6 +1,6 @@
 [Unit]
 Description=Keepalive proxy in front of the serving engine :__PORT__ (agent clients connect to :__PROXY_PORT__)
-After=network-online.target qwen38-sglang.service qwen38-flash.service
+After=network-online.target qwen38-sglang.service qwen38-flash.service qwen38-kolibri.service
 Wants=network-online.target
 
 [Service]
@@ -18,7 +18,7 @@ Environment=MAX_SILENCE_S=3600
 # #26), and a new start of one drops what the proxy read from the engine before it: its
 # pool, window and names (v6.35). Quoted: unquoted, systemd would read the space as two
 # assignments.
-Environment="PROXY_HOLD_UNITS=qwen38-sglang.service qwen38-flash.service"
+Environment="PROXY_HOLD_UNITS=qwen38-sglang.service qwen38-flash.service qwen38-kolibri.service"
 Environment=PROXY_HOLD_MAX_S=1200
 Environment=PROXY_BIND=__PROXY_BIND__
 # A ceiling on the proxy's own memory, so a proxy that grows past any real use is stopped
