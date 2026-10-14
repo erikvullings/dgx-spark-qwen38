@@ -83,9 +83,21 @@ text_lane_back(){  # [$1 the side lane at boot]: the text unit to give the boot 
   return 0
 }
 
-lane_serves_older_unit(){  # $1 unit, $2 its unit file: true when it serves and that file is newer than its start
+lane_serves_older(){  # $1 unit, $2... its files: true when it serves and one of them is newer than its start
+  local unit="$1" started f; shift
+  [ "$(systemctl show -p ActiveState --value "$unit" 2>/dev/null)" = active ] || return 1
+  started="$(systemctl show -p ExecMainStartTimestamp --value --timestamp=unix "$unit" 2>/dev/null | tr -dc '0-9')"
+  [ -n "$started" ] || return 1
+  for f in "$@"; do
+    [ -e "$f" ] && [ "$(stat -L -c %Y "$f")" -gt "$started" ] && return 0
+  done
+  return 1
+}
+
+stale_since(){  # $1 unit, $2... its files: true when it does not serve, or serves older files than these
   local started
-  [ "$(systemctl show -p ActiveState --value "$1" 2>/dev/null)" = active ] || return 1
+  [ "$(systemctl show -p ActiveState --value "$1" 2>/dev/null)" = active ] || return 0
   started="$(systemctl show -p ExecMainStartTimestamp --value --timestamp=unix "$1" 2>/dev/null | tr -dc '0-9')"
-  [ -n "$started" ] && [ -e "$2" ] && [ "$(stat -L -c %Y "$2")" -gt "$started" ]
+  [ -n "$started" ] || return 0
+  lane_serves_older "$@"
 }

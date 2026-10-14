@@ -23,11 +23,14 @@ import unittest
 
 REPO = pathlib.Path(__file__).resolve().parents[1]
 INSTALL = (REPO / "install.sh").read_text()
+# install.sh's is lanes.sh's since v1.30, which it sources (the lanes' installers share it)
 SCRIPTS = {name: (REPO / name).read_text() for name in
-           ("install.sh", "dashboard/install-dashboard.sh", "dashboard/install-agent.sh")}
+           ("lanes.sh", "dashboard/install-dashboard.sh", "dashboard/install-agent.sh")}
 
 
 def helper(text):
+    if text is SCRIPTS["lanes.sh"]:
+        return text + "\n"                  # the library whole, as install.sh sources it
     start = text.index("stale_since(){")
     return text[start:text.index("\n}\n", start) + 3]
 
@@ -60,6 +63,10 @@ class StaleSince(unittest.TestCase):
                 self.assertEqual(stale(text, started=now - 100, files=(500, 300)), "KEEP")
                 self.assertEqual(stale(text, started=now - 100, files=(500, 10)), "RESTART")
                 self.assertEqual(stale(text, started=None, files=(500,)), "RESTART")
+
+    def test_install_sh_has_the_librarys_before_it_asks(self):
+        self.assertNotIn("stale_since(){", INSTALL, "one copy: lanes.sh's")
+        self.assertLess(INSTALL.index('. "$REPO_DIR/lanes.sh"'), INSTALL.index('stale_since "$KEEPALIVE_UNIT"'))
 
 
 class EachRestartHasAReason(unittest.TestCase):

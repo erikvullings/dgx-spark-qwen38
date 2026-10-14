@@ -212,20 +212,44 @@ class TheLibrary(unittest.TestCase):
         self.assertEqual(Box(units=("flash",)).run("text_lane_back"), "qwen38-flash.service")
         self.assertEqual(Box(units=("image",)).run("text_lane_back image"), "")
 
-    def test_a_lane_serving_an_older_unit_is_told(self):
+    def test_a_lane_serving_older_files_is_told(self):
         b = Box()
-        unit = b.units / "qwen38-image.service"
+        unit, runtime = b.units / "qwen38-image.service", b.cfg / "runtime-changed"
+        runtime.write_text("")
         started = int(time.time()) - 100
         (b.bin / "systemctl").write_text(
             "#!/bin/bash\n"
             'case "$*" in *ActiveState*) echo "${STATE:-active}";; '
             f'*ExecMainStartTimestamp*) echo "@{started}";; esac\n')
+        older = f'lane_serves_older qwen38-image.service "{unit}" "{runtime}" "{b.cfg}/absent" && echo OLDER || echo SAME'
+        for f in (unit, runtime):
+            os.utime(f, (started - 50, started - 50))
+        self.assertEqual(b.run(older), "SAME")
+        for f in (unit, runtime):                        # either one newer than the start is enough
+            with self.subTest(newer=f.name):
+                os.utime(f, (started + 50, started + 50))
+                self.assertEqual(b.run(older), "OLDER")
+                self.assertEqual(b.run("STATE=inactive " + older), "SAME", "a lane that does not serve serves nothing older")
+                os.utime(f, (started - 50, started - 50))
+
+    def test_stale_since_is_true_for_a_service_that_does_not_serve(self):
+        # install.sh's own (the proxy's), moved here: it restarts a service that is down, or
+        # that serves files older than these
+        b = Box()
+        unit = b.units / "qwen38-keepalive.service"
+        unit.write_text("[Service]\n")
+        started = int(time.time()) - 100
+        (b.bin / "systemctl").write_text(
+            "#!/bin/bash\n"
+            'case "$*" in *ActiveState*) echo "${STATE:-active}";; '
+            f'*ExecMainStartTimestamp*) echo "${{STARTED-@{started}}}";; esac\n')
+        stale = f'stale_since qwen38-keepalive.service "{unit}" && echo STALE || echo FRESH'
         os.utime(unit, (started - 50, started - 50))
-        self.assertEqual(b.run(f'lane_serves_older_unit qwen38-image.service "{unit}" && echo OLDER || echo SAME'), "SAME")
+        self.assertEqual(b.run(stale), "FRESH")
+        self.assertEqual(b.run("STATE=inactive " + stale), "STALE")
+        self.assertEqual(b.run("STARTED= " + stale), "STALE", "no start time read: restarted, as before")
         os.utime(unit, (started + 50, started + 50))
-        self.assertEqual(b.run(f'lane_serves_older_unit qwen38-image.service "{unit}" && echo OLDER || echo SAME'), "OLDER")
-        self.assertEqual(b.run(f'STATE=inactive lane_serves_older_unit qwen38-image.service "{unit}" && echo OLDER || echo SAME'),
-                         "SAME", "a lane that does not serve serves nothing older")
+        self.assertEqual(b.run(stale), "STALE")
 
 
 class EverySequenceOfSwitches(unittest.TestCase):

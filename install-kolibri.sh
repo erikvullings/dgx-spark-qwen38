@@ -277,6 +277,9 @@ fi
 step "3/5 Checkpoint ($MODEL @ ${MODEL_REV:0:12}, resumable)"
 mkdir -p "$HF_CACHE"
 DL_TOKEN_ARGS=()
+# the byte count, when the script is there (a mount of a missing file makes a root-owned directory)
+DL_PROGRESS_ARGS=()
+[ -f "$HERE/hf-progress.py" ] && DL_PROGRESS_ARGS=(-v "$HERE/hf-progress.py:/opt/qwen38/hf-progress.py:ro")
 # by name: docker takes the value from its own environment, so the token is in no argv
 if [ -n "${HF_TOKEN:-}" ]; then export HF_TOKEN; DL_TOKEN_ARGS=(-e HF_TOKEN); fi
 # The image's own huggingface_hub, as install.sh does for the other text lanes, with the
@@ -287,7 +290,7 @@ if [ -n "${HF_TOKEN:-}" ]; then export HF_TOKEN; DL_TOKEN_ARGS=(-e HF_TOKEN); fi
 docker run --rm --network host --user "$(id -u):$(id -g)" --entrypoint python3 \
   -e HF_HOME=/hf -e HF_HUB_DOWNLOAD_TIMEOUT=30 -e HF_HUB_DISABLE_XET=1 \
   -e KOL_MODEL="$MODEL" -e KOL_REV="$MODEL_REV" -e KOL_NEED_GB="$WEIGHTS_GB" "${DL_TOKEN_ARGS[@]}" \
-  -v "$HERE/kolibri-fetch.py:/opt/qwen38/kolibri-fetch.py:ro" -v "$HERE/hf-progress.py:/opt/qwen38/hf-progress.py:ro" \
+  -v "$HERE/kolibri-fetch.py:/opt/qwen38/kolibri-fetch.py:ro" "${DL_PROGRESS_ARGS[@]}" \
   -v "$HF_CACHE":/hf "$LOCAL_IMAGE" /opt/qwen38/kolibri-fetch.py \
   || die "checkpoint download failed. Causes: no internet, HuggingFace throttling an unauthenticated download (set HF_TOKEN=<your token>), a pinned revision removed upstream, or a permission error in $HF_CACHE. Re-running resumes."
 
@@ -316,11 +319,13 @@ else
   sudo install -m 644 "$RENDER" "$INSTALLED"; sudo systemctl daemon-reload
   echo "unit installed at $INSTALLED"
 fi
-# A lane that serves goes on serving the unit it started with: said here, whether this run or an
-# earlier update changed it (an update leaves a serving lane serving, and said nothing for the
-# image and video lanes: found in review, 2026-10-14).
-if lane_serves_older_unit "$UNIT" "$INSTALLED"; then
-  echo "NOTE: Kolibri serves the unit it started with; it serves this one after: sudo systemctl restart $UNIT   (or Load it again from the cockpit)"
+# A lane that serves goes on serving the unit, the runtime and the start scripts it started with:
+# said here when no proof follows to restart it, whether this run or an earlier update changed
+# them (an update leaves a serving lane serving, and said nothing for the image and video lanes:
+# found in review, 2026-10-14).
+LANE_FILES=("$INSTALLED" "$CONFIG_DIR/vllm-auth/vllm_engine_auth.py" "$CONFIG_DIR/engine-preflight.sh" "$CONFIG_DIR/engine-secrets.sh")
+if [ "$SMOKE" -eq 0 ] && lane_serves_older "$UNIT" "${LANE_FILES[@]}"; then
+  echo "NOTE: Kolibri runs older files than the ones installed now (its unit, its runtime or its start scripts); it runs these after: sudo systemctl restart $UNIT   (or Load it again from the cockpit)"
 fi
 # Images of this lane built from older pins, once the unit names this one: removed before
 # the checkpoint came, a failed download left the unit naming an image that was gone.
@@ -354,15 +359,18 @@ restore_lane() {
 trap restore_lane EXIT
 KEY="$(head -1 "$CONFIG_DIR/api-key")"
 SINCE="$(date '+%Y-%m-%d %H:%M:%S')"
-R0="$(systemctl show -p NRestarts --value "$UNIT" 2>/dev/null | tr -dc '0-9')"
-# A lane that serves an older unit than the one installed now restarts for the proof: the engine
-# that runs proved nothing about the unit this run installed (found in review, 2026-10-14).
-if [ "$WAS_KOLIBRI" -eq 1 ] && lane_serves_older_unit "$UNIT" "$INSTALLED"; then
-  echo "Kolibri serves the unit it started with, older than the one installed now: it restarts to prove this one"
+# A lane that runs older files than the ones installed now restarts for the proof: the engine that
+# runs proved nothing about what this run installed (found in review, 2026-10-14).
+if [ "$WAS_KOLIBRI" -eq 1 ] && lane_serves_older "$UNIT" "${LANE_FILES[@]}"; then
+  echo "Kolibri runs older files than the ones installed now (its unit, its runtime or its start scripts): it restarts to prove these"
   sudo systemctl restart "$UNIT"
 elif [ "$WAS_KOLIBRI" -eq 0 ]; then
   sudo systemctl start "$UNIT"
 fi
+# read after the start: a start or a restart resets the count, and one read before it, from a
+# unit that had restarted on its own before, let as many crashes of the new one go unseen (found
+# in review, 2026-10-14)
+R0="$(systemctl show -p NRestarts --value "$UNIT" 2>/dev/null | tr -dc '0-9')"
 READY=0
 for i in $(seq 1 150); do
   curl -fsS -m 3 "http://127.0.0.1:$PORT/health" >/dev/null 2>&1 && { READY=1; break; }

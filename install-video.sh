@@ -62,6 +62,7 @@ VENV="$LANE_DIR/venv"
 SRC="$LANE_DIR/sglang"
 WHEEL_NOTE="$LANE_DIR/sglang-wheel"   # the wheel release the venv's dependencies come from (step 3)
 SOURCE_NOTE="$LANE_DIR/sglang-source" # the SGLang commit the venv runs from (step 3)
+RUNTIME_NOTE="$LANE_DIR/runtime-changed"   # touched whenever this script changes the runtime the lane runs (step 3)
 PORT="${VIDEO_PORT:-$(unit_flag --port)}"; PORT="${PORT:-30022}"
 # The checkpoint and its revision, pinned like the rest: refs/main on 2026-09-25.
 # The first smoke on the reference box confirms it; until then the pin-watch alarms
@@ -241,7 +242,7 @@ if ! "$VENV/bin/python" -c 'import sglang' 2>/dev/null || [ "$(cat "$WHEEL_NOTE"
   echo "installing sglang[diffusion]==$WHEEL (~10 min on a new venv: torch and the kernels are large; an existing one only takes what changed)"
   "$VENV/bin/pip" install --quiet --pre "sglang[diffusion]==$WHEEL" \
     || die "the released wheel would not install. Re-run: pip resumes. If it keeps failing, SGLANG_DIFFUSION_WHEEL=<version> picks another."
-  printf '%s\n' "$WHEEL" > "$WHEEL_NOTE"
+  printf '%s\n' "$WHEEL" > "$WHEEL_NOTE"; touch "$RUNTIME_NOTE"
 fi
 if [ ! -d "$SRC/.git" ]; then
   git clone --quiet https://github.com/sgl-project/sglang "$SRC" || die "could not clone SGLang."
@@ -287,13 +288,14 @@ fi
 # lane started after both notes (dashboard/cockpit.py video_runtime_stale). A lane that runs
 # ddebc52, this lane's runtime before v1.25, loads the whole DiT to put an adapter on.
 HEAD_NOW="$(git -C "$SRC" rev-parse HEAD)"
-[ "$(cat "$SOURCE_NOTE" 2>/dev/null)" = "$HEAD_NOW" ] || printf '%s\n' "$HEAD_NOW" > "$SOURCE_NOTE"
+[ "$(cat "$SOURCE_NOTE" 2>/dev/null)" = "$HEAD_NOW" ] || { printf '%s\n' "$HEAD_NOW" > "$SOURCE_NOTE"; touch "$RUNTIME_NOTE"; }
 for P in "${PATCHES[@]}"; do
   PF="$HERE/image-sglang/$P.patch"
   if git -C "$SRC" apply --reverse --check "$PF" >/dev/null 2>&1; then
     echo "$P: already applied"
   elif git -C "$SRC" apply --check "$PF" >/dev/null 2>&1; then
     git -C "$SRC" apply "$PF" || die "$P passed its check and then failed to apply to $SRC."
+    touch "$RUNTIME_NOTE"
     echo "$P: applied, ${PATCH_FIXES[$P]} (effective at the lane's next start)"
   else
     # A newer pin may have changed that code, or fixed it upstream. The lane works either
@@ -415,11 +417,14 @@ else
   sudo install -m 644 "$RENDER" "$INSTALLED"; sudo systemctl daemon-reload
   echo "unit installed at $INSTALLED"
 fi
-# A lane that serves goes on serving the unit it started with: said here, whether this run or an
-# earlier update changed it (an update leaves a serving lane serving, and said nothing for the
-# image and video lanes: found in review, 2026-10-14).
-if lane_serves_older_unit "$UNIT" "$INSTALLED"; then
-  echo "NOTE: The video lane serves the unit it started with; it serves this one after: sudo systemctl restart $UNIT   (or Load it again from the cockpit)"
+# A lane that serves goes on serving the unit, the runtime and the start scripts it started with:
+# said here when no proof follows to restart it, whether this run or an earlier update changed
+# them (an update leaves a serving lane serving, and said nothing for the image and video lanes:
+# found in review, 2026-10-14). The runtime's dates: runtime-changed, touched at each change
+# since v1.30, and the notes of the wheel and of the source, which said the changes before.
+LANE_FILES=("$INSTALLED" "$RUNTIME_NOTE" "$WHEEL_NOTE" "$SOURCE_NOTE" "$CONFIG_DIR/engine-preflight.sh")
+if [ "$SMOKE" -eq 0 ] && lane_serves_older "$UNIT" "${LANE_FILES[@]}"; then
+  echo "NOTE: The video lane runs older files than the ones installed now (its unit, its runtime or its start scripts); it runs these after: sudo systemctl restart $UNIT   (or Load it again from the cockpit)"
 fi
 # Installed, not switched to: the lane this box serves stays the lane it serves. The
 # video lane becomes the boot lane the same way the other lanes do, by a switch, which
@@ -460,10 +465,10 @@ restore_other_lane() {
   rm -f "$RENDER" "${OUT:-}"
 }
 trap restore_other_lane EXIT
-# A lane that serves an older unit than the one installed now restarts for the proof: the engine
-# that runs proved nothing about the unit this run installed (found in review, 2026-10-14).
-if [ "$WAS_VIDEO" -eq 1 ] && lane_serves_older_unit "$UNIT" "$INSTALLED"; then
-  echo "The video lane serves the unit it started with, older than the one installed now: it restarts to prove this one"
+# A lane that runs older files than the ones installed now restarts for the proof: the engine that
+# runs proved nothing about what this run installed (found in review, 2026-10-14).
+if [ "$WAS_VIDEO" -eq 1 ] && lane_serves_older "$UNIT" "${LANE_FILES[@]}"; then
+  echo "The video lane runs older files than the ones installed now (its unit, its runtime or its start scripts): it restarts to prove these"
   sudo systemctl restart "$UNIT"
 else
   sudo systemctl start "$UNIT"

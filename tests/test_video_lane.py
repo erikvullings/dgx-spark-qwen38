@@ -414,7 +414,8 @@ class TheIdlePatch(unittest.TestCase):
 
     def _install(self, src, pin):
         script = ("set -euo pipefail\ndie(){ echo \"DIE: $*\"; exit 1; }\n"
-                  f'HERE="{REPO}"; SRC="{src}"; PIN="{pin}"; SOURCE_NOTE="{self._note()}"\n' + self._block())
+                  f'HERE="{REPO}"; SRC="{src}"; PIN="{pin}"; SOURCE_NOTE="{self._note()}"; '
+                  f'RUNTIME_NOTE="{src}.runtime-changed"\n' + self._block())
         r = subprocess.run(["bash", "-c", script], capture_output=True, text=True, timeout=30)
         return r.returncode, r.stdout + r.stderr
 
@@ -428,11 +429,16 @@ class TheIdlePatch(unittest.TestCase):
         # changes nothing leaves the note's date alone: a lane started since keeps its Turbo
         self.assertEqual(self.note.read_text().strip(), pin)
         os.utime(self.note, (1_000_000, 1_000_000))
+        # and the runtime's date, which the proof reads (install-video.sh's LANE_FILES)
+        runtime = pathlib.Path(f"{src}.runtime-changed")
+        self.assertTrue(runtime.exists())
+        os.utime(runtime, (1_000_000, 1_000_000))
         rc, out = self._install(src, pin)
         self.assertEqual(rc, 0, out)
         self.assertIn("scheduler-idle-poll: already applied", out)
         self.assertEqual((src / PATCHED).read_text().count("self._poller.poll(timeout=1000)"), 1)
         self.assertEqual(int(self.note.stat().st_mtime), 1_000_000)
+        self.assertEqual(int(runtime.stat().st_mtime), 1_000_000, "nothing changed: the date stays")
 
     def test_a_new_pin_checks_out_over_a_patched_tree(self):
         """The patch is a local edit, and git refuses to check out over a local edit of a

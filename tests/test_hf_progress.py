@@ -322,6 +322,14 @@ class SwitchModelWiresIt(unittest.TestCase):
         self.assertIn('-v "$REPO_DIR/hf-progress.py:/opt/qwen38/hf-progress.py:ro" -e QWEN38_REPO_DIR=/opt/qwen38', SWITCH)
         self.assertIn('"${DL_TOKEN_ARGS[@]}" "${DL_PROGRESS_ARGS[@]}"', SWITCH)
 
+    def test_kolibris_installer_mounts_it_only_when_it_is_there_too(self):
+        # docker -v of a host file that is not there makes a root-owned directory in its place,
+        # here in the repository (found in review, 2026-10-14)
+        kol = (REPO / "install-kolibri.sh").read_text()
+        self.assertIn('[ -f "$HERE/hf-progress.py" ] && DL_PROGRESS_ARGS=(-v "$HERE/hf-progress.py:/opt/qwen38/hf-progress.py:ro")', kol)
+        self.assertIn('-v "$HERE/kolibri-fetch.py:/opt/qwen38/kolibri-fetch.py:ro" "${DL_PROGRESS_ARGS[@]}"', kol)
+        self.assertEqual(kol.count("hf-progress.py:/opt/qwen38/hf-progress.py"), 1, "one mount, the guarded one")
+
     def test_bars_go_only_without_a_terminal(self):
         self.assertIn('DL_NO_BARS=""; [ -t 1 ] || DL_NO_BARS=1', SWITCH)
         # the text lanes', the image lane's, the video lane's and the Kolibri lane's

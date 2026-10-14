@@ -18,6 +18,7 @@ The rest holds the shape of the install: one engine at a time is a systemd Confl
 rather than a convention, the runtime pin is a full commit (the v0.5.21 release's, plus
 local patches), and the sizes the cockpit offers are the seven ratios Qwen publishes.
 """
+import os
 import pathlib
 import re
 import subprocess
@@ -446,7 +447,8 @@ class TheLocalPatches(unittest.TestCase):
 
     def _install(self, src, pin):
         script = ("set -euo pipefail\ndie(){ echo \"DIE: $*\"; exit 1; }\n"
-                  f'HERE="{REPO}"; SRC="{src}"; PIN="{pin}"\n' + self._block())
+                  f'HERE="{REPO}"; SRC="{src}"; PIN="{pin}"; RUNTIME_NOTE="{src}.runtime-changed"\n'
+                  + self._block())
         r = subprocess.run(["bash", "-c", script], capture_output=True, text=True, timeout=30)
         return r.returncode, r.stdout + r.stderr
 
@@ -460,8 +462,13 @@ class TheLocalPatches(unittest.TestCase):
         for name in TURBO_PATCHES:
             self.assertIn(f"{name}: applied", out)
         self.assertNotIn("NOTE:", out)
+        # the tree changed: the lane that serves runs the one before (install-image.sh's proof)
+        note = pathlib.Path(f"{src}.runtime-changed")
+        self.assertTrue(note.exists())
+        os.utime(note, (1_000_000, 1_000_000))
         rc, out = self._install(src, pin)
         self.assertEqual(rc, 0, out)
+        self.assertEqual(note.stat().st_mtime, 1_000_000, "nothing changed: the date stays")
         self.assertIn("scheduler-idle-poll: already applied", out)
         self.assertIn("http-graceful-timeout: already applied", out)
         self.assertEqual((src / PATCHED).read_text().count("self._poller.poll(timeout=1000)"), 1)

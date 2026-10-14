@@ -1089,16 +1089,7 @@ step() { printf '\n\033[1;36m── %s%s\033[0m\n' "${SECONDARY:+${SECONDARY/27b
 # rewritten when their content changes (cmp before install), so a date that moved is a
 # change. A run that changed nothing restarted the proxy, cutting every request in flight
 # through it, even with the engine kept (found in review, 2026-09-24).
-stale_since(){
-  local unit="$1" started f; shift
-  [ "$(systemctl show -p ActiveState --value "$unit" 2>/dev/null)" = "active" ] || return 0
-  started="$(systemctl show -p ExecMainStartTimestamp --value --timestamp=unix "$unit" 2>/dev/null | tr -dc '0-9')"
-  [ -n "$started" ] || return 0
-  for f in "$@"; do
-    [ -e "$f" ] && [ "$(stat -L -c %Y "$f")" -gt "$started" ] && return 0
-  done
-  return 1
-}
+# stale_since: in lanes.sh (sourced above), with the lanes' own freshness check
 # (die() is defined above, before the port validations that call it first.)
 
 step "1/10 Preflight checks"
