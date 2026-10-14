@@ -81,11 +81,11 @@ case "${KOLIBRI_VARIANT:-}" in
   fp8|nvfp4) VARIANT="$KOLIBRI_VARIANT" ;;
   *) die "KOLIBRI_VARIANT takes fp8 or nvfp4, got: $KOLIBRI_VARIANT" ;;
 esac
-# Each checkpoint's share of the GPU memory, chosen so that both keep the same KV cache,
-# about 2.1 million tokens (8 requests at the full 262,144 window): the FP8's 0.80 left
-# 2,093,056 tokens and 11.1 GiB of MemAvailable at its busiest (16 streams), measured; the
-# NVFP4 holds 30.8 GiB less of weights, and 0.55 gives that back to the box rather than to a
-# cache nobody fills.
+# Each checkpoint's share of the GPU memory, chosen so that both keep about the same KV cache,
+# 2.0 to 2.2 million tokens (about 8 requests at the full 262,144 window): the FP8's 0.80 left
+# 2,093,056 to 2,175,959 tokens over three boots, and MemAvailable never under 10.9 GiB
+# (measured, the benchmark client on the box beside it); the NVFP4 holds 30.8 GiB less of
+# weights, and 0.55 gives that back to the box rather than to a cache nobody fills.
 if [ "$VARIANT" = nvfp4 ]; then
   MODEL="$KOLIBRI_NVFP4_REPO"; MODEL_REV="$KOLIBRI_NVFP4_REV"; GMU=0.55; WEIGHTS_GB=46
 else
@@ -131,6 +131,18 @@ if [ "$ACTION" = uninstall ]; then
       fi
     fi
   fi
+  # A side lane switched to from Kolibri names it as the lane to give the boot back to, and
+  # install.sh follows that link to the text lane on an update: it now names where Kolibri's
+  # own pointed, never its own lane nor a unit that is gone.
+  KOL_BEFORE="$(cat "$CONFIG_DIR/lane-before-kolibri" 2>/dev/null || true)"
+  for SIDE in image video; do
+    [ "$(cat "$CONFIG_DIR/lane-before-$SIDE" 2>/dev/null || true)" = "$UNIT" ] || continue
+    if [ -n "$KOL_BEFORE" ] && [ "$KOL_BEFORE" != "qwen38-$SIDE.service" ]; then
+      printf '%s\n' "$KOL_BEFORE" > "$CONFIG_DIR/lane-before-$SIDE"
+    else
+      rm -f "$CONFIG_DIR/lane-before-$SIDE"
+    fi
+  done
   rm -f "$CONFIG_DIR/lane-before-kolibri"
   docker rm -f "$CONTAINER" >/dev/null 2>&1 || true
   for img in $(docker images --format '{{.Repository}}:{{.Tag}}' 'qwen38-kolibri' 2>/dev/null); do
@@ -294,7 +306,7 @@ for i in $(seq 1 150); do
     sudo journalctl -u "$UNIT" --since "$SINCE" --no-pager | tail -40
     die "the lane died while starting; the journal above says why."
   fi
-  [ $((i % 15)) -eq 0 ] && echo "  still loading... ($((i * 8)) s; about 9 min on the reference box)"
+  [ $((i % 15)) -eq 0 ] && echo "  still loading... ($((i * 8)) s; about 10 min on the reference box)"
   sleep 8
 done
 [ "$READY" -eq 1 ] || { sudo journalctl -u "$UNIT" --since "$SINCE" --no-pager | tail -40; die "the lane did not answer /health within 20 min. The journal above says why."; }
