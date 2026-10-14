@@ -1,25 +1,39 @@
-# LLMs, System One decisions, images and video on one DGX Spark (GB10)
+# One command turns a DGX Spark into a private AI server
 
-**One command turns a DGX Spark, or another GB10 box such as the ASUS Ascent GX10, into a
-private AI server.** Everything runs on the box: no prompt, image or video goes to a cloud
-service.
+**Qwen3.8-27B at 71.4 tok/s with a 1M context, Qwen3.8-Flash-Next 176B on a single box, images,
+video and Kolibri-1: installed, pinned and proved by one command**, on a DGX Spark or another
+GB10 box such as the ASUS Ascent GX10. No prompt, image or video leaves the box.
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/hasso5703/dgx-spark-qwen38/main/get.sh | bash
 ```
 
-- **Text**: Qwen3.8 27B at 71.4 tok/s with a 1M context by default, and Qwen3.8-Flash-Next
-  176B on the same box, seven switchable targets, an OpenAI- and Anthropic-compatible API.
-- **German and English**: Aleph Alpha's Kolibri-1, a 78B mixture of experts with 3.5B active, on
-  vLLM: 48 tok/s alone, 166 at 8 streams, a 262K context, reasoning and tool calls.
-- **Images**: Qwen-Image 2.1, a 1024×1024 image in about 34 s, or 7.5 s with its eight-step Turbo.
-- **Video with sound**: MiniMax-H3, a 4 s clip at 480p with its audio in 10 to 13 minutes, or about 2 with its Turbo.
-- **Agents**: opencode wired to the local model, in a terminal or in the cockpit's Agent
-  view, from a laptop or a phone.
-- **Typed decisions**: a System One endpoint that answers with calibrated probabilities
-  instead of text.
-- **A cockpit** that shows what holds the memory, loads a lane with one button, and runs the
-  whole box from a browser.
+Prefer to read it before it runs? Clone the repo and run `./install.sh`: that is all the
+one-liner does ([Quickstart](#quickstart)).
+
+| Model | Measured on a real DGX Spark |
+|---|---|
+| Qwen3.8-27B, NVFP4 + DFlash2 | **71.4 tok/s** greedy median, 1M context, 135-148 tok/s at 8 streams |
+| Qwen3.8-Flash-Next 176B, on **one** box | **47.9 tok/s** on code, 262K context |
+| Qwen-Image 2.1, 1024×1024 | **7.5 s** with its Turbo, 34 s without |
+
+**Why this rather than a recipe.** A recipe starts one model. On a Spark the hard part comes
+after: five models take turns in one 128 GB pool, SGLang's memory accounting misses 25-40 GB of
+transient allocations in it, and a pool pushed to zero freezes the box until a power cycle
+([the unified-memory trap](docs/gb10-memory.md)). This repo is what lets them live on one box:
+
+- **Pinned and proved.** Images by digest, checkpoints by revision; every lane an install adds
+  proves it serves before the run ends, and an update is the same command.
+- **One pool, lanes that take turns.** The cockpit shows what holds the memory and loads a lane
+  with one button, from a laptop or a phone.
+- **Clients that work out of the box.** OpenAI- and Anthropic-compatible APIs, opencode wired to
+  the local model, Claude Code, VS Code Copilot, Open WebUI and Cursor in [docs/clients.md](docs/clients.md).
+- **Measured, not claimed.** GSM8K 94.0% on the 27B and 97.41% on the flash, tool calling
+  91/100, every number with its method in [BENCHMARKS.md](BENCHMARKS.md).
+
+Also on the box: Aleph Alpha's **Kolibri-1** for German and English (48 tok/s, 166 at 8
+streams), **MiniMax-H3** video with sound, and a **System One** endpoint that answers with
+calibrated probabilities instead of text.
 
 Used and cited by others: [Kevin Welter's write-up](https://kevinwelter.com/en/blog/qwen-3-8-lokal)
 of running Qwen3.8 on a DGX Spark follows this recipe,
