@@ -158,73 +158,16 @@ if [ "$CHOICE" = "kolibri" ] || [ "$CHOICE" = "kolibri-nvfp4" ]; then
   fi
   # In the lane's own image, as the text lanes fetch theirs in their serving image; --init
   # for the same reason as below: a cockpit job stopped past its timeout stops this too.
-  docker run --rm -i --init --network host --user "$(id -u):$(id -g)" --entrypoint python3 \
+  # kolibri-fetch.py is the one copy of the fetch, install-kolibri.sh's too (it says why).
+  docker run --rm --init --network host --user "$(id -u):$(id -g)" --entrypoint python3 \
     -e HF_HOME=/hf -e HF_HUB_DOWNLOAD_TIMEOUT=30 -e HF_HUB_DISABLE_XET=1 \
     -e HF_HUB_DISABLE_PROGRESS_BARS="$DL_NO_BARS" \
     -e KOL_MODEL="$KOL_MODEL" -e KOL_REV="$KOL_REV" \
     -e KOL_NEED_GB="$KOL_NEED_GB" -e KOL_FREE_GB="$(dl_free_gb "$KOL_HF")" \
     "${KOL_TOKEN_ARGS[@]}" "${KOL_PROGRESS_ARGS[@]}" \
-    -v "$KOL_HF":/hf "$KOL_IMAGE" - <<'PYKOL' || die "the Kolibri checkpoint could not be verified or fetched (re-run to resume; set HF_TOKEN if it stalls)"
-import contextlib
-import importlib.util
-import json
-import os
-import time
-from huggingface_hub import constants, snapshot_download
-
-
-def reporting(*args, **kwargs):
-    """hf-progress.py's byte count while the rest comes; a progress line is never worth a download."""
-    try:
-        spec = importlib.util.spec_from_file_location(
-            "hf_progress", os.path.join(os.environ["QWEN38_REPO_DIR"], "hf-progress.py"))
-        mod = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(mod)
-        return mod.reporting(*args, **kwargs)
-    except Exception:
-        return contextlib.nullcontext()
-
-
-def complete(path):
-    """Every shard the index names is in the snapshot (a file appears there only once its
-    blob is whole), as install.sh's ckpt_cached reads it: huggingface_hub's own offline
-    check sees a missing file only when it cached the repo's tree, which a download made
-    with another tool or an older hub never wrote, and vLLM then dies at every start."""
-    try:
-        with open(os.path.join(path, "model.safetensors.index.json")) as f:
-            shards = set(json.load(f)["weight_map"].values())
-    except (OSError, ValueError, KeyError, TypeError, AttributeError):
-        shards = {"model.safetensors"}
-    return bool(shards) and all(os.path.exists(os.path.join(path, s)) for s in shards)
-
-
-repo, rev = os.environ["KOL_MODEL"], os.environ["KOL_REV"]
-try:
-    path = snapshot_download(repo, revision=rev, local_files_only=True)
-    if not complete(path):
-        raise FileNotFoundError(f"a shard the index of {repo} names is missing")
-except Exception:
-    # Refused before the first byte rather than stopped by a full disk halfway. What the
-    # cache already holds of the repo comes off the need: a fetch that stopped resumes.
-    blobs = os.path.join(constants.HF_HUB_CACHE, "models--" + repo.replace("/", "--"), "blobs")
-    have = sum(e.stat().st_size for e in os.scandir(blobs) if e.is_file()) if os.path.isdir(blobs) else 0
-    free = int(os.environ.get("KOL_FREE_GB") or 0)
-    need = max(int(os.environ["KOL_NEED_GB"]) - have // 10**9, 1)
-    if free and free < need:
-        raise SystemExit(f"{free} GB free in the cache, and {repo} needs about {need} GB more: free some space first")
-    print("not complete in the cache, fetching the rest", flush=True)
-    with reporting(repo, revision=rev):
-        for attempt in range(1, 6):  # a new attempt keeps every file already whole
-            try:
-                path = snapshot_download(repo, revision=rev)
-                break
-            except Exception as e:
-                if attempt == 5:
-                    raise
-                print(f"download interrupted ({type(e).__name__}), resuming ({attempt}/5)...", flush=True)
-                time.sleep(10)
-print(path)
-PYKOL
+    -v "$REPO_DIR/kolibri-fetch.py:/opt/qwen38/kolibri-fetch.py:ro" \
+    -v "$KOL_HF":/hf "$KOL_IMAGE" /opt/qwen38/kolibri-fetch.py \
+    || die "the Kolibri checkpoint could not be verified or fetched (re-run to resume; set HF_TOKEN if it stalls)"
   # The unit names one checkpoint, its revision and its memory share, on one line each; a
   # switch rewrites those and nothing else.
   KOL_CUR="$(grep -m1 -oE -- "[^ ]+ --revision [0-9a-f]{40}" "$KOLIBRI_UNIT" || true)"

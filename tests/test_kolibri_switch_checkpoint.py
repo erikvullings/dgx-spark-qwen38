@@ -1,11 +1,12 @@
 #!/usr/bin/env python3
-"""./switch-model.sh kolibri: a snapshot missing a shard is fetched, not taken as cached.
+"""The Kolibri lane's fetch (kolibri-fetch.py): a snapshot missing a shard is fetched, not taken as cached.
 
 The switch first asks huggingface_hub for the snapshot offline. huggingface_hub 1.30 (the
 lane image's) sees a missing file there only when it cached the repo's tree listing, which
 a download made with another tool or an older hub never wrote: the NVFP4 checkpoint on the
 reference box has no tree cache. A switch would then enable a unit whose vLLM, offline,
-dies at every start. The script's own Python runs here, whole, against a fake hub.
+dies at every start. The script runs here, whole, against a fake hub. It is the one copy of the
+fetch: install-kolibri.sh had its own, without that check (found in review, 2026-10-14).
 """
 import json
 import os
@@ -16,9 +17,7 @@ import tempfile
 import unittest
 
 REPO = pathlib.Path(__file__).resolve().parents[1]
-TEXT = (REPO / "switch-model.sh").read_text()
-_at = TEXT.index("<<'PYKOL'")
-SCRIPT = TEXT[TEXT.index("\n", _at) + 1:TEXT.index("\nPYKOL\n", _at)]
+FETCH = REPO / "kolibri-fetch.py"
 
 FAKE_HUB = '''
 import json, os, pathlib
@@ -56,7 +55,7 @@ class ACheckpointIsCachedOnlyWhenWhole(unittest.TestCase):
         env = dict(os.environ, PYTHONPATH=str(d), HF_HOME=str(d), FAKE_LOG=str(log), SNAP=str(snap),
                    KOL_MODEL="Quantinine/Kolibri-1-NVFP4A16-FP8", KOL_REV="4" * 40,
                    KOL_NEED_GB="46", KOL_FREE_GB="1000")
-        r = subprocess.run([sys.executable, "-c", SCRIPT], capture_output=True, text=True, env=env, timeout=60)
+        r = subprocess.run([sys.executable, str(FETCH)], capture_output=True, text=True, env=env, timeout=60)
         self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
         return log.read_text().splitlines(), r.stdout
 
@@ -77,6 +76,19 @@ class ACheckpointIsCachedOnlyWhenWhole(unittest.TestCase):
         self.assertEqual([c.split()[-1] for c in calls], ["local=True", "local=False"])
         calls, _ = self.run_switch(["model.safetensors"])
         self.assertEqual([c.split()[-1] for c in calls], ["local=True"])
+
+
+
+class OneCopyOfTheFetch(unittest.TestCase):
+    def test_both_callers_run_it_and_neither_has_its_own(self):
+        switch = (REPO / "switch-model.sh").read_text()
+        at = switch.index('if [ "$CHOICE" = "kolibri" ] || [ "$CHOICE" = "kolibri-nvfp4" ]; then')
+        kolibri_block = switch[at:switch.index("\nfi\n", at)]
+        for name, text in (("switch-model.sh, its Kolibri block", kolibri_block),
+                           ("install-kolibri.sh", (REPO / "install-kolibri.sh").read_text())):
+            with self.subTest(script=name):
+                self.assertIn("/opt/qwen38/kolibri-fetch.py", text)
+                self.assertNotIn("snapshot_download", text, "a fetch of its own again")
 
 
 if __name__ == "__main__":

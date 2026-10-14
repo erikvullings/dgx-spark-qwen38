@@ -306,25 +306,16 @@ DL_TOKEN_ARGS=()
 # by name: docker takes the value from its own environment, so the token is in no argv
 if [ -n "${HF_TOKEN:-}" ]; then export HF_TOKEN; DL_TOKEN_ARGS=(-e HF_TOKEN); fi
 # The image's own huggingface_hub, as install.sh does for the other text lanes, with the
-# same Xet ban (the classic CDN path measured 89 MB/s where Xet stalled at 0 to 8).
-docker run --rm -i --network host --user "$(id -u):$(id -g)" --entrypoint python3 \
+# same Xet ban (the classic CDN path measured 89 MB/s where Xet stalled at 0 to 8), through
+# kolibri-fetch.py, the one copy of the fetch switch-model.sh runs too: a snapshot the cache
+# holds is taken only when every shard its index names is there (the fetch here had no such
+# check, and huggingface_hub's own sees a missing file only with its tree cache).
+docker run --rm --network host --user "$(id -u):$(id -g)" --entrypoint python3 \
   -e HF_HOME=/hf -e HF_HUB_DOWNLOAD_TIMEOUT=30 -e HF_HUB_DISABLE_XET=1 \
-  -e MODEL_REPO="$MODEL" -e MODEL_REV="$MODEL_REV" "${DL_TOKEN_ARGS[@]}" \
-  -v "$HF_CACHE":/hf "$LOCAL_IMAGE" - <<'PY' || die "checkpoint download failed. Causes: no internet, HuggingFace throttling an unauthenticated download (set HF_TOKEN=<your token>), a pinned revision removed upstream, or a permission error in $HF_CACHE. Re-running resumes."
-import os, time
-from huggingface_hub import snapshot_download
-repo, rev = os.environ["MODEL_REPO"], os.environ["MODEL_REV"]
-for attempt in range(1, 6):  # a resumed attempt reuses every finished byte
-    try:
-        path = snapshot_download(repo, revision=rev)
-        break
-    except Exception as e:
-        if attempt == 5:
-            raise
-        print(f"   download interrupted ({type(e).__name__}), resuming ({attempt}/5)", flush=True)
-        time.sleep(10)
-print("   " + path, flush=True)
-PY
+  -e KOL_MODEL="$MODEL" -e KOL_REV="$MODEL_REV" -e KOL_NEED_GB="$WEIGHTS_GB" "${DL_TOKEN_ARGS[@]}" \
+  -v "$HERE/kolibri-fetch.py:/opt/qwen38/kolibri-fetch.py:ro" -v "$HERE/hf-progress.py:/opt/qwen38/hf-progress.py:ro" \
+  -v "$HF_CACHE":/hf "$LOCAL_IMAGE" /opt/qwen38/kolibri-fetch.py \
+  || die "checkpoint download failed. Causes: no internet, HuggingFace throttling an unauthenticated download (set HF_TOKEN=<your token>), a pinned revision removed upstream, or a permission error in $HF_CACHE. Re-running resumes."
 
 step "4/5 Service"
 mkdir -p "$CONFIG_DIR" "$CONFIG_DIR/kolibri-cache"
