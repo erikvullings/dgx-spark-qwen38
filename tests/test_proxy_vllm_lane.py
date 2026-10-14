@@ -88,7 +88,8 @@ class FakeVllm(http.server.BaseHTTPRequestHandler):
         if path == "/metrics" and FakeVllm.metrics_fail:
             self._json(500, {"detail": "Internal Server Error"})
         elif path == "/metrics":
-            out = METRICS.encode()
+            # SGLang's page has none of vLLM's gauges
+            out = (METRICS if FakeVllm.owner == "vllm" else "sglang:num_running_reqs 0.0\n").encode()
             self.send_response(200)
             self.send_header("Content-Type", "text/plain")
             self.send_header("Content-Length", str(len(out)))
@@ -489,6 +490,18 @@ class ThroughTheProxy(unittest.TestCase):
         self.mod.invalidate_pool()                    # a new engine is asked again
         self.mod.pool_tokens()
         self.assertEqual(len(FakeVllm.info_hits), 4)
+
+    def test_an_sglang_engine_after_vllm_is_asked_its_routes_again(self):
+        # a proxy that names no unit (PROXY_HOLD_UNITS unset) sees no start: Kolibri noted that
+        # the engine has no SGLang route, a 27B took the port, and every read of its pool went
+        # vLLM's way and found nothing, the guard down for that engine's life (review, 2026-10-14)
+        self.assertEqual(self.mod.pool_tokens(), 2014877)
+        self.assertIsNone(self.mod._INFO_ROUTE["path"])
+        FakeVllm.served, FakeVllm.owner = "qwen3.8-27b", "sglang"
+        self.mod._POOL["ts"] = 0.0
+        self.assertIsNone(self.mod.pool_tokens(), "this read meets the new engine: not the vLLM engine's pool")
+        self.assertEqual(self.mod._INFO_ROUTE["path"], "/server_info")
+        self.assertEqual(self.mod.pool_tokens(), 863644)
 
     def test_on_sglang_a_foreign_name_goes_as_it_came(self):
         FakeVllm.served, FakeVllm.owner = "qwen3.8-27b", "sglang"

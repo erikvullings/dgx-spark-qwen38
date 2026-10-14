@@ -44,7 +44,10 @@ v6.39: an engine that has neither of SGLang's info routes is not asked them agai
 the pool on the Kolibri lane (vLLM) began with /server_info and /get_server_info, two 404s, and the
 hold's probe asked /server_info each time it looked: the proxy notes that this engine has none,
 reads vLLM's own facts at once, and probes /health there, which on vLLM generates nothing. A new
-engine (any restart, any lane switch) is asked again (found in review, 2026-10-14).
+engine (any restart, any lane switch) is asked again (found in review, 2026-10-14), and so is one
+that took the port with no start the proxy saw (a proxy told no unit to watch): the first read that
+finds it is not vLLM drops what was read from the vLLM engine and goes back to SGLang's routes (the
+review of the fix, the same day).
 
 v6.38: the client's key reaches the engine without the whitespace around it. The spaces around
 a header's value are not part of it (RFC 9110, section 5.5), and SGLang reads it so: a key sent
@@ -1496,7 +1499,7 @@ _INFO_ROUTE = {"path": "/server_info"}
 
 
 def _server_info(key, timeout):
-    path = _INFO_ROUTE["path"]
+    path = _INFO_ROUTE["path"] or "/server_info"
     for attempt in (path, "/get_server_info"):
         req = urllib.request.Request(UPSTREAM + attempt, headers={"Authorization": f"Bearer {key}"})
         try:
@@ -1575,7 +1578,7 @@ def pool_tokens():
         return _POOL["tokens"]
     try:
         try:
-            if _INFO_ROUTE["path"] is None:
+            if _INFO_ROUTE["path"] is None and _SERVED["engine"] == "vllm":
                 # v6.39: this engine has neither of SGLang's info routes (vLLM): its own facts
                 raise urllib.error.HTTPError(UPSTREAM, 404, "no SGLang info route", None, None)
             info = _server_info(_api_key(), POOL_READ_TIMEOUT_S)
@@ -1585,6 +1588,12 @@ def pool_tokens():
             # v6.37: no SGLang info route at all, as on vLLM (the Kolibri lane), which says
             # both on /metrics and /v1/models; an engine with neither stays unmeasured.
             n, w = _vllm_facts(_api_key(), POOL_READ_TIMEOUT_S)
+            if _SERVED["engine"] != "vllm":
+                # not the vLLM engine the route was noted on: one that took the port with no unit
+                # start seen (a proxy that names none) kept the pool unread, then this read gave
+                # the vLLM engine's pool for it. Its facts are dropped and its routes asked again
+                # (found in review, 2026-10-14).
+                invalidate_pool()
         else:
             n = int(info.get("max_total_num_tokens") or 0)
             # The longest prompt the engine itself accepts, read with the pool (v6.34).
