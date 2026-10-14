@@ -632,6 +632,25 @@ class ReadRoutes(Base):
         self.assertEqual(body["release"]["latest"], "v9.9.9")
         self.assertEqual(pin[:10], next(r for r in body["models"] if r["var"] == var)["pin"])
 
+    def test_the_release_line_compares_numbers_not_strings(self):
+        # Library's release line compared the two tags as strings, so a box ahead of the
+        # newest release, as one that develops this repo is, was told an update was out
+        # (found in review, 2026-10-14): the route says behind or ahead, by number, as the
+        # update banner decides it.
+        local = self.cp.installed_release()
+        seen = {}
+        for latest in ("v9.9.9", "v0.0.1", local):
+            self.cp._get_json = (lambda url, timeout=5.0, tag=latest:
+                                 {"tag_name": tag} if "api.github.com" in url else {"sha": "0" * 40})
+            try:
+                seen[latest] = self.cp.upstream_snapshot(max_age=0.0)["release"]
+            finally:
+                self.cp._get_json = offline
+        self.cp.upstream_snapshot(max_age=0.0)
+        self.assertEqual((seen["v9.9.9"]["behind"], seen["v9.9.9"]["ahead"]), (True, False))
+        self.assertEqual((seen["v0.0.1"]["behind"], seen["v0.0.1"]["ahead"]), (False, True))
+        self.assertEqual((seen[local]["behind"], seen[local]["ahead"]), (False, False))
+
     def test_refresh_bypasses_the_cache_without_breaking_the_answer(self):
         cookie = self.login()
         for path in ("/api/registry?refresh=1", "/api/recipes?refresh=1"):

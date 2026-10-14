@@ -286,7 +286,9 @@ async function checkUpstream(){
       tr.insertCell().append(tag(m.status, m.status === 'same' ? 'cool' : m.status === 'moved' ? 'warn' : 'err')); });
     labelCells($('up-table'));
     const rel = d.release || {}, stale = rel.stale_code || [];
-    const relLine = rel.latest ? `Release: this box ${rel.local}, latest ${rel.latest}` + (rel.latest === rel.local ? ', up to date.' : ', an update is out.') : 'The release check is offline (no network, or GitHub unreachable).';
+    const relLine = rel.latest ? `Release: this box ${rel.local}, latest ${rel.latest}` + (rel.behind ? ', an update is out.'
+      : rel.ahead ? ', this box runs a version newer than the latest release.' : rel.latest === rel.local ? ', up to date.' : '.')
+      : 'The release check is offline (no network, or GitHub unreachable).';
     setText('up-line', stale.length ? `This cockpit runs code older than the repo (${stale.join(', ')} changed on disk): restart it. ${relLine}` : relLine);
     const moved = (d.models || []).filter(m => m.status === 'moved').length;
     setText(b, moved ? `Recheck (${moved} moved)` : 'Recheck');

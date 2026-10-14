@@ -4044,6 +4044,12 @@ def upstream_snapshot(max_age: float = 3600.0) -> dict:
             except Exception:  # noqa: BLE001
                 rel["latest"] = None
                 rel["detail"] = str(e)[:80]
+        # Which way, by number, as the update banner decides it: the page compared the two
+        # tags as strings, and told a box ahead of the newest release that an update was out
+        # (found in review, 2026-10-14).
+        here, there = _semver(rel["local"]), _semver(rel.get("latest") or "")
+        rel["behind"] = bool(here and there and there > here)
+        rel["ahead"] = bool(here and there and here > there)
         stale = code_is_stale()
         if stale:
             rel["stale_code"] = stale

@@ -588,6 +588,26 @@ class TheUpdateCommandsNameThisCheckout(unittest.TestCase):
         self.assertEqual(r, self.UPDATE)
 
 
+class TheReleaseLineSaysWhichWay(unittest.TestCase):
+    """Library's release line compared the two tags as strings: a box ahead of the newest
+    release, as one that develops this repo is, was told an update was out (found in review,
+    2026-10-14). It reads which way from the route, which compares numbers."""
+
+    def test_ahead_behind_and_level(self):
+        r = run(self, r"""
+        const line = async rel => {
+          __fetch = async url => url.startsWith('/api/upstream') ? __response(200, {models: [], release: rel}) : new Promise(() => {});
+          await checkUpstream(); return txt('up-line'); };
+        report([await line({local: 'v1.31.0', latest: 'v1.30.0', behind: false, ahead: true}),
+                await line({local: 'v1.30.0', latest: 'v1.31.0', behind: true, ahead: false}),
+                await line({local: 'v1.31.0', latest: 'v1.31.0', behind: false, ahead: false})]);
+        """)
+        self.assertNotIn("an update is out", r[0])
+        self.assertIn("newer than the latest release", r[0])
+        self.assertIn("an update is out", r[1])
+        self.assertIn("up to date", r[2])
+
+
 class ExampleNamesCountRight(unittest.TestCase):
     """U41: the "Twenty options" example had eight."""
 
