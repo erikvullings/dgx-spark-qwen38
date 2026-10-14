@@ -6,6 +6,7 @@ inode so a multi-revision model is not double-counted.
 """
 from __future__ import annotations
 
+import fnmatch
 import json
 import os
 import re
@@ -97,14 +98,23 @@ def parse_docker_images(lines: list[str]) -> list[dict]:
 ACTIVE_S = 600
 
 
-def snapshot_complete(snap: Path) -> bool:
+def allowed(rel: str, allow) -> bool:
+    """Whether a snapshot path counts under allow patterns, as ckpt-fetch.py (and
+    huggingface_hub) read them: fnmatch, case kept, a trailing / standing for the folder."""
+    return not allow or any(fnmatch.fnmatchcase(rel, p + "*" if p.endswith("/") else p) for p in allow)
+
+
+def snapshot_complete(snap: Path, allow=None) -> bool:
     """Every weight file each of the snapshot's indexes names is in it (a file appears there
     only once its blob is whole): the root index of a checkpoint, what install.sh's
     ckpt_cached checks, or one per component in a diffusers layout. With no index, a weight
-    file at all. A snapshot folder exists before the first byte of its first file."""
-    indexes = list(snap.rglob("*.safetensors.index.json"))
+    file at all. A snapshot folder exists before the first byte of its first file. Only what
+    the allow patterns cover counts, as in ckpt-fetch.py's complete(): the video lane serves
+    one partition of MiniMax-H3, and the index of another a full pull began does not make
+    the lane's checkpoint incomplete (found building the models view, 2026-10-14)."""
+    indexes = [p for p in snap.rglob("*.safetensors.index.json") if allowed(p.relative_to(snap).as_posix(), allow)]
     if not indexes:
-        return any(snap.rglob("*.safetensors"))
+        return any(allowed(p.relative_to(snap).as_posix(), allow) for p in snap.rglob("*.safetensors"))
     for idx in indexes:
         try:
             shards = set(json.loads(idx.read_text())["weight_map"].values())
@@ -113,6 +123,18 @@ def snapshot_complete(snap: Path) -> bool:
         if not shards or not all((idx.parent / s).exists() for s in shards):
             return False
     return True
+
+
+VIDEO_ALLOW_RE = re.compile(r'if \[ "\$VID_VARIANT" = "fl2va" \]; then VID_ALLOW="([^"]+)"\s*else VID_ALLOW="([^"]+)"')
+
+
+def video_allow(switch_text: str, variant: str):
+    """The patterns the video lane's switch fetches and serves for a variant, read from
+    switch-model.sh, where they are written; None when it no longer reads that way."""
+    m = VIDEO_ALLOW_RE.search(switch_text or "")
+    if not m:
+        return None
+    return (m.group(1) if variant == "fl2va" else m.group(2)).split()
 
 
 def scan_hf_cache(root: Path) -> list[dict]:

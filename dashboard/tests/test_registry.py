@@ -172,6 +172,71 @@ def fake_repo(root, revs, shared=(), refs=None, name="models--o--m"):
     return repo
 
 
+class CompleteForWhatTheLaneServes(unittest.TestCase):
+    """A snapshot is complete for a lane when every index its allow patterns cover has its
+    shards: the reference box's MiniMax-H3 keeps Ref2VA's transformer index with none of its
+    shards beside the whole FL2VA partition its lane serves, and the registry read that
+    revision incomplete (found building the models view, 2026-10-14). The same rule as
+    ckpt-fetch.py's complete(), checked against it."""
+
+    def setUp(self):
+        import tempfile, json
+        self.json = json
+        self.root = Path(tempfile.mkdtemp(prefix="registry-complete-"))
+        self.addCleanup(__import__("shutil").rmtree, self.root, True)
+
+    def snap(self, parts):
+        """{"FL2VA": True, "Ref2VA": False}: each part an index of two shards, whole or not."""
+        s = self.root / ("s" + str(len(list(self.root.iterdir()))))
+        for part, whole in parts.items():
+            d = s / part / "transformer"
+            d.mkdir(parents=True)
+            (d / "model.safetensors.index.json").write_text(self.json.dumps(
+                {"weight_map": {"a": "1.safetensors", "b": "2.safetensors"}}))
+            (d / "1.safetensors").write_text("w")
+            if whole:
+                (d / "2.safetensors").write_text("w")
+        (s / "model_index.json").write_text("{}")
+        return s
+
+    def ckpt_fetch(self):
+        import importlib.util, types
+        saved = sys.modules.get("huggingface_hub")
+        fake = types.ModuleType("huggingface_hub")
+        fake.constants, fake.snapshot_download = types.SimpleNamespace(), None
+        sys.modules["huggingface_hub"] = fake
+        try:
+            spec = importlib.util.spec_from_file_location("ckpt_fetch_parity", REPO / "ckpt-fetch.py")
+            mod = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(mod)
+        finally:
+            if saved is None:
+                del sys.modules["huggingface_hub"]
+            else:
+                sys.modules["huggingface_hub"] = saved
+        return mod
+
+    def test_only_what_the_patterns_cover_counts(self):
+        s = self.snap({"FL2VA": True, "Ref2VA": False})
+        self.assertFalse(rg.snapshot_complete(s))
+        self.assertTrue(rg.snapshot_complete(s, ["FL2VA/*", "model_index.json"]))
+        self.assertFalse(rg.snapshot_complete(s, ["Ref2VA/*", "model_index.json"]))
+
+    def test_the_same_answer_as_ckpt_fetch(self):
+        cf = self.ckpt_fetch()
+        for parts in ({"FL2VA": True}, {"FL2VA": False}, {"FL2VA": True, "Ref2VA": False}):
+            s = self.snap(parts)
+            for allow in (None, ["FL2VA/*", "model_index.json"], ["Ref2VA/*"], ["FL2VA/"]):
+                with self.subTest(parts=parts, allow=allow):
+                    self.assertEqual(rg.snapshot_complete(s, allow), cf.complete(s, allow))
+
+    def test_the_video_lane_patterns_are_the_switchs_own(self):
+        sw = (REPO / "switch-model.sh").read_text()
+        self.assertEqual(rg.video_allow(sw, "fl2va")[0], "FL2VA/*")
+        self.assertEqual(rg.video_allow(sw, "ref2va")[0], "Ref2VA/*")
+        self.assertIn("model_index.json", rg.video_allow(sw, "fl2va"))
+
+
 class WhatADeleteRemoves(unittest.TestCase):
     """A stray revision is deleted with the blobs only it links to: a blob another revision
     shares stays, and so does a revision a ref names, which a load by name reads."""

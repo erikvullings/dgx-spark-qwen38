@@ -390,7 +390,8 @@ const ACTION_PHRASE = {
   flush_cache: () => 'flush the engine cache', abort_all: () => 'abort every generation in flight',
   smoke: () => 'run a smoke generation', diag_bundle: () => 'write a diagnostics bundle',
   fit_opencode: () => 'fit the opencode limits to this engine',
-  delete_strays: () => 'delete the stray revisions from the model caches'};
+  delete_strays: () => 'delete the stray revisions from the model caches',
+  fetch: p => `download the checkpoint of ${TARGET_NAME[p.target] || p.target || 'a target'}`};
 function actionPhrase(action, params){
   const f = ACTION_PHRASE[action]; if (f) return f(params || {});
   const p = params || {}; return action + (Object.keys(p).length ? ' ' + Object.entries(p).map(([k, v]) => `${k} ${v}`).join(', ') : '');
@@ -441,6 +442,8 @@ const EXPLAIN = {
   fit_opencode: () => 'Reads the KV pool of the engine serving now and rewrites only opencode’s context and output limits, so a conversation can never outgrow it. A dated backup is written first. If the Agent server runs, it restarts to read them: a reply it is writing then is cut short.'};
 // the stray revisions the last scan of the checkpoints offered to delete (Library, scanRegistry)
 const REG_STRAYS = {list: [], bytes: 0};
+EXPLAIN.fetch = p => `switch-model.sh fetches the checkpoint of ${TARGET_NAME[p.target] || p.target} into the cache as a switch to it does: `
+  + 'the cache first, resumable, its room checked before. It changes nothing else: no unit, no boot, no engine. The dock shows the bytes as they come.';
 EXPLAIN.delete_strays = () => {
   const s = REG_STRAYS;
   return `Removes from the Hugging Face cache ${s.list.map(x => `${x.repo.split('/').pop()} ${x.rev.slice(0, 10)} (${fmtGiB(x.bytes)})`).join(', ')}`
@@ -450,12 +453,13 @@ EXPLAIN.delete_strays = () => {
 const TITLE = {unit: p => `${cap1(p.verb)} ${laneLabel(p.unit)}`, switch: p => `Point the boot at ${TARGET_NAME[p.target] || p.target}`,
   flush_cache: () => 'Flush the engine cache', abort_all: () => 'Abort every generation in flight', smoke: () => 'Run a smoke generation',
   diag_bundle: () => 'Write a diagnostics bundle', fit_opencode: () => 'Fit the opencode limits',
-  delete_strays: () => 'Delete the stray revisions'};
+  delete_strays: () => 'Delete the stray revisions',
+  fetch: p => `Download ${TARGET_NAME[p.target] || p.target}`};
 const VERB = {unit: p => cap1(p.verb) + ' ' + (LANE_NAME[p.unit] || laneLabel(p.unit)), switch: () => 'Point the boot', flush_cache: () => 'Flush',
   abort_all: () => 'Abort all', smoke: () => 'Run the probe', diag_bundle: () => 'Write the bundle', fit_opencode: () => 'Fit the limits',
-  delete_strays: () => 'Delete them'};
+  delete_strays: () => 'Delete them', fetch: () => 'Download'};
 const argvFor = (name, p) => name === 'unit' ? ['sudo', '-n', '/usr/bin/systemctl', p.verb, p.unit]
-  : name === 'switch' ? ['bash', 'switch-model.sh', p.target] : ['cockpit', name];
+  : name === 'switch' ? ['bash', 'switch-model.sh', p.target] : name === 'fetch' ? ['bash', 'switch-model.sh', p.target, '--fetch'] : ['cockpit', name];
 
 let SHEET = null;   // {mode: 'one'|'journey', ...}
 // A dialog hands the focus back to what opened it: closing one left it on the body, so a

@@ -656,6 +656,42 @@ class TheModelsViewDeletesOnlyWhatItMay(unittest.TestCase):
         self.assertFalse(r["btn"]["shown"])
 
 
+class TheModelsViewDownloadsWhatALaneCanLoad(unittest.TestCase):
+    """Library says, for each target a Load can switch to, whether its checkpoint is on disk,
+    begun or not downloaded, and offers Download where its lane is installed: the switch with
+    --fetch, which changes nothing else (2026-10-14)."""
+
+    REG = {"images": [], "other_models": [], "caches": ["/c"], "models": [],
+           "targets": [{"target": "stock", "repo": "RadixArk/Qwen3.8-27B-NVFP4", "rev": "a" * 40, "state": "complete", "installed": True},
+                       {"target": "kolibri-nvfp4", "repo": "Quantinine/Kolibri-1-NVFP4A16-FP8", "rev": "b" * 40, "state": "absent", "installed": True},
+                       {"target": "kolibri", "repo": "Aleph-Alpha/Kolibri-1", "rev": "c" * 40, "state": "incomplete", "installed": True},
+                       {"target": "image", "repo": "Qwen/Qwen-Image-2.1", "rev": "d" * 40, "state": "absent", "installed": False}]}
+
+    def test_download_where_a_lane_is_installed_and_its_checkpoint_is_not_whole(self):
+        r = run(self, r"""
+        __fetch = async (url, init) => url.startsWith('/api/registry') ? __response(200, %s)
+          : url === '/api/csrf' ? __response(200, {token: 't'})
+          : url === '/api/action' ? __response(202, {job: 'j1', argv: null, warnings: [], dry_run: false})
+          : new Promise(() => {});
+        await scanRegistry();
+        const rows = [...$('reg-targets').tBodies[0].rows].map(tr => tr.textContent);
+        const btns = [...$('reg-targets').querySelectorAll('button')];
+        btns[0].click(); await __settle();
+        const sheet = {title: txt('sh-title'), lede: txt('sh-lede'), cmd: txt('sh-cmd'), open: !$('scrim').hidden};
+        $('sh-go').click(); await __settle();
+        const post = __fetches.find(f => f.url === '/api/action');
+        report({rows, labels: btns.map(b => b.textContent), sheet, sent: post ? JSON.parse(post.init.body) : null});
+        """ % json.dumps(self.REG))
+        self.assertEqual(len(r["rows"]), 4)
+        self.assertIn("on disk", r["rows"][0])
+        self.assertIn("its lane is not installed", r["rows"][3])
+        self.assertEqual(r["labels"], ["Download", "Finish the download"])
+        self.assertTrue(r["sheet"]["open"])
+        self.assertIn("nothing else", r["sheet"]["lede"])
+        self.assertEqual(r["sheet"]["cmd"], "bash switch-model.sh kolibri-nvfp4 --fetch")
+        self.assertEqual(r["sent"], {"name": "fetch", "params": {"target": "kolibri-nvfp4"}, "csrf": "t"})
+
+
 class ExampleNamesCountRight(unittest.TestCase):
     """U41: the "Twenty options" example had eight."""
 

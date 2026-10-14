@@ -138,6 +138,8 @@ def job_phrase(action: str, params: dict) -> str:
         return "fit the opencode limits to this engine"
     if action == "delete_strays":
         return "delete the stray revisions from the model caches"
+    if action == "fetch":
+        return f"download the {p.get('target', '')} checkpoint"
     return action + (" " + ", ".join(f"{k} {v}" for k, v in p.items()) if p else "")
 
 
@@ -2117,6 +2119,33 @@ ACTIONS = {
         "timeout": 300,
     },
 }
+
+# Library's Download: the switch's own target list, and its argv with --fetch, which fetches
+# the target's checkpoint as the switch does and changes nothing else (switch-model.sh).
+ACTIONS["fetch"] = {
+    "danger": "low",
+    "params": {"target": ACTIONS["switch"]["params"]["target"]},
+    "argv": lambda p: ["bash", str(REPO_DIR / "switch-model.sh"), p["target"], "--fetch"],
+    "timeout": 7200,
+}
+# Which pin each switch target serves (registry.PIN_MODELS names its repo).
+TARGET_PIN = {"stock": "STOCK_REV", "uncensored": "UNC_REV", "fp8": "FP8_REV", "uncensored-fp8": "UNCFP8_REV",
+              "flash": "FLASH_REV", "flash-nvda": "FLASH_NVDA_REV", "flash-uncensored": "FLASH_UNC_REV",
+              "image": "IMAGE_MODEL_PIN_REV", "image-turbo": "IMAGE_TURBO_PIN_REV",
+              "video": "VIDEO_MODEL_PIN_REV", "kolibri": "KOLIBRI_FP8_REV", "kolibri-nvfp4": "KOLIBRI_NVFP4_REV"}
+
+
+def target_unit(target: str) -> Path:
+    """The file whose presence says a target's lane is installed: a switch to it needs it."""
+    if target in ("image", "image-turbo"):
+        return IMAGE_UNIT_PATH
+    if target == "video":
+        return VIDEO_UNIT_PATH
+    if target.startswith("kolibri"):
+        return KOLIBRI_UNIT_PATH
+    if target.startswith("flash"):
+        return UNIT_PATHS["qwen38-flash.service"]
+    return UNIT_PATHS["qwen38-sglang.service"]
 
 
 class Job:
@@ -4239,7 +4268,41 @@ def registry_snapshot(max_age: float = 300.0) -> dict:
             + run(["docker", "images", "-a", "--digests", "--format",
                    "{{.Repository}}@{{.Digest}} {{.Size}} {{.ID}}"],
                   timeout=10).splitlines())
+        # Each target a Load can switch to: its checkpoint whole (for what its lane serves),
+        # begun or absent in the caches the lanes read, and whether its lane is installed.
+        # The video lane fetches the revision its refs/main names, the pin when there is none,
+        # and serves one partition of it, as switch-model.sh does.
+        try:
+            switch_text = (REPO_DIR / "switch-model.sh").read_text()
+        except OSError:
+            switch_text = ""
+        try:
+            variant = re.search(r"--model-variant\s+(\S+)", VIDEO_UNIT_PATH.read_text(errors="replace"))
+        except OSError:
+            variant = None
+        targets = []
+        for t in ACTIONS["switch"]["params"]["target"]:
+            var = TARGET_PIN[t]
+            repo, rev = rg.PIN_MODELS[var], pins.get(var, "")
+            allow = rg.video_allow(switch_text, variant.group(1) if variant else "fl2va") if t == "video" else None
+            state = "absent"
+            for d in caches:
+                repo_dir = Path(d) / "hub" / ("models--" + repo.replace("/", "--"))
+                r = rev
+                if t == "video":
+                    try:
+                        ref = (repo_dir / "refs" / "main").read_text().strip()
+                        r = ref if rg.REV_RE.match(ref) else rev
+                    except OSError:
+                        pass
+                if r and (repo_dir / "snapshots" / r).is_dir():
+                    state = "complete" if rg.snapshot_complete(repo_dir / "snapshots" / r, allow) else "incomplete"
+                    if state == "complete":
+                        break
+            targets.append({"target": t, "repo": repo, "rev": rev, "state": state,
+                            "installed": target_unit(t).exists()})
         data = {"pins": pins, "managed_repos": sorted(set(rg.PIN_MODELS.values())), "caches": caches,
+                "targets": targets,
                 "models": [m for m in models if m["managed"]],
                 "other_models": [{"repo_id": m["repo_id"],
                                   "disk_bytes": m["disk_bytes"]}

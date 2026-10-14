@@ -128,7 +128,11 @@ marks and scripts are all served by the box: the page fetches nothing from elsew
   deletes the ones it offers, after a sheet that names each. Each goes with its
   snapshot and the blobs only it links to, never a blob another revision shares; the
   job scans again before it deletes, and the page sends no name and no path. It is the
-  one cleanup the page runs; the rest of the reclaim stays a command.
+  one cleanup the page runs; the rest of the reclaim stays a command. Below, each target a
+  Load can switch to says whether its checkpoint is on disk (whole for what its lane
+  serves), begun or not downloaded, and Download fetches it where its lane is installed:
+  `./switch-model.sh <target> --fetch`, the switch's own fetch (the cache first, resumable,
+  its room checked), which changes nothing else, no unit, no boot, no engine.
 
 On a phone the rail is a drawer behind the menu button, controls are 44 px
 targets, and the Agent view opens fullscreen (see "On a phone" below): the whole

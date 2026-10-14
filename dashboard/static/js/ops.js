@@ -270,6 +270,21 @@ async function scanRegistry(){
     setText(rd, `Delete ${offered.length} stray revision${offered.length === 1 ? '' : 's'}, frees ${fmtGiB(REG_STRAYS.bytes)}`);
     if (!tb.rows.length) emptyRow(tb, 5, 'No managed model in the Hugging Face cache.');
     labelCells($('reg-models'));
+    // each target a Load can switch to: its checkpoint here, begun or not, and Download where its lane is installed
+    const tt = $('reg-targets').tBodies[0]; clear(tt);
+    (d.targets || []).forEach(t => {
+      const tr = tt.insertRow(); tr.insertCell().textContent = TARGET_NAME[t.target] || t.target;
+      tr.insertCell().textContent = String(t.repo || '').split('/').pop();
+      const st = tr.insertCell();
+      st.append(tag(t.state === 'complete' ? 'on disk' : t.state === 'incomplete' ? 'begun' : 'not downloaded', t.state === 'complete' ? 'cool' : 'warn'));
+      if (t.state !== 'complete' && t.installed){
+        const b4 = el('button', 'btn sm ghost', t.state === 'incomplete' ? 'Finish the download' : 'Download'); b4.type = 'button';
+        b4.addEventListener('click', () => askAction('fetch', {target: t.target}));
+        st.append(' ', b4);
+      } else if (t.state !== 'complete') st.append(' ', el('span', 'muted', 'its lane is not installed'));
+    });
+    if (!tt.rows.length) emptyRow(tt, 3, 'No target.');
+    labelCells($('reg-targets'));
     const ti = $('reg-images').tBodies[0]; clear(ti);
     (d.images || []).forEach(im => { const tr = ti.insertRow(); tr.insertCell().textContent = im.ref; const a = tr.insertCell(); a.className = 'r num'; a.textContent = im.size; const c = tr.insertCell(); c.className = 'r num'; c.textContent = im.id; });
     if (!ti.rows.length) emptyRow(ti, 3, 'No engine image.');
@@ -315,7 +330,7 @@ async function scanInventory(){
   finally{ b.disabled = false; }
 }
 on('job_finished', j => { if (j.action === 'switch' || j.action === 'unit'){ LOADED.recipes = false; if (activeView === 'library') loadRecipes(); }
-  if (j.action === 'delete_strays' && activeView === 'library') scanRegistry(); });
+  if ((j.action === 'delete_strays' || j.action === 'fetch') && activeView === 'library') scanRegistry(); });
 onShow('library', () => { if (!LOADED.recipes) loadRecipes(); });
 
 // ── Logs ──────────────────────────────────────────────────────────────────────
