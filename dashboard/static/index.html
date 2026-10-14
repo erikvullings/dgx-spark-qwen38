@@ -603,7 +603,7 @@
         <section class="panel">
           <header><h2>Update the serving stack</h2></header>
           <p class="muted">The installer needs an interactive sudo, so it is not a button: a half-applied install is the one thing this cockpit must never cause. Run it on the box; your choices are remembered.</p>
-          <pre class="cmd" id="st-update" style="margin-top:var(--s-3)">…</pre>
+          <div><pre class="cmd" id="st-update" style="margin-top:var(--s-3)">…</pre><div class="btn-row"><button class="btn sm ghost" id="st-copy" type="button">Copy</button></div></div>
         </section>
         <!-- no data-src: these facts are the process's own, set once at its start, and the
              freshness rule read their age as the cockpit's uptime: "stale, 2 h 18 old" in

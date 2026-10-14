@@ -193,7 +193,9 @@ Library view, printed after a button press, which means it reached whoever alrea
 suspected there was news. Since v1.15.2 the cockpit volunteers it: every six hours it
 asks GitHub whether a newer release is published, and if there is one the banner strip
 says so with the command that installs it. The Settings view carries the same line
-permanently, next to the repo's own version.
+permanently, next to the repo's own version, and the command with a button that copies it:
+the one command of the README, run from the checkout so that it updates that clone
+(`./install.sh` alone fetches nothing: it installs the release already there again).
 
 Two details decide whether this is useful or irritating. It compares version **numbers**,
 not strings, so `v1.15.0` is correctly newer than `v1.9.0`, and it only speaks when the

@@ -120,14 +120,19 @@ try {
   ok('up to date: no update banner', !/is out; this box runs/.test(s), s);
   s = await banners({ installed: 'v1.15.0', latest: 'v1.99.0', behind: true });
   ok('behind: the banner names both versions', /Version v1\.99\.0 is out; this box runs v1\.15\.0/.test(s), s);
-  ok('and gives the command', /git pull && \.\/install\.sh/.test(s), s);
+  // the update is the one command, run from this checkout: install.sh alone fetches nothing,
+  // and a git pull skips get.sh's guards (found in review, 2026-10-14)
+  const ONE = 'curl -fsSL https://raw.githubusercontent.com/hasso5703/dgx-spark-qwen38/main/get.sh | bash';
+  ok('and gives the command', s.includes(`Update with: cd `) && s.includes(` && ${ONE}.`) && !/git pull/.test(s), s);
+  const cmd = await evalJs("document.getElementById('st-update').textContent");
+  ok('Settings gives the same command', /^cd \S+ && /.test(cmd) && cmd.endsWith(` && ${ONE}`), cmd);
   s = await banners({ installed: 'v1.15.1', stale_code: ['static/js/base.js'] });
   ok('older code than its files: the banner says so', /runs older code than the files on disk/.test(s), s);
   ok('and names the file and the remedy', /static\/js\/base\.js/.test(s) && /systemctl restart qwen38-dashboard/.test(s), s);
   s = await banners({ installed: 'v1.15.1', latest: 'v1.15.1', behind: false });
   ok('up to date again: the banner goes', !/is out; this box runs/.test(s) && !/older code/.test(s), s);
   let line = await setupLine({ installed: 'v1.15.0', latest: 'v1.99.0', behind: true });
-  ok('Setup line, behind', /v1\.15\.0/.test(line) && /v1\.99\.0 is out/.test(line), line);
+  ok('Setup line, behind', /v1\.15\.0/.test(line) && /v1\.99\.0 is out/.test(line) && !/git pull/.test(line), line);
   line = await setupLine({ installed: 'v1.15.1', latest: null });
   ok('Setup line, offline', /unknown/.test(line), line);
   line = await setupLine({ installed: 'v1.15.1', checked: false });

@@ -1987,7 +1987,13 @@ STATE["config"] = {"data": {"usable_frac": USABLE_FRAC, "version": VERSION, "dry
                             # install that is nothing: it promised the belt's restart regardless
                             "autoheal": AUTOHEAL, "autoheal_grace_s": AUTOHEAL_GRACE,
                             "zombie_restart": ZOMBIE_RESTART,
+                            # update_stack runs the installer again (the Agent view's hint);
+                            # update is the README's one command, run from this checkout so that
+                            # get.sh updates this clone: install.sh alone fetches nothing, and
+                            # Settings gave it as the update (found in review, 2026-10-14)
                             "terminal_only": {"update_stack": f"cd {REPO_DIR} && ./install.sh",
+                                              "update": f"cd {REPO_DIR} && curl -fsSL https://raw."
+                                                        "githubusercontent.com/hasso5703/dgx-spark-qwen38/main/get.sh | bash",
                                               "install_agent": f"cd {REPO_DIR} && dashboard/install-agent.sh"}},
                    "ts": time.time()}
 

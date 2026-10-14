@@ -555,19 +555,37 @@ class TheEditEstimateCountsItsReferences(unittest.TestCase):
 
 class TheUpdateCommandsNameThisCheckout(unittest.TestCase):
     """U40: the update banner and the Agent view's install hint said cd ~/dgx-spark-qwen38
-    whatever the checkout; the cockpit knows its own."""
+    whatever the checkout; the cockpit knows its own. And an update is the one command, run
+    from it: Settings gave cd <repo> && ./install.sh, which fetches nothing, so it installed
+    again the release the box already ran, and the banner a git pull that skips get.sh's
+    guards (found in review, 2026-10-14)."""
+
+    UPDATE = "cd /opt/qwen && curl -fsSL https://raw.githubusercontent.com/hasso5703/dgx-spark-qwen38/main/get.sh | bash"
 
     def test_both_commands(self):
         r = run(self, r"""
-        feed({config: Object.assign({}, CONFIG, {repo_dir: '/opt/qwen', terminal_only: {update_stack: 'cd /opt/qwen && ./install.sh'}}),
+        feed({config: Object.assign({}, CONFIG, {repo_dir: '/opt/qwen', terminal_only: {update_stack: 'cd /opt/qwen && ./install.sh', update: '%s'}}),
               update: {installed: 'v1.18.6', latest: 'v1.18.7', behind: true},
               agent: {enabled: false, opencode_found: null, pinned: '1.18.32'}});
-        report({banner: txt('banners'), agent: txt('ag-cmd'), settings: txt('st-update')});
-        """)
-        self.assertIn("cd /opt/qwen", r["banner"])
+        report({banner: txt('banners'), agent: txt('ag-cmd'), settings: txt('st-update'), line: txt('rp-upd')});
+        """ % self.UPDATE)
+        self.assertIn(self.UPDATE, r["banner"])
+        self.assertNotIn("git pull", r["banner"])
         self.assertNotIn("~/dgx-spark-qwen38", r["banner"])
+        # the Agent view's hint is the installer again, which is what it asks for
         self.assertEqual(r["agent"], "cd /opt/qwen && ./install.sh")
-        self.assertEqual(r["settings"], "cd /opt/qwen && ./install.sh")
+        self.assertEqual(r["settings"], self.UPDATE)
+        self.assertIn("v1.18.7 is out", r["line"])
+        self.assertNotIn("git pull", r["line"])
+
+    def test_the_update_command_is_copied_whole(self):
+        r = run(self, r"""
+        feed({config: Object.assign({}, CONFIG, {repo_dir: '/opt/qwen', terminal_only: {update_stack: 'cd /opt/qwen && ./install.sh', update: '%s'}})});
+        let copied = null; navigator.clipboard.writeText = async t => { copied = t; };
+        $('st-copy').click(); await __settle();
+        report(copied);
+        """ % self.UPDATE)
+        self.assertEqual(r, self.UPDATE)
 
 
 class ExampleNamesCountRight(unittest.TestCase):

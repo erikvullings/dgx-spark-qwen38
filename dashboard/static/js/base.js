@@ -370,6 +370,13 @@ function toast(text, kind, ms = 4200){
   while (box.children.length > 3) box.firstChild.remove();
   setTimeout(() => t.remove(), ms);
 }
+// The update: the README's one command, run from this checkout so that get.sh updates this
+// clone. The server sends it; a page newer than the process that serves it builds it.
+function updateCmd(cfg){
+  const c = cfg || {};
+  return (c.terminal_only || {}).update
+    || `cd ${c.repo_dir || '~/dgx-spark-qwen38'} && curl -fsSL https://raw.githubusercontent.com/hasso5703/dgx-spark-qwen38/main/get.sh | bash`;
+}
 async function copyText(txt){
   try { await navigator.clipboard.writeText(txt); toast('Copied.', 'ok', 1800); }
   catch { toast('The browser refused the clipboard; select the text instead.', 'warn'); }
@@ -843,7 +850,7 @@ function renderBanners(state, errors){
   if (F.memFloor && F.memFloor.aborts && F.memFloor.last_abort && Date.now() / 1000 - F.memFloor.last_abort < 600)
     add('warn', 'The memory floor fired.', `Memory fell under ${F.memFloor.gib} GiB with requests running: every generation was aborted ${fmtDur(Date.now() / 1000 - F.memFloor.last_abort)} ago to keep the box out of a livelock.`);
   const upd = F.update || {};
-  if (upd.behind) add('info', `Version ${upd.latest} is out; this box runs ${upd.installed}.`, `Update with: cd ${(F.config || {}).repo_dir || '~/dgx-spark-qwen38'} && git pull && ./install.sh. It keeps your target, context mode, port and cache.`);
+  if (upd.behind) add('info', `Version ${upd.latest} is out; this box runs ${upd.installed}.`, `Update with: ${updateCmd(F.config)}. It keeps your target, context mode, port and cache.`);
   if ((upd.stale_code || []).length) add('warn', 'This cockpit runs older code than the files on disk.', `${upd.stale_code.join(', ')} changed under it. Restart it: sudo systemctl restart qwen38-dashboard.service`);
   const ocf = F.ocfit;
   if (ocf && !ocf.ok) add('warn', 'opencode asks for more than this engine can hold.', `${ocf.why}: opencode declares ${fmtN(ocf.asked)} tokens, and ${ocf.served} can serve ${fmtN(ocf.limit)}. A session would break when the proxy refuses the prompt. ` + (ocf.autofit === 'started' ? 'The cockpit is fitting the limits now.' : 'Settings has "Fit the limits to this engine".'));

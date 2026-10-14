@@ -120,6 +120,20 @@ class Base(unittest.TestCase):
                 if n.startswith("collect_") and callable(getattr(self.cp, n))}
 
 
+class TheUpdateCommand(Base):
+    def test_the_update_is_the_one_command_run_from_this_checkout(self):
+        # Settings gave cd <repo> && ./install.sh as the update, and install.sh fetches
+        # nothing: it installed again the release the box already ran (found in review,
+        # 2026-10-14). The update is the README's one command; run from the checkout, get.sh
+        # updates that clone, wherever it is, and no other.
+        one = "curl -fsSL https://raw.githubusercontent.com/hasso5703/dgx-spark-qwen38/main/get.sh | bash"
+        self.assertIn(f"\n{one}\n", (REPO / "README.md").read_text())
+        t = self.cp.STATE["config"]["data"]["terminal_only"]
+        self.assertEqual(t["update"], f"cd {REPO} && {one}")
+        # the Agent view's hint stays the installer again, which is what it asks for
+        self.assertEqual(t["update_stack"], f"cd {REPO} && ./install.sh")
+
+
 class Parse(Base):
     def test_units_reads_systemctl_show(self):
         self.box({"systemctl show": fixture("systemctl-show.txt")})
