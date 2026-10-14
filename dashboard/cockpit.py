@@ -457,6 +457,29 @@ def kolibri_serving() -> bool:
         return (LIFE.get("states") or {}).get(KOLIBRI_UNIT) in lc.BUSY_STATES
 
 
+def vllm_answered(kind: str, err: Exception) -> bool:
+    """True when an engine read failed because the engine has no SGLang route at all (a 404 on
+    the current route and on the deprecated one): vLLM, the Kolibri lane, read before the
+    lifecycle's first reading says it serves. A cockpit started while Kolibri served showed
+    that 404 for 30 s and kept SGLang's deprecated routes until a connection failed (found in
+    review, 2026-10-14): the route goes back to the current one, and the caller reads vLLM's
+    own facts."""
+    if isinstance(err, urllib.error.HTTPError) and err.code == 404:
+        ENGINE_ROUTES[kind] = CURRENT_ROUTES[kind]
+        return True
+    return False
+
+
+# What the Kolibri lane's vLLM has no route for, refused here as the page refuses it (base.js,
+# KOLIBRI_CANNOT): a caller other than the page got the engine's 404, or the fit tool's "no
+# engine to read" (found in review, 2026-10-14).
+KOLIBRI_CANNOT = {
+    "flush_cache": "The Kolibri lane has no cache flush route: vLLM evicts its prefix cache by itself.",
+    "abort_all": "The Kolibri lane has no route that aborts its generations: stopping the lane stops them.",
+    "fit_opencode": "Kolibri's opencode limits are its own, set when it is loaded: there is nothing to fit to its pool.",
+}
+
+
 def vllm_metrics_facts(text: str) -> dict:
     """What the cockpit reads off vLLM's /metrics: requests running and waiting, the share of
     the KV cache in use, and the cache's size in tokens (cache_config_info's label)."""
@@ -548,8 +571,13 @@ def collect_engine_fast():
     try:
         # the Kolibri lane's vLLM answers none of SGLang's load routes (404, twice a second)
         load = kolibri_load(timeout=3) if kolibri_serving() else engine_load(timeout=3)
-    except Exception:  # noqa: BLE001
+    except Exception as e:  # noqa: BLE001
         load = None
+        if vllm_answered("load", e):
+            try:
+                load = kolibri_load(timeout=3)
+            except Exception:  # noqa: BLE001
+                load = None
     now = time.time()
     num_reqs, waiting = 0, 0
     try:
@@ -648,7 +676,12 @@ def collect_engine_info():
     # 10 s, not 6: SGLang's event loop stalls under a long prefill and a late answer is
     # far better than none (measured 30/08: three timeouts in a row at 6 s while the same
     # endpoint answered in 0.19 s between two requests).
-    info = engine_server_info(timeout=10)
+    try:
+        info = engine_server_info(timeout=10)
+    except Exception as e:  # noqa: BLE001
+        if vllm_answered("info", e):
+            return kolibri_engine_info()
+        raise
     kept = ("model_path", "served_model_name", "revision", "quantization",
             "context_length", "mem_fraction_static", "max_running_requests",
             "chunked_prefill_size", "speculative_algorithm",
@@ -3827,7 +3860,13 @@ def job_diag_bundle(job: Job):
         (tdp / "system.txt").write_text(run(["uname", "-a"]) + run(["free", "-g"]) + run(["df", "-h", str(Path.home())]) + run(["docker", "images", "--format", "{{.Repository}}:{{.Tag}} {{.Size}} {{.ID}}"], timeout=10))
         (tdp / "units.txt").write_text("".join(run(["systemctl", "show", u, "--no-pager"], timeout=5) + "\n" for u in JOURNAL_UNITS))
         try:
-            info = engine_server_info(timeout=6)
+            # the Kolibri lane's facts are its own: SGLang's route was a 404 there (review, 2026-10-14)
+            try:
+                info = kolibri_engine_info() if kolibri_serving() else engine_server_info(timeout=6)
+            except Exception as e:  # noqa: BLE001
+                if not vllm_answered("info", e):
+                    raise
+                info = kolibri_engine_info()
             for f in MASKED_FIELDS:
                 info.pop(f, None)
             (tdp / "server-info.json").write_text(json.dumps(info, default=str, indent=1))
@@ -3873,6 +3912,9 @@ def start_action(name: str, params: dict, origin: str = "ui") -> tuple[int, dict
             return 400, {"error": f"invalid {key}"}
         clean[key] = val
     # lifecycle gates: the server refuses what the UI also disables
+    if name in KOLIBRI_CANNOT and kolibri_serving():
+        audit({"kind": "action_blocked", "action": name, "params": clean, "reasons": [KOLIBRI_CANNOT[name]]})
+        return 409, {"error": "blocked", "reasons": [KOLIBRI_CANNOT[name]]}
     warnings = []
     if name in ("unit", "switch"):
         with LIFE_LOCK:

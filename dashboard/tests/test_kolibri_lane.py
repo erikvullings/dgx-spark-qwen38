@@ -113,6 +113,9 @@ class ItsMetrics(Base):
         self.assertEqual(self.ck.vllm_metrics_facts("sglang:num_running_reqs 4\n"),
                          {"running": 0, "waiting": 0, "usage": 0.0, "pool": 0})
         self.assertEqual(self.ck.vllm_metrics_facts('vllm:num_requests_running{engine="0"} NaNx\n')["running"], 0)
+        # "1e" passes the gauge's pattern and not float(): the case the try is for ("NaNx" never
+        # reached it, review of 2026-10-14)
+        self.assertEqual(self.ck.vllm_metrics_facts('vllm:num_requests_running{engine="0"} 1e\n')["running"], 0)
 
     def test_the_load_takes_the_shape_the_page_reads(self):
         rows = self.ck.kolibri_load()
@@ -279,6 +282,74 @@ class WhatItDoesNotHave(Base):
         finally:
             self.serving(None)
 
+
+class BeforeTheLifecycleSaysItServes(Base):
+    """A cockpit started while Kolibri served read the engine SGLang's way until its lifecycle's
+    first reading: the engine panel showed the 404 for 30 s, the diagnostics bundle held only that
+    404, and the route table kept SGLang's deprecated routes until a connection failed (found in
+    review, 2026-10-14). The engine's own answer says it is vLLM."""
+
+    def setUp(self):
+        self.serving(None)
+        self.ck.ENGINE_ROUTES.update(self.ck.CURRENT_ROUTES)
+
+    def test_the_info_collector_reads_vllms_facts(self):
+        out = self.ck.collect_engine_info()
+        self.assertEqual(out.get("info", {}).get("served_model_name"), "kolibri-1", out)
+        self.assertEqual(self.ck.ENGINE_ROUTES["info"], self.ck.CURRENT_ROUTES["info"])
+
+    def test_the_fast_collector_reads_its_load(self):
+        fast = self.ck.collect_engine_fast()
+        self.assertEqual((fast.get("load") or [{}])[0].get("num_tokens"), 1949253, fast)
+        self.assertEqual(self.ck.ENGINE_ROUTES["load"], self.ck.CURRENT_ROUTES["load"])
+
+    def test_the_diagnostics_bundle_holds_its_facts(self):
+        import tarfile
+        home = Path(tempfile.mkdtemp(prefix="kol-bundle-home-"))
+        saved_home, saved_run = os.environ.get("HOME"), self.ck.run
+        os.environ["HOME"] = str(home)
+        self.ck.run = lambda argv, timeout=5.0, merge_err=False: ""    # no journal of this box
+        try:
+            job = self.ck.Job("diag_bundle", None, 60, fn=self.ck.job_diag_bundle)
+            ok, lines, result = self.ck.job_diag_bundle(job)
+        finally:
+            self.ck.run = saved_run
+            os.environ["HOME"] = saved_home
+        self.assertTrue(ok, lines)
+        with tarfile.open(result["path"], "r:gz") as tar:
+            member = next(m for m in tar.getmembers() if m.name.endswith("server-info.json"))
+            info = json.loads(tar.extractfile(member).read())
+        shutil.rmtree(home, ignore_errors=True)
+        self.assertEqual(info.get("info", {}).get("served_model_name"), "kolibri-1", info)
+
+
+class TheServerRefusesWhatItsVllmHasNoRouteFor(Base):
+    """The page refused them with why; another caller of the action API got the engine's 404,
+    or the fit tool's "no engine to read" (found in review, 2026-10-14)."""
+
+    def act(self, name):
+        # an action already running: what passes this gate meets "busy", and nothing starts
+        assert self.ck.JOB_LOCK.acquire(blocking=False)
+        try:
+            return self.ck.start_action(name, {})
+        finally:
+            self.ck.JOB_LOCK.release()
+
+    def test_flush_abort_and_fit_are_refused_with_why(self):
+        self.serving("ready")
+        try:
+            out = {name: self.act(name) for name in ("flush_cache", "abort_all", "fit_opencode")}
+        finally:
+            self.serving(None)
+        for name, why in (("flush_cache", "no cache flush route"), ("abort_all", "no route that aborts"),
+                          ("fit_opencode", "nothing to fit")):
+            code, body = out[name]
+            self.assertEqual((code, body.get("error")), (409, "blocked"), name)
+            self.assertIn(why, " ".join(body.get("reasons") or []), name)
+
+    def test_on_a_qwen_lane_the_gate_lets_them_through(self):
+        code, body = self.act("flush_cache")
+        self.assertEqual((code, body.get("error")), (409, "busy"))
 
 class ItsUnit(Base):
     def test_the_target_is_read_from_the_unit(self):
