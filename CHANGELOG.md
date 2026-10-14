@@ -1,5 +1,25 @@
 # Changelog
 
+## v1.29.1 (2026-10-14): a key with a space after it reaches the Kolibri lane too
+
+**What was found.** The production checks run after the update to v1.29.0 on the reference box sent
+the box's key twelve ways through the proxy, and two of them answered differently on the Kolibri lane
+than on the Qwen lanes: `Bearer <key> ` (a space after the key) passed on a Qwen lane and was refused
+with a 401 on Kolibri. The spaces around a header's value are not part of it (RFC 9110, section 5.5),
+and SGLang reads it so; the proxy forwarded the header as it came, and vLLM's own check, like the
+Kolibri lane's middleware, compares the value exactly. The proxy (v6.38) forwards the client's key
+without the spaces and tabs around it, so a client set up for one lane keeps working on the other;
+two spaces between `Bearer` and the key are still not the key, on every lane. And on the cockpit's
+Machine view, the memory floor's line on the Kolibri lane was cut with an ellipsis where the KV pool
+guard's wraps: it wraps too.
+
+**Tested.** Both fixes have a test that fails on v1.29.0 (the proxy's fake vLLM now checks the key the
+way vLLM does), and the local CI ran in full, no step skipped. On the reference box, Kolibri serving,
+the new proxy started beside the production one: the twelve ways of sending the key gave the Qwen
+lanes' answers 24 times out of 24 (22 through v6.37), and the OpenAI and Anthropic SDKs, fetch, Claude
+Code, opencode, Hermes and pi answered through it. An update restarts the proxy and the cockpit; the
+engines keep running.
+
 ## v1.29.0 (2026-10-14): Kolibri-1, Aleph Alpha's German and English model, as a fifth lane
 
 **What it is.** [Kolibri-1](https://huggingface.co/Aleph-Alpha/Kolibri-1) is Aleph Alpha's open model
