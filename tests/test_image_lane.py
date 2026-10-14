@@ -559,7 +559,7 @@ class TheOneLinerReachesIt(unittest.TestCase):
 
     def test_the_help_says_what_it_costs_before_someone_spends_it(self):
         self.assertIn("--no-image            leave the Qwen-Image 2.1 lane out (40 GB)", self.text)
-        self.assertIn("about 440 GB", self.text)
+        self.assertIn("about 540 GB", self.text)
 
 
 class AnUpdateKeepsTheImageLaneAsTheBootLane(unittest.TestCase):
@@ -577,13 +577,13 @@ class AnUpdateKeepsTheImageLaneAsTheBootLane(unittest.TestCase):
         self.assertIn('[ "$SGL_ENABLED" -eq 0 ] && [ "$FLASH_ENABLED" -eq 0 ]', self.text)
 
     def test_the_text_unit_is_not_enabled_on_that_path(self):
-        i = self.text.index('if [ "$IMAGE_BOOT" -eq 0 ] && [ "$VIDEO_BOOT" -eq 0 ]; then')
-        self.assertIn('sudo systemctl enable "$UNIT_NAME"', self.text[i:i + 120])
+        i = self.text.index('if [ "$IMAGE_BOOT" -eq 0 ] && [ "$VIDEO_BOOT" -eq 0 ] && [ "$KOLIBRI_BOOT" -eq 0 ]; then')
+        self.assertIn('sudo systemctl enable "$UNIT_NAME"', self.text[i:i + 160])
         # and that is the ONLY enable of the serving unit: an unguarded one would undo it
         self.assertEqual(self.text.count('sudo systemctl enable "$UNIT_NAME"'), 1)
 
     def test_that_path_ends_before_any_text_engine_is_started(self):
-        i = self.text.index('if [ "$IMAGE_BOOT" -eq 0 ] && [ "$VIDEO_BOOT" -eq 0 ]; then')
+        i = self.text.index('if [ "$IMAGE_BOOT" -eq 0 ] && [ "$VIDEO_BOOT" -eq 0 ] && [ "$KOLIBRI_BOOT" -eq 0 ]; then')
         early = self.text[i:self.text.index("exit 0", i)]
         self.assertNotIn("systemctl start", early)
         self.assertIn("--no-smoke", early, "the smoke test stops and starts the serving lane")
@@ -611,12 +611,12 @@ class TheBootLaneConvergenceHoldsEveryWay(unittest.TestCase):
         self.assertIn("sudo systemctl disable qwen38-image.service", self.text)
 
     def test_the_image_boot_path_restarts_the_proxy_it_rewrote(self):
-        i = self.text.index('if [ "$IMAGE_BOOT" -eq 0 ] && [ "$VIDEO_BOOT" -eq 0 ]; then')
+        i = self.text.index('if [ "$IMAGE_BOOT" -eq 0 ] && [ "$VIDEO_BOOT" -eq 0 ] && [ "$KOLIBRI_BOOT" -eq 0 ]; then')
         early = self.text[i:self.text.index("exit 0", i)]
         self.assertIn('sudo systemctl restart "$KEEPALIVE_UNIT"', early)
 
     def test_the_image_boot_path_respects_a_left_out_image_lane(self):
-        i = self.text.index('if [ "$IMAGE_BOOT" -eq 0 ] && [ "$VIDEO_BOOT" -eq 0 ]; then')
+        i = self.text.index('if [ "$IMAGE_BOOT" -eq 0 ] && [ "$VIDEO_BOOT" -eq 0 ] && [ "$KOLIBRI_BOOT" -eq 0 ]; then')
         early = self.text[i:self.text.index("exit 0", i)]
         call = early.index('"$REPO_DIR/install-image.sh" --no-smoke')
         self.assertIn('if [ "$WANT_IMAGE" -eq 1 ]', early[:call])
@@ -626,13 +626,14 @@ class TheBootLaneConvergenceHoldsEveryWay(unittest.TestCase):
         was in use: the switch writes it down, and install.sh reads it."""
         self.assertIn('> "$CONFIG_DIR/lane-before-image"', self.sw)
         # written BEFORE the loop that disables them, or it would record nothing
-        self.assertLess(self.sw.index('> "$CONFIG_DIR/lane-before-image"'),
-                        self.sw.index('sudo systemctl disable "$TEXT_UNIT_NAME"'))
+        img = self.sw.index('if [ "$CHOICE" = "image" ] || [ "$CHOICE" = "image-turbo" ]; then')
+        self.assertLess(self.sw.index('> "$CONFIG_DIR/lane-before-image"', img),
+                        self.sw.index('sudo systemctl disable "$TEXT_UNIT_NAME"', img))
         self.assertIn('[ "$LANE_BEFORE_IMAGE" = "qwen38-flash.service" ]', self.text)
 
     def test_it_never_points_at_a_switch_target_that_does_not_exist(self):
         """A kept custom model is MODEL_CHOICE=custom, which switch-model.sh rejects."""
-        i = self.text.index('if [ "$IMAGE_BOOT" -eq 0 ] && [ "$VIDEO_BOOT" -eq 0 ]; then')
+        i = self.text.index('if [ "$IMAGE_BOOT" -eq 0 ] && [ "$VIDEO_BOOT" -eq 0 ] && [ "$KOLIBRI_BOOT" -eq 0 ]; then')
         early = self.text[i:self.text.index("exit 0", i)]
         # the case names custom before the line that names ./switch-model.sh $MODEL_CHOICE
         case = early.index('case "$MODEL_CHOICE" in')
@@ -776,7 +777,8 @@ class TheImageLaneIsALaneLikeTheOthers(unittest.TestCase):
         """The proxy is a text door and opencode a text client: pointing opencode's default
         model at an image lane would break every session it opened."""
         sw = (REPO / "switch-model.sh").read_text()
-        branch = sw[sw.index('if [ "$CHOICE" = "image" ] || [ "$CHOICE" = "image-turbo" ]; then'):sw.index("exit 0\nfi")]
+        start = sw.index('if [ "$CHOICE" = "image" ] || [ "$CHOICE" = "image-turbo" ]; then')
+        branch = sw[start:sw.index("exit 0\nfi", start)]
         self.assertNotIn("oc-point-default", branch)
         self.assertNotIn("PROMPT_CEILING_TOKENS", branch)
         # it runs from its own venv: no serving image to inspect, no container to download with

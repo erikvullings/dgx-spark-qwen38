@@ -294,7 +294,7 @@ for i in $(seq 1 150); do
     sudo journalctl -u "$UNIT" --since "$SINCE" --no-pager | tail -40
     die "the lane died while starting; the journal above says why."
   fi
-  [ $((i % 15)) -eq 0 ] && echo "  still loading... ($((i * 8)) s; about 9 min from the internal disk or a fast SSD)"
+  [ $((i % 15)) -eq 0 ] && echo "  still loading... ($((i * 8)) s; about 9 min on the reference box)"
   sleep 8
 done
 [ "$READY" -eq 1 ] || { sudo journalctl -u "$UNIT" --since "$SINCE" --no-pager | tail -40; die "the lane did not answer /health within 20 min. The journal above says why."; }

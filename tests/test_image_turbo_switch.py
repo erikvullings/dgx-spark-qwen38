@@ -384,7 +384,7 @@ class TheRestartHint(unittest.TestCase):
 
 class TheTargetIsKnownEverywhere(unittest.TestCase):
     def test_the_usage_line_and_the_cockpit_offer_it(self):
-        self.assertIn("|image|image-turbo|video)", TEXT)
+        self.assertIn("|image|image-turbo|video|", TEXT)
         cockpit = (REPO / "dashboard/cockpit.py").read_text()
         self.assertIn('"image-turbo"', cockpit)
         self.assertIn(f'IMAGE_TURBO_MODEL = "{TURBO}"', cockpit)

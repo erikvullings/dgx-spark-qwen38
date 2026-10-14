@@ -1,5 +1,60 @@
 # Changelog
 
+## v1.29.0 (2026-10-14): Kolibri-1, Aleph Alpha's German and English model, as a fifth lane
+
+**What it is.** [Kolibri-1](https://huggingface.co/Aleph-Alpha/Kolibri-1) is Aleph Alpha's open model
+(Apache 2.0, released 2026-10-02): a 78B mixture of experts with 3.5B active per token, built for German
+and English, with reasoning and tool calls. Every plain install now includes it as a fifth lane, beside
+the 27B, the flash, the image and the video lanes; `--no-kolibri` leaves it out (102 GB), and later runs
+remember it. On the cockpit's Lanes view it is **Kolibri-1**, **FP8** or **NVFP4**, then **Load**; from a
+terminal, `./switch-model.sh kolibri` or `kolibri-nvfp4`. Clients reach it through the proxy on `:30001`
+with the box's key, as model `kolibri-1`, in the OpenAI and the Anthropic dialects alike.
+
+**Aleph Alpha's own serving stack.** SGLang cannot load Kolibri (sglang#43256), so this lane runs vLLM
+0.29.0 with Aleph Alpha's plugin, aleph-alpha-inference 1.0.0, which pins it. Their container is
+published for amd64 only: `install-kolibri.sh` builds the same one for ARM64, their Dockerfile on the
+image their `FROM` names (the arm64 manifest of `vllm/vllm-openai:v0.29.0`, pinned by digest) plus the
+plugin's wheel, checked against the sha256 PyPI publishes. It serves the model card's command: the
+262,144-token window Aleph Alpha recommends, an FP8 KV cache, the `kolibri1` reasoning and tool parsers,
+and the checkpoint's own sampling (temperature 1.0, top_p 0.97, top_k 128, which vLLM applies to any
+request that sets none). Reasoning is on, at the effort its template defaults to (high), and a request
+sets its own (`low`, `medium`, `high` or `none`). The key reaches vLLM in the file SGLang's lanes read,
+and its anonymous usage report to its authors is off.
+
+**Measured on the reference box (2026-10-14), the checkpoint on a USB SSD.**
+
+| | FP8 (default): Aleph Alpha's release | NVFP4: Quantinine's, experts in 4-bit |
+|---|---|---|
+| decode, 1 / 4 / 8 / 16 streams | 48.0 / 121.9 / 165.8 / 202.0 tok/s | 52.9 / 157.7 / 248.2 / 377.2 tok/s |
+| prefill of 128K tokens | 48.5 s | 40.6 s |
+| weights / KV cache | 73.6 GiB / 2.09M tokens | 42.8 GiB / 2.01M tokens |
+| boot | 8 min 40 s | 7 min 10 s |
+
+The FP8 is deterministic to the bit on this box: 153,450 prompt log-probabilities of English, German and
+French Wikipedia came out identical across runs and with eight documents batched. Against it, the NVFP4
+leaves the likelihood of English and German text level (+0.006 and +0.003 nats per token, neither
+interval excluding zero) and lowers French measurably (+0.037, about 4 % of perplexity; French is not
+one of Kolibri's languages). Tried and not kept, each measured: the CUDA 12.9 build of the same vLLM
+(its block-FP8 kernels are sm_120a, and the GB10's first GEMM dies), vLLM 0.31.0 (identical to the bit
+and as fast), an 8-thread weight loader (slower from the SSD), vLLM's GB10 MoE table (within noise),
+and n-gram speculative decoding (2.4 times faster on a reply that copies its prompt, a third slower on
+prose, and it disables `logit_bias`). Every number: [docs/kolibri-lane.md](docs/kolibri-lane.md).
+
+**The proxy serves a vLLM lane (v6.37).** vLLM answers neither `/server_info` nor `/abort_request`, and
+refuses a model it does not serve: the proxy reads the pool and the window from its `/metrics` and
+`/v1/models` (without them every body past 256 KiB was held as "not measured yet" for good), closes the
+connection of a client that left, which stops vLLM's generation within half a second (measured; it
+drained such a request up to 15 minutes), gives a request naming another model the served one (so a
+client set up for the 27B keeps working on Kolibri), and drops the vocabulary and the request-id rule it
+learned when another model names itself. System One says it needs a Qwen lane there.
+
+**The cockpit follows it on its own facts**, as it does the image and the video lanes: its boot from
+vLLM's log (the shard being read, of 32), its health from vLLM's `/health`, its load and cache from
+`/metrics`, its engine panel from what it serves. None of the SGLang belts apply to it (the canary's
+model name is a 404 there, and the pool guard, the autoheal and the zombie guard read routes and log
+lines vLLM does not have). opencode gets a `kolibri` provider, text only, with Kolibri's own levels, and
+it becomes opencode's default when the lane is loaded.
+
 ## v1.28.2 (2026-10-13): a load window can be put away while its steps run, and long opencode sessions keep their cache
 
 **A window that held the page.** Loading a lane runs its steps one after the other (point the boot

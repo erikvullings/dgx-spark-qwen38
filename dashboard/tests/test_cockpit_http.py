@@ -679,10 +679,10 @@ class ReadRoutes(Base):
             self.assertEqual(body["error"], "unknown source", name)
         # and the allowlist is exactly these: the lanes' containers and this repo's units.
         # A truthiness check of the union could not fail (found in review, 2026-09-24).
-        self.assertEqual(set(self.cp.CONTAINERS), {"qwen38-sglang", "qwen38-flash"})
+        self.assertEqual(set(self.cp.CONTAINERS), {"qwen38-sglang", "qwen38-flash", "qwen38-kolibri"})
         self.assertEqual(set(self.cp.JOURNAL_UNITS), {
             "qwen38-sglang.service", "qwen38-flash.service", "qwen38-image.service",
-            "qwen38-video.service",
+            "qwen38-video.service", "qwen38-kolibri.service",
             "qwen38-keepalive.service", "opencode-web.service"})
 
     def test_a_known_log_source_answers_with_bounded_lines(self):

@@ -1,7 +1,7 @@
 /* Spark Cockpit, the control room of one DGX Spark.
 
    The design starts from the machine's defining fact: one pool of 121.6 GiB of unified
-   memory that four lanes take turns occupying. The pool is the hero of the first screen,
+   memory that five lanes take turns occupying. The pool is the hero of the first screen,
    the lanes are bays in a rack, and every other view hangs off those two ideas.
 
    Material: deep indigo. Two soft halos of violet and blue light breathe slowly behind
@@ -470,7 +470,8 @@ details.why > div{margin-top:var(--s-3); color:var(--fg-2); font-size:var(--t-14
 
 /* ── THE RACK ──────────────────────────────────────────────────────────────────
    Four bays, one seated. A lane that is not loaded is not missing: it is shelved. */
-.rack{display:grid; grid-template-columns:repeat(4, minmax(0,1fr)); gap:var(--s-3); margin-top:var(--s-5)}
+/* five bays: the three text lanes on the first row, the image and the video lanes under them */
+.rack{display:grid; grid-template-columns:repeat(3, minmax(0,1fr)); gap:var(--s-3); margin-top:var(--s-5)}
 .bay{position:relative; display:flex; flex-direction:column; gap:var(--s-3); padding:var(--s-4); border-radius:var(--r-panel);
   border:1px solid rgba(255,255,255,.12); background:linear-gradient(180deg, rgba(255,255,255,.075), rgba(255,255,255,.04));
   box-shadow:var(--shadow-1); min-height:190px; text-align:left; color:var(--fg-1);
@@ -736,13 +737,13 @@ body.agentmax .view{animation:none}
 
 /* ── responsive ── */
 @media (max-width:1280px){
-  .rack{grid-template-columns:repeat(2, minmax(0,1fr))}
   .vitals{grid-template-columns:repeat(3, minmax(0,1fr))}
   .vital:nth-child(4){border-left:0}
   .vital:nth-child(n+4){border-top:1px solid var(--rule-1)}
   .minipool{width:140px}
 }
 @media (max-width:1100px){
+  .rack{grid-template-columns:repeat(2, minmax(0,1fr))}
   .studio{grid-template-columns:minmax(0,1fr)}
   .g-7-5, .g-5-7, .g3{grid-template-columns:minmax(0,1fr)}
   .jobpip{display:none}

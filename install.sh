@@ -486,10 +486,10 @@ serves, the 27B by default, and the other is installed beside it, ready to
 load), the image lane, the video lane, the Kolibri lane (Aleph Alpha's
 Kolibri-1, on vLLM), the keepalive proxy with its typed decision endpoint, the
 opencode wiring, the cockpit and its Agent view. Each lane a run installs for
-the first time proves it serves before the run ends. All of it takes about
-540 GB of disk (27B 54, flash 203, image 40, video 144, Kolibri 102): about an
-hour and a half of work on the box, plus the downloads (about 90 minutes at
-100 MB/s). A lane that does not fit on the disk is left out and named at the
+the first time proves it serves before the run ends. All of it takes
+about 540 GB of disk (27B 54, flash 203, image 40, video 144, Kolibri 102):
+about an hour and a half of work on the box, plus the downloads (about 90
+minutes at 100 MB/s). A lane that does not fit on the disk is left out and named at the
 end, with the command that adds it later. When it finishes it prints the
 cockpit URL, and from there you start, stop, switch, watch and benchmark
 without a terminal.

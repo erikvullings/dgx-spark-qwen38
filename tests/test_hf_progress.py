@@ -324,7 +324,8 @@ class SwitchModelWiresIt(unittest.TestCase):
 
     def test_bars_go_only_without_a_terminal(self):
         self.assertIn('DL_NO_BARS=""; [ -t 1 ] || DL_NO_BARS=1', SWITCH)
-        self.assertEqual(SWITCH.count('HF_HUB_DISABLE_PROGRESS_BARS="$DL_NO_BARS"'), 3, "all three fetches")
+        # the text lanes', the image lane's, the video lane's and the Kolibri lane's
+        self.assertEqual(SWITCH.count('HF_HUB_DISABLE_PROGRESS_BARS="$DL_NO_BARS"'), 4, "all four fetches")
 
 
 @contextlib.contextmanager

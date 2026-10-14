@@ -472,7 +472,7 @@ class TheSwitch(unittest.TestCase):
         self.text = SWITCH.read_text()
 
     def test_video_is_a_switch_target(self):
-        self.assertIn("|video)", self.text)
+        self.assertIn("|video|", self.text)
         self.assertIn("./switch-model.sh video", self.text)
 
     def test_the_switch_verifies_only_the_served_partition(self):
@@ -572,18 +572,18 @@ class TheBootLaneConvergence(unittest.TestCase):
         self.assertIn("systemctl is-enabled --quiet qwen38-video.service", self.text)
 
     def test_the_text_unit_is_not_enabled_on_that_path(self):
-        i = self.text.index('if [ "$IMAGE_BOOT" -eq 0 ] && [ "$VIDEO_BOOT" -eq 0 ]; then')
-        self.assertIn('sudo systemctl enable "$UNIT_NAME"', self.text[i:i + 120])
+        i = self.text.index('if [ "$IMAGE_BOOT" -eq 0 ] && [ "$VIDEO_BOOT" -eq 0 ] && [ "$KOLIBRI_BOOT" -eq 0 ]; then')
+        self.assertIn('sudo systemctl enable "$UNIT_NAME"', self.text[i:i + 160])
         self.assertEqual(self.text.count('sudo systemctl enable "$UNIT_NAME"'), 1)
 
     def test_that_path_updates_without_starting_anything(self):
-        i = self.text.index('if [ "$IMAGE_BOOT" -eq 0 ] && [ "$VIDEO_BOOT" -eq 0 ]; then')
+        i = self.text.index('if [ "$IMAGE_BOOT" -eq 0 ] && [ "$VIDEO_BOOT" -eq 0 ] && [ "$KOLIBRI_BOOT" -eq 0 ]; then')
         early = self.text[i:self.text.index("exit 0", i)]
         self.assertNotIn("systemctl start", early)
         self.assertIn("--no-smoke", early)
 
     def test_that_path_respects_a_left_out_video_lane(self):
-        i = self.text.index('if [ "$IMAGE_BOOT" -eq 0 ] && [ "$VIDEO_BOOT" -eq 0 ]; then')
+        i = self.text.index('if [ "$IMAGE_BOOT" -eq 0 ] && [ "$VIDEO_BOOT" -eq 0 ] && [ "$KOLIBRI_BOOT" -eq 0 ]; then')
         early = self.text[i:self.text.index("exit 0", i)]
         call = early.index('"$REPO_DIR/install-video.sh" --no-smoke')
         self.assertIn('if [ "$WANT_VIDEO" -eq 1 ]', early[:call])
