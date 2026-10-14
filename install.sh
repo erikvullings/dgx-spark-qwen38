@@ -504,13 +504,14 @@ default), which serves, the keepalive proxy with its typed decision endpoint,
 the opencode wiring, the cockpit and its Agent view, and every other lane on
 demand: a run puts in its units, and the first Load of each from the cockpit
 prepares it as the user, with no sudo, and fetches its weights. That is the
-flash lane beside the 27B (its image and checkpoint, 203 GB), the image lane
-(40), the video lane (144) and the Kolibri lane (Aleph Alpha's Kolibri-1, on
-vLLM, 102). The lane that serves proves it serves before the run ends; on a new
-box the 27B takes 54 GB of disk, about 43 GB of downloads (about 7 minutes at
-100 MB/s). A 27B installed beside a serving flash (MODEL_CHOICE=flash) is
-installed whole, as before. A lane that does not fit on the disk is left out and
-named at the end, with the command that adds it later. When it finishes it prints the
+other text lane (the flash beside the 27B, its image and checkpoint, 203 GB;
+or the 27B beside a serving flash, its image, draft and checkpoint, 54), the
+image lane (40), the video lane (144) and the Kolibri lane (Aleph Alpha's
+Kolibri-1, on vLLM, 102). The lane that serves proves it serves before the run
+ends; on a new box the 27B takes 54 GB of disk, about 43 GB of downloads (about
+7 minutes at 100 MB/s). A lane installed whole (--all-weights, --with-<lane>)
+that does not fit on the disk is left out and named at the end, with the
+command that adds it later. When it finishes it prints the
 cockpit URL, and from there you start, stop, switch, watch and benchmark
 without a terminal.
 

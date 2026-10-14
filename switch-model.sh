@@ -23,7 +23,8 @@
 #   4. rewrites ONLY --model-path/--revision in the qwen38-sglang unit.
 #
 # Across lanes (27B <-> flash) both stacks must already be installed once
-# (each by its own ./install.sh run: the switch is surgical, it does not
+# (each by its own ./install.sh run, or a lane installed on demand prepared by
+# its first Load, ./prepare-lane.sh: the switch is surgical, it does not
 # download images or build overlays). It then re-verifies the checkpoint,
 # regenerates the target's template, flips which unit is enabled at boot,
 # and points the opencode default model at the target.

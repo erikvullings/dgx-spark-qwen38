@@ -623,9 +623,10 @@ and the keepalive proxy stay put.
   chat template from the target's own snapshot, rewrites the `--model-path`,
   `--revision` and KV cache lines of `/etc/systemd/system/qwen38-sglang.service`
   and daemon-reloads.
-- Existing install, across lanes (`flash` ↔ any 27B target): install each
-  stack once (`MODEL_CHOICE=flash ./install.sh` downloads the image and
-  the checkpoint); after that `./switch-model.sh flash` /
+- Existing install, across lanes (`flash` ↔ any 27B target): each stack is
+  prepared once (a plain run installs the other text lane's units, and its first
+  Load from the cockpit, or `./prepare-lane.sh flash` / `27b`, downloads its
+  image and checkpoint); after that `./switch-model.sh flash` /
   `./switch-model.sh stock` is surgical too: it re-verifies the checkpoint,
   regenerates the target's template, flips which unit is enabled at boot, and
   points the opencode default model at the target.
