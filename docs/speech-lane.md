@@ -20,7 +20,9 @@ It needs `ffmpeg` (`sudo apt-get install -y ffmpeg`, which the video lane needs 
 box), a venv of pinned wheels (168 MB) and 1.4 GB of models checked by sha256 (2.9 GB with
 the 1.7B). It writes `qwen38-speech.service`, then proves the
 lane: it speaks a sentence and hears it back. The first run took 3 minutes here; a run on
-an installed lane changes only what changed, and restarts the lane if it was running.
+an installed lane changes only what changed, and restarts the lane if it was running. The
+one command's updates leave this lane as it is: run `./install-speech.sh` again after one,
+to bring the lane to the version it installed.
 
 It is not started at boot unless `SPEECH_BOOT=1`: running, it holds host memory that a
 flash lane's long prompts also want, 2.5 GB resident at rest and 2.7 GB at work with the
