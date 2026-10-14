@@ -1,13 +1,10 @@
 #!/usr/bin/env python3
-"""./install-kolibri.sh --uninstall keeps the other side lanes' way back to the text lane.
+"""./install-kolibri.sh --uninstall gives the boot back to the box's text lane, and keeps the record.
 
-A switch to a side lane (image, video, Kolibri) writes down the lane it took the boot from,
-in lane-before-<lane>: that lane's own uninstall gives the boot back to it, and install.sh
-follows those links on an update to find the text lane it brings up to date. The image lane
-switched to from Kolibri names Kolibri there. Removing the Kolibri lane deleted its own link
-and left that one naming a unit that was gone: the chain stopped at it, the image lane's
-uninstall found nothing to give the boot back to, and an update fell back to the 27B lane on
-a box that had been serving the flash lane.
+Until v1.29 a switch to a side lane (image, video, Kolibri) wrote down the lane it took the boot
+from, in lane-before-<lane>, and these uninstalls followed and spliced those links. Since v1.30
+there is one record, text-lane (lanes.sh): the links of a box switched before are read once,
+while Kolibri is still the lane at boot, and their answer becomes the record.
 
 The script's own uninstall block runs here, whole, against a fake unit path, a fake
 config directory and a fake /etc/systemd/system (the box's own was read before, review of
@@ -63,6 +60,7 @@ class TheUninstallKeepsTheChain(unittest.TestCase):
         script = "\n".join([
             "set -euo pipefail",
             "step(){ :; }",
+            f'LANES_UNIT_DIR="{sd}"', f'. "{REPO}/lanes.sh"',   # the library the script sources
             f'HERE="{REPO}"',
             "ACTION=uninstall",
             "UNIT=qwen38-kolibri.service",
@@ -78,35 +76,34 @@ class TheUninstallKeepsTheChain(unittest.TestCase):
         env = dict(os.environ, PATH=f"{bin_}:/usr/bin:/bin", HOME=str(self.home))
         r = subprocess.run(["bash", "-c", script], capture_output=True, text=True, env=env, timeout=30)
         self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
-        return {p.name: p.read_text().strip() for p in cfg.iterdir() if p.name.startswith("lane-before-")}
+        self.out = r.stdout
+        return {p.name: p.read_text().strip() for p in cfg.iterdir()
+                if p.name.startswith("lane-before-") or p.name == "text-lane"}
 
-    def test_a_lane_that_named_kolibri_now_names_where_kolibri_came_from(self):
+    def test_the_links_of_a_box_switched_before_become_the_record(self):
         # the reference box on 2026-10-14: flash, then image, then Kolibri, then image again
         left = self.run_block({"lane-before-image": "qwen38-kolibri.service",
                                "lane-before-kolibri": "qwen38-flash.service"})
-        self.assertEqual(left, {"lane-before-image": "qwen38-flash.service"})
-
-    def test_the_video_lane_too(self):
+        self.assertEqual(left["text-lane"], "qwen38-flash.service")
+        self.assertNotIn("lane-before-kolibri", left, "its own link goes with the lane")
         left = self.run_block({"lane-before-video": "qwen38-kolibri.service",
                                "lane-before-kolibri": "qwen38-sglang.service"})
-        self.assertEqual(left, {"lane-before-video": "qwen38-sglang.service"})
+        self.assertEqual(left["text-lane"], "qwen38-sglang.service")
 
-    def test_a_link_never_comes_back_to_its_own_lane(self):
-        # image and Kolibri naming each other: the image lane's origin is unknown, not itself
-        left = self.run_block({"lane-before-image": "qwen38-kolibri.service",
-                               "lane-before-kolibri": "qwen38-image.service"})
-        self.assertEqual(left, {})
+    def test_links_that_lead_nowhere_write_no_record(self):
+        # image and Kolibri naming each other, or a link with nothing behind it: no text lane
+        # can be told, and nothing is written (the links of v1.29 are left as they are)
+        for files in ({"lane-before-image": "qwen38-kolibri.service", "lane-before-kolibri": "qwen38-image.service"},
+                      {"lane-before-video": "qwen38-kolibri.service"}):
+            with self.subTest(files=files):
+                left = self.run_block(files)
+                self.assertNotIn("text-lane", left)
 
-    def test_a_link_to_kolibri_with_nothing_behind_it_goes(self):
-        left = self.run_block({"lane-before-video": "qwen38-kolibri.service"})
-        self.assertEqual(left, {})
-
-    def test_links_that_never_named_kolibri_stay_as_they_are(self):
-        left = self.run_block({"lane-before-image": "qwen38-flash.service",
-                               "lane-before-video": "qwen38-image.service",
-                               "lane-before-kolibri": "qwen38-sglang.service"})
-        self.assertEqual(left, {"lane-before-image": "qwen38-flash.service",
-                                "lane-before-video": "qwen38-image.service"})
+    def test_a_record_already_there_is_kept_and_the_links_are_not_read(self):
+        left = self.run_block({"text-lane": "qwen38-flash.service",
+                               "lane-before-kolibri": "qwen38-sglang.service"}, kolibri_at_boot=True)
+        self.assertEqual(left["text-lane"], "qwen38-flash.service")
+        self.assertEqual(self.enabled(), ["qwen38-flash.service"])
 
     def test_opencode_loses_the_provider_and_its_default_follows_the_lane_before(self):
         # left as they were, opencode offered and defaulted to a model nothing served, and its
@@ -147,8 +144,8 @@ class TheUninstallKeepsTheChain(unittest.TestCase):
                    "lane-before-image": "qwen38-kolibri.service"}
         self.run_block(d_files, kolibri_at_boot=True)
         self.assertEqual(self.enabled(), ["qwen38-flash.service"])
-        at = BLOCK.index('BACK="$(cat "$CONFIG_DIR/lane-before-kolibri"')
-        self.assertLess(at, BLOCK.index('rm -f "$CONFIG_DIR/lane-before-kolibri"'))
+        # the links are read while Kolibri is still the lane at boot, before its unit goes
+        self.assertLess(BLOCK.index("text_lane_migrate"), BLOCK.index('sudo systemctl disable --now "$UNIT"'))
 
     def test_the_boot_goes_back_past_a_side_lane_removed_since(self):
         # flash, then image, then Kolibri; the image lane uninstalled: Kolibri's link named a unit
@@ -157,9 +154,17 @@ class TheUninstallKeepsTheChain(unittest.TestCase):
                         "lane-before-image": "qwen38-flash.service"}, kolibri_at_boot=True)
         self.assertEqual(self.enabled(), ["qwen38-flash.service"])
 
-    def test_a_chain_that_ends_nowhere_enables_nothing(self):
+    def test_with_nothing_noted_the_installed_text_lane_gets_the_boot(self):
+        # a link that ends nowhere left the box with no lane at boot until v1.29; a text lane
+        # installed is better than none (the 27B first), and none installed enables nothing
         self.run_block({"lane-before-kolibri": "qwen38-video.service"}, kolibri_at_boot=True)
+        self.assertEqual(self.enabled(), ["qwen38-sglang.service"])
+        self.run_block({"lane-before-kolibri": "qwen38-video.service"}, kolibri_at_boot=True,
+                       units=("qwen38-flash.service",))
+        self.assertEqual(self.enabled(), ["qwen38-flash.service"])
+        self.run_block({}, kolibri_at_boot=True, units=())
         self.assertEqual(self.enabled(), [])
+        self.assertIn("no engine is enabled at boot any more", self.out)
 
     def test_the_compaction_follows_the_default_put_back(self):
         # sized from Kolibri's window, it stayed at 38,000 tokens on a 27B whose own table keeps

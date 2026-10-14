@@ -27,9 +27,8 @@ BLOCK = TEXT[START:END]
 _lines = TEXT.splitlines(keepends=True)
 _at = next(i for i, ln in enumerate(_lines) if ln.startswith("dl_free_gb(){"))
 DLFREE = "".join(_lines[_at:_at + 2])
-# and the helper the block calls before it writes the lane it leaves (close_lane_loop)
-_h = TEXT.index("close_lane_loop(){")
-DLFREE += TEXT[_h:TEXT.index("\n}\n", _h) + 3]
+# and the library the block notes the text lane with (text_lane_note, lanes.sh)
+DLFREE += f'. "{REPO}/lanes.sh"\n'
 PINS = dict(re.findall(r'^(IMAGE_MODEL_PIN|IMAGE_MODEL_PIN_REV|IMAGE_TURBO_PIN|IMAGE_TURBO_PIN_REV)="([^"]+)"',
                        (REPO / "install-image.sh").read_text(), re.M))
 BASE, TURBO = PINS["IMAGE_MODEL_PIN"], PINS["IMAGE_TURBO_PIN"]
@@ -283,7 +282,7 @@ class TheTurboTarget(unittest.TestCase):
         rc, out, log = run(d, unit, g, "image-turbo")
         self.assertEqual(rc, 0, out)
         self.assertIn("sudo systemctl disable qwen38-sglang.service", log)
-        self.assertEqual((d / "cfg/lane-before-image").read_text().strip(), "qwen38-sglang.service")
+        self.assertEqual((d / "cfg/text-lane").read_text().strip(), "qwen38-sglang.service")
         self.assertIn("sudo systemctl stop qwen38-sglang.service && sudo systemctl start qwen38-image.service", out)
 
 

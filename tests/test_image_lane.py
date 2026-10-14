@@ -623,13 +623,13 @@ class TheBootLaneConvergenceHoldsEveryWay(unittest.TestCase):
 
     def test_the_text_lane_used_before_images_is_the_one_brought_up_to_date(self):
         """A switch to images disables both text units, so enablement cannot say which one
-        was in use: the switch writes it down, and install.sh reads it."""
-        self.assertIn('> "$CONFIG_DIR/lane-before-image"', self.sw)
-        # written BEFORE the loop that disables them, or it would record nothing
+        was in use: the switch notes it (lanes.sh, one record since v1.30), and install.sh
+        reads it."""
         img = self.sw.index('if [ "$CHOICE" = "image" ] || [ "$CHOICE" = "image-turbo" ]; then')
-        self.assertLess(self.sw.index('> "$CONFIG_DIR/lane-before-image"', img),
+        # noted BEFORE the loop that disables them, or it would record nothing
+        self.assertLess(self.sw.index('text_lane_note "$TEXT_UNIT_NAME"', img),
                         self.sw.index('sudo systemctl disable "$TEXT_UNIT_NAME"', img))
-        self.assertIn('[ "$LANE_BEFORE_IMAGE" = "qwen38-flash.service" ]', self.text)
+        self.assertIn('[ "$TEXT_LANE_LAST" = "qwen38-flash.service" ]', self.text)
 
     def test_it_never_points_at_a_switch_target_that_does_not_exist(self):
         """A kept custom model is MODEL_CHOICE=custom, which switch-model.sh rejects."""

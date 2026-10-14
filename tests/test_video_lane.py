@@ -361,7 +361,7 @@ class TheInstaller(unittest.TestCase):
         self.assertIn("installed WorkingDirectory", self.text)
 
     def test_uninstall_restores_the_lane_it_replaced_at_boot(self):
-        self.assertIn("lane-before-video", self.text)
+        self.assertIn('BACK="$(text_lane_back video)"', self.text)
 
 
 PATCHED = "python/sglang/multimodal_gen/runtime/managers/scheduler.py"
@@ -506,8 +506,8 @@ class TheSwitch(unittest.TestCase):
     def test_the_lane_before_video_is_written_down_before_anything_is_disabled(self):
         i = self.text.index('if [ "$CHOICE" = "video" ]; then')
         block = self.text[i:self.text.index("exit 0", i)]
-        self.assertIn('> "$CONFIG_DIR/lane-before-video"', block)
-        self.assertLess(block.index('> "$CONFIG_DIR/lane-before-video"'),
+        self.assertIn('text_lane_note "$TEXT_UNIT_NAME"', block)
+        self.assertLess(block.index('text_lane_note "$TEXT_UNIT_NAME"'),
                         block.index("sudo systemctl disable"))
 
     def test_it_disables_every_other_engine_and_enables_this_one(self):
@@ -595,8 +595,8 @@ class TheBootLaneConvergence(unittest.TestCase):
         self.assertLess(block.index('if [ -n "$_ENV_MODEL_CHOICE" ]; then'), block.index("VIDEO_BOOT=1"))
 
     def test_the_text_lane_used_before_video_is_the_one_brought_up_to_date(self):
-        self.assertIn('> "$CONFIG_DIR/lane-before-video"', SWITCH.read_text())
-        self.assertIn('[ "$LANE_BEFORE_VIDEO" = "qwen38-flash.service" ]', self.text)
+        self.assertIn('text_lane_note "$TEXT_UNIT_NAME"', SWITCH.read_text())
+        self.assertIn('[ "$TEXT_LANE_LAST" = "qwen38-flash.service" ]', self.text)
 
     def test_with_video_and_no_video_contradict_each_other(self):
         self.assertIn("'--no-video and --with-video contradict each other", self.text)

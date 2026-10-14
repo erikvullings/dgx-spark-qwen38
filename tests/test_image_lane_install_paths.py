@@ -129,6 +129,7 @@ class RemovingTheLaneThatBooted(unittest.TestCase):
             f.chmod(0o755)
         text = self.UNINSTALL.replace("/etc/systemd/system", str(units))
         script = ('set -euo pipefail\nstep(){ :; }\nACTION=uninstall; UNIT=qwen38-image.service\n'
+                  f'LANES_UNIT_DIR="{units}"; . "{REPO}/lanes.sh"\n'   # the library the script sources
                   f'INSTALLED="{units}/qwen38-image.service"; CONFIG_DIR="{d}"; LANE_DIR="{d}/lane"; '
                   f'VENV="{d}/lane/venv"; SRC="{d}/lane/sglang"; HF_CACHE="{d}/hf"; MODEL=Qwen/Qwen-Image-2.1\n'
                   'IMAGE_MODEL_PIN=Qwen/Qwen-Image-2.1; IMAGE_TURBO_PIN=Qwen/Qwen-Image-2.1-Turbo\n'

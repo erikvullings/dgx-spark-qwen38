@@ -432,6 +432,9 @@ PORT="${PORT:-30000}"
 HF_CACHE="${HF_CACHE:-$HOME/.cache/huggingface}"
 CONFIG_DIR="$HOME/.config/qwen38"
 REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# the text lane the box comes back to, one record shared with switch-model.sh (lanes.sh)
+# shellcheck source=lanes.sh
+. "$REPO_DIR/lanes.sh"
 
 NO_START=0
 NO_SERVICE=0
@@ -705,33 +708,21 @@ if [ -z "$SECONDARY" ] && systemctl is-enabled --quiet qwen38-kolibri.service 2>
   fi
 fi
 # Which text lane to bring up to date on that path. Both text units can be on disk with
-# neither enabled, since a switch to images disables both, so enablement cannot say which
-# one was in use; the switch writes it down instead, and without it the 27B lane is the
-# fallback, the same one the code below picks when nothing is enabled.
-LANE_BEFORE_IMAGE="$(cat "$CONFIG_DIR/lane-before-image" 2>/dev/null || true)"
-LANE_BEFORE_VIDEO="$(cat "$CONFIG_DIR/lane-before-video" 2>/dev/null || true)"
-LANE_BEFORE_KOLIBRI="$(cat "$CONFIG_DIR/lane-before-kolibri" 2>/dev/null || true)"
-# A switch from one side lane to the other writes the side lane it leaves (the installers
-# of those lanes go back to it): the text lane is then the one written before it. The
-# reference box went flash, image, video, and its update took the 27B (2026-10-06).
-[ "$LANE_BEFORE_VIDEO" = "qwen38-image.service" ] && LANE_BEFORE_VIDEO="$LANE_BEFORE_IMAGE"
-[ "$LANE_BEFORE_IMAGE" = "qwen38-video.service" ] && LANE_BEFORE_IMAGE="$LANE_BEFORE_VIDEO"
-[ "$LANE_BEFORE_KOLIBRI" = "qwen38-image.service" ] && LANE_BEFORE_KOLIBRI="$LANE_BEFORE_IMAGE"
-[ "$LANE_BEFORE_KOLIBRI" = "qwen38-video.service" ] && LANE_BEFORE_KOLIBRI="$LANE_BEFORE_VIDEO"
-[ "$LANE_BEFORE_IMAGE" = "qwen38-kolibri.service" ] && LANE_BEFORE_IMAGE="$LANE_BEFORE_KOLIBRI"
-[ "$LANE_BEFORE_VIDEO" = "qwen38-kolibri.service" ] && LANE_BEFORE_VIDEO="$LANE_BEFORE_KOLIBRI"
+# neither enabled, since a switch to a side lane disables both, so enablement cannot say which
+# one was in use; switch-model.sh writes it down instead (lanes.sh: one record since v1.30, the
+# links of a box switched before are read once), and without it the 27B lane is the fallback,
+# the same one the code below picks when nothing is enabled.
+text_lane_migrate
+TEXT_LANE_LAST="$(text_lane_last)"
 if [ "$FLASH_READABLE" -eq 1 ] && [ "$FLASH_ENABLED" -eq 1 ] && [ "$SGL_ENABLED" -eq 1 ]; then
   echo "NOTE: both qwen38-sglang and qwen38-flash are enabled (only one can serve the port)."
   echo "      Following the 27B unit; run ./switch-model.sh to resolve this cleanly."
 fi
 if [ "$FLASH_READABLE" -eq 1 ] && [ "$FLASH_ENABLED" -eq 1 ] && [ "$SGL_ENABLED" -eq 0 ]; then
   INSTALLED_CHOICE=flash
-elif [ "$IMAGE_BOOT" -eq 1 ] && [ "$LANE_BEFORE_IMAGE" = "qwen38-flash.service" ] && [ "$FLASH_READABLE" -eq 1 ]; then
-  INSTALLED_CHOICE=flash          # the text lane this box used before it switched to images
-elif [ "$VIDEO_BOOT" -eq 1 ] && [ "$LANE_BEFORE_VIDEO" = "qwen38-flash.service" ] && [ "$FLASH_READABLE" -eq 1 ]; then
-  INSTALLED_CHOICE=flash          # the text lane this box used before it switched to video
-elif [ "$KOLIBRI_BOOT" -eq 1 ] && [ "$LANE_BEFORE_KOLIBRI" = "qwen38-flash.service" ] && [ "$FLASH_READABLE" -eq 1 ]; then
-  INSTALLED_CHOICE=flash          # the text lane this box used before it switched to Kolibri
+elif [ $((IMAGE_BOOT + VIDEO_BOOT + KOLIBRI_BOOT)) -gt 0 ] && [ "$TEXT_LANE_LAST" = "qwen38-flash.service" ] \
+     && [ "$FLASH_READABLE" -eq 1 ]; then
+  INSTALLED_CHOICE=flash          # the text lane this box used before it switched to a side lane
 elif [ "$SGL_READABLE" -eq 1 ]; then
   INSTALLED_CHOICE=27b
 elif [ "$FLASH_READABLE" -eq 1 ]; then
@@ -2395,6 +2386,7 @@ if [ -n "$SECONDARY" ]; then
 fi
 if [ "$IMAGE_BOOT" -eq 0 ] && [ "$VIDEO_BOOT" -eq 0 ] && [ "$KOLIBRI_BOOT" -eq 0 ]; then
   sudo systemctl enable "$UNIT_NAME"
+  text_lane_note "$UNIT_NAME"
 else
   # Updated, not switched to. Starting it would stop the lane that is serving, and
   # the cockpit and the side-lane steps below only run once a text engine has proved

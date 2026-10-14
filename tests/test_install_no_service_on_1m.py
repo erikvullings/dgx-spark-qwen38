@@ -36,6 +36,7 @@ def box(context_length):
     assert STEP1 in text
     text = text.replace(STEP1, 'echo "PAST THE REFUSALS"; exit 0\n' + STEP1, 1)
     (d / "install.sh").write_text(text)
+    (d / "lanes.sh").write_text((REPO / "lanes.sh").read_text())   # sourced by the scripts since v1.30
     (d / "install.sh").chmod(0o755)
     (d / "bin").mkdir()
     (d / "bin/systemctl").write_text(

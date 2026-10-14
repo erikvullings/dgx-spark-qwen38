@@ -56,6 +56,9 @@ for a in "$@"; do case "$a" in
 esac; done
 
 CONFIG_DIR="$HOME/.config/qwen38"
+# the text lane the box comes back to, one record shared with switch-model.sh (lanes.sh)
+# shellcheck source=lanes.sh
+. "$HERE/lanes.sh"
 
 # The pins, at column 0 like install.sh's: the vLLM image Aleph Alpha's Dockerfile builds on
 # (v0.29.0, its arm64 manifest), the plugin's wheel, and the two checkpoints at the
@@ -123,6 +126,8 @@ case "$PORT" in ''|*[!0-9]*) die "the engine port must be a number, got: $PORT" 
 
 if [ "$ACTION" = uninstall ]; then
   step "Removing the Kolibri lane"
+  # what the box's links of v1.29 say, read while this lane is still the one at boot (lanes.sh)
+  text_lane_migrate
   if [ -f "$INSTALLED" ]; then
     WAS_BOOT=0; systemctl is-enabled --quiet "$UNIT" 2>/dev/null && WAS_BOOT=1
     sudo systemctl disable --now "$UNIT" 2>/dev/null || true
@@ -131,20 +136,10 @@ if [ "$ACTION" = uninstall ]; then
     # Kolibri was the lane at boot: the text lane it replaced was disabled by that switch,
     # and removing this one would leave no engine at the next boot.
     if [ "$WAS_BOOT" -eq 1 ]; then
-      BACK="$(cat "$CONFIG_DIR/lane-before-kolibri" 2>/dev/null || true)"
-      # Past a side lane removed since, along its own link: an image lane taken out after the
-      # switch to Kolibri left this one naming a unit that was gone, and the box was left with
-      # no lane at boot while opencode's default went on to the text lane (found in review,
-      # 2026-10-14).
-      for _ in 1 2 3; do
-        case "$BACK" in
-          qwen38-image.service|qwen38-video.service)
-            [ -f "/etc/systemd/system/$BACK" ] && break
-            SIDE="${BACK#qwen38-}"; BACK="$(cat "$CONFIG_DIR/lane-before-${SIDE%.service}" 2>/dev/null || true)" ;;
-          *) break ;;
-        esac
-      done
-      if [ -n "$BACK" ] && [ -f "/etc/systemd/system/$BACK" ]; then
+      # The text lane noted (lanes.sh), or the one installed: its own link, followed past a side
+      # lane removed since, was v1.29's way (found in review, 2026-10-14), and one record needs none.
+      BACK="$(text_lane_back kolibri)"
+      if [ -n "$BACK" ]; then
         sudo systemctl enable "$BACK"
         echo "$BACK is enabled at boot again, as it was before Kolibri; start it now with: sudo systemctl start $BACK   (or the cockpit)"
       else
@@ -153,35 +148,14 @@ if [ "$ACTION" = uninstall ]; then
       fi
     fi
   fi
-  # A side lane switched to from Kolibri names it as the lane to give the boot back to, and
-  # install.sh follows that link to the text lane on an update: it now names where Kolibri's
-  # own pointed, never its own lane nor a unit that is gone.
-  KOL_BEFORE="$(cat "$CONFIG_DIR/lane-before-kolibri" 2>/dev/null || true)"
-  for SIDE in image video; do
-    [ "$(cat "$CONFIG_DIR/lane-before-$SIDE" 2>/dev/null || true)" = "$UNIT" ] || continue
-    if [ -n "$KOL_BEFORE" ] && [ "$KOL_BEFORE" != "qwen38-$SIDE.service" ]; then
-      printf '%s\n' "$KOL_BEFORE" > "$CONFIG_DIR/lane-before-$SIDE"
-    else
-      rm -f "$CONFIG_DIR/lane-before-$SIDE"
-    fi
-  done
   # opencode and pi: the kolibri provider goes, and a default that named it follows the text
-  # lane this box had before Kolibri (oc-point-default.py with no target: no name changes).
+  # lane this box comes back to (lanes.sh; oc-point-default.py with no target: no name changes).
   # Left as they were, opencode offered and defaulted to a model nothing served, and its
-  # small-model calls sent Kolibri's level "none" to the Qwen template, which refuses it
+  # small-model calls sent Kolibri's level "none" to the Qwen template, which refused it
   # (found in review, 2026-10-14).
-  OC_BACK="$KOL_BEFORE"
-  for _ in 1 2 3; do
-    case "$OC_BACK" in
-      qwen38-image.service|qwen38-video.service)
-        SIDE="${OC_BACK#qwen38-}"; OC_BACK="$(cat "$CONFIG_DIR/lane-before-${SIDE%.service}" 2>/dev/null || true)" ;;
-      *) break ;;
-    esac
-  done
-  case "$OC_BACK" in
+  case "$(text_lane_back kolibri)" in
     qwen38-flash.service) OC_LANE=flash ;;
-    qwen38-sglang.service) OC_LANE=27b ;;
-    *) OC_LANE=27b; [ -f /etc/systemd/system/qwen38-sglang.service ] || OC_LANE=flash ;;
+    *) OC_LANE=27b ;;
   esac
   OC_SUM_BEFORE="$({ cat "$CONFIG_DIR/opencode.json" "$HOME/.config/opencode/opencode.json" 2>/dev/null || true; } | sha256sum)"
   for OC_JSON in "$CONFIG_DIR/opencode.json" "$HOME/.config/opencode/opencode.json"; do

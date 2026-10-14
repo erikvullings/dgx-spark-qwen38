@@ -50,6 +50,7 @@ class Box:
             assert old in text, f"switch-model.sh no longer names {unit} that way"
             text = text.replace(old, f'"{units}/{unit}"')
         (repo / "switch-model.sh").write_text(text)
+        (repo / "lanes.sh").write_text((REPO / "lanes.sh").read_text())   # sourced by the scripts since v1.30
         (repo / "switch-model.sh").chmod(0o755)
         self.bin = self.t / "bin"
         self.bin.mkdir()

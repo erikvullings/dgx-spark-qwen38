@@ -120,6 +120,8 @@ def converge(units, enabled, env, home=None):
     copy = tmp("lane-walled-") / "install.sh"
     copy.write_text(text)
     copy.chmod(0o755)
+    # the library install.sh sources from its own directory (since v1.30), units redirected too
+    (copy.parent / "lanes.sh").write_text((REPO / "lanes.sh").read_text().replace("/etc/systemd/system", str(unit_dir)))
     home = home or tmp("lane-home-")
     fenv, record = wall.fenced_env(home=home, enabled=enabled, **env)
     r = subprocess.run([str(copy)], capture_output=True, text=True, env=fenv, cwd=wall.cwd(), timeout=60)
@@ -210,6 +212,25 @@ class ATextLaneBeforeBothSideLanes(unittest.TestCase):
     def test_a_27b_before_them_stays_the_27b(self):
         out = self.resolve("qwen38-sglang.service", "qwen38-image.service", "qwen38-video.service")
         self.assertIn("INSTALLED=27b", out)
+
+    def test_the_links_are_read_once_and_the_record_wins_after(self):
+        # a box switched before v1.30 has only the links; the run notes their answer, and a stale
+        # link left on the disk (the reference box kept lane-before-video naming the 27B from an
+        # older round trip) never outvotes the record again
+        home = tmp("lane-record-home-")
+        cfg = home / ".config" / "qwen38"
+        cfg.mkdir(parents=True)
+        (cfg / "text-lane").write_text("qwen38-flash.service\n")
+        (cfg / "lane-before-video").write_text("qwen38-sglang.service\n")
+        (cfg / "launch-flash.sh").write_text(self.LAUNCHER)
+        units = {"qwen38-sglang.service": SGL_UNIT, "qwen38-flash.service": self.FLASH_UNIT,
+                 "qwen38-image.service": "[Service]\n", "qwen38-video.service": "[Service]\n"}
+        rc, out, _ = converge(units, enabled=("qwen38-video.service",), env=SHARED, home=home)
+        self.assertEqual(rc, 97, out)
+        self.assertIn("INSTALLED=flash", out)
+        # and the migration writes the record from the links, from the side lane at boot
+        out = self.resolve("qwen38-flash.service", "qwen38-image.service", "qwen38-video.service")
+        self.assertIn("INSTALLED=flash", out)
 
 
 class ABoxBootingKolibri(unittest.TestCase):

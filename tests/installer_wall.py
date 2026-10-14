@@ -73,6 +73,12 @@ def walled(script="install.sh", at=None, after=False, units=None):
     copy = d / pathlib.Path(script).name
     copy.write_text(text)
     copy.chmod(0o755)
+    # the library the installers source from their own directory (since v1.30), its units
+    # pointed where the copy's are
+    lanes = (REPO / "lanes.sh").read_text()
+    if units != REAL_UNITS:
+        lanes = lanes.replace("/etc/systemd/system", str(units))
+    (d / "lanes.sh").write_text(lanes)
     return str(copy)
 
 

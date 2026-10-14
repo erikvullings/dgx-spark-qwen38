@@ -118,6 +118,7 @@ class ContradictoryImageFlags(unittest.TestCase):
         cut = TEXT.index('step "1/10 Preflight checks"')
         d = pathlib.Path(tempfile.mkdtemp(prefix="img-flags-"))
         (d / "install.sh").write_text(TEXT[:cut] + 'echo "FLAGS OK"; exit 0\n')
+        (d / "lanes.sh").write_text((REPO / "lanes.sh").read_text())   # sourced by the scripts since v1.30
         r = subprocess.run(["bash", str(d / "install.sh"), "--with-image", "--no-image"], capture_output=True,
                            text=True, timeout=60, cwd=str(REPO), env={"PATH": "/usr/bin:/bin", "HOME": str(d)})
         self.assertNotEqual(r.returncode, 0)

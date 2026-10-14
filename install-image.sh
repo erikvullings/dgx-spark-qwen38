@@ -48,6 +48,9 @@ installed(){ { grep -m1 -E "^$1=" "$INSTALLED" 2>/dev/null || true; } | cut -d= 
 unit_flag(){ { grep -m1 -oE -- "$1 [^ \\\\]+" "$INSTALLED" 2>/dev/null || true; } | awk '{print $2}'; }
 
 CONFIG_DIR="$HOME/.config/qwen38"
+# the text lane the box comes back to, one record shared with switch-model.sh (lanes.sh)
+# shellcheck source=lanes.sh
+. "$HERE/lanes.sh"
 LANE_DIR="${IMAGE_LANE_DIR:-$(installed WorkingDirectory)}"; LANE_DIR="${LANE_DIR:-$HOME/.local/share/qwen38-image}"
 VENV="$LANE_DIR/venv"
 SRC="$LANE_DIR/sglang"
@@ -110,6 +113,8 @@ WEIGHTS_GB=31; RUNTIME_GB=11   # the checkpoint; the venv and checkout (7) and t
 
 if [ "$ACTION" = uninstall ]; then
   step "Removing the image lane"
+  # what the box's links of v1.29 say, read while this lane is still the one at boot (lanes.sh)
+  text_lane_migrate
   if [ -f "$INSTALLED" ]; then
     WAS_BOOT=0; systemctl is-enabled --quiet "$UNIT" 2>/dev/null && WAS_BOOT=1
     sudo systemctl disable --now "$UNIT" 2>/dev/null || true
@@ -123,8 +128,11 @@ if [ "$ACTION" = uninstall ]; then
       systemctl is-enabled --quiet "$u" 2>/dev/null && TEXT_ENABLED=1
     done
     if [ "$WAS_BOOT" -eq 1 ] && [ "$TEXT_ENABLED" -eq 0 ]; then
-      BACK="$(cat "$CONFIG_DIR/lane-before-image" 2>/dev/null || true)"
-      if [ -n "$BACK" ] && [ -f "/etc/systemd/system/$BACK" ]; then
+      # The text lane noted (lanes.sh), or the one installed: it read a link of its own, and a
+      # lane it named that was removed since left the box with no lane at boot (found in review,
+      # 2026-10-14).
+      BACK="$(text_lane_back image)"
+      if [ -n "$BACK" ]; then
         sudo systemctl enable "$BACK"
         echo "the text lane $BACK is enabled at boot again, as it was before the image lane;"
         echo "start it now with: sudo systemctl start $BACK   (or the cockpit)"

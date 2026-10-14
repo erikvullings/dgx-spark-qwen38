@@ -27,6 +27,7 @@ class TheHintIsAccepted(unittest.TestCase):
         cut = text.index('step "1/10 Preflight checks"')
         d = pathlib.Path(tempfile.mkdtemp(prefix="run-hint-"))
         (d / "install.sh").write_text(text[:cut] + 'echo "FLAGS OK"; exit 0\n')
+        (d / "lanes.sh").write_text((REPO / "lanes.sh").read_text())   # sourced by the scripts since v1.30
         (d / "install.sh").chmod(0o755)
         r = subprocess.run([str(d / "install.sh"), *flags], capture_output=True, text=True, timeout=60,
                            cwd=str(REPO), env={"PATH": "/usr/bin:/bin", "HOME": str(d),
