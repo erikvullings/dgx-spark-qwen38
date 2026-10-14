@@ -136,7 +136,8 @@ if [ "$ACTION" = uninstall ]; then
   for img in $(docker images --format '{{.Repository}}:{{.Tag}}' 'qwen38-kolibri' 2>/dev/null); do
     docker rmi "$img" >/dev/null 2>&1 && echo "image removed: $img"
   done
-  rm -rf "$CONFIG_DIR/kolibri-cache"
+  # vLLM writes its compile cache as root inside the container: what the user cannot remove, sudo does
+  rm -rf "$CONFIG_DIR/kolibri-cache" 2>/dev/null || sudo rm -rf --one-file-system "$CONFIG_DIR/kolibri-cache"
   echo "the base image $KOLIBRI_BASE_IMAGE stays (docker rmi it yourself if nothing else uses it)"
   for R in "$KOLIBRI_FP8_REPO" "$KOLIBRI_NVFP4_REPO"; do
     D="$HF_CACHE/hub/models--${R//\//--}"

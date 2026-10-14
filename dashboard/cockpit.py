@@ -687,7 +687,9 @@ def kolibri_engine_info():
     cfg = re.search(r"^vllm:cache_config_info\{([^}]*)\}", text, re.M)
     labels = dict(re.findall(r'(\w+)="([^"]*)"', cfg.group(1))) if cfg else {}
     version = (http_json(ENGINE_BASE + "/version", timeout=5) or {}).get("version")
-    target = unit_target(KOLIBRI_UNIT).get("target")
+    # what the engine serves, from its own answer: the unit names what its NEXT start loads
+    root = models[0].get("root") or ""
+    target = ("kolibri-nvfp4" if "NVFP4" in root.upper() else "kolibri") if root else None
     slim = {"model_path": models[0].get("root"), "served_model_name": models[0].get("id"),
             "context_length": models[0].get("max_model_len"),
             "max_total_num_tokens": facts["pool"] or None,
