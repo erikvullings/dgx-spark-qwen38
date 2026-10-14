@@ -81,6 +81,14 @@ index names is there. A round trip between side lanes (image, then Kolibri, then
 cockpit) left each naming the other as the lane before it, and an update took the 27B for the text lane
 of a box that served the flash; a switch now closes such a loop, image and video included.
 
+**Every installer follows a symlinked model cache to its disk.** They tell which disk each need lands
+on by the device of its directory, and `stat -c %d` read a symlink's own device. On a box whose
+`~/.cache/huggingface` links to another disk (an external SSD, the reference box since 2026-10-13),
+`install.sh` took the cache and Docker for one disk and checked their sum against the SSD's free space,
+the flash lane counted its 47.7 GiB PLE table on the SSD, the image lane checked its runtime's room
+there, and the video lane mixed the two disks' needs. They read the device the directory is on now
+(`stat -L`), as `install-kolibri.sh` does; a test fails on each script before the fix.
+
 **Four reviews before the merge** (2026-10-14: the code-review skill, then three reviewers, on the proxy
 and the engine's key guard, on the installers and the switch, and on the cockpit, the clients and the
 docs; no blocker, and no way past the key guard among 16 routes, 7 methods and 28 path tricks). What they
