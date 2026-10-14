@@ -1765,9 +1765,21 @@ OC_PORT="$PROXY_PORT"
 # box (nobody should be offered a model that nothing serves); the model being
 # installed right now always appears. The default model is the one being
 # installed. json.dump writes the file: no hand-escaping.
-OC_27B=0; OC_FLASH=0
+OC_27B=0; OC_FLASH=0; OC_KOLIBRI=0
 { [ "$LANE" = "27b" ] || [ -f "$SGL_UNIT_PATH" ]; } && OC_27B=1
 { [ "$LANE" = "flash" ] || [ -f "$FLASH_UNIT_PATH" ]; } && OC_FLASH=1
+# The Kolibri lane is installed at the end of a run (install-kolibri.sh): its provider comes
+# with the first run that finds its unit, or with the first switch to it.
+[ -f /etc/systemd/system/qwen38-kolibri.service ] && OC_KOLIBRI=1
+OC_KOLIBRI_CTX=""; OC_KOLIBRI_OUT=""; OC_KOLIBRI_NAME=""
+if [ "$OC_KOLIBRI" -eq 1 ]; then
+  OC_KOLIBRI_TARGET=kolibri
+  grep -qs -- "Quantinine/Kolibri-1-NVFP4A16-FP8 --revision" /etc/systemd/system/qwen38-kolibri.service && OC_KOLIBRI_TARGET=kolibri-nvfp4
+  OC_KOLIBRI_PAIR="$("$REPO_DIR/oc-limits.sh" "$OC_KOLIBRI_TARGET")" \
+    || die "oc-limits.sh refused $OC_KOLIBRI_TARGET (repo bug: please open an issue)"
+  OC_KOLIBRI_CTX="${OC_KOLIBRI_PAIR%% *}"; OC_KOLIBRI_OUT="$(echo "$OC_KOLIBRI_PAIR" | cut -d' ' -f2)"
+  OC_KOLIBRI_NAME="$(python3 "$REPO_DIR/oc-point-default.py" --label "$OC_KOLIBRI_TARGET" 262144 || true)"
+fi
 # How much of a conversation survives a compaction verbatim, from the same table.
 OC_KEEP="$("$REPO_DIR/oc-limits.sh" --preserve "$OC_CTX")" \
   || die "oc-limits.sh --preserve failed for $OC_CTX (repo bug: please open an issue)"
@@ -1850,6 +1862,8 @@ OC_CTX="$OC_CTX" OC_OUT="$OC_OUT" OC_LABEL="$OC_LABEL" OC_CONTEXT_MODE="$OC_27B_
 OC_27B_CTX="$OC_27B_CTX" OC_27B_OUT="$OC_27B_OUT" OC_SERVED_NAME="$OC_SERVED_NAME" \
 OC_27B_NAME="$OC_27B_NAME" OC_FLASH_NAME="$OC_FLASH_NAME" \
 OC_FLASH_CTX="$OC_FLASH_CTX" OC_FLASH_OUT="$OC_FLASH_OUT" \
+OC_KOLIBRI="$OC_KOLIBRI" OC_KOLIBRI_CTX="$OC_KOLIBRI_CTX" OC_KOLIBRI_OUT="$OC_KOLIBRI_OUT" \
+OC_KOLIBRI_NAME="$OC_KOLIBRI_NAME" OC_KOLIBRI_BOOT="$KOLIBRI_BOOT" OC_REPO_DIR="$REPO_DIR" \
 OC_KEEP="$OC_KEEP" OC_PIN="$OPENCODE_PIN" \
 OC_CONFIG_DIR="$CONFIG_DIR" python3 - <<'PYEOF' || die "could not write the opencode provider config"
 import json
@@ -1917,8 +1931,19 @@ if os.environ["OC_FLASH"] == "1":
                                   lane == "flash" and served_name or os.environ.get("OC_FLASH_NAME")
                                   or "Qwen3.8-Flash-Next NVFP4+MTP (local, 262K)",
                                   fctx, fout)
+if os.environ.get("OC_KOLIBRI") == "1":
+    # one definition, shared with switch-model.sh (oc-kolibri.py says why)
+    import importlib.util
+    spec = importlib.util.spec_from_file_location("oc_kolibri", os.path.join(os.environ["OC_REPO_DIR"], "oc-kolibri.py"))
+    ock = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(ock)
+    providers["kolibri"] = ock.provider(base_url, f"{cfg_dir}/api-key",
+                                        int(os.environ["OC_KOLIBRI_CTX"]), int(os.environ["OC_KOLIBRI_OUT"]),
+                                        os.environ.get("OC_KOLIBRI_NAME") or "Kolibri-1 FP8 official (local, 262K)")
 
 default = "flashnext/qwen3.8-flash-next" if lane == "flash" else "qwen38/qwen3.8-27b"
+if os.environ.get("OC_KOLIBRI_BOOT") == "1" and "kolibri" in providers:
+    default = "kolibri/kolibri-1"       # the lane this box serves stays opencode's default
 # Compaction is global in opencode.json, not per-model, so it is sized from the
 # INSTALLED target (oc-limits.sh --preserve) and rewritten by every install and
 # switch. preserve_recent_tokens exists because opencode's own default clamps it
@@ -1962,7 +1987,7 @@ if [ ! -e "$OC_USER_CFG" ]; then
   mkdir -p "$HOME/.config/opencode"
   install -m 644 "$CONFIG_DIR/opencode.json" "$OC_USER_CFG"
   echo "  no opencode config yet: installed this repo's at $OC_USER_CFG"
-elif ! grep -qsE '"(qwen38|flashnext)"' "$OC_USER_CFG"; then
+elif ! grep -qsE '"(qwen38|flashnext|kolibri)"' "$OC_USER_CFG"; then
   # the user's own config, with none of this repo's providers in it: theirs to merge
   echo "  your $OC_USER_CFG has no provider for this box: merge the \"qwen38\" (or \"flashnext\")"
   echo "  block from $CONFIG_DIR/opencode.json into it (docs/opencode.md)"
@@ -2018,10 +2043,15 @@ fi
 # defaulting to the previous lane (reference box 2026-09-11: flash selected
 # while stock 1M served). Same helper as switch-model.sh, one label table; it moves
 # the user's default only when that one is unset or already this box's.
-python3 "$REPO_DIR/oc-point-default.py" "$CONFIG_DIR/opencode.json" "$LANE" "$MODEL_CHOICE" "$OC_WINDOW" \
+OC_POINT_LANE="$LANE"; OC_POINT_CHOICE="$MODEL_CHOICE"; OC_POINT_WINDOW="$OC_WINDOW"
+if [ "$KOLIBRI_BOOT" -eq 1 ] && [ "$OC_KOLIBRI" -eq 1 ]; then
+  # the Kolibri lane is this box's lane: opencode's default stays on it
+  OC_POINT_LANE=kolibri; OC_POINT_CHOICE="$OC_KOLIBRI_TARGET"; OC_POINT_WINDOW=262144
+fi
+python3 "$REPO_DIR/oc-point-default.py" "$CONFIG_DIR/opencode.json" "$OC_POINT_LANE" "$OC_POINT_CHOICE" "$OC_POINT_WINDOW" \
   || die "could not point the generated opencode config at the installed lane"
 if [ -f "$OC_USER_CFG" ]; then
-  python3 "$REPO_DIR/oc-point-default.py" "$OC_USER_CFG" "$LANE" "$MODEL_CHOICE" "$OC_WINDOW" || true
+  python3 "$REPO_DIR/oc-point-default.py" "$OC_USER_CFG" "$OC_POINT_LANE" "$OC_POINT_CHOICE" "$OC_POINT_WINDOW" || true
 fi
 # Every opencode.json this install touches has been written by now, except the limits
 # a 1m install fits to the pool once the engine is up (step 9, which restarts it again),

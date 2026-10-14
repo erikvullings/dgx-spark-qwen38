@@ -237,6 +237,39 @@ PYKOL
   else
     echo "Effective after:  sudo systemctl start $KOLIBRI_UNIT_NAME   (or next reboot; ready in about 9 min)"
   fi
+  # opencode follows the lane, as on a text switch: the kolibri provider (added here to a
+  # config written before the lane was installed) becomes the default of the generated
+  # config and of the one opencode reads, and the server that reads them restarts when they
+  # changed. A box installed with --no-opencode is left alone.
+  if [ -f "$CONFIG_DIR/opencode.off" ]; then
+    echo "opencode integration is off on this box (./install.sh --no-opencode): default model left alone"
+  else
+    KOL_OC_SUM="$({ cat "$CONFIG_DIR/opencode.json" "$HOME/.config/opencode/opencode.json" 2>/dev/null || true; } | sha256sum)"
+    KOL_PAIR="$("$REPO_DIR/oc-limits.sh" "$CHOICE")" || KOL_PAIR=""
+    KOL_NAME="$(python3 "$REPO_DIR/oc-point-default.py" --label "$CHOICE" 262144 || true)"
+    KOL_PORT="$({ grep -m1 -oE 'PROXY_PORT=[0-9]+|keepalive-proxy.py [0-9]+' /etc/systemd/system/qwen38-keepalive.service 2>/dev/null || true; } | grep -oE '[0-9]+$' || true)"
+    KOL_SRC="$(mktemp)"
+    if [ -n "$KOL_PAIR" ] && python3 "$REPO_DIR/oc-kolibri.py" "http://127.0.0.1:${KOL_PORT:-30001}/v1" "$CONFIG_DIR/api-key" \
+         "${KOL_PAIR%% *}" "$(echo "$KOL_PAIR" | cut -d' ' -f2)" "${KOL_NAME:-Kolibri-1 (local, 262K)}" > "$KOL_SRC"; then
+      for OC_JSON in "$CONFIG_DIR/opencode.json" "$HOME/.config/opencode/opencode.json"; do
+        [ -f "$OC_JSON" ] || continue
+        python3 "$REPO_DIR/oc-merge-limits.py" "$OC_JSON" --add-providers "$KOL_SRC" >/dev/null || true
+        python3 "$REPO_DIR/oc-point-default.py" "$OC_JSON" kolibri "$CHOICE" 262144 \
+          || echo "NOTE: could not update $OC_JSON (hand-edited?); set its \"model\" field yourself"
+      done
+    fi
+    rm -f "$KOL_SRC"
+    if [ -d "$CONFIG_DIR/pi" ] || [ -d "$CONFIG_DIR/omp" ]; then
+      python3 "$REPO_DIR/pi-gen.py" --config "$CONFIG_DIR/opencode.json" --out "$CONFIG_DIR" \
+        || echo "NOTE: could not regenerate the pi/omp artifacts; run ./pi-gen.py by hand"
+    fi
+    if [ "$KOL_OC_SUM" != "$({ cat "$CONFIG_DIR/opencode.json" "$HOME/.config/opencode/opencode.json" 2>/dev/null || true; } | sha256sum)" ] \
+       && systemctl list-unit-files opencode-web.service >/dev/null 2>&1 && systemctl is-active --quiet opencode-web.service; then
+      sudo systemctl restart opencode-web.service \
+        && echo "opencode-web.service restarted so it reads the new default" \
+        || echo "NOTE: could not restart opencode-web.service; restart it by hand"
+    fi
+  fi
   echo "Clients reach it through the proxy on :30001 with the box's key, as model kolibri-1."
   echo "Switch back:      ./switch-model.sh stock   (or any other target)"
   exit 0

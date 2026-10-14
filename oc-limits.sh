@@ -232,6 +232,15 @@ case "$CHOICE" in
       *) printf 'oc-limits: unknown context mode "%s"\n' "$MODE" >&2; exit 2 ;;
     esac
     ;;
+  kolibri|kolibri-nvfp4)
+    # The Kolibri lane serves Aleph Alpha's 262,144-token window, and vLLM refuses any
+    # request whose prompt + max_tokens passes it. Its KV cache holds about 2.1 million
+    # tokens (8 requests at the full window, either checkpoint), so the pool binds nothing
+    # and the window decides: the native 27B pair, by the same rule
+    # (173,000 - 20,000 + 43,863 + 64,000 = 260,863 <= 262,144), whose 64,000 of output
+    # leave its reasoning room at the high effort its template defaults to.
+    CTX=173000; OUT=64000; LABEL="local, 262K"
+    ;;
   *) printf 'oc-limits: unknown target "%s"\n' "$CHOICE" >&2; exit 2 ;;
 esac
 

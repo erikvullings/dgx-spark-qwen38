@@ -93,14 +93,14 @@ class TheFlags(unittest.TestCase):
         return r.returncode, out, home / ".config" / "qwen38"
 
     def test_each_no_flag_is_remembered(self):
-        for lane in ("image", "video", "flash", "27b"):
+        for lane in ("image", "video", "flash", "27b", "kolibri"):
             rc, out, cfg = self.run_install(f"--no-{lane}")
             self.assertEqual(rc, 1, out)
             self.assertIn("CONTEXT_MODE=1m", out, "stopped at the refusal after the flags")
             self.assertTrue((cfg / f"{lane}.off").exists(), lane)
 
     def test_contradictions_are_refused(self):
-        for lane in ("flash", "27b"):
+        for lane in ("flash", "27b", "kolibri"):
             rc, out, cfg = self.run_install(f"--no-{lane}", f"--with-{lane}")
             self.assertEqual(rc, 1)
             self.assertIn(f"--no-{lane} and --with-{lane} contradict each other", out)
@@ -212,6 +212,43 @@ class ATextLaneBeforeBothSideLanes(unittest.TestCase):
         self.assertIn("INSTALLED=27b", out)
 
 
+class ABoxBootingKolibri(unittest.TestCase):
+    """The Kolibri lane is a lane of its own (vLLM, its own unit and installer), and when it is
+    the one enabled at boot a plain re-run brings the text lane it replaced up to date without
+    enabling it beside it, the promise the image and the video lanes have."""
+
+    FLASH_UNIT = ATextLaneBeforeBothSideLanes.FLASH_UNIT
+    LAUNCHER = ATextLaneBeforeBothSideLanes.LAUNCHER
+
+    def resolve(self, before_kolibri, env=None):
+        home = tmp("lane-kolibri-home-")
+        cfg = home / ".config" / "qwen38"
+        cfg.mkdir(parents=True)
+        (cfg / "lane-before-kolibri").write_text(before_kolibri + "\n")
+        (cfg / "launch-flash.sh").write_text(self.LAUNCHER)
+        units = {"qwen38-sglang.service": SGL_UNIT, "qwen38-flash.service": self.FLASH_UNIT,
+                 "qwen38-kolibri.service": "[Service]\n"}
+        rc, out, _ = converge(units, enabled=("qwen38-kolibri.service",), env={**SHARED, **(env or {})}, home=home)
+        self.assertEqual(rc, 97, out)
+        return out
+
+    def test_it_stays_the_boot_lane_and_the_flash_before_it_is_brought_up_to_date(self):
+        out = self.resolve("qwen38-flash.service")
+        self.assertIn("The Kolibri lane is this box's boot lane", out)
+        self.assertIn("INSTALLED=flash", out)
+
+    def test_a_27b_before_it_stays_the_27b(self):
+        self.assertIn("INSTALLED=27b", self.resolve("qwen38-sglang.service"))
+
+    def test_an_explicit_target_takes_the_boot_back(self):
+        out = self.resolve("qwen38-flash.service", env={"MODEL_CHOICE": "flash"})
+        self.assertIn("MODEL_CHOICE=flash given on a box booting the Kolibri lane", out)
+        self.assertNotIn("The Kolibri lane is this box's boot lane", out)
+
+    def test_the_run_that_takes_the_boot_back_disables_it(self):
+        self.assertIn('if [ -z "$SECONDARY" ] && [ "$KOLIBRI_BOOT" -eq 0 ] && systemctl is-enabled --quiet qwen38-kolibri.service', TEXT)
+
+
 class ItLeavesWhatIsSharedToItsParent(unittest.TestCase):
     """What the run for the other lane must not touch, read where it would."""
 
@@ -298,7 +335,8 @@ class TheOtherLanesAndTheirProofs(unittest.TestCase):
     BLOCK = between("    # ── Every other lane", "    printf '\\n\\033[1;32m✅ Installed")
 
     def end(self, units=(), want_image=1, want_video=1, with_image=0, with_video=0, with_flash=0,
-            second_state="installed", second_fresh=1, image_rc=0, video_rc=0, prove_fail=""):
+            second_state="installed", second_fresh=1, image_rc=0, video_rc=0, prove_fail="",
+            want_kolibri=1, with_kolibri=0, kolibri_rc=0):
         t = tmp("lane-end-")
         unit_dir = t / "units"
         unit_dir.mkdir()
@@ -308,7 +346,8 @@ class TheOtherLanesAndTheirProofs(unittest.TestCase):
         repo.mkdir()
         log = t / "calls"
         log.write_text("")
-        for name, rc in (("install-image.sh", image_rc), ("install-video.sh", video_rc)):
+        for name, rc in (("install-image.sh", image_rc), ("install-video.sh", video_rc),
+                         ("install-kolibri.sh", kolibri_rc)):
             stub(repo / name, f'echo "{name} $*" >> "{log}"\n'
                               f'case "$*" in *--no-smoke*) exit {rc} ;; esac\nexit 0')
         (repo / "oc-fit-limits.py").write_text(f"open({str(log)!r}, 'a').write('oc-fit-limits\\n')\n")
@@ -323,9 +362,9 @@ class TheOtherLanesAndTheirProofs(unittest.TestCase):
                   f'REPO_DIR="{repo}"; CONFIG_DIR="{t}"; LANE=27b; UNIT_NAME=qwen38-sglang.service; SMOKE_MODEL=qwen3.8-27b\n'
                   'KEEPALIVE_UNIT=qwen38-keepalive.service; PORT=30000; PROXY_PORT=30001; CONTEXT_MODE=1m; OPENCODE=1; KA_CHANGED=0\n'
                   f"WANT_IMAGE={want_image}; WANT_VIDEO={want_video}; WITH_IMAGE={with_image}; WITH_VIDEO={with_video}\n"
-                  f"WITH_FLASH={with_flash}; WITH_27B=0\n"
+                  f"WITH_FLASH={with_flash}; WITH_27B=0; WANT_KOLIBRI={want_kolibri}; WITH_KOLIBRI={with_kolibri}\n"
                   f"SECOND_LANE=flash; SECOND_UNIT=qwen38-flash.service; SECOND_STATE={second_state}; SECOND_FRESH={second_fresh}\n"
-                  + block + '\necho "STATES second=$SECOND_STATE image=$IMAGE_STATE video=$VIDEO_STATE"\n')
+                  + block + '\necho "STATES second=$SECOND_STATE image=$IMAGE_STATE video=$VIDEO_STATE kolibri=$KOLIBRI_STATE"\n')
         r = subprocess.run(["bash", "-c", script], capture_output=True, text=True, timeout=30,
                            env={"PATH": f"{bin_}:/usr/bin:/bin"})
         return r.returncode, r.stdout + r.stderr, log.read_text().splitlines()
@@ -334,24 +373,27 @@ class TheOtherLanesAndTheirProofs(unittest.TestCase):
         rc, out, calls = self.end()
         self.assertEqual(rc, 0, out)
         self.assertEqual(calls, [
-            "install-image.sh --no-smoke", "install-video.sh --no-smoke",
+            "install-image.sh --no-smoke", "install-video.sh --no-smoke", "install-kolibri.sh --no-smoke",
             "sudo systemctl stop qwen38-sglang.service",
             "prove qwen38-flash.service qwen3.8-flash-next stop",
-            "install-image.sh ", "install-video.sh ",
+            "install-image.sh ", "install-video.sh ", "install-kolibri.sh ",
             "prove qwen38-sglang.service qwen3.8-27b",
             "sudo systemctl restart qwen38-keepalive.service", "oc-fit-limits"])
-        self.assertIn("STATES second=proved image=proved video=proved", out)
+        self.assertIn("STATES second=proved image=proved video=proved kolibri=proved", out)
 
     def test_a_routine_update_proves_nothing_and_keeps_the_lane_serving(self):
-        rc, out, calls = self.end(units=("qwen38-image.service", "qwen38-video.service"), second_fresh=0)
+        rc, out, calls = self.end(units=("qwen38-image.service", "qwen38-video.service", "qwen38-kolibri.service"),
+                                  second_fresh=0)
         self.assertEqual(rc, 0, out)
-        self.assertEqual(calls, ["install-image.sh --no-smoke", "install-video.sh --no-smoke"])
-        self.assertIn("STATES second=installed image=installed video=installed", out)
+        self.assertEqual(calls, ["install-image.sh --no-smoke", "install-video.sh --no-smoke",
+                                 "install-kolibri.sh --no-smoke"])
+        self.assertIn("STATES second=installed image=installed video=installed kolibri=installed", out)
 
     def test_a_lane_left_out_is_not_touched(self):
-        rc, out, calls = self.end(units=("qwen38-video.service",), want_image=0, second_fresh=0)
+        rc, out, calls = self.end(units=("qwen38-video.service",), want_image=0, want_kolibri=0, second_fresh=0)
         self.assertEqual(calls, ["install-video.sh --no-smoke"])
         self.assertIn("image=off", out)
+        self.assertIn("kolibri=off", out)
 
     def test_a_lane_that_does_not_install_is_not_proved_and_the_rest_goes_on(self):
         rc, out, calls = self.end(image_rc=1)
@@ -359,17 +401,26 @@ class TheOtherLanesAndTheirProofs(unittest.TestCase):
         self.assertNotIn("install-image.sh ", calls)
         self.assertIn("install-video.sh ", calls)
         self.assertIn("image=failed", out)
+        rc, out, calls = self.end(kolibri_rc=1)
+        self.assertEqual(rc, 0, out)
+        self.assertNotIn("install-kolibri.sh ", calls)
+        self.assertIn("install-image.sh ", calls)
+        self.assertIn("kolibri=failed", out)
 
     def test_naming_a_lane_proves_it_on_an_update(self):
-        rc, out, calls = self.end(units=("qwen38-image.service", "qwen38-video.service"), second_fresh=0,
-                                  with_video=1)
-        self.assertEqual(calls[2:], ["sudo systemctl stop qwen38-sglang.service", "install-video.sh ",
+        units = ("qwen38-image.service", "qwen38-video.service", "qwen38-kolibri.service")
+        rc, out, calls = self.end(units=units, second_fresh=0, with_video=1)
+        self.assertEqual(calls[3:], ["sudo systemctl stop qwen38-sglang.service", "install-video.sh ",
                                      "prove qwen38-sglang.service qwen3.8-27b",
                                      "sudo systemctl restart qwen38-keepalive.service", "oc-fit-limits"])
         self.assertIn("video=proved", out)
-        rc, out, calls = self.end(units=("qwen38-image.service", "qwen38-video.service"), second_fresh=0,
-                                  with_flash=1)
+        rc, out, calls = self.end(units=units, second_fresh=0, with_flash=1)
         self.assertIn("prove qwen38-flash.service qwen3.8-flash-next stop", calls)
+        rc, out, calls = self.end(units=units, second_fresh=0, with_kolibri=1)
+        self.assertEqual(calls[3:], ["sudo systemctl stop qwen38-sglang.service", "install-kolibri.sh ",
+                                     "prove qwen38-sglang.service qwen3.8-27b",
+                                     "sudo systemctl restart qwen38-keepalive.service", "oc-fit-limits"])
+        self.assertIn("kolibri=proved", out)
 
     def test_a_proof_that_fails_is_said_and_the_served_lane_still_comes_back(self):
         rc, out, calls = self.end(prove_fail="qwen38-flash.service")
