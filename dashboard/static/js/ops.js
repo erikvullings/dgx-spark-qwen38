@@ -21,15 +21,16 @@ afterApply(() => {
 });
 on('decode', d => {
   const t = d.decode, u = d.usage || {};
-  if (!d.lane){ setText('tr-acc', 'none'); setText('tr-kv', 'none'); return; }
-  if (d.lane === 'qwen38-kolibri'){
-    // vLLM writes none of SGLang's scheduler lines these read: Kolibri runs no draft model, and
-    // its cache's use is the engine's own count (kolibri_load). Both read "idle" while it served.
+  if (!d.lane && (servingEngine() || [])[0] === KOLIBRI_UNIT){
+    // The scheduler lines these read are SGLang's, and the server reads none off the Kolibri lane
+    // (lane null): Kolibri runs no draft model, and its cache's use is vLLM's own count
+    // (kolibri_load). Both read "none" while it served (found in review, 2026-10-14).
     const l = F.load || {};
     setText('tr-acc', 'no draft model');
     setText('tr-kv', l.num_tokens ? (100 * (l.num_used_tokens || 0) / l.num_tokens).toFixed(1) + ' %' : 'idle');
     return;
   }
+  if (!d.lane){ setText('tr-acc', 'none'); setText('tr-kv', 'none'); return; }
   setText('tr-acc', t ? t.accept_len.toFixed(2) : 'idle');
   setText('tr-kv', t ? (100 * t.token_usage).toFixed(1) + ' %' : u.tokens ? (100 * u.tokens).toFixed(0) + ' %' : 'idle');
 });

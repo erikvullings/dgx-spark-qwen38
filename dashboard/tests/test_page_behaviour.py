@@ -136,7 +136,7 @@ class TheKolibriLaneIsSaidAsItIs(unittest.TestCase):
     def test_traffic_says_kolibri_serves_and_reads_its_own_cache(self):
         r = run(self, self.KOLIBRI + r"""
         feed({engine_fast: {load: [{num_reqs: 1, num_waiting_reqs: 0, num_tokens: 2000000, num_used_tokens: 500000}]}});
-        feed({metrics: {lane: null}, decode: {lane: 'qwen38-kolibri', decode: null, usage: {}}});
+        feed({metrics: {lane: null}, decode: {lane: null}});    // what the server sends on this lane
         report({verdict: txt('wm-verdict'), acc: txt('tr-acc'), kv: txt('tr-kv')});
         """)
         self.assertIn("serves on vLLM", r["verdict"])
