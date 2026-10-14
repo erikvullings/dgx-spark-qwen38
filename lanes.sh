@@ -101,3 +101,40 @@ stale_since(){  # $1 unit, $2... its files: true when it does not serve, or serv
   [ -n "$started" ] || return 0
   lane_serves_older "$@"
 }
+
+# The flash lane's reduced draft vocabulary, built once into $CONFIG_DIR, by install.sh and by the
+# lane's first Load when it is installed on demand (prepare-lane.sh flash). Built inside the
+# serving image, so the tokenizer that ranks the ids is the one the served model ships, not
+# whatever the host has (the host has no transformers at all). Corpus-free by default: the
+# ranking falls back to the tokenizer's own construction order, which is a frequency ranking
+# learned over the tokenizer's training corpus. Drop a corpus.jsonl in the config directory (one
+# JSON object per line with a "text" field, ideally the model's own output) and it is used as
+# the primary ranking instead, which is what the model's drafter actually has to predict.
+# Needs REPO_DIR (build-token-map.py) and CONFIG_DIR.
+flash_token_map(){  # $1 image, $2 HF cache, $3 repo, $4 revision, $5 size, $6 what to say when no snapshot is there yet
+  local image="$1" hf="$2" repo="$3" rev="$4" size="$5" name="token-map-$5.pt" cache corpus=()
+  if [ -s "$CONFIG_DIR/$name" ]; then
+    echo "reduced draft vocabulary already built: $CONFIG_DIR/$name"
+    return 0
+  fi
+  echo "building the reduced draft vocabulary ($size ids, ~30 s)"
+  # the commit a ref names (MODEL_REV=main): snapshots/main never exists, and the map was
+  # skipped on every run (found in review, 2026-09-24)
+  cache="$hf/hub/models--${repo//\//--}"
+  [ -f "$cache/refs/$rev" ] && rev="$(cat "$cache/refs/$rev")"
+  if [ ! -d "$cache/snapshots/$rev" ]; then
+    echo "NOTE: no snapshot at the pinned revision yet; the draft vocabulary is skipped this run."
+    echo "      $6"
+    return 0
+  fi
+  [ -s "$CONFIG_DIR/corpus.jsonl" ] && corpus=(--corpus /out/corpus.jsonl)
+  docker run --rm --entrypoint python3 \
+    -v "$hf":/root/.cache/huggingface \
+    -v "$CONFIG_DIR":/out \
+    -v "$REPO_DIR":/repo:ro \
+    "$image" \
+    /repo/build-token-map.py \
+      --snapshot "/root/.cache/huggingface/hub/models--${repo//\//--}/snapshots/$rev" \
+      --out "/out/$name" --size "$size" "${corpus[@]}" \
+    || return 1
+}

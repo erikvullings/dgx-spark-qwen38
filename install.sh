@@ -1405,41 +1405,11 @@ else
     || die "serving image not present: $LANE_SERVE_IMAGE. Nothing pulls an override, so build or pull it first, or drop SERVE_IMAGE= to serve the pin ($LANE_PIN_IMAGE)."
 fi
 
-# The reduced draft vocabulary. Built inside the serving image, so the tokenizer
-# that ranks the ids is the one the served model ships, not whatever the host has
-# (the host has no transformers at all). Corpus-free by default: the ranking
-# falls back to the tokenizer's own construction order, which is a frequency
-# ranking learned over the tokenizer's training corpus. Drop a corpus.jsonl in
-# the config directory (one JSON object per line with a "text" field, ideally the
-# model's own output) and it is used as the primary ranking instead, which is
-# what the model's drafter actually has to predict.
+# The reduced draft vocabulary (lanes.sh: flash_token_map says how and why).
 if [ "$LANE" = "flash" ] && [ "${SPEC_TOKEN_MAP_SIZE:-0}" -gt 0 ]; then
-  if [ -s "$CONFIG_DIR/$TOKEN_MAP_NAME" ]; then
-    echo "reduced draft vocabulary already built: $CONFIG_DIR/$TOKEN_MAP_NAME"
-  else
-    echo "building the reduced draft vocabulary ($SPEC_TOKEN_MAP_SIZE ids, ~30 s)"
-    # the commit a ref names (MODEL_REV=main): snapshots/main never exists, and the map was
-    # skipped on every run (found in review, 2026-09-24)
-    MAP_REPO_CACHE="$HF_CACHE/hub/models--${MODEL_REPO//\//--}"
-    MAP_REV="$MODEL_REV"; [ -f "$MAP_REPO_CACHE/refs/$MODEL_REV" ] && MAP_REV="$(cat "$MAP_REPO_CACHE/refs/$MODEL_REV")"
-    SNAP_DIR="$(ls -d "$MAP_REPO_CACHE/snapshots/$MAP_REV" 2>/dev/null || true)"
-    if [ -z "$SNAP_DIR" ]; then
-      echo "NOTE: no snapshot at the pinned revision yet; the draft vocabulary is skipped this run."
-      echo "      Re-run ./install.sh after the checkpoint is in place to build and serve it."
-    else
-      MAP_CORPUS=""
-      [ -s "$CONFIG_DIR/corpus.jsonl" ] && MAP_CORPUS="--corpus /out/corpus.jsonl"
-      docker run --rm --entrypoint python3 \
-        -v "$HF_CACHE":/root/.cache/huggingface \
-        -v "$CONFIG_DIR":/out \
-        -v "$REPO_DIR":/repo:ro \
-        "$FLASH_IMAGE" \
-        /repo/build-token-map.py \
-          --snapshot "/root/.cache/huggingface/hub/models--${MODEL_REPO//\//--}/snapshots/$MAP_REV" \
-          --out "/out/$TOKEN_MAP_NAME" --size "$SPEC_TOKEN_MAP_SIZE" $MAP_CORPUS \
-        || die "building the reduced draft vocabulary failed. It is an optimization, not a requirement: re-run with SPEC_TOKEN_MAP_SIZE=0 to serve without it, and please open an issue with the output above."
-    fi
-  fi
+  flash_token_map "$FLASH_IMAGE" "$HF_CACHE" "$MODEL_REPO" "$MODEL_REV" "$SPEC_TOKEN_MAP_SIZE" \
+    "Re-run ./install.sh after the checkpoint is in place to build and serve it." \
+    || die "building the reduced draft vocabulary failed. It is an optimization, not a requirement: re-run with SPEC_TOKEN_MAP_SIZE=0 to serve without it, and please open an issue with the output above."
 fi
 
 # What the engine this run installs reads when it starts, as it stands before this run
