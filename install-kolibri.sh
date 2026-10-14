@@ -393,13 +393,15 @@ for i in $(seq 1 150); do
   curl -fsS -m 3 "http://127.0.0.1:$PORT/health" >/dev/null 2>&1 && { READY=1; break; }
   if [ "$(systemctl is-active "$UNIT" || true)" = failed ] \
      || [ "$(systemctl show -p NRestarts --value "$UNIT" 2>/dev/null | tr -dc '0-9')" -gt "${R0:-0}" ]; then
-    sudo journalctl -u "$UNIT" --since "$SINCE" --no-pager | tail -40
+    { sudo journalctl -u "$UNIT" --since "$SINCE" --no-pager || true; } | tail -40
     die "the lane died while starting; the journal above says why."
   fi
   [ $((i % 15)) -eq 0 ] && echo "  still loading... ($((i * 8)) s; about 10 min on the reference box)"
   sleep 8
 done
-[ "$READY" -eq 1 ] || { sudo journalctl -u "$UNIT" --since "$SINCE" --no-pager | tail -40; die "the lane did not answer /health within 20 min. The journal above says why."; }
+# a journal that cannot be read (sudo without a ticket) must not end this before the reason:
+# under pipefail it did, with only sudo's own line printed (found in review, 2026-10-14)
+[ "$READY" -eq 1 ] || { { sudo journalctl -u "$UNIT" --since "$SINCE" --no-pager || true; } | tail -40; die "the lane did not answer /health within 20 min. The journal above says why."; }
 echo "up after ~$(( (i - 1) * 8 )) s"
 OUT="$(mktemp)"
 ask(){  # $1: request body; the reply lands in $OUT, the HTTP code is printed
