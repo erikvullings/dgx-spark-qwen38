@@ -2,10 +2,13 @@
 
 How a 176B hybrid MoE serves on a single GB10, the three serving tiers, and what each one measured on this box. Moved out of the README in v1.14.2.
 
-Since v1.20 every plain install puts this lane on the box: beside the 27B, installed and not
-enabled at boot, ready for the cockpit's Load, by the same installer started again for this
-lane (its target and tier are kept across updates), and proved once with a boot and a real
-generation when it is new. `MODEL_CHOICE=flash` makes it the lane that serves instead, with
+Since v1.20 every plain install puts this lane on the box beside the 27B, installed and not
+enabled at boot, by the same installer started again for this lane (its target and tier are
+kept across updates), and now on demand: a plain run writes its unit and launcher, and its
+first Load from the cockpit pulls its image, fetches its checkpoint and builds its draft
+vocabulary (`./prepare-lane.sh flash`, as the user, no sudo), then switches to it and starts
+it. `--all-weights` or `--with-flash` installs it whole at once and proves it with a boot and
+a real generation, as every run did before. `MODEL_CHOICE=flash` makes it the lane that serves instead, with
 the 27B installed beside it; `--no-flash` leaves it out of a 27B box (203 GB), and later runs
 remember that.
 

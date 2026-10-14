@@ -496,18 +496,18 @@ Run it as yourself. Never with sudo in front: it calls sudo itself for the
 privileged steps, and under sudo every path it writes moves to /root (see the
 refusal at the top of this file).
 
-A plain run installs the box: both text lanes (the one MODEL_CHOICE names
-serves, the 27B by default, and the other is installed beside it, ready to
-load), the keepalive proxy with its typed decision endpoint, the opencode
-wiring, the cockpit and its Agent view. The image lane, the video lane and the
-Kolibri lane (Aleph Alpha's Kolibri-1, on vLLM) are installed on demand: a run
-puts in their units, and the first Load of each from the cockpit builds its
-runtime and fetches its weights (image 40 GB, video 144, Kolibri 102), as the
-user, with no sudo. Each text lane a run installs for the first time proves it
-serves before the run ends. The two text lanes take about 260 GB of disk (27B
-54, flash 203), about 45 minutes of downloads at 100 MB/s. A lane that does not
-fit on the disk is left out and named at the end, with the command that adds it
-later. When it finishes it prints the
+A plain run installs the box: the text lane MODEL_CHOICE names (the 27B by
+default), which serves, the keepalive proxy with its typed decision endpoint,
+the opencode wiring, the cockpit and its Agent view, and every other lane on
+demand: a run puts in its units, and the first Load of each from the cockpit
+prepares it as the user, with no sudo, and fetches its weights. That is the
+flash lane beside the 27B (its image and checkpoint, 203 GB), the image lane
+(40), the video lane (144) and the Kolibri lane (Aleph Alpha's Kolibri-1, on
+vLLM, 102). The lane that serves proves it serves before the run ends; on a new
+box the 27B takes 54 GB of disk, about 43 GB of downloads (about 7 minutes at
+100 MB/s). A 27B installed beside a serving flash (MODEL_CHOICE=flash) is
+installed whole, as before. A lane that does not fit on the disk is left out and
+named at the end, with the command that adds it later. When it finishes it prints the
 cockpit URL, and from there you start, stop, switch, watch and benchmark
 without a terminal.
 
@@ -538,9 +538,10 @@ without a terminal.
   --no-kolibri          leave the Kolibri-1 lane out (vLLM, 102 GB), remembered
                         the same way (./install-kolibri.sh --uninstall removes it)
   --with-kolibri        bring it back after a --no-kolibri
-  --all-weights         install the image, video and Kolibri lanes whole now,
-                        runtime and weights, and prove each new one (without
-                        it, each is built at its first Load from the cockpit;
+  --all-weights         install every lane whole now (the flash beside the 27B,
+                        the image, video and Kolibri lanes), runtime and
+                        weights, and prove each new one (without it, each is
+                        prepared at its first Load from the cockpit;
                         --with-<lane> does the same for that one lane)
 
 Re-running over an existing install keeps the operator's choices: the target
