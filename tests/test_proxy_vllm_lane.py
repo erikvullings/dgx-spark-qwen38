@@ -283,6 +283,8 @@ class ThroughTheProxy(unittest.TestCase):
         self.assertEqual(FakeVllm.aborts, [], "vLLM has no /abort_request")
         self.assertIn("closing the upstream: vLLM stops what it generates", self.log.getvalue())
         self.assertNotIn("drained an abandoned", self.log.getvalue())
+        # and no SGLang advice in a vLLM lane's journal (it did, on the reference box)
+        self.assertNotIn("SGLANG_ENABLE_REQUEST_HEADER_OVERRIDES", self.log.getvalue())
 
     def test_the_vocabulary_is_read_in_vllms_words_with_the_served_name(self):
         self.mod.pool_tokens()                       # names known, as on any prompt

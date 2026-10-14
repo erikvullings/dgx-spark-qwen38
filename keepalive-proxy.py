@@ -3101,12 +3101,15 @@ class H(BaseHTTPRequestHandler):
                         forced = self._forced_rid()
                         if forced and _rid_override_honoured is None:
                             _rid_override_honoured = (rid == forced)
-                            log("this engine honours x-override-rid: an abandoned request "
-                                "can be aborted before it produces anything"
-                                if _rid_override_honoured else
-                                "this engine ignores x-override-rid (start it with "
-                                "SGLANG_ENABLE_REQUEST_HEADER_OVERRIDES=1): a request "
-                                "abandoned before its first event can only be drained")
+                            # v6.37: on vLLM the rid is never used (closing stops it), and the
+                            # SGLang advice below was a wrong lead in its journal
+                            if _SERVED["engine"] != "vllm":
+                                log("this engine honours x-override-rid: an abandoned request "
+                                    "can be aborted before it produces anything"
+                                    if _rid_override_honoured else
+                                    "this engine ignores x-override-rid (start it with "
+                                    "SGLANG_ENABLE_REQUEST_HEADER_OVERRIDES=1): a request "
+                                    "abandoned before its first event can only be drained")
                     return
         except Exception:
             return
