@@ -1,9 +1,11 @@
 #!/usr/bin/env python3
 """Every lane but the one that serves is installed on demand: its units at install, what it
 runs at its first Load from the cockpit, as the user, by prepare-lane.sh. The cockpit says
-which are prepared, as install.sh reads it (the venv and its wheel's note, the image the
-Kolibri unit names, the image the flash launcher or the 27B unit runs with what that lane keeps
-beside it), and runs the preparation as a job of its own, with no sudo."""
+which are built (the venv and its wheel's note, written once the whole runtime is in; the image
+the Kolibri unit names; the image the flash launcher or the 27B unit runs, with the vocabulary or
+the draft that lane keeps beside it, whole and set for its window), which can start as installed
+(built, and switched to: the checkpoint it serves whole, its chat template, the 27B's window),
+and runs the preparation of the target a Load loads as a job of its own, with no sudo."""
 import importlib.util
 import os
 import shutil
@@ -52,6 +54,7 @@ class Prepare(unittest.TestCase):
     def setUp(self):
         for f in self.units.iterdir():
             f.unlink()
+        self.cp.UNIT_TARGET_CACHE.clear()
         self.images = set()
         self.cp.run = lambda argv, timeout=5.0, merge_err=False: (
             "sha256:abc\n" if argv[:3] == ["docker", "image", "inspect"] and argv[-1] in self.images else "")
@@ -200,6 +203,137 @@ class Prepare(unittest.TestCase):
         self.assertGreaterEqual(self.cp.ACTIONS["prepare"]["timeout"], self.cp.ACTIONS["switch"]["timeout"])
 
 
+    def test_a_text_lane_starts_as_installed_once_its_load_has_switched_to_it(self):
+        # built is its runtime; its Start needs what its switch writes too: the checkpoint it
+        # serves whole, its chat template, and for the 27B its config set for its window (found
+        # in review, 2026-10-15: a Load stopped after its preparation offered a Start that
+        # crash-looped, the unit stopping the lane that served on its way)
+        img, cfg, hf = "lmsysorg/sglang@sha256:" + "b" * 64, self.tmp / "out", self.tmp / "hf-start"
+        shutil.rmtree(hf, ignore_errors=True)
+        shutil.rmtree(cfg, ignore_errors=True)
+        cfg.mkdir()
+        (hf / "hub").mkdir(parents=True)
+        self.images.add(img)
+        model, rev = self.cp.rg.PIN_MODELS["FLASH_NVDA_REV"], "c" * 40
+        (self.units / "launch-flash.sh").write_text(
+            f"exec /usr/bin/docker run --rm \\\n  -v {hf}:/root/.cache/huggingface \\\n  -v {cfg}:/out \\\n"
+            f"  {img} \\\n  python3 -m sglang.launch_server \\\n    --model-path {model} --revision {rev} \\\n"
+            "    --chat-template /out/chat-template-flashnext.jinja \\\n")
+        self.assertIs(self.cp.lane_prepared("flash"), True)
+        self.assertIs(self.cp.lane_startable("flash"), False)            # no checkpoint, no template
+        snap = hf / "hub" / ("models--" + model.replace("/", "--")) / "snapshots" / rev
+        snap.mkdir(parents=True)
+        (snap / "config.json").write_text("{}")
+        (cfg / "chat-template-flashnext.jinja").write_text("{{ x }}")
+        self.assertIs(self.cp.lane_startable("flash"), False)            # its config, no weights yet
+        (snap / "model.safetensors").write_text("w")
+        (cfg / "chat-template-flashnext.jinja").unlink()
+        self.assertIs(self.cp.lane_startable("flash"), False)            # its checkpoint whole, no template
+        (cfg / "chat-template-flashnext.jinja").write_text("")
+        self.assertIs(self.cp.lane_startable("flash"), False)            # an empty one
+        (cfg / "chat-template-flashnext.jinja").write_text("{{ x }}")
+        self.assertIs(self.cp.lane_startable("flash"), True)
+        self.assertIs(self.cp.collect_lanes_startable()["flash"], True)
+        self.images.clear()
+        self.assertIs(self.cp.lane_startable("flash"), False)            # not built: no Start either
+        self.assertIsNone(self.cp.lane_startable("video"))               # not installed
+
+        # the 27B in 1M: its checkpoint's config too
+        self.images.add(img)
+        model27, rev27 = self.cp.rg.PIN_MODELS["STOCK_REV"], "e" * 40
+        (self.units / "qwen38-sglang.service").write_text(
+            f"[Service]\nExecStart=/usr/bin/docker run --rm \\\n  -v {hf}:/root/.cache/huggingface \\\n  -v {cfg}:/out \\\n"
+            f"  {img} \\\n  python3 -m sglang.launch_server \\\n"
+            f"    --trust-remote-code --context-length 1010000 --model-path {model27} --revision {rev27} \\\n"
+            "    --chat-template /out/chat-template-sglang.jinja \\\n")
+        (cfg / "chat-template-sglang.jinja").write_text("{{ x }}")
+        snap27 = hf / "hub" / ("models--" + model27.replace("/", "--")) / "snapshots" / rev27
+        snap27.mkdir(parents=True)
+        (snap27 / "model.safetensors").write_text("w")
+        (snap27 / "config.json").write_text('{"text_config": {"max_position_embeddings": 262144}}')
+        self.assertIs(self.cp.lane_prepared("27b"), True)                # no draft named
+        self.assertIs(self.cp.lane_startable("27b"), False)              # native config, 1M unit
+        (snap27 / "config.json").write_text('{"text_config": {"max_position_embeddings": 1010000}}')
+        self.assertIs(self.cp.lane_startable("27b"), True)
+
+    def test_an_image_lane_starts_once_the_checkpoint_it_serves_is_whole(self):
+        # its runtime built, its checkpoint the one refs/main names, as the unit serves it offline
+        hf = self.tmp / "hf-image"
+        shutil.rmtree(hf, ignore_errors=True)
+        (hf / "hub").mkdir(parents=True)
+        self.lane("image", built=True)
+        unit = self.units / "qwen38-image.service"
+        unit.write_text(unit.read_text() + f"Environment=HF_HOME={hf}\nExecStart=/x/sglang serve --model-path Qwen/Qwen-Image-2.1\n")
+        self.assertIs(self.cp.lane_startable("image"), False)
+        repo = hf / "hub" / "models--Qwen--Qwen-Image-2.1"
+        (repo / "refs").mkdir(parents=True)
+        (repo / "refs" / "main").write_text("f" * 40)
+        tr = repo / "snapshots" / ("f" * 40) / "transformer"
+        tr.mkdir(parents=True)
+        (tr / "diffusion_pytorch_model.safetensors").write_text("w")
+        self.assertIs(self.cp.lane_startable("image"), True)
+        # whole in another lane's cache and not in the one this unit reads: not startable
+        other = self.tmp / "hf-other"
+        shutil.rmtree(other, ignore_errors=True)
+        (other / "hub").mkdir(parents=True)
+        unit.write_text(unit.read_text().replace(f"HF_HOME={hf}", f"HF_HOME={other}"))
+        (self.units / "qwen38-video.service").write_text(f"[Service]\nEnvironment=HF_HOME={hf}\n")
+        self.assertIs(self.cp.lane_startable("image"), False)
+
+    def test_a_video_lane_on_another_model_is_judged_on_its_whole_repo(self):
+        # the partition patterns are MiniMax-H3's: a lane installed on another model, whole in its
+        # cache, had no Start for ever (found in review, 2026-10-15)
+        hf = self.tmp / "hf-video"
+        shutil.rmtree(hf, ignore_errors=True)
+        self.lane("video", built=True)
+        unit = self.units / "qwen38-video.service"
+        unit.write_text(unit.read_text() + f"Environment=HF_HOME={hf}\nExecStart=/x/sglang serve --model-path org/other-video\n")
+        repo = hf / "hub" / "models--org--other-video"
+        (repo / "refs").mkdir(parents=True)
+        (repo / "refs" / "main").write_text("9" * 40)
+        (repo / "snapshots" / ("9" * 40)).mkdir(parents=True)
+        (repo / "snapshots" / ("9" * 40) / "model.safetensors").write_text("w")
+        self.assertIs(self.cp.lane_startable("video"), True)
+
+    def test_a_template_and_a_mount_in_quotes_are_read(self):
+        img, cfg, hf = "lmsysorg/sglang@sha256:" + "a" * 64, self.tmp / "out-q", self.tmp / "hf-q"
+        for d in (cfg, hf):
+            shutil.rmtree(d, ignore_errors=True)
+        cfg.mkdir()
+        (hf / "hub").mkdir(parents=True)
+        self.images.add(img)
+        model, rev = self.cp.rg.PIN_MODELS["FLASH_NVDA_REV"], "d" * 40
+        (self.units / "launch-flash.sh").write_text(
+            f'exec /usr/bin/docker run --rm \\\n  -v {hf}:/root/.cache/huggingface \\\n  -v "{cfg}":/out \\\n'
+            f"  {img} \\\n  python3 -m sglang.launch_server \\\n    --model-path {model} --revision {rev} \\\n"
+            "    --chat-template '/out/chat-template-flashnext.jinja'\n")
+        snap = hf / "hub" / ("models--" + model.replace("/", "--")) / "snapshots" / rev
+        snap.mkdir(parents=True)
+        (snap / "config.json").write_text("{}")
+        (snap / "model.safetensors").write_text("w")
+        (cfg / "chat-template-flashnext.jinja").write_text("{{ x }}")
+        self.assertIs(self.cp.lane_startable("flash"), True)
+        (cfg / "chat-template-flashnext.jinja").unlink()               # read in its quotes, and missing
+        self.assertIs(self.cp.lane_startable("flash"), False)
+
+    def test_a_job_that_changes_a_lane_has_the_lanes_and_library_read_again(self):
+        # the next Load and Library read what it left, not what the last 30 s tier saw (2026-10-15)
+        self.cp.REGISTRY_CACHE.update(ts=__import__("time").time(), data={"stale": True})
+        with self.cp.STATE_LOCK:
+            self.cp.STATE.pop("lanes_startable", None)
+        code, body = self.cp.start_action("prepare", {"target": "kolibri"})
+        self.assertEqual(code, 202, body)
+        self.wait(body["job"])
+        for _ in range(100):                      # read again just after the job's end
+            with self.cp.STATE_LOCK:
+                if "lanes_startable" in self.cp.STATE:
+                    break
+            __import__("time").sleep(0.05)
+        self.assertEqual(self.cp.REGISTRY_CACHE["ts"], 0.0)
+        with self.cp.STATE_LOCK:
+            self.assertIn("lanes_startable", self.cp.STATE)
+            self.assertIn("lanes_ready", self.cp.STATE)
+
     def test_a_preparation_waits_for_a_lane_that_is_starting(self):
         # a first Load's pip and docker pull beside a lane loading its weights, on the same unified
         # memory: refused as a switch is (found in review, 2026-10-15)
@@ -213,6 +347,26 @@ class Prepare(unittest.TestCase):
         finally:
             with self.cp.LIFE_LOCK:
                 self.cp.LIFE["states"] = before
+
+    def test_the_lanes_read_again_does_not_hold_the_next_step(self):
+        # read while the job lock was held, the page that saw the job end started its next step
+        # on a lock still taken, and was told busy (found in review, 2026-10-15)
+        slow = self.cp.collect_lanes_startable
+        self.cp.collect_lanes_startable = lambda: (__import__("time").sleep(0.8), {})[1]
+        try:
+            code, body = self.cp.start_action("prepare", {"target": "kolibri"})
+            self.assertEqual(code, 202, body)
+            self.wait(body["job"])
+            t0 = __import__("time").time()
+            while True:
+                code, nxt = self.cp.start_action("prepare", {"target": "kolibri"})
+                if code != 409 or __import__("time").time() - t0 > 0.4:
+                    break
+                __import__("time").sleep(0.02)
+            self.assertEqual(code, 202, nxt)
+            self.wait(nxt["job"])
+        finally:
+            self.cp.collect_lanes_startable = slow
 
     def test_a_preparation_goes_beside_a_lane_that_is_steady(self):
         # only a lane starting or stopping holds it back: ready, degraded, wedged, orphan or failed,
@@ -230,6 +384,121 @@ class Prepare(unittest.TestCase):
                     with self.cp.LIFE_LOCK:
                         self.cp.LIFE["states"] = before
 
+    def test_the_video_lane_on_minimax_h3_is_judged_on_the_partition_it_serves(self):
+        # FL2VA whole and an index of Ref2VA begun (a full pull that stopped, as on the reference
+        # box): the lane serves FL2VA and starts
+        hf = self.tmp / "hf-h3"
+        shutil.rmtree(hf, ignore_errors=True)
+        self.lane("video", built=True)
+        unit = self.units / "qwen38-video.service"
+        unit.write_text(unit.read_text() + f"Environment=HF_HOME={hf}\nExecStart=/x/sglang serve --model-path MiniMaxAI/MiniMax-H3\n")
+        repo = hf / "hub" / "models--MiniMaxAI--MiniMax-H3"
+        (repo / "refs").mkdir(parents=True)
+        (repo / "refs" / "main").write_text("8" * 40)
+        snap = repo / "snapshots" / ("8" * 40)
+        (snap / "FL2VA").mkdir(parents=True)
+        (snap / "FL2VA" / "model.safetensors").write_text("w")
+        (snap / "Ref2VA").mkdir()
+        (snap / "Ref2VA" / "model.safetensors.index.json").write_text('{"weight_map": {"a": "model-00001.safetensors"}}')
+        self.assertIs(self.cp.lane_startable("video"), True)
+        (snap / "FL2VA" / "model.safetensors").unlink()                # its own partition not there
+        self.assertIs(self.cp.lane_startable("video"), False)
+
+    def test_library_is_read_again_after_a_scan_that_was_running(self):
+        # its date set to 0 under the scan's lock: a scan running as the job ended wrote its own
+        # date over it after, and Library kept what it had read before the job
+        lock = self.cp.REGISTRY_LOCK
+        lock.acquire()
+        try:
+            code, body = self.cp.start_action("prepare", {"target": "kolibri"})
+            self.assertEqual(code, 202, body)
+            self.wait(body["job"])
+            __import__("time").sleep(0.2)                              # the job waits on the scan
+            self.cp.REGISTRY_CACHE["ts"] = 12345.0                     # the scan ends, with its date
+        finally:
+            lock.release()
+        for _ in range(100):
+            if self.cp.REGISTRY_CACHE["ts"] == 0.0:
+                break
+            __import__("time").sleep(0.02)
+        self.assertEqual(self.cp.REGISTRY_CACHE["ts"], 0.0)
+
+    def test_each_job_that_changes_a_lane_has_them_read_again(self):
+        for action, params in (("switch", {"target": "kolibri"}), ("fetch", {"target": "kolibri"}), ("delete_strays", {})):
+            with self.subTest(action=action):
+                self.cp.REGISTRY_CACHE.update(ts=__import__("time").time(), data={"stale": True})
+                with self.cp.STATE_LOCK:
+                    self.cp.STATE.pop("lanes_startable", None)
+                code, body = self.cp.start_action(action, params)
+                self.assertEqual(code, 202, body)
+                self.wait(body["job"])
+                for _ in range(100):
+                    with self.cp.STATE_LOCK:
+                        if "lanes_startable" in self.cp.STATE:
+                            break
+                    __import__("time").sleep(0.05)
+                self.assertEqual(self.cp.REGISTRY_CACHE["ts"], 0.0)
+                with self.cp.STATE_LOCK:
+                    self.assertIn("lanes_startable", self.cp.STATE)
+
+    def test_a_mount_quoted_whole_is_read_too(self):
+        img, cfg, hf = "lmsysorg/sglang@sha256:" + "a" * 64, self.tmp / "out-w", self.tmp / "hf-w"
+        for d in (cfg, hf):
+            shutil.rmtree(d, ignore_errors=True)
+        cfg.mkdir()
+        self.images.add(img)
+        model, rev = self.cp.rg.PIN_MODELS["FLASH_NVDA_REV"], "d" * 40
+        (self.units / "launch-flash.sh").write_text(
+            f'exec /usr/bin/docker run --rm \\\n  -v {hf}:/root/.cache/huggingface \\\n  -v "{cfg}:/out" \\\n'
+            f"  {img} \\\n  python3 -m sglang.launch_server \\\n    --model-path {model} --revision {rev} \\\n"
+            "    --chat-template /out/chat-template-flashnext.jinja\n")
+        snap = hf / "hub" / ("models--" + model.replace("/", "--")) / "snapshots" / rev
+        snap.mkdir(parents=True)
+        (snap / "config.json").write_text("{}")
+        (snap / "model.safetensors").write_text("w")
+        self.assertIs(self.cp.lane_startable("flash"), False)          # its template not there
+        (cfg / "chat-template-flashnext.jinja").write_text("{{ x }}")
+        self.assertIs(self.cp.lane_startable("flash"), True)
+
+    def test_a_unit_with_no_cache_of_its_own_reads_the_default_one_and_one_with_a_cache_reads_it_only(self):
+        default = self.tmp / ".cache" / "huggingface"
+        shutil.rmtree(default, ignore_errors=True)
+        repo = default / "hub" / "models--Qwen--Qwen-Image-2.1"
+        (repo / "refs").mkdir(parents=True)
+        (repo / "refs" / "main").write_text("e" * 40)
+        tr = repo / "snapshots" / ("e" * 40) / "transformer"
+        tr.mkdir(parents=True)
+        (tr / "diffusion_pytorch_model.safetensors").write_text("w")
+        self.lane("image", built=True)
+        unit = self.units / "qwen38-image.service"
+        base = unit.read_text()
+        unit.write_text(base + "ExecStart=/x/sglang serve --model-path Qwen/Qwen-Image-2.1\n")
+        self.assertIs(self.cp.lane_startable("image"), True)           # HOME's cache, as the lanes run
+        own = self.tmp / "hf-own"
+        shutil.rmtree(own, ignore_errors=True)
+        (own / "hub").mkdir(parents=True)
+        unit.write_text(base + f"Environment=HF_HOME={own}\nExecStart=/x/sglang serve --model-path Qwen/Qwen-Image-2.1\n")
+        self.assertIs(self.cp.lane_startable("image"), False)          # not the default beside its own
+
+    def test_a_job_is_seen_ended_once_its_lock_is_free(self):
+        # seen ended before (its audit and its event in between), a client that chained the next
+        # job at once was told busy, 138 times in 300 (found in review, 2026-10-15)
+        prune = self.cp._prune_jobs
+
+        def slow_prune():                    # the last step before the lock goes
+            __import__("time").sleep(0.3)
+            prune()
+        self.cp._prune_jobs = slow_prune
+        try:
+            code, body = self.cp.start_action("prepare", {"target": "kolibri"})
+            self.assertEqual(code, 202, body)
+            while self.cp.JOBS[body["job"]].status == "running":
+                __import__("time").sleep(0.005)
+            code, nxt = self.cp.start_action("prepare", {"target": "kolibri"})
+            self.assertEqual(code, 202, nxt)
+            self.wait(nxt["job"])
+        finally:
+            self.cp._prune_jobs = prune
 
 if __name__ == "__main__":
     unittest.main()

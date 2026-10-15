@@ -2061,6 +2061,95 @@ def collect_lanes_ready():
     runtime first when it is not)."""
     return {lane: lane_prepared(lane) for lane in ("image", "video", "kolibri", "flash", "27b")}
 
+
+UNIT_OF_LANE = {"image": "qwen38-image.service", "video": "qwen38-video.service", "kolibri": KOLIBRI_UNIT,
+                "flash": "qwen38-flash.service", "27b": "qwen38-sglang.service"}
+
+
+def served_snapshot(text: str, model: str, allow=None):
+    """(state, snapshot) of the checkpoint a unit or launcher serves: its model at the revision
+    it names (--revision), or the one refs/main names (HF_HUB_OFFLINE), in the cache it reads
+    (its HF_HOME or its mount, ~/.cache/huggingface when it names none): complete
+    (registry.snapshot_complete, for what the lane serves), incomplete or absent. Another
+    lane's cache, where the same model may be whole, is not the one this unit starts from."""
+    rev = re.search(r"--revision\s+([0-9a-f]{40})\b", text)
+    state, where = "absent", None
+    for d in rg.cache_dirs([text]) or [str(Path.home() / ".cache/huggingface")]:
+        repo_dir = Path(d) / "hub" / ("models--" + model.replace("/", "--"))
+        r = rev.group(1) if rev else None
+        if not r:
+            try:
+                r = (repo_dir / "refs" / "main").read_text().strip()
+            except OSError:
+                continue
+        snap = repo_dir / "snapshots" / r
+        if snap.is_dir():
+            where = snap
+            if rg.snapshot_complete(snap, allow):
+                return "complete", snap
+            state = "incomplete"
+    return state, where
+
+
+def lane_startable(lane: str):
+    """Whether a lane can start as it is installed, what its Start does with no switch: built
+    (lane_prepared), the checkpoint its unit or launcher serves whole on the disk, the chat
+    template it names there (the text lanes), and the 27B's checkpoint config set for the
+    window its unit serves (patch-yarn.py). A lane installed on demand is all that once its Load
+    has switched to it; its preparation builds the runtime only, and a Load that stopped there
+    (the page closed during a preparation) left a Start that crash-looped, stopping the lane
+    that served on its way through the unit's Conflicts= (found in review, 2026-10-15). What
+    cannot be read (a model given as a path, a template outside the mounts) does not hold it
+    back. None when the lane is not installed."""
+    built = lane_prepared(lane)
+    if not built:
+        return built
+    unit = UNIT_OF_LANE[lane]
+    path = {"image": IMAGE_UNIT_PATH, "video": VIDEO_UNIT_PATH, "kolibri": KOLIBRI_UNIT_PATH}.get(lane) or UNIT_PATHS[unit]
+    try:
+        text = path.read_text(errors="replace")
+    except OSError:
+        return None
+    # a path in quotes, as a unit edited by hand may write it, read without them
+    tmpl = re.search(r"--chat-template\s+[\"']?/out/([^\s\"']+)", text)
+    out = re.search(r"-v\s+[\"']?([^ :\"']+)[\"']?:/out(?=[\"'\s]|$)", text, re.M)
+    if tmpl and out:
+        try:
+            if (Path(out.group(1)) / tmpl.group(1)).stat().st_size == 0:
+                return False
+        except OSError:
+            return False
+    model = unit_target(unit).get("model")
+    if not model or model.startswith(("/", ".")):
+        return True
+    allow = None
+    # the partition patterns are MiniMax-H3's, as install-video.sh and the switch apply them; a
+    # lane installed on another model serves its whole repo (found in review, 2026-10-15)
+    if lane == "video" and model == "MiniMaxAI/MiniMax-H3":
+        try:
+            switch_text = (REPO_DIR / "switch-model.sh").read_text()
+        except OSError:
+            switch_text = ""
+        allow = rg.video_allow(switch_text, video_variant() or "fl2va")
+    state, snap = served_snapshot(text, model, allow)
+    if state != "complete":
+        return False
+    if lane == "27b":
+        try:
+            cfg = json.loads((snap / "config.json").read_text())
+        except (OSError, ValueError):
+            return False
+        tc = cfg.get("text_config", cfg) if isinstance(cfg, dict) else {}
+        if (isinstance(tc, dict) and tc.get("max_position_embeddings") == 1010000) != ("--context-length 1010000" in text):
+            return False
+    return True
+
+
+@guard
+def collect_lanes_startable():
+    """30 s tier: which side lanes can start as installed (their Start), lane_startable."""
+    return {lane: lane_startable(lane) for lane in ("image", "video", "kolibri", "flash", "27b")}
+
 TIERS = [
     (1.0, {"machine": collect_machine, "engine_fast": collect_engine_fast, "job": collect_jobs}),
     (2.0, {"lifecycle": collect_lifecycle}),
@@ -2072,7 +2161,7 @@ TIERS = [
     # and the units, the feed and the agent must not wait with it
     (5.0, {"metrics": collect_engine_metrics}),
     (30.0, {"engine_info": collect_engine_info, "repo": collect_repo, "kernel": collect_kernel,
-            "lanes_ready": collect_lanes_ready,
+            "lanes_ready": collect_lanes_ready, "lanes_startable": collect_lanes_startable,
             "opencode": collect_opencode, "reqguard": collect_guard,
             "update": collect_update}),
 ]
@@ -2382,12 +2471,13 @@ def _end_group(proc, grace: float = 10.0) -> str:
 
 
 def run_job(job: Job):
+    status = "failed"
     try:
         if DRY_RUN:
             job.append(f"[dry run] would run: {' '.join(job.argv) if job.argv else job.action}")
             time.sleep(2.0)
             job.rc = 0
-            job.status = "done"
+            status = "done"
             job.result = {"ok": True, "dry_run": True}
         elif job.fn is not None:
             ok, lines, result = job.fn(job)
@@ -2395,7 +2485,7 @@ def run_job(job: Job):
                 job.append(ln)
             job.result = result
             job.rc = 0 if ok else 1
-            job.status = "done" if ok else "failed"
+            status = "done" if ok else "failed"
         else:
             # Its own process group, and a deadline that does not wait for output. The
             # deadline was checked only when a line arrived, so a silent job never timed
@@ -2429,19 +2519,35 @@ def run_job(job: Job):
                 timer.cancel()
                 proc.stdout.close()
             job.rc = proc.wait(timeout=30)
-            job.status = "done" if job.rc == 0 and not expired.is_set() else "failed"
+            status = "done" if job.rc == 0 and not expired.is_set() else "failed"
     except Exception as e:  # noqa: BLE001
-        job.status = "failed"
+        status = "failed"
         job.append(f"[cockpit] {type(e).__name__}: {e}")
     finally:
         job.ended = time.time()
         audit({"kind": "job_end", "action": job.action, "rc": job.rc,
-               "status": job.status, "id": job.id, "dry_run": DRY_RUN})
-        add_event("job", f"{job_phrase(job.action, job.params)}: {job.status}"
+               "status": status, "id": job.id, "dry_run": DRY_RUN})
+        add_event("job", f"{job_phrase(job.action, job.params)}: {status}"
                   + (f" (exit code {job.rc})" if job.argv and job.rc else "")
                   + (" [dry run]" if DRY_RUN else ""))
         _prune_jobs()
         JOB_LOCK.release()
+        # Seen ended once its lock is free: seen ended before (its audit and its event in
+        # between), a client that chained the next job at once was told busy, 138 times in 300
+        # (found in review, 2026-10-15).
+        job.status = status
+        # What the next Load and Library read, again now rather than at the next 30 s tier: a
+        # Load right after a preparation prepared again, and Library showed the cache as it was
+        # (found in review, 2026-10-15). After the lock: read while it was held (a quarter of a
+        # second), the page that saw the job end started its next step on a lock still taken,
+        # and was told busy (found in review of that fix, the same day).
+        if job.action in ("prepare", "switch", "fetch", "delete_strays"):
+            with REGISTRY_LOCK:      # a scan running now would write its own date over it
+                REGISTRY_CACHE["ts"] = 0.0
+            for name, fn in (("lanes_ready", collect_lanes_ready), ("lanes_startable", collect_lanes_startable)):
+                snap = fn()
+                with STATE_LOCK:
+                    STATE[name] = {"data": snap, "ts": time.time()}
         with EVENT:
             EVENT.notify_all()
 
@@ -4345,6 +4451,28 @@ REGISTRY_CACHE: dict = {"ts": 0.0, "data": None}
 REGISTRY_LOCK = threading.Lock()
 
 
+def lane_caches() -> list[str]:
+    """Every cache a lane reads, as its unit names it (install.sh takes HF_CACHE), once each by
+    where it really is: ~/.cache/huggingface alone left a box installed with another cache an
+    empty Library (found in review, 2026-10-14)."""
+    caches, real = [], set()
+    for d in rg.cache_dirs(_lane_unit_texts()) + [str(Path.home() / ".cache/huggingface")]:
+        r = os.path.realpath(d)
+        if r not in real and os.path.isdir(os.path.join(r, "hub")):
+            real.add(r)
+            caches.append(d)
+    return caches
+
+
+def video_variant():
+    """The weights the video lane's unit serves (--model-variant), None when it names none."""
+    try:
+        m = re.search(r"--model-variant\s+(\S+)", VIDEO_UNIT_PATH.read_text(errors="replace"))
+    except OSError:
+        return None
+    return m.group(1) if m else None
+
+
 def registry_snapshot(max_age: float = 300.0) -> dict:
     """Local registry, cached; the scan is metadata-only but not free."""
     with REGISTRY_LOCK:
@@ -4356,15 +4484,7 @@ def registry_snapshot(max_age: float = 300.0) -> dict:
                 pins.update(rg.parse_pins((REPO_DIR / f).read_text()))
             except OSError:
                 pass
-        # Every cache a lane reads, as its unit names it (install.sh takes HF_CACHE), once
-        # each by where it really is: ~/.cache/huggingface alone left a box installed with
-        # another cache an empty Library (found in review, 2026-10-14).
-        caches, real = [], set()
-        for d in rg.cache_dirs(_lane_unit_texts()) + [str(Path.home() / ".cache/huggingface")]:
-            r = os.path.realpath(d)
-            if r not in real and os.path.isdir(os.path.join(r, "hub")):
-                real.add(r)
-                caches.append(d)
+        caches = lane_caches()
         models = []
         for d in caches:
             try:
@@ -4405,15 +4525,12 @@ def registry_snapshot(max_age: float = 300.0) -> dict:
             switch_text = (REPO_DIR / "switch-model.sh").read_text()
         except OSError:
             switch_text = ""
-        try:
-            variant = re.search(r"--model-variant\s+(\S+)", VIDEO_UNIT_PATH.read_text(errors="replace"))
-        except OSError:
-            variant = None
+        variant = video_variant()
         targets = []
         for t in ACTIONS["switch"]["params"]["target"]:
             var = TARGET_PIN[t]
             repo, rev = rg.PIN_MODELS[var], pins.get(var, "")
-            allow = rg.video_allow(switch_text, variant.group(1) if variant else "fl2va") if t == "video" else None
+            allow = rg.video_allow(switch_text, variant or "fl2va") if t == "video" else None
             state = "absent"
             for d in caches:
                 repo_dir = Path(d) / "hub" / ("models--" + repo.replace("/", "--"))

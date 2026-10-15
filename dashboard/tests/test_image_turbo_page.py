@@ -145,6 +145,21 @@ class LoadingIt(unittest.TestCase):
         self.assertEqual(r["video"], {"start": True, "load": True})
         self.assertEqual(r["text"], {"start": True, "load": True})
 
+    def test_a_lane_prepared_and_not_switched_to_offers_its_load_and_no_start(self):
+        # its preparation done, its switch not (the page closed during a Load): a Start would
+        # run a unit with no checkpoint or chat template yet, crash-looping, and its Conflicts=
+        # stopped the lane that served (found in review, 2026-10-15)
+        r = run(self, lanes("stopped", "image") + r"""
+        feed({lanes_ready: {image: true, video: true, kolibri: null, flash: true},
+              lanes_startable: {image: false, video: true, kolibri: null, flash: true}});
+        showView('lanes');
+        const st = u => { const c = LCARDS.get(u); return {start: !c.start.hidden, load: !c.load.hidden}; };
+        report({image: st(IMAGE_UNIT), video: st(VIDEO_UNIT), flash: st(UFLASH)});
+        """)
+        self.assertEqual(r["image"], {"start": False, "load": True})
+        self.assertEqual(r["video"], {"start": True, "load": True})
+        self.assertEqual(r["flash"], {"start": True, "load": True})
+
     def test_a_prepared_lane_loads_as_before(self):
         r = run(self, lanes("stopped", "image", text_state="ready") + r"""
         feed({lanes_ready: {image: true, video: true, kolibri: null}});

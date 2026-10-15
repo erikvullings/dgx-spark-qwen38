@@ -953,6 +953,7 @@ on('update', d => { F.update = d || {}; });
 // which side lanes are prepared, their runtime built (installed on demand: units at install,
 // runtime at the first Load): true, false, or null for a lane not installed
 on('lanes_ready', d => { F.lanesReady = d || {}; });
+on('lanes_startable', d => { F.lanesStartable = d || {}; });
 on('agent', d => { F.agent = d; });
 on('containers', d => { F.containers = d.containers || {}; });
 on('job', renderJob);
