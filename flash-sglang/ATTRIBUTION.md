@@ -171,8 +171,10 @@ configured: its KV pool was 189,056 tokens on that boot (pinned to 190,000 since
 v1.6.2; see the README), so a 190k prompt does not fit. Sending
 one anyway, direct to the engine past the proxy's guard, queued it forever
 (`#queue-req: 1, #running-req: 0`) and wedged the scheduler for every request after
-it; `/abort_request` answered `not found in rid_to_state`, which is sglang#36333,
-whose fix (#36418) is not merged. That is a second reason agent clients must go
+it; `/abort_request` did not bring it back (the engine logged `not found in
+rid_to_state`), and only a restart did. That is this box's own measurement, not
+sglang#36333 (closed on 2026-10-15 as fixed by #35255, which does not touch
+admission). It is a second reason agent clients must go
 through the proxy, and it is why the author's 9/9 at 190k and 210k stays their
 measurement rather than ours.
 

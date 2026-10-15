@@ -74,7 +74,8 @@ daily since 2026-08-22:
   decoding unless the abort reaches it in time, and it cannot: `abort_request()` returns
   early once the rid has left `rid_to_state`, which the disconnect itself empties
   ([sglang#35255](https://github.com/sgl-project/sglang/pull/35255), merged upstream
-  2026-09-04 and in neither image this repo serves). Measured here on 2026-09-09: 6,582
+  2026-09-04, in v0.5.20 and later, so in every image this repo pins; a rollback to
+  v0.5.19 lacks it, which is why the proxy keeps this contract). Measured here on 2026-09-09: 6,582
   `state was deleted in TokenizerManager` lines in one day, one request decoding 6 min for
   nobody. The proxy now names every request itself (`x-override-rid`, which the engine
   honours because the units pass `SGLANG_ENABLE_REQUEST_HEADER_OVERRIDES=1`), so a request

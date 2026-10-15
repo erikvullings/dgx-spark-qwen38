@@ -186,9 +186,17 @@ are verified by the target, so output quality is exactly the target's.
 
 **One thing still wedges this lane: a prompt larger than the KV pool, sent
 straight to the engine port.** It is queued and never admitted, which stalls
-every request after it (`/abort_request` answers `not found in rid_to_state`:
-[sglang#36333](https://github.com/sgl-project/sglang/issues/36333), open
-upstream). Only a restart clears it, and at 15 minutes that is worth avoiding:
+every request after it, and aborting it does not bring the scheduler back (the
+engine logs `not found in rid_to_state`, its answer to the scheduler's abort
+echo). This is this box's own measurement, not
+[sglang#36333](https://github.com/sgl-project/sglang/issues/36333) (a request
+left decoding after its client disconnects, closed on 2026-10-15 as fixed by
+[#35255](https://github.com/sgl-project/sglang/pull/35255), which every image
+this repo pins carries). The closest upstream report is
+[sglang#41841](https://github.com/sgl-project/sglang/issues/41841), fixed by
+[#41872](https://github.com/sgl-project/sglang/pull/41872) on 2026-10-12, which
+this lane's image does not carry; whether it ends this wedge is not measured
+here. Only a restart clears it, and at 15 minutes that is worth avoiding:
 **use the proxy port**, which refuses such a prompt with a 400. The `context`
 tier makes this much harder to hit, since its pool (279,872) is larger than the
 window it serves (262,144).
