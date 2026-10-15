@@ -163,7 +163,7 @@ cd dgx-spark-qwen38
 ./bench.sh              # verify your tok/s
 ```
 
-First boot takes **~7-9 minutes** for a 27B target (CUDA graph capture + kernel compilation, cached afterwards; later boots ~5-7 min) and **~12-15 minutes** for a flash target, every boot: the server writes the whole 47.7 GiB N-gram table into its file each time (measured here: 12 min 21 s to `/health` on a fresh table). A first install then proves the other four lanes one after the other while the served one waits, and brings it back. Then:
+First boot takes **~7-9 minutes** for a 27B target (CUDA graph capture + kernel compilation, cached afterwards; later boots ~5-7 min) and **~12-15 minutes** for a flash target, every boot: the server writes the whole 47.7 GiB N-gram table into its file each time (measured here: 12 min 21 s to `/health` on a fresh table). With `--all-weights` the install then proves each other lane it built, one after the other while the served one waits, and brings it back; a plain install leaves each to its first Load. Then:
 
 - **opencode**: ready config at `~/.config/qwen38/opencode.json`, see [opencode integration](docs/opencode.md)
 - **Any OpenAI client**: `http://<host>:30001/v1/chat/completions`, model `qwen3.8-27b` (flash: `qwen3.8-flash-next`), Bearer key from `~/.config/qwen38/api-key`

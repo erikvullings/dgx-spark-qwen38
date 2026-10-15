@@ -43,6 +43,10 @@ by #41872 on 2026-10-12 and not in the flash lane's image (not measured here).
 docs/context-1m.md said #35255 was in neither image this repo serves: it is in every image
 pinned now, and the proxy keeps its contract for a rollback to v0.5.19.
 
+**The README, put right.** It said a first install then proves the other four lanes one after the
+other; since v1.33.0 a plain install proves the lane that serves, and `--all-weights` each lane it
+builds.
+
 **Tests.** Each fix has a test that fails on the old code, on the page as it runs (Library's reads,
 the median, the guard's line, the polls dimmed or not, Decide's line, the tables' layout rules) and
 on a cache laid out as huggingface_hub lays it out (blobs and their links, hard links, a link to a
