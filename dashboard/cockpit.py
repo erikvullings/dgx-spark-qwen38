@@ -1983,8 +1983,15 @@ def engine_image(text: str):
 
 
 def draft_in_cache(text: str) -> bool:
-    """Whether the DFlash2 draft a 27B unit names is in the cache it mounts, at its revision (a
-    ref such as main read through refs/): its config and a weights file, as lanes.sh reads it."""
+    """Whether the DFlash2 draft a 27B unit names is whole in the cache it mounts, at its revision
+    (a ref such as main read through refs/), and its config set for the window the unit serves:
+    its config, every weight file its index names or one when it has none, a link counting once
+    its blob is there, and the YaRN window in its config when the unit serves 1M, none otherwise
+    (patch-yarn.py, which prepare-lane.sh runs after the fetch). A config with one weight file of
+    two, a link to a blob gone, or a fetch whose patch failed read as prepared: the next Load
+    skipped the preparation and started the 1M unit on a native draft (found in review,
+    2026-10-15). lanes.sh asks less (a config and a weights file): install.sh reads it to update
+    a lane begun on the box whole, and that run sets the config again."""
     repo = re.search(r"--speculative-draft-model-path (\S+)", text)
     if not repo:
         return True
@@ -1998,18 +2005,24 @@ def draft_in_cache(text: str) -> bool:
         if (snap / "refs" / r).is_file():
             r = (snap / "refs" / r).read_text().strip()
         d = snap / "snapshots" / r
-        return (d / "config.json").is_file() and any(d.glob("*.safetensors"))
-    except OSError:
+        if not (d / "config.json").is_file() or not rg.snapshot_complete(d):
+            return False
+        cfg = json.loads((d / "config.json").read_text())
+    except (OSError, ValueError):
         return False
+    tc = cfg.get("text_config", cfg) if isinstance(cfg, dict) else {}
+    return (isinstance(tc, dict) and tc.get("max_position_embeddings") == 1010000) == ("--context-length 1010000" in text)
 
 
 def lane_prepared(lane: str):
-    """Whether a lane installed on demand is prepared, as install.sh reads it: the venv and the
-    note of its wheel (written once the wheel is in) for the image and video lanes, the image
-    its unit names for Kolibri; for the other text lane beside the lane that serves, the image
-    its launcher (flash) or unit (27B) runs, with the draft vocabulary the flash launcher waits
-    for, when it waits for one, and the 27B's DFlash2 draft. None when the lane is not
-    installed (no unit, no launcher)."""
+    """Whether a lane installed on demand is built, so that its Load does not prepare it first:
+    the venv and the note of its wheel, which its installer writes once the whole runtime is in,
+    for the image and video lanes; the image its unit names for Kolibri, tagged once built; for
+    the other text lane beside the lane that serves, the image its launcher (flash) or unit
+    (27B) runs, with the draft vocabulary the flash launcher waits for, when it waits for one,
+    and the 27B's DFlash2 draft, whole and set for its window (draft_in_cache). install.sh asks
+    less to update a lane whole (its runtime begun: a venv, an image); this asks what a Load
+    needs. None when the lane is not installed (no unit, no launcher)."""
     unit = {"image": IMAGE_UNIT_PATH, "video": VIDEO_UNIT_PATH, "kolibri": KOLIBRI_UNIT_PATH,
             "flash": UNIT_PATHS["qwen38-flash.service"], "27b": UNIT_PATHS["qwen38-sglang.service"]}[lane]
     try:
@@ -2024,7 +2037,12 @@ def lane_prepared(lane: str):
         if lane == "27b":
             return draft_in_cache(text)
         waits = re.search(r'\[ -s "([^"]+)" \] && TIER\+=\(--speculative-token-map', text)
-        return not waits or Path(waits.group(1)).exists()
+        if not waits:
+            return True
+        try:
+            return Path(waits.group(1)).stat().st_size > 0     # [ -s ]: an empty one is skipped
+        except OSError:
+            return False
     if lane == "kolibri":
         m = re.search(r"qwen38-kolibri:\S+", text)
         return bool(m) and run(["docker", "image", "inspect", "--format", "{{.Id}}", m.group(0)],

@@ -444,5 +444,23 @@ class BenchAgentTiming(unittest.TestCase):
         self.assertEqual(cm.exception.code, 3)
 
 
+class TheTokenMapIsPutInPlaceWhole(unittest.TestCase):
+    """build-token-map.py writes beside the map, reads it back as SGLang would, and only then puts
+    it in place: lanes.sh takes a map that is there for built, and a run stopped mid-write (a job
+    the cockpit stops, a disk that fills) left one half written that the launcher passed to the
+    engine at every start (found in review, 2026-10-15). torch is not in this suite's Python, so
+    the order is read from the script."""
+
+    def test_the_map_is_read_back_before_it_replaces_the_one_there(self):
+        main = (REPO / "build-token-map.py").read_text()
+        main = main[main.index("def main("):]
+        save, load, put = (main.index("torch.save(ids, tmp)"), main.index("torch.load(tmp, weights_only=True)"),
+                           main.index("os.replace(tmp, args.out)"))
+        self.assertLess(save, load)
+        self.assertLess(load, put)
+        self.assertNotIn("torch.save(ids, args.out)", main)
+        self.assertNotIn("torch.load(args.out", main)
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

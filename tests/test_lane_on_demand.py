@@ -129,6 +129,53 @@ class TheImageAndVideoLanesInTwoHalves(unittest.TestCase):
                 self.assertFalse([c for c in calls if c.startswith(("sudo ", "systemctl ", "docker "))], calls)
                 self.assertFalse((box.units / unit).exists(), "--prepare wrote the unit")
                 self.assertFalse([c for c in calls if "ckpt-fetch.py" in c], calls)
+    def test_a_preparation_stopped_on_the_way_leaves_no_note(self):
+        # the note is what says prepared: a run that stops after the wheel (here its clone fails)
+        # leaves none, and the next Load prepares again instead of serving the bare wheel, with
+        # none of the patches (found in review, 2026-10-15: the note came right after the wheel)
+        no_clone = FAKE_GIT.replace('if [ "$1" = clone ]; then mkdir -p "${@: -1}/.git"; exit 0; fi',
+                                    'if [ "$1" = clone ]; then exit 128; fi')
+        assert no_clone != FAKE_GIT
+        for installer, lane, _unit in LANES_IN_TWO_HALVES:
+            with self.subTest(installer=installer):
+                box = Box(installer)
+                (box.bin / "git").write_text(no_clone)
+                rc, out, calls = box.run("--prepare")
+                self.assertNotEqual(rc, 0, out)
+                self.assertIn("could not clone SGLang", out)
+                self.assertTrue([c for c in calls if "sglang[diffusion]" in c], calls)     # the wheel went in
+                self.assertTrue((box.home / lane / "venv/bin/python").exists(), out)
+                self.assertFalse((box.home / lane / "sglang-wheel").exists(), "a half-built runtime has its note")
+
+    def test_a_run_that_changes_nothing_leaves_the_notes_date(self):
+        # the note's date is one of the runtime's (the lane serves older files, the cockpit's
+        # stale-runtime check that turns the video lane's Turbo off): written at every run, it said
+        # so after every update (found in review, 2026-10-15)
+        for installer, lane, _unit in LANES_IN_TWO_HALVES:
+            with self.subTest(installer=installer):
+                box = Box(installer)
+                self.assertEqual(box.run("--prepare")[0], 0)
+                note = box.home / lane / "sglang-wheel"
+                first = note.stat().st_mtime_ns
+                __import__("time").sleep(0.05)
+                rc, out, _ = box.run("--prepare")
+                self.assertEqual(rc, 0, out)
+                self.assertEqual(note.stat().st_mtime_ns, first)
+
+    def test_a_new_wheel_rewrites_the_note(self):
+        # written only when it changes: a wheel of another release reinstalls the runtime and the
+        # note names the new one, which the cockpit compares with what the lane serves
+        for installer, lane, _unit in LANES_IN_TWO_HALVES:
+            with self.subTest(installer=installer):
+                box = Box(installer)
+                self.assertEqual(box.run("--prepare")[0], 0)
+                note = box.home / lane / "sglang-wheel"
+                wheel = note.read_text()
+                note.write_text("0.5.19\n")
+                rc, out, calls = box.run("--prepare")
+                self.assertEqual(rc, 0, out)
+                self.assertEqual(note.read_text(), wheel)
+                self.assertNotEqual(wheel, "0.5.19\n")
 
     def test_the_two_halves_are_asked_for_one_at_a_time(self):
         for installer, _lane, _unit in LANES_IN_TWO_HALVES:

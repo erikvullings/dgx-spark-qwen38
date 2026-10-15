@@ -305,12 +305,13 @@ step "3/6 SGLang Diffusion (released wheel first, then the pinned source over it
 # that moves to a new release takes that release's wheel too: a venv that only checked
 # whether sglang imported kept the previous release's dependencies under the new source
 # (cache-dit 1.3.0 under v0.5.21, which asks for 1.5.1). The version installed is written
-# down; a venv from before this has no note and takes the wheel once.
+# down once the whole runtime is in (below, after the registry check); a venv from before
+# that note, or one a run left half built, has none and takes the wheel again.
 if ! "$VENV/bin/python" -c 'import sglang' 2>/dev/null || [ "$(cat "$WHEEL_NOTE" 2>/dev/null)" != "$WHEEL" ]; then
   echo "installing sglang[diffusion]==$WHEEL (~10 min on a new venv: torch and the kernels are large; an existing one only takes what changed)"
   "$VENV/bin/pip" install --quiet --pre "sglang[diffusion]==$WHEEL" \
     || die "the released wheel would not install. Re-run: pip resumes. If it keeps failing, SGLANG_DIFFUSION_WHEEL=<version> picks another."
-  printf '%s\n' "$WHEEL" > "$WHEEL_NOTE"; touch "$RUNTIME_NOTE"
+  touch "$RUNTIME_NOTE"
 fi
 if [ ! -d "$SRC/.git" ]; then
   git clone --quiet https://github.com/sgl-project/sglang "$SRC" || die "could not clone SGLang."
@@ -408,6 +409,14 @@ if [ "$MODEL" = "$IMAGE_TURBO_PIN" ]; then
     || die "this lane serves $IMAGE_TURBO_PIN, and the runtime at ${PIN:0:12} cannot sample on its eight-step grid: ${TURBO_WHY:-no reason given} (a qwen-image21-turbo-sigma patch above did not apply?). Serve the base with ./switch-model.sh image, or pin a commit that carries sgl-project/sglang#43391."
   echo "   the runtime samples on the Turbo's eight-step sigma grid"
 fi
+# The runtime is whole: its note says so, and it is what the cockpit and install.sh read as
+# this lane prepared. Written last, so a run that stops on the way (a clone that fails, a
+# patch, the overlay, the registry) leaves a lane its next Load prepares again, not one it
+# takes for built and serves on the bare wheel (found in review, 2026-10-15). And only when it
+# changes: its date is one of the runtime's (LANE_FILES, the cockpit's stale-runtime check), and
+# rewritten at every run it told a serving lane it ran older files, at each update (found in
+# review of that fix, the same day).
+[ "$(cat "$WHEEL_NOTE" 2>/dev/null)" = "$WHEEL" ] || printf '%s\n' "$WHEEL" > "$WHEEL_NOTE"
 
 if [ "$MODE" = prepare ]; then
   step "Done: the image lane's runtime is ready; its Load fetches the checkpoint and starts it"

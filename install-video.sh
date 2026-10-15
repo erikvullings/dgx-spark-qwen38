@@ -302,13 +302,13 @@ step "3/6 SGLang Diffusion (released wheel first, then the pinned source over it
 # runtime without those kernels and the server dies on the first request.
 # The wheel is also what sets the versions of everything the runtime imports, so a pin
 # that moves to a new release takes that release's wheel too, as in install-image.sh: the
-# version installed is written down, and a venv from before this has no note and takes the
-# wheel once.
+# version installed is written down once the whole runtime is in (below, after the registry
+# check), and a venv from before that note, or one a run left half built, takes the wheel again.
 if ! "$VENV/bin/python" -c 'import sglang' 2>/dev/null || [ "$(cat "$WHEEL_NOTE" 2>/dev/null)" != "$WHEEL" ]; then
   echo "installing sglang[diffusion]==$WHEEL (~10 min on a new venv: torch and the kernels are large; an existing one only takes what changed)"
   "$VENV/bin/pip" install --quiet --pre "sglang[diffusion]==$WHEEL" \
     || die "the released wheel would not install. Re-run: pip resumes. If it keeps failing, SGLANG_DIFFUSION_WHEEL=<version> picks another."
-  printf '%s\n' "$WHEEL" > "$WHEEL_NOTE"; touch "$RUNTIME_NOTE"
+  touch "$RUNTIME_NOTE"
 fi
 if [ ! -d "$SRC/.git" ]; then
   git clone --quiet https://github.com/sgl-project/sglang "$SRC" || die "could not clone SGLang."
@@ -394,6 +394,14 @@ if name != "MiniMaxH3Pipeline" or registry.get_pipeline_class(name) is not MiniM
 src = pathlib.Path(sglang.__file__).parent
 print(f"   runtime: {src}")
 PY
+# The runtime is whole: its note says so, and it is what the cockpit and install.sh read as
+# this lane prepared. Written last, so a run that stops on the way (a clone that fails, a
+# patch, the overlay, the registry) leaves a lane its next Load prepares again, not one it
+# takes for built and serves on the bare wheel (found in review, 2026-10-15). And only when it
+# changes: its date is one of the runtime's (LANE_FILES, the cockpit's stale-runtime check), and
+# rewritten at every run it told a serving lane it ran older files, at each update (found in
+# review of that fix, the same day).
+[ "$(cat "$WHEEL_NOTE" 2>/dev/null)" = "$WHEEL" ] || printf '%s\n' "$WHEEL" > "$WHEEL_NOTE"
 
 step "4/6 Checkpoint ($MODEL at ${MODEL_REV:0:12}, one-time, resumable)"
 # Only the partition this lane serves is fetched, by allowlist. The repo holds both

@@ -16,6 +16,7 @@ target cannot be added to the installer and forgotten in the registry.
 """
 import re
 import sys
+import tempfile
 import unittest
 from pathlib import Path
 
@@ -229,6 +230,21 @@ class CompleteForWhatTheLaneServes(unittest.TestCase):
             for allow in (None, ["FL2VA/*", "model_index.json"], ["Ref2VA/*"], ["FL2VA/"]):
                 with self.subTest(parts=parts, allow=allow):
                     self.assertEqual(rg.snapshot_complete(s, allow), cf.complete(s, allow))
+
+    def test_a_link_counts_once_its_blob_is_there_with_no_index_too(self):
+        # a snapshot of single files whose link points at a blob gone read as whole here, while
+        # ckpt-fetch.py, which fetches it, read it as missing (found in review, 2026-10-15)
+        cf = self.ckpt_fetch()
+        d = Path(tempfile.mkdtemp(prefix="reg-link-"))
+        (d / "blobs").mkdir()
+        s = d / "snapshots" / ("a" * 40)
+        s.mkdir(parents=True)
+        (s / "model.safetensors").symlink_to(d / "blobs" / "b1")
+        self.assertFalse(rg.snapshot_complete(s))
+        self.assertEqual(rg.snapshot_complete(s), cf.complete(s))
+        (d / "blobs" / "b1").write_text("w")
+        self.assertTrue(rg.snapshot_complete(s))
+        self.assertEqual(rg.snapshot_complete(s), cf.complete(s))
 
     def test_the_video_lane_patterns_are_the_switchs_own(self):
         sw = (REPO / "switch-model.sh").read_text()

@@ -114,7 +114,8 @@ def snapshot_complete(snap: Path, allow=None) -> bool:
     the lane's checkpoint incomplete (found building the models view, 2026-10-14)."""
     indexes = [p for p in snap.rglob("*.safetensors.index.json") if allowed(p.relative_to(snap).as_posix(), allow)]
     if not indexes:
-        return any(allowed(p.relative_to(snap).as_posix(), allow) for p in snap.rglob("*.safetensors"))
+        # a link counts once its blob is there, as in an index (a link to a blob gone did)
+        return any(allowed(p.relative_to(snap).as_posix(), allow) and p.exists() for p in snap.rglob("*.safetensors"))
     for idx in indexes:
         try:
             shards = set(json.loads(idx.read_text())["weight_map"].values())

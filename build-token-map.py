@@ -223,14 +223,21 @@ def main() -> None:
     out_dir = os.path.dirname(os.path.abspath(args.out))
     if out_dir and not os.path.isdir(out_dir):
         die(f"output directory does not exist: {out_dir}")
-    torch.save(ids, args.out)
+    # Written beside it, read back, and only then put in place: install.sh and prepare-lane.sh
+    # take a map that is there (lanes.sh, [ -s ]) for built, and a run stopped mid-write (a job
+    # the cockpit stops, a disk that fills) left one half written that the launcher passed to
+    # the engine at every start (found in review, 2026-10-15).
+    tmp = args.out + ".tmp"
+    torch.save(ids, tmp)
 
     # Read it back the way SGLang will, so a map that cannot be loaded fails here
     # and not nine minutes into a boot.
-    reread = torch.load(args.out, weights_only=True)
+    reread = torch.load(tmp, weights_only=True)
     back = torch.tensor(reread, dtype=torch.int64)
     if back.numel() != args.size or int(back.min()) < 0 or int(back.max()) >= vocab_size:
+        os.unlink(tmp)
         die("the written map does not read back as SGLang would read it")
+    os.replace(tmp, args.out)
 
     covered = sum(n for tid, n in counts.items() if tid in seen)
     print(f"vocabulary        {vocab_size}")

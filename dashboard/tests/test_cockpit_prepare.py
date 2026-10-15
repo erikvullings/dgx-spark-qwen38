@@ -123,6 +123,54 @@ class Prepare(unittest.TestCase):
         self.assertIs(self.cp.lane_prepared("27b"), True)
         self.assertIs(self.cp.collect_lanes_ready()["27b"], True)
 
+    def test_an_empty_vocabulary_is_none(self):
+        # [ -s ]: the launcher skips an empty one, and so does this (found in review, 2026-10-15)
+        img, vocab = "lmsysorg/sglang@sha256:" + "d" * 64, self.tmp / "token-map-65536.pt"
+        self.images.add(img)
+        (self.units / "launch-flash.sh").write_text(
+            self.runs(img, f'[ -s "{vocab}" ] && TIER+=(--speculative-token-map /out/token-map-65536.pt)\n'))
+        vocab.write_text("")
+        self.assertIs(self.cp.lane_prepared("flash"), False)
+        vocab.write_text("map")
+        self.assertIs(self.cp.lane_prepared("flash"), True)
+
+    def test_a_draft_half_there_or_set_for_another_window_is_not_prepared(self):
+        # one shard of two, a link to a blob gone, a config set for another window than its unit
+        # serves: each read as prepared, and the next Load started the 1M unit on a native draft
+        # (found in review, 2026-10-15)
+        img, hf, rev = "lmsysorg/sglang@sha256:" + "f" * 64, self.tmp / "hf-draft", "a" * 40
+        shutil.rmtree(hf, ignore_errors=True)
+        self.images.add(img)
+        unit = self.units / "qwen38-sglang.service"
+
+        def write(window):
+            unit.write_text(self.runs(img, f"  -v {hf}:/root/.cache/huggingface \\\n",
+                                      "    --context-length 1010000 \\\n" if window == "1m" else "",
+                                      "    --speculative-draft-model-path org/draft \\\n",
+                                      f"    --speculative-draft-model-revision {rev} \\\n"))
+        repo = hf / "hub" / "models--org--draft"
+        snap, blobs = repo / "snapshots" / rev, repo / "blobs"
+        snap.mkdir(parents=True)
+        blobs.mkdir()
+        (snap / "config.json").write_text('{"max_position_embeddings": 262144}')
+        (snap / "model.safetensors.index.json").write_text(
+            '{"weight_map": {"a": "model-1.safetensors", "b": "model-2.safetensors"}}')
+        (snap / "model-1.safetensors").write_text("w")
+        write("native")
+        self.assertIs(self.cp.lane_prepared("27b"), False)              # one shard of two
+        (blobs / "b2").write_text("w")
+        (snap / "model-2.safetensors").symlink_to(blobs / "b2")
+        self.assertIs(self.cp.lane_prepared("27b"), True)
+        (blobs / "b2").unlink()
+        self.assertIs(self.cp.lane_prepared("27b"), False)              # a link to a blob gone
+        (blobs / "b2").write_text("w")
+        write("1m")
+        self.assertIs(self.cp.lane_prepared("27b"), False)              # native config, 1M unit
+        (snap / "config.json").write_text('{"max_position_embeddings": 1010000}')
+        self.assertIs(self.cp.lane_prepared("27b"), True)
+        write("native")
+        self.assertIs(self.cp.lane_prepared("27b"), False)              # 1M config, native unit
+
     def test_a_venv_without_its_wheels_note_is_not_prepared(self):
         # the venv is made first and the wheel's note written once the wheel is in
         self.lane("image", built=True)
