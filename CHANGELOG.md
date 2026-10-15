@@ -1,5 +1,56 @@
 # Changelog
 
+## v1.33.1 (2026-10-15): the cockpit's ergonomics review, and the flash lane's wedge named right
+
+The cockpit's views were read one by one, on a desk screen and on a phone, with the Kolibri lane
+serving and the loading window open (a cockpit of the branch in dry run, on a copy of the box's
+config): six things were wrong, and a review of those fixes found three more. A test session of
+the whole cockpit before the release, each lane loaded from its card, found one more.
+
+- Library opened empty below its recipes: the checkpoints, what each lane can load and its
+  Download, the engine images and the other models waited for a click on Scan, while opening the
+  view had just made the server read them. They show as it opens, read once per page, and Scan
+  reads the caches again. A job that changes the lanes or the caches (a switch, a preparation, a
+  Download, a deletion) has Library read them again, at once when it is open, else at its next
+  opening.
+- A median that was not one: "Last 2 boots: 14 min 47, 15 min 37. Median 15 min 37", the upper
+  of the two middle values standing for the median, and for every "answers in about" said from
+  it. An even count takes the mean of its two middle values.
+- Traffic said "Request id override: no engine" over a serving Kolibri lane: it is an SGLang
+  setting, which the proxy's guard reads on the SGLang lanes only, and the page says so.
+- The Kolibri engine's journal was the box's own polls, its metrics every few seconds, its
+  version and its models: they are dimmed like the SGLang lanes' polls, when they were answered
+  (an engine's 200, the proxy's "ok get"), and a poll refused (a 401 without the key, a 503 with
+  no engine) stands out among them.
+- Under Ask, Decide said System One "needs a text lane" while the Kolibri text lane served: it
+  names the 27B or the flash lane, which answer it, and with one of those serving it defers to
+  the note that says why.
+- Library's Size column counted a revision twice: MiniMax-H3 read 268.8 GiB for its 134.1 on the
+  disk, its snapshot linking 192 files to 80 blobs. A revision counts each of its blobs once.
+- Library's tables stood apart from their headings on a desk screen. .stack, the layout's flex
+  column, also matched the five tables whose class says they stack on a phone (recipes,
+  checkpoints, targets, engine images, pins): each table's header and body were laid out apart,
+  the headings bunched at the left over columns out of line. Wider than a phone they are tables
+  again. In the engine images, a name by digest (88 characters in one word) pushed Size and ID
+  out of the panel, behind a scroll nothing showed: it breaks anywhere now.
+
+**The flash lane's wedge, named right.** docs/flash-lane.md and flash-sglang/ATTRIBUTION.md gave
+sglang#36333 as the cause of the wedge a prompt past the KV pool makes, sent straight to the
+engine, and called it open. It was closed on 2026-10-15 as fixed by #35255, which aborts a
+request already dispatched when its client goes and does not touch admission. Both now say the
+wedge is this box's own measurement, and name the closest upstream report, sglang#41841, fixed
+by #41872 on 2026-10-12 and not in the flash lane's image (not measured here).
+docs/context-1m.md said #35255 was in neither image this repo serves: it is in every image
+pinned now, and the proxy keeps its contract for a rollback to v0.5.19.
+
+**Tests.** Each fix has a test that fails on the old code, on the page as it runs (Library's reads,
+the median, the guard's line, the polls dimmed or not, Decide's line, the tables' layout rules) and
+on a cache laid out as huggingface_hub lays it out (blobs and their links, hard links, a link to a
+blob gone).
+
+**What an update does.** An update restarts the cockpit, which serves the new page; the engines
+keep running.
+
 ## v1.33.0 (2026-10-15): every lane but the one that serves installed on demand, and built at its first Load
 
 A first install downloaded every lane: about 460 GB and an hour and a half of work, for lanes a
