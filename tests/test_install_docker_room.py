@@ -5,7 +5,9 @@ The preflight asked for 40 GB free on the docker root whatever was there, so an 
 on a box with the pinned image already in place and 36 GB free was refused, with
 nothing to download (reference box, 2026-09-23). These run the installer's own lines,
 as written, against a fake docker and a fake df."""
+import math
 import pathlib
+import re
 import subprocess
 import tempfile
 import unittest
@@ -67,6 +69,74 @@ class TheDockerRoomFollowsWhatThereIsToPull(unittest.TestCase):
         # the 27B's image being here says nothing about the flash lane's
         self.assertIn("DIE: Need ~35 GB free", run("flash", 20, ["lmsysorg/sglang@sha256:27b"]))
 
+
+
+class TheRoomCoversAPullsPeak(unittest.TestCase):
+    """What install.sh and prepare-lane.sh ask before a pull covers its peak in either of Docker's
+    image stores (the containerd one, Docker 29's default on a new install, keeps the downloads
+    beside the unpacked image), in GiB as df -BG rounds them up. They asked for 40 and 35, the
+    image alone, and Kolibri's installer 23 (found in review, 2026-10-15)."""
+    # (GB unpacked, GB to download) of each image, from the registry and the reference box
+    PEAK = {"27b": (33.7, 14.8), "flash": (34.4, 15.3), "kolibri": (22.1, 9.6)}
+
+    @staticmethod
+    def need(unpacked, download):
+        return math.ceil((unpacked + download) * 1e9 / 2 ** 30 * 1.02) + 1
+
+    def test_each_lane_asks_for_its_peak_and_the_two_scripts_agree(self):
+        text = INSTALL.read_text()
+        n27 = int(re.search(r'^NEED_GB=45; DOCKER_NEED_GB=(\d+);', text, re.M).group(1))
+        nfl = int(re.search(r'^  NEED_GB=180; DOCKER_NEED_GB=(\d+);', text, re.M).group(1))
+        prep = (REPO / "prepare-lane.sh").read_text()
+        p27 = int(re.search(r'pull_image "\$img" 27b (\d+)', prep).group(1))
+        pfl = int(re.search(r'pull_image "\$img" flash (\d+)', prep).group(1))
+        self.assertGreaterEqual(n27, self.need(*self.PEAK["27b"]))
+        self.assertGreaterEqual(nfl, self.need(*self.PEAK["flash"]))
+        self.assertEqual((p27, pfl), (n27, nfl))          # one number each lane, the same in both
+        kol = (REPO / "install-kolibri.sh").read_text()
+        self.assertGreaterEqual(int(re.search(r'^IMAGE_GB=(\d+)', kol, re.M).group(1)), self.need(*self.PEAK["kolibri"]))
+
+
+class TheCheckpointsRoomIsInOnePlace(unittest.TestCase):
+    """The room a text lane's checkpoint asks, with its caches: install.sh's NEED_GB, the switch's
+    and a first Load's (lanes.sh ckpt_room_gb), one number each lane."""
+
+    def test_install_the_switch_and_a_first_load_ask_the_same(self):
+        text = INSTALL.read_text()
+        n27 = int(re.search(r"^NEED_GB=(\d+); DOCKER_NEED_GB=", text, re.M).group(1))
+        nfl = int(re.search(r"^  NEED_GB=(\d+); DOCKER_NEED_GB=", text, re.M).group(1))
+        lanes = (REPO / "lanes.sh").read_text()
+        fn = lanes[lanes.index("ckpt_room_gb(){"):]
+        self.assertIn(f"local n={n27} have dir=", fn)
+        self.assertIn(f'[ "$1" = flash ] && n={nfl}', fn)
+        self.assertIn('DL_NEED_GB="$(ckpt_room_gb "$TARGET_LANE" "$HF_CACHE" "$TARGET_REPO" "$TARGET_REV")"', (REPO / "switch-model.sh").read_text())
+        self.assertIn("ckpt_room_gb flash", (REPO / "prepare-lane.sh").read_text())
+        self.assertIn("ckpt_room_gb 27b", (REPO / "prepare-lane.sh").read_text())
+
+
+    def test_what_it_answers(self):
+        # 10 for a target whole in the cache, else the lane's number less what its blobs hold, 10
+        # at least (a sparse file: its apparent size is what du counts)
+        d = pathlib.Path(tempfile.mkdtemp(prefix="ckpt-room-"))
+        repo = d / "hub" / "models--org--m"
+        (repo / "blobs").mkdir(parents=True)
+
+        def ask(lane):
+            r = subprocess.run(["bash", "-c", f'set -euo pipefail\n. "{REPO}/lanes.sh"\nckpt_room_gb {lane} "{d}" org/m abc123'],
+                               capture_output=True, text=True, timeout=30)
+            self.assertEqual(r.returncode, 0, r.stderr)
+            return int(r.stdout)
+        self.assertEqual((ask("flash"), ask("27b")), (180, 45))
+        with open(repo / "blobs" / "x.incomplete", "wb") as f:
+            f.truncate(100 * 1024 ** 3)
+        self.assertEqual((ask("flash"), ask("27b")), (80, 10))
+        with open(repo / "blobs" / "x.incomplete", "wb") as f:
+            f.truncate(200 * 1024 ** 3)
+        self.assertEqual(ask("flash"), 10)
+        (repo / "blobs" / "x.incomplete").unlink()
+        (repo / "snapshots" / "abc123").mkdir(parents=True)
+        (repo / "snapshots" / "abc123" / "model.safetensors").write_text("w")
+        self.assertEqual((ask("flash"), ask("27b")), (10, 10))
 
 
 PIN_DOCKER = """#!/bin/sh

@@ -458,9 +458,33 @@ if [ "$CHOICE" = "video" ]; then
   VID_WANT_GB="${VID_WANT_GB:-145}"
   VID_HAVE_B="$({ du -s --apparent-size -B1 "$VID_MODEL_DIR/blobs" 2>/dev/null || true; } | cut -f1)"
   VID_WANT_GB=$((VID_WANT_GB - ${VID_HAVE_B:-0} / 1073741824)); [ "$VID_WANT_GB" -ge 10 ] || VID_WANT_GB=10
+  # The two caches the runtime writes at its first start (lanes.sh), with the checkpoint on the
+  # disk they share and on their own otherwise: a first Load's preparation counts them with the
+  # runtime, before the checkpoint, and this counted the checkpoint alone, so a disk with room
+  # for each part passed both and filled up at the first start (found in review, 2026-10-15).
+  dev_of(){ local p="$1"; while [ ! -e "$p" ]; do p="$(dirname "$p")"; done; stat -L -c %d "$p"; }
+  VID_DEV="$(dev_of "${VID_HF:-$HF_CACHE}")"; VID_WHAT="about $VID_WANT_GB GB for the checkpoint"
+  declare -A C_NEED=() C_AT=() C_DIRS=() C_WHAT_ON=()
+  while IFS='|' read -r C_DIR C_GB C_WHAT; do
+    [ "$C_GB" -gt 0 ] || continue
+    C_DEV="$(dev_of "$C_DIR")"
+    if [ "$C_DEV" = "$VID_DEV" ]; then
+      VID_WANT_GB=$((VID_WANT_GB + C_GB)); VID_WHAT="$VID_WHAT, $C_GB for $C_WHAT"
+    else
+      # summed on their own disk: each was checked alone there (found in review, 2026-10-15)
+      C_NEED[$C_DEV]=$(( ${C_NEED[$C_DEV]:-0} + C_GB )); C_AT[$C_DEV]="${C_AT[$C_DEV]:-$C_DIR}"
+      C_DIRS[$C_DEV]="${C_DIRS[$C_DEV]:+${C_DIRS[$C_DEV]} and }$C_DIR"     # each named, not the last alone
+      C_WHAT_ON[$C_DEV]="${C_WHAT_ON[$C_DEV]:+${C_WHAT_ON[$C_DEV]}, }$C_GB for $C_WHAT"
+    fi
+  done < <(video_first_start_caches)
+  for C_DEV in "${!C_NEED[@]}"; do
+    C_FREE="$(dl_free_gb "${C_AT[$C_DEV]}")"
+    [ "${C_FREE:-0}" -ge "${C_NEED[$C_DEV]}" ] \
+      || die "not enough room for the video lane's first start under ${C_DIRS[$C_DEV]}: ${C_FREE:-?} GB free, about ${C_NEED[$C_DEV]} GB needed (${C_WHAT_ON[$C_DEV]}; nothing was changed). Free some space first."
+  done
   VID_FREE_GB="$(dl_free_gb "${VID_HF:-$HF_CACHE}")"
   [ "${VID_FREE_GB:-0}" -ge "$VID_WANT_GB" ] \
-    || die "not enough room for $VID_MODEL under HF_HOME=${VID_HF:-$HF_CACHE}: ${VID_FREE_GB:-?} GB free, about $VID_WANT_GB GB needed (nothing was changed). Free some space first, or point HF_HOME at a bigger disk."
+    || die "not enough room for $VID_MODEL under HF_HOME=${VID_HF:-$HF_CACHE}: ${VID_FREE_GB:-?} GB free, about $VID_WANT_GB GB needed ($VID_WHAT; nothing was changed). Free some space first, or point HF_HOME at a bigger disk."
   # ckpt-fetch.py, the one fetch of every lane: the cache first (a full sha resolves straight
   # from snapshots/, refs or no refs), then the rest with resumed attempts. refs/main is what
   # the offline unit resolves, and a download by sha never writes it: --refs-main fill creates
@@ -652,10 +676,7 @@ printf '\n\033[1;36m── Verifying/downloading %s @ %s (resumable)\033[0m\n' "
 # message blamed an HF_TOKEN (found in review, 2026-09-24). What the cache already holds
 # for the target comes off the lane's need (install.sh's numbers: 45 GB for a 27B
 # checkpoint and its caches, 180 for flash).
-DL_REPO_CACHE="$HF_CACHE/hub/models--${TARGET_REPO//\//--}"
-DL_NEED_GB=45; [ "$TARGET_LANE" = "flash" ] && DL_NEED_GB=180
-DL_HAVE_B="$({ du -s --apparent-size -B1 "$DL_REPO_CACHE/blobs" 2>/dev/null || true; } | cut -f1)"
-DL_NEED_GB=$((DL_NEED_GB - ${DL_HAVE_B:-0} / 1073741824)); [ "$DL_NEED_GB" -ge 10 ] || DL_NEED_GB=10
+DL_NEED_GB="$(ckpt_room_gb "$TARGET_LANE" "$HF_CACHE" "$TARGET_REPO" "$TARGET_REV")"   # lanes.sh, the first Load's too
 DL_FREE_GB="$(dl_free_gb)"
 [ "${DL_FREE_GB:-0}" -ge "$DL_NEED_GB" ] \
   || die "not enough room for $TARGET_REPO under HF_CACHE=$HF_CACHE: ${DL_FREE_GB:-?} GB free, about $DL_NEED_GB GB needed (nothing was changed). Free some space first."

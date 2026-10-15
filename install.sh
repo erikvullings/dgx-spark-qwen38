@@ -1224,9 +1224,16 @@ FREE_DISK_GB=$({ df -BG --output=avail "$HF_CACHE" 2>/dev/null || true; } | tail
 # Flash-Next (its NVFP4 checkpoint alone is ~136 GB), plus ~50 GB for the flash lane's
 # PLE table where PLE_DIR lands; what the cache already holds comes off (below).
 # README "Quickstart" states these numbers: keep the two together.
-NEED_GB=45; DOCKER_NEED_GB=40; IMG_LABEL="33 GB Docker image"
+# The room a pull takes at its peak, counted for both of Docker's image stores: the classic one
+# keeps a layer's download until it is unpacked, the containerd one (the default of Docker 29
+# on a new install) keeps every download beside what it unpacked. In GiB as df -BG rounds them
+# up: ceil(peak x 1.02) + 1. Measured from the registry and on the reference box (2026-10-15):
+# the 27B's image is 33.7 GB unpacked and 14.8 GB to download, 45.1 GiB at the peak; the flash
+# lane's 34.4 GB and 15.3 GB, 46.3 GiB. It asked for 40 and 35, which a pull on a disk with just
+# that free outgrew in either store (found in review, 2026-10-15).
+NEED_GB=45; DOCKER_NEED_GB=48; IMG_LABEL="31 GB Docker image"
 if [ "$LANE" = "flash" ]; then
-  NEED_GB=180; DOCKER_NEED_GB=35; IMG_LABEL="30 GB Docker image"
+  NEED_GB=180; DOCKER_NEED_GB=49; IMG_LABEL="32 GB Docker image"
 fi
 # What is left to download, not what a checkpoint weighs. huggingface_hub creates the
 # snapshot folder before the first byte of the first file (file_download.py, 1.31.0), so a
@@ -1242,6 +1249,7 @@ else
   HAVE_B="$({ du -s --apparent-size -B1 "$HF_REPO_CACHE/blobs" 2>/dev/null || true; } | cut -f1)"
   NEED_GB=$((NEED_GB - ${HAVE_B:-0} / 1073741824)); [ "$NEED_GB" -ge 10 ] || NEED_GB=10   # floor: never under the need
 fi
+PLE_OWN_DEV=""
 if [ "$LANE" = "flash" ] && [ "$UNITS_ONLY" -eq 0 ] && ! ls "$PLE_DIR"/ple_table_*.bin >/dev/null 2>&1; then
   # The 47.7 GiB sparse backing file is written on every boot, in PLE_DIR; the space
   # has to be there whether or not a previous boot left one behind, and on that disk:
@@ -1250,6 +1258,7 @@ if [ "$LANE" = "flash" ] && [ "$UNITS_ONLY" -eq 0 ] && ! ls "$PLE_DIR"/ple_table
   if [ "$(stat -L -c %d "$PLE_PARENT")" = "$(stat -L -c %d "$HF_CACHE")" ]; then
     NEED_GB=$((NEED_GB + 50))
   else
+    PLE_OWN_DEV="$(stat -L -c %d "$PLE_PARENT")"
     PLE_FREE_GB="$({ df -BG --output=avail "$PLE_PARENT" 2>/dev/null || true; } | tail -1 | tr -dc '0-9')"
     [ -n "$PLE_FREE_GB" ] && [ "$PLE_FREE_GB" -ge 50 ] || die "Need ~50 GB free under PLE_DIR=$PLE_DIR for the flash lane's PLE table (47.7 GiB, written at every boot); found ${PLE_FREE_GB:-unknown} GB. Free some space or set PLE_DIR to another disk."
   fi
@@ -1281,6 +1290,13 @@ HF_DEV="$(stat -L -c %d "$HF_CACHE" 2>/dev/null || true)"; DOCKER_DEV="$(stat -L
 if [ -n "$HF_DEV" ] && [ "$HF_DEV" = "$DOCKER_DEV" ]; then
   BOTH_GB=$((NEED_GB + DOCKER_NEED_GB))
   [ "${FREE_DISK_GB:-0}" -ge "$BOTH_GB" ] || die "Need ~${BOTH_GB} GB free on the disk that holds both $HF_CACHE and $DOCKER_ROOT (${NEED_GB} for the checkpoints and caches, ${DOCKER_NEED_GB} for the $IMG_LABEL); found ${FREE_DISK_GB:-unknown} GB. Free some space, or set HF_CACHE to another disk."
+fi
+# The PLE table and the image on one disk that is not the cache's (the cache on a disk of its
+# own): their needs add up there too. Checked apart, 60 GB free passed both (found in review,
+# 2026-10-15).
+if [ -n "$PLE_OWN_DEV" ] && [ "$PLE_OWN_DEV" = "$DOCKER_DEV" ]; then
+  PLE_BOTH_GB=$((50 + DOCKER_NEED_GB))
+  [ "${DOCKER_FREE_GB:-0}" -ge "$PLE_BOTH_GB" ] || die "Need ~${PLE_BOTH_GB} GB free on the disk that holds both PLE_DIR=$PLE_DIR and $DOCKER_ROOT (50 for the flash lane's PLE table, ${DOCKER_NEED_GB} for the $IMG_LABEL); found ${DOCKER_FREE_GB:-unknown} GB. Free some space or set PLE_DIR to another disk."
 fi
 # A secondary run shares the port with the lane its parent serves, which holds it by
 # design: the parent checked both ports, and owns the proxy.

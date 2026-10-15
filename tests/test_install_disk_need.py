@@ -20,7 +20,7 @@ import unittest
 
 REPO = pathlib.Path(__file__).resolve().parents[1]
 TEXT = (REPO / "install.sh").read_text()
-START = TEXT.index("NEED_GB=45; DOCKER_NEED_GB=40")
+START = TEXT.index("NEED_GB=45; DOCKER_NEED_GB=")      # its value is TheRoomCoversAPullsPeak's
 END = TEXT.index('[ -n "$FREE_DISK_GB" ] && [ "$FREE_DISK_GB" -ge "$NEED_GB" ] || die', START)
 BLOCK = TEXT[START:END]
 SHARDS = [f"model-0000{i}-of-00004.safetensors" for i in range(1, 5)]
@@ -108,6 +108,34 @@ class ThePleTableIsCheckedOnItsOwnDisk(unittest.TestCase):
         root = cache(pathlib.Path(tempfile.mkdtemp(prefix="disk-need-")), shards_done=4)
         need, out = run("flash", root, ple_other_disk=500)
         self.assertEqual(need, 10, out)
+
+
+class ThePleTableAndTheImageOnOneDisk(unittest.TestCase):
+    """The cache on a disk of its own (the reference box's SSD), Docker's images and the PLE table
+    on the home disk: their needs add up there. Checked apart, 60 GB free passed 50 for the table
+    and 49 for the image (found in review, 2026-10-15)."""
+    SECTION = TEXT[START:TEXT.index("\n# A secondary run shares the port")]
+
+    def run_section(self, other_free):
+        root = cache(pathlib.Path(tempfile.mkdtemp(prefix="disk-need-")), shards_done=4)
+        (root / "otherdisk" / "docker").mkdir(parents=True)
+        t = pathlib.Path(tempfile.mkdtemp(prefix="disk-need-bin-"))
+        (t / "stat").write_text("#!/bin/sh\ncase \"$*\" in *otherdisk*) echo 99;; *) echo 1;; esac\n")
+        (t / "df").write_text(f"#!/bin/sh\necho Avail\ncase \"$*\" in *otherdisk*) echo {other_free}G;; *) echo 1000G;; esac\n")
+        (t / "docker").write_text(f'#!/bin/sh\n[ "$1" = info ] && echo "{root}/otherdisk/docker"\nexit 1\n')
+        for f in ("stat", "df", "docker"):
+            (t / f).chmod(0o755)
+        script = (f'PATH="{t}:$PATH"\nset -euo pipefail\ndie(){{ echo "DIE: $*"; exit 1; }}\n. "{REPO}/lanes.sh"\n'
+                  f'HF_CACHE="{root}"; MODEL_REPO=org/model; MODEL_REV=abc123; LANE=flash; IMAGE=i; FLASH_IMAGE=f\n'
+                  f'PLE_DIR="{root}/otherdisk/ple"; FREE_DISK_GB=1000; UNITS_ONLY=0\n' + self.SECTION + "\necho FITS\n")
+        r = subprocess.run(["bash", "-c", script], capture_output=True, text=True, timeout=60)
+        return r.stdout + r.stderr
+
+    def test_their_sum_is_asked_on_their_disk(self):
+        out = self.run_section(98)
+        self.assertIn("DIE: Need ~99 GB free on the disk that holds both PLE_DIR=", out)
+        self.assertIn("50 for the flash lane's PLE table, 49 for the 32 GB Docker image", out)
+        self.assertIn("FITS", self.run_section(99))
 
 
 if __name__ == "__main__":

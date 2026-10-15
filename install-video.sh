@@ -256,19 +256,12 @@ HAVE_B="$({ du -s --apparent-size -B1 "$HF_CACHE/hub/models--${MODEL//\//--}/blo
 WEIGHTS_NEED=$(( (WEIGHTS_GB * 1073741824 - ${HAVE_B:-0}) / 1073741824 )); [ "$WEIGHTS_NEED" -ge 0 ] || WEIGHTS_NEED=0
 # --prepare: the checkpoint is the Load's switch's to fetch, and to measure
 [ "$MODE" = prepare ] && WEIGHTS_NEED=0
-# Two caches of the runtime's own, written at the lane's first start and reused after, on the
-# disk of $HOME and outside the lane's folder (counted nowhere before this check, 2026-10-10):
-# copies of 52 transformed DiT weights (fused q/k/v, reordered rows) as file mappings, 11.2
-# GiB, and the video decoder's weights converted to its decode dtype, 4.5 GiB (reference
-# box, 2026-09-25). What is already there comes off.
-cache_need(){ local have; have="$({ du -s --apparent-size -B1 "$1" 2>/dev/null || true; } | cut -f1)"
-  local n=$(( ($2 * 1073741824 - ${have:-0}) / 1073741824 )); [ "$n" -ge 0 ] || n=0; echo "$n"; }
-SPILL_DIR="$HOME/.cache/sglang/diffusion/host_spill"; SPILL_NEED="$(cache_need "$SPILL_DIR" 12)"
-DTYPE_DIR="$HOME/.cache/sgl_diffusion/decode_dtype_store"; DTYPE_NEED="$(cache_need "$DTYPE_DIR" 5)"
-# Summed per disk: on a stock box all of it lands on one.
+# The two caches the runtime writes at the lane's first start (lanes.sh), counted nowhere before
+# this check (2026-10-10). Summed per disk: on a stock box all of it lands on one.
 declare -A NEED_ON=() FREE_ON=() WHAT_ON=()
-for PART in "$HF_CACHE|$WEIGHTS_NEED|the checkpoint" "$LANE_DIR|$RUNTIME_GB|the runtime and its build" \
-            "$SPILL_DIR|$SPILL_NEED|the runtime's transformed weights" "$DTYPE_DIR|$DTYPE_NEED|the decoder's converted weights"; do
+PARTS=("$HF_CACHE|$WEIGHTS_NEED|the checkpoint" "$LANE_DIR|$RUNTIME_GB|the runtime and its build")
+while IFS= read -r PART; do PARTS+=("$PART"); done < <(video_first_start_caches)
+for PART in "${PARTS[@]}"; do
   IFS='|' read -r WHERE GB WHAT <<< "$PART"
   DEV="$(stat -L -c %d "$(existing "$WHERE")")"
   NEED_ON[$DEV]=$(( ${NEED_ON[$DEV]:-0} + GB ))

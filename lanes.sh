@@ -201,3 +201,56 @@ free_gb_at(){  # $1 a path
   local p="$1"; while [ ! -e "$p" ]; do p="$(dirname "$p")"; done
   { df -BG --output=avail "$p" 2>/dev/null || true; } | tail -1 | tr -dc '0-9'
 }
+
+# The video lane's runtime writes two caches of its own at its first start, reused after, on the
+# disk of $HOME and outside the lane's folder: copies of 52 transformed DiT weights (fused q/k/v,
+# reordered rows) as file mappings, 11.2 GiB, and the video decoder's weights converted to its
+# decode dtype, 4.5 GiB (reference box, 2026-09-25). One line each, folder|GiB still needed|what
+# (what is already there comes off): install-video.sh counts them with the runtime, and
+# switch-model.sh with the checkpoint, on the disk each lands on.
+video_first_start_caches(){
+  local p d gb what have n
+  for p in "$HOME/.cache/sglang/diffusion/host_spill|12|the runtime's transformed weights" \
+           "$HOME/.cache/sgl_diffusion/decode_dtype_store|5|the decoder's converted weights"; do
+    IFS='|' read -r d gb what <<< "$p"
+    have="$({ du -s --apparent-size -B1 "$d" 2>/dev/null || true; } | cut -f1)"
+    n=$(( (gb * 1073741824 - ${have:-0}) / 1073741824 )); [ "$n" -ge 0 ] || n=0
+    printf '%s|%s|%s\n' "$d" "$n" "$what"
+  done
+}
+
+# The room a text lane's checkpoint asks of its cache's disk, with its caches, whole GB still
+# needed, as install.sh counts it: 10 when the target is whole in the cache, else 45 for a 27B
+# target (its DFlash2 draft in it) and 180 for flash, what the cache holds of the repo off, 10 at
+# least. The switch checks it (switch-model.sh), and so does a first Load before its first
+# download (prepare-lane.sh). A flash checkpoint already whole was asked 54 here and 10 by
+# install.sh, and a first Load after a Download from Library was refused for want of room it
+# did not need (found in review, 2026-10-15).
+ckpt_room_gb(){  # $1 flash|27b, $2 the HF cache, $3 the repo, $4 its revision
+  local n=45 have dir="$2/hub/models--${3//\//--}"; [ "$1" = flash ] && n=180
+  if ckpt_cached "$dir" "${4:-main}"; then echo 10; return 0; fi
+  have="$({ du -s --apparent-size -B1 "$dir/blobs" 2>/dev/null || true; } | cut -f1)"
+  n=$(( n - ${have:-0} / 1073741824 )); [ "$n" -ge 10 ] || n=10
+  echo "$n"
+}
+# What a first Load downloads, summed on each disk before the first byte: "path|GB|what" each.
+# Each part checked its own room as it came, so a disk with room for the image and the
+# checkpoint and not for the PLE table beside them took 150 GB, then stopped (found in review,
+# 2026-10-15); install.sh sums its parts on each disk too. The refusal names the disk by the
+# folders of its parts: "on one disk" left a box with two to guess which (the same review).
+room_per_disk(){
+  local -A need=() free=() what=() at=()
+  local part path gb w p dev
+  for part in "$@"; do
+    IFS='|' read -r path gb w <<< "$part"
+    [ "${gb:-0}" -gt 0 ] || continue
+    p="$path"; while [ ! -e "$p" ]; do p="$(dirname "$p")"; done
+    dev="$(stat -L -c %d "$p")"
+    need[$dev]=$(( ${need[$dev]:-0} + gb )); free[$dev]="$(free_gb_at "$path")"
+    what[$dev]="${what[$dev]:+${what[$dev]}; }$gb for $w"; at[$dev]="${at[$dev]:+${at[$dev]} and }$path"
+  done
+  for dev in "${!need[@]}"; do
+    [ "${free[$dev]:-0}" -ge "${need[$dev]}" ] \
+      || die "need ~${need[$dev]} GB free on the disk of ${at[$dev]} for this first Load (${what[$dev]}); found ${free[$dev]:-unknown} GB. Free some space, then Load the lane again: what came already is kept."
+  done
+}

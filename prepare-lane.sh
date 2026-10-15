@@ -79,7 +79,15 @@ prepare_flash(){
     *) if [ -n "$TARGET" ]; then die "$TARGET is not a flash lane target (flash, flash-nvda or flash-uncensored)"; fi
        die "the flash launcher serves $model, which no flash target names: ./switch-model.sh flash points it at one" ;;
   esac
-  pull_image "$img" flash 35
+  # what it downloads, summed on each disk before the first byte (lanes.sh room_per_disk); each
+  # part checks its own room again as it comes
+  local img_need=49 table_need=0
+  if docker image inspect "$img" >/dev/null 2>&1; then img_need=0; fi
+  if [ -n "$ple" ] && ! ls "$ple"/ple_table_*.bin >/dev/null 2>&1; then table_need=50; fi
+  room_per_disk "$(docker info --format '{{.DockerRootDir}}' 2>/dev/null || echo /var/lib/docker)|$img_need|its image" \
+                "$hf|$(ckpt_room_gb flash "$hf" "$model" "$rev")|its checkpoint and its caches" \
+                "${ple:-$hf}|$table_need|its PLE table, 47.7 GiB written at every boot"
+  pull_image "$img" flash 49     # its peak, as install.sh counts it (DOCKER_NEED_GB)
   bash "$HERE/switch-model.sh" "$target" --fetch
   # The PLE table its launcher writes at every boot, 47.7 GiB in PLE_DIR, needs its room there,
   # counted after the checkpoint when the two share a disk (install.sh asks for both at once).
@@ -112,7 +120,14 @@ prepare_27b(){
     *) if [ -n "$TARGET" ]; then die "$TARGET is not a 27B lane target (stock, uncensored, fp8 or uncensored-fp8)"; fi
        die "the 27B unit serves $model, which no 27B target names: ./switch-model.sh stock points it at one" ;;
   esac
-  pull_image "$img" 27b 40
+  # what it downloads, summed on each disk before the first byte, as for the flash lane; the
+  # checkpoint's 45 hold its DFlash2 draft, as install.sh counts them (5 more for it here asked
+  # 98 where install.sh asks 93, found in review, 2026-10-15)
+  local img_need=48
+  if docker image inspect "$img" >/dev/null 2>&1; then img_need=0; fi
+  room_per_disk "$(docker info --format '{{.DockerRootDir}}' 2>/dev/null || echo /var/lib/docker)|$img_need|its image" \
+                "$hf|$(ckpt_room_gb 27b "$hf" "$trepo" "$trev")|its checkpoint, its DFlash2 draft and their caches"
+  pull_image "$img" 27b 48       # its peak, as install.sh counts it (DOCKER_NEED_GB)
   if [ -n "$draft" ]; then
     section "The 27B lane's DFlash2 draft ($draft @ ${drev:-main})"
     room_or_die 5 "$hf" "its DFlash2 draft"

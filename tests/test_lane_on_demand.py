@@ -277,7 +277,10 @@ class TextBox:
     PINS = dict(re.findall(r'^((?:FLASH(?:_NVDA|_UNC)?|STOCK|UNC|FP8|UNCFP8)_(?:REPO|REV))="([^"]+)"',
                            (REPO / "install.sh").read_text(), re.M))
 
-    def __init__(self, image_here=False, free_gb=1000):
+    def __init__(self, image_here=False, free_gb=1000, free_at=(), hf_on=None):
+        """free_at: (folder, GB) pairs, the room df gives under each (the rest has free_gb);
+        hf_on: a folder on another disk the HF cache links to, as ~/.cache/huggingface does to
+        an SSD on the reference box."""
         self.t = t = pathlib.Path(tempfile.mkdtemp(prefix="prepare-text-"))
         self.d = d = t / "repo"
         d.mkdir()
@@ -289,7 +292,11 @@ class TextBox:
         (d / "switch-model.sh").write_text(f'echo "switch-model.sh $*" >> "{t}/calls"\n')
         (d / "patch-yarn.py").write_text(f'import sys\nopen("{t}/calls", "a").write("patch-yarn.py " + " ".join(sys.argv[1:]) + "\\n")\n')
         self.hf, self.ple = t / "hf", t / "ple"
-        self.hf.mkdir()
+        if hf_on is not None:
+            (pathlib.Path(hf_on) / "hf").mkdir()
+            self.hf.symlink_to(pathlib.Path(hf_on) / "hf")
+        else:
+            self.hf.mkdir()
         self.ple.mkdir()
         self.cfg = t / "home" / ".config" / "qwen38"
         self.cfg.mkdir(parents=True)
@@ -303,16 +310,23 @@ class TextBox:
                   f'  "pull "*) touch "{t}/pulled" ;;\n'
                   'esac\nexit 0\n')
         self.stub("df", f'printf "Avail\\n{free_gb}G\\n"')
+        if free_at:
+            # df answers for the disk of the folder it is given, a link followed
+            self.stub("df", 'p="$(readlink -f "${@: -1}")"\ncase "$p" in\n'
+                      + "".join(f'  "{pathlib.Path(d).resolve()}"*) printf "Avail\\n{gb}G\\n" ;;\n' for d, gb in free_at)
+                      + f'  *) printf "Avail\\n{free_gb}G\\n" ;;\nesac\n')
 
     def stub(self, name, body):
-        (self.t / "bin" / name).write_text("#!/bin/sh\n" + body)
+        (self.t / "bin" / name).write_text(("#!/bin/bash\n" if "${@" in body else "#!/bin/sh\n") + body)
         (self.t / "bin" / name).chmod(0o755)
 
-    def flash(self, model, image, map_line=True):
+    def flash(self, model, image, map_line=True, ple="here"):
+        ple = self.ple if ple == "here" else ple       # None: a launcher with no PLE table
         (self.cfg / "launch-flash.sh").write_text(
             "exec /usr/bin/docker run --rm --name qwen38-flash --gpus all \\\n"
-            f"  -v {self.hf}:/root/.cache/huggingface \\\n  -v {self.cfg}:/out \\\n  -v {self.ple}:/ple \\\n"
-            f"  -e HF_HUB_OFFLINE=1 \\\n  {image} \\\n  python3 -m sglang.launch_server \\\n"
+            f"  -v {self.hf}:/root/.cache/huggingface \\\n  -v {self.cfg}:/out \\\n"
+            + (f"  -v {ple}:/ple \\\n" if ple else "")
+            + f"  -e HF_HUB_OFFLINE=1 \\\n  {image} \\\n  python3 -m sglang.launch_server \\\n"
             f"    --model-path {model} --tp-size 1 \\\n"
             + (f'[ -s "{self.cfg}/token-map-65536.pt" ] && TIER+=(--speculative-token-map /out/token-map-65536.pt)\n' if map_line else ""))
 
@@ -355,7 +369,8 @@ class TheFlashPreparation(unittest.TestCase):
     def test_image_checkpoint_and_vocabulary_in_that_order(self):
         rc, out, calls = self.box().run("flash")
         self.assertEqual(rc, 0, out)
-        self.assertEqual(heads(calls), ["docker image", "docker info", "docker pull", "docker image", "docker image",
+        self.assertEqual(heads(calls), ["docker image", "docker info",                  # the room of each part, summed first
+                                        "docker image", "docker info", "docker pull", "docker image", "docker image",
                                         "docker tag", "switch-model.sh flash", "docker run"])
         self.assertIn(f"docker pull {self.IMG}", calls)
         # tagged as install.sh tags what it pulls, so a docker image prune leaves it alone
@@ -397,23 +412,83 @@ class TheFlashPreparation(unittest.TestCase):
         self.assertIn(f"docker pull {tag}", calls)
         self.assertNotIn("docker tag", heads(calls))          # a tag needs none
 
+    def test_a_checkpoint_already_whole_asks_its_caches_only(self):
+        # as install.sh: 10 for a target whole in the cache, which a Download from Library fetched
+        # before the first Load; it was asked 180 less what its blobs hold (54 on the reference
+        # box), summed with the image and the PLE table (found in review, 2026-10-15)
+        b = self.box(free_gb=110)
+        snap = b.hf / "hub" / ("models--" + b.PINS["FLASH_REPO"].replace("/", "--")) / "snapshots" / b.PINS["FLASH_REV"]
+        (snap / "model.safetensors").write_text("w")
+        rc, out, calls = b.run("flash")
+        self.assertEqual(rc, 0, out)                                 # 49 + 10 + 50 on its one disk
+
+    def test_the_room_is_the_one_of_the_target_it_loads(self):
+        # its launcher on the default, the Load on flash-nvda: what the cache holds of flash-nvda
+        # comes off, not what it holds of the default (90 GiB of it there, none of the default)
+        b = self.box(image_here=True, free_gb=95)
+        (b.ple / "ple_table_0.bin").write_text("t")
+        blobs = b.hf / "hub" / ("models--" + b.PINS["FLASH_NVDA_REPO"].replace("/", "--")) / "blobs"
+        blobs.mkdir(parents=True)
+        with open(blobs / "part.incomplete", "wb") as f:
+            f.truncate(90 * 1024 ** 3)                               # sparse: its apparent size counts
+        rc, out, calls = b.run("flash", "flash-nvda")
+        self.assertEqual(rc, 0, out)                                 # 180 - 90 = 90 of the 95 free
+        self.assertIn("switch-model.sh flash-nvda --fetch", calls)
+
+    def test_each_part_is_counted_on_the_disk_it_lands_on(self):
+        # the cache linked to another disk (the reference box's SSD), Docker's images and the PLE
+        # table on the home disk: 49 and 50 summed there, the checkpoint's 180 on the other one
+        ssd = pathlib.Path(tempfile.mkdtemp(dir="/dev/shm", prefix="prepare-ssd-"))
+        self.addCleanup(__import__("shutil").rmtree, ssd, True)
+        for home_free, rc in ((99, 0), (98, 1)):
+            with self.subTest(home_free=home_free):
+                b = self.box(free_gb=home_free, free_at=((ssd, 1000),), hf_on=ssd)
+                got, out, calls = b.run("flash")
+                self.assertEqual(got, rc, out)
+                if rc:
+                    self.assertIn(f"need ~99 GB free on the disk of {b.t}/docker-root and {b.ple} for this first Load "
+                                  "(49 for its image; 50 for its PLE table, 47.7 GiB written at every boot); found 98 GB", out)
+                    self.assertEqual(heads(calls), ["docker image", "docker info"])
+                (ssd / "hf").rename(ssd / f"hf-{home_free}")
+
+    def test_a_ple_folder_not_made_yet_is_on_the_disk_of_its_parent(self):
+        # its launcher makes it at its first start: the nearest folder of it that exists says the disk
+        b = self.box(free_gb=1000)
+        b.flash(b.PINS["FLASH_REPO"], self.IMG, ple=b.t / "ple-later")
+        rc, out, calls = b.run("flash")
+        self.assertEqual(rc, 0, out)
+
+    def test_a_launcher_with_no_ple_table_asks_no_room_for_one(self):
+        # 49 for the image and 180 for the checkpoint, on a disk with just that free
+        b = self.box(free_gb=229)
+        b.flash(b.PINS["FLASH_REPO"], self.IMG, ple=None)
+        rc, out, calls = b.run("flash")
+        self.assertEqual(rc, 0, out)
+
     def test_no_vocabulary_asked_none_built(self):
         rc, out, calls = self.box(map_line=False).run("flash")
         self.assertEqual(rc, 0, out)
         self.assertNotIn("docker run", heads(calls))
 
-    def test_no_room_for_the_image_is_refused_before_its_pull(self):
+    def test_no_room_for_what_it_downloads_is_refused_before_the_first_byte(self):
+        # the image, the checkpoint and its caches, the PLE table: summed on their one disk
         rc, out, calls = self.box(free_gb=20).run("flash")
         self.assertEqual(rc, 1, out)
-        self.assertIn("need ~35 GB free", out)
+        self.assertIn("need ~279 GB free on the disk of ", out)
+        self.assertIn("for this first Load (49 for its image; 180 for its checkpoint and its caches; "
+                      "50 for its PLE table, 47.7 GiB written at every boot)", out)
         self.assertEqual(heads(calls), ["docker image", "docker info"])
 
-    def test_no_room_for_the_ple_table_is_refused_after_the_checkpoint(self):
-        rc, out, calls = self.box(image_here=True, free_gb=20).run("flash")
+    def test_room_for_the_checkpoint_and_not_its_ple_table_is_refused_before_either(self):
+        # each part checked its own room as it came: 150 GB came, then the table had none (found
+        # in review, 2026-10-15)
+        rc, out, calls = self.box(image_here=True, free_gb=200).run("flash")
         self.assertEqual(rc, 1, out)
-        self.assertIn("for the flash lane's PLE table", out)
-        self.assertEqual(heads(calls)[-1], "switch-model.sh flash")   # the checkpoint came; no vocabulary built
-        b = self.box(image_here=True, free_gb=20)
+        self.assertIn("need ~230 GB free on the disk of ", out)
+        self.assertIn("50 for its PLE table", out)
+        self.assertNotIn("for its image", out)                         # what is already here is not listed
+        self.assertNotIn("switch-model.sh flash", heads(calls))      # nothing fetched
+        b = self.box(image_here=True, free_gb=200)
         (b.ple / "ple_table_0.bin").write_text("t")                   # a table already there takes its own room
         self.assertEqual(b.run("flash")[0], 0)
 
@@ -436,7 +511,8 @@ class TheTwentySevenBPreparation(unittest.TestCase):
         b = self.box()
         rc, out, calls = b.run("27b")
         self.assertEqual(rc, 0, out)
-        self.assertEqual(heads(calls), ["docker image", "docker info", "docker pull", "docker image", "docker image",
+        self.assertEqual(heads(calls), ["docker image", "docker info",                  # the room of each part, summed first
+                                        "docker image", "docker info", "docker pull", "docker image", "docker image",
                                         "docker tag", "docker run", "patch-yarn.py " + str(b.hf), "switch-model.sh uncensored"])
         run = next(c for c in calls if c.startswith("docker run"))
         self.assertIn(f"-v {b.hf}:/hf {self.IMG} /opt/qwen38/ckpt-fetch.py {self.DRAFT} {self.DREV} --refs-main fill", run)
@@ -466,6 +542,36 @@ class TheTwentySevenBPreparation(unittest.TestCase):
         self.assertEqual(rc, 1, out)
         self.assertIn("is not a 27B lane target", out)
         self.assertEqual(calls, [])
+
+    def test_the_room_is_the_one_of_the_target_it_loads(self):
+        # the unit on uncensored, the Load on fp8: what the cache holds of fp8 comes off (30 GiB)
+        b = self.box(image_here=True, free_gb=20)
+        blobs = b.hf / "hub" / ("models--" + b.PINS["FP8_REPO"].replace("/", "--")) / "blobs"
+        blobs.mkdir(parents=True)
+        with open(blobs / "part.incomplete", "wb") as f:
+            f.truncate(30 * 1024 ** 3)
+        rc, out, calls = b.run("27b", "fp8")
+        self.assertEqual(rc, 0, out)                                 # 45 - 30 = 15 of the 20 free
+        self.assertIn("switch-model.sh fp8 --fetch", calls)
+
+    def test_a_target_whole_at_its_pin_asks_its_caches_only(self):
+        # the revision the Load loads, as the switch fetches it: 10 for a target whole at it
+        b = self.box(image_here=True, free_gb=10)
+        snap = b.hf / "hub" / ("models--" + b.PINS["FP8_REPO"].replace("/", "--")) / "snapshots" / b.PINS["FP8_REV"]
+        snap.mkdir(parents=True)
+        (snap / "model.safetensors").write_text("w")
+        rc, out, calls = b.run("27b", "fp8")
+        self.assertEqual(rc, 0, out)
+
+    def test_no_room_for_what_it_downloads_is_refused_before_the_first_byte(self):
+        # its image, its checkpoint with its draft and their caches, summed on their one disk
+        rc, out, calls = self.box(free_gb=60).run("27b")
+        self.assertEqual(rc, 1, out)
+        # the draft in the checkpoint's 45, as install.sh counts them: 5 more for it asked 98 where
+        # install.sh asks 93 (found in review, 2026-10-15)
+        self.assertIn("need ~93 GB free on the disk of ", out)
+        self.assertIn("for this first Load (48 for its image; 45 for its checkpoint, its DFlash2 draft and their caches)", out)
+        self.assertEqual(heads(calls), ["docker image", "docker info"])
 
 
     def test_a_token_goes_by_its_name_only(self):

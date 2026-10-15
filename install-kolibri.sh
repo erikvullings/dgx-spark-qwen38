@@ -110,7 +110,11 @@ if [ "$VARIANT" = nvfp4 ]; then
 else
   MODEL="$KOLIBRI_FP8_REPO"; MODEL_REV="$KOLIBRI_FP8_REV"; GMU="$KOLIBRI_FP8_GMU"; WEIGHTS_GB="$KOLIBRI_FP8_GB"
 fi
-IMAGE_GB=23   # the base image unpacked (22.1 GB measured) and the plugin's layer
+# The base image's pull at its peak and the plugin's layer: 22.1 GB unpacked and 9.6 GB to
+# download, which the containerd image store (Docker 29's default on a new install) keeps beside
+# it, 29.5 GiB; ceil(x 1.02) + 1 as df -BG rounds up (install.sh counts the text lanes' images so).
+# It asked for 23, the image alone (found in review, 2026-10-15).
+IMAGE_GB=32
 
 # The text lanes' cache and port: Kolibri is one of them for the proxy, so it answers where
 # the proxy sends (its UPSTREAM), on the bind the other lanes use, from the same cache.
