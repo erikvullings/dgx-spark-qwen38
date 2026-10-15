@@ -389,6 +389,10 @@ input[type=range]:focus-visible::-webkit-slider-thumb{box-shadow:0 0 0 4px color
 .tbl tr > :last-child{padding-right:0}
 .tbl .r{text-align:right}
 .tbl .num{font-variant-numeric:tabular-nums}
+.tbl .brk{overflow-wrap:anywhere}
+/* .stack, the layout's flex column, matched the tables whose class says they stack on a phone:
+   their header and body laid out apart on a desk screen, the columns out of line */
+.tbl.stack{display:table}
 .tbl.dense{font-size:var(--t-13)}
 /* vertical only: the shorthand gave every dense table's first cell its 12 px back (same
    specificity as the :first-child rule above, and later), while its header stayed flush */

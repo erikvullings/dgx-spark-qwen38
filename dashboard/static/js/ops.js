@@ -293,7 +293,9 @@ async function scanRegistry(fresh = true){
     if (!tt.rows.length) emptyRow(tt, 3, 'No target.');
     labelCells($('reg-targets'));
     const ti = $('reg-images').tBodies[0]; clear(ti);
-    (d.images || []).forEach(im => { const tr = ti.insertRow(); tr.insertCell().textContent = im.ref; const a = tr.insertCell(); a.className = 'r num'; a.textContent = im.size; const c = tr.insertCell(); c.className = 'r num'; c.textContent = im.id; });
+    // an image named by its digest is one word of 70 characters: allowed to break anywhere, it no
+    // longer widens its column past the panel and pushes Size and ID out of view on a desk screen
+    (d.images || []).forEach(im => { const tr = ti.insertRow(); const n = tr.insertCell(); n.className = 'brk'; n.textContent = im.ref; const a = tr.insertCell(); a.className = 'r num'; a.textContent = im.size; const c = tr.insertCell(); c.className = 'r num'; c.textContent = im.id; });
     if (!ti.rows.length) emptyRow(ti, 3, 'No engine image.');
     labelCells($('reg-images'));
     const to = $('reg-other').tBodies[0]; clear(to);

@@ -5,11 +5,13 @@ lane, the Kolibri engine's polls drowning its own journal, and Decide asking for
 while one served. Same harness as test_page_behaviour.py."""
 import json
 import pathlib
+import re
 import sys
 import unittest
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
-from test_page_behaviour import run  # noqa: E402
+import pagejs  # noqa: E402
+from test_page_behaviour import css_rules, run  # noqa: E402
 
 REG = {"images": [], "other_models": [], "caches": ["/c"], "models": [],
        "targets": [{"target": "stock", "repo": "RadixArk/Qwen3.8-27B-NVFP4", "rev": "a" * 40, "state": "complete", "installed": True},
@@ -175,6 +177,56 @@ class SystemOneNamesTheLanesThatServeIt(unittest.TestCase):
         """)
         self.assertEqual(r["why"], "System One does not answer right now: the note says why.")
         self.assertIn("does not answer /v1/systemone", r["note"])
+
+
+class LibrarysEngineImagesFitTheirPanel(unittest.TestCase):
+    """An image named by its digest (vllm/vllm-openai@sha256:..., 88 characters with no break)
+    widened Library's first column past its panel on a desk screen: Size and ID went out of view,
+    behind a scroll nothing showed (found in the cockpit's test session, 2026-10-15, at 636 px
+    for a 584 px panel). Its name breaks anywhere, at every width."""
+
+    def test_the_name_of_an_image_breaks_anywhere_at_every_width(self):
+        ref = "vllm/vllm-openai@sha256:" + "a7" * 32
+        reg = dict(REG, images=[{"ref": ref, "size": "24.4GB", "id": "bc7762f87a5e"}])
+        r = run(self, r"""
+        __fetch = async (url, init) => url.startsWith('/api/recipes') ? __response(200, {builtin: [], custom: [], custom_dir: ''})
+          : url.startsWith('/api/registry') ? __response(200, %s) : new Promise(() => {});
+        feed({config: CONFIG, units: UNITS, lifecycle: life({'qwen38-sglang.service': eng('ready')})});
+        showView('library'); await __settle(); await __settle();
+        report([...$('reg-images').tBodies[0].rows[0].cells].map(c => ({text: c.textContent, cls: c.className})));
+        """ % json.dumps(reg))
+        self.assertEqual([c["text"] for c in r], [ref, "24.4GB", "bc7762f87a5e"])
+        name = r[0]["cls"].split()
+        # a rule under no @media: the phone's stacked rows already break anywhere, the desk did not
+        breaks = [sel for sel, media, decl in css_rules() if not media and re.search(r"overflow-wrap:\s*anywhere", decl)
+                  and any(re.fullmatch(r"\.tbl\s+(td)?\.%s" % re.escape(c), s.strip()) for c in name for s in sel.split(","))]
+        self.assertTrue(breaks, "no rule at every width lets the image's name break anywhere")
+
+
+class TheTablesThatStackOnAPhoneStayTablesOnADesk(unittest.TestCase):
+    """.stack is the layout's flex column, and the tables whose class says they stack on a phone
+    carried it too: on a desk screen each was a flex column, its header and its body laid out
+    apart, the headings bunched at the left and the columns out of line under them (Library's
+    recipes, checkpoints, targets, engine images and pins; found in the cockpit's test session,
+    2026-10-15). Wider than a phone they are tables, and on a phone they still stack."""
+
+    def selectors(self, sel):
+        return [s.strip() for s in sel.split(",")]
+
+    def test_a_stacking_table_is_a_table_wider_than_a_phone(self):
+        page = (pagejs.STATIC / "index.html").read_text()
+        stacking = [c.split() for c in re.findall(r'<table class="([^"]*)"', page) if "stack" in c.split()]
+        self.assertTrue(stacking)
+        for classes in stacking:
+            self.assertIn("tbl", classes)       # the rule below reads .tbl.stack
+        rules = css_rules()
+        self.assertTrue([1 for sel, media, decl in rules if not media and ".stack" in self.selectors(sel)
+                         and re.search(r"display:\s*flex", decl)], "the layout's .stack this guards against")
+        self.assertTrue([1 for sel, media, decl in rules if not media and ".tbl.stack" in self.selectors(sel)
+                         and re.search(r"display:\s*table\s*(;|$)", decl)], "no rule makes them tables again")
+        self.assertTrue([1 for sel, media, decl in rules if any("max-width" in m for m in media)
+                         and ".tbl.stack" in self.selectors(sel) and re.search(r"display:\s*block", decl)],
+                        "on a phone they stack")
 
 
 if __name__ == "__main__":
