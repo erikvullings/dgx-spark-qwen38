@@ -7,7 +7,9 @@ only a skipped step wrote) shows up here, and not as a lane missing from every n
 The copy ends at a wall just past its last line (installer_wall); the commands that act on the
 box are stubs that answer as a box with no lane image would (docker has none, nvidia-smi sees
 the GPU), sudo runs what it is given in the test's own folders, and the units are written to a
-folder the test owns."""
+folder the test owns. The machine is a GB10 whatever runs the suite: uname says aarch64 and the
+copy reads the reference box's MemTotal, as the preflight refuses anything else (GitHub's x86_64
+runner, 16 GB, stopped it there: found by the CI run of v1.33.0, 2026-10-15)."""
 import pathlib
 import shutil
 import subprocess
@@ -24,6 +26,11 @@ DONE = '    step "Done: installed as $UNIT_NAME ($MODEL_CHOICE), not enabled at 
 def run_units_only(lane):
     units = wall.units_dir()
     script = pathlib.Path(wall.walled(at=DONE, after=True, units=units))
+    meminfo = wall._tmp("meminfo-") / "meminfo"
+    meminfo.write_text("MemTotal:       127535272 kB\n")      # the reference box's
+    text, read = script.read_text(), "awk '/^MemTotal/{print int($2/1048576)}' /proc/meminfo"
+    assert text.count(read) == 1, "install.sh reads the memory another way now"
+    script.write_text(text.replace(read, read.replace("/proc/meminfo", str(meminfo))))
     for f in REPO.iterdir():      # what install.sh reads beside itself (its templates, its helpers)
         if f.is_file() and not (script.parent / f.name).exists():
             shutil.copy2(f, script.parent / f.name)
@@ -36,6 +43,7 @@ def run_units_only(lane):
     calls.touch()
     for name, body in (
             ("nvidia-smi", 'case "$*" in *driver_version*) echo 580.173.02 ;; *memory.total*) echo "[N/A]" ;; *) echo "NVIDIA GB10" ;; esac\n'),
+            ("uname", 'echo aarch64\n'),
             ("docker", f'case "$1 $2" in "info "*) echo "{docker_root}" ;; "image inspect") exit 1 ;; esac\nexit 0\n'),
             ("sudo", 'while [ -n "${1:-}" ] && [ "${1#-}" != "$1" ]; do shift; done\n'
                      '[ "$#" -eq 0 ] || [ "$1" = true ] && exit 0\n"$@"\n'),
