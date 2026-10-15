@@ -142,9 +142,10 @@ def scan_hf_cache(root: Path) -> list[dict]:
     """[{repo_id, disk_bytes, incomplete, active, revisions:[{rev, bytes, complete}]}] for
     models--* dirs.
 
-    disk_bytes = physical blobs (deduped); a revision's bytes resolve its
-    snapshot symlinks, so shared blobs count in every revision that uses
-    them (logical size) but only once in disk_bytes.
+    disk_bytes = physical blobs (deduped); a revision's bytes are the blobs its
+    snapshot links to, each once (two of its files can link one blob: MiniMax-H3's
+    partitions share their weights, and counted per file its one revision read twice
+    its size), so a blob two revisions share counts in each, and once in disk_bytes.
     """
     out = []
     now = time.time()
@@ -179,13 +180,16 @@ def scan_hf_cache(root: Path) -> list[dict]:
         snaps = d / "snapshots"
         if snaps.is_dir():
             for rd in sorted(snaps.iterdir()):
-                size = 0
+                size, mine = 0, set()
                 for base, _dirs, files in os.walk(rd):
                     for fn in files:
                         try:
-                            size += (Path(base) / fn).stat().st_size
+                            st = (Path(base) / fn).stat()
                         except OSError:
-                            pass
+                            continue
+                        if (st.st_dev, st.st_ino) not in mine:
+                            mine.add((st.st_dev, st.st_ino))
+                            size += st.st_size
                 revs.append({"rev": rd.name, "bytes": size, "complete": snapshot_complete(rd)})
         out.append({"repo_id": repo_id, "disk_bytes": disk,
                     "incomplete": incomplete, "active": active, "revisions": revs})

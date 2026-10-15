@@ -253,6 +253,34 @@ class CompleteForWhatTheLaneServes(unittest.TestCase):
         self.assertIn("model_index.json", rg.video_allow(sw, "fl2va"))
 
 
+class WhatARevisionTakes(unittest.TestCase):
+    """Library's Size said 268.8 GiB for the reference box's MiniMax-H3, whose one revision
+    takes 134.1 on disk (2026-10-15): its snapshot links 192 files to 80 blobs (its partitions
+    share their weights), and each file was counted. A revision counts each of its blobs once;
+    two revisions sharing a blob each count it, and the repo's disk once."""
+
+    def setUp(self):
+        import tempfile
+        self.root = Path(tempfile.mkdtemp(prefix="registry-size-"))
+        self.addCleanup(__import__("shutil").rmtree, self.root, True)
+
+    def test_two_files_on_one_blob_take_it_once(self):
+        import os
+        repo = fake_repo(self.root, {"a" * 40: {"part1.safetensors": b"x" * 100, "config.json": b"{}"}})
+        snap = repo / "snapshots" / ("a" * 40)
+        os.symlink(os.readlink(snap / "part1.safetensors"), snap / "part2.safetensors")   # a second file, the same blob
+        (m,) = rg.scan_hf_cache(self.root)
+        self.assertEqual(m["revisions"][0]["bytes"], 102)
+        self.assertEqual(m["disk_bytes"], 102)
+
+    def test_a_blob_two_revisions_share_counts_in_each(self):
+        fake_repo(self.root, {"a" * 40: {"config.json": b"same", "w.safetensors": b"x" * 10},
+                              "b" * 40: {"config.json": b"same", "w.safetensors": b"y" * 20}}, shared={"config.json"})
+        (m,) = rg.scan_hf_cache(self.root)
+        self.assertEqual([r["bytes"] for r in m["revisions"]], [14, 24])
+        self.assertEqual(m["disk_bytes"], 34)
+
+
 class WhatADeleteRemoves(unittest.TestCase):
     """A stray revision is deleted with the blobs only it links to: a blob another revision
     shares stays, and so does a revision a ref names, which a load by name reads."""
