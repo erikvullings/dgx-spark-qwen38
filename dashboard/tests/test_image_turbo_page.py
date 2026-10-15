@@ -61,7 +61,7 @@ class LoadingIt(unittest.TestCase):
         r = run(self, lanes("stopped", "image", text_state="ready") + r"""
         feed({lanes_ready: {image: false, video: true, kolibri: null}});
         const steps = laneJourneySteps('image');
-        report({steps: steps.map(s => s.name + (s.params.verb ? ':' + s.params.verb : '') + (s.params.lane ? ' ' + s.params.lane : '')),
+        report({steps: steps.map(s => s.name + (s.params.verb ? ':' + s.params.verb : '') + (s.name === 'prepare' ? ' ' + laneOfTarget(s.params.target) : '')),
                 title: steps[0].title, cmd: argvFor(steps[0].name, steps[0].params).join(' ')});
         """)
         self.assertEqual(r["steps"], ["prepare image", "switch", "unit:stop", "unit:start"])
@@ -81,26 +81,39 @@ class LoadingIt(unittest.TestCase):
         r = run(self, lanes("stopped", "image", text_state="ready") + r"""
         feed({lanes_ready: {image: true, video: true, kolibri: null, flash: false}});
         const steps = laneJourneySteps('flash');
-        report({steps: steps.map(s => s.name + (s.params.lane ? ' ' + s.params.lane : '')), desc: steps[0].desc,
+        report({steps: steps.map(s => s.name + (s.name === 'prepare' ? ' ' + laneOfTarget(s.params.target) : '')), desc: steps[0].desc,
                 cmd: argvFor(steps[0].name, steps[0].params).join(' ')});
         """)
         self.assertEqual(r["steps"][0], "prepare flash")
         self.assertIn("switch", r["steps"])
         self.assertIn("checkpoint (about 136 GB)", r["desc"])
         self.assertNotIn("The next step fetches", r["desc"])
-        self.assertEqual(r["cmd"], "bash prepare-lane.sh flash")
+        self.assertEqual(r["cmd"], "bash prepare-lane.sh flash flash")
+
+    def test_a_first_load_prepares_the_target_it_loads(self):
+        # the NVIDIA export loaded first: its preparation fetches that one, not the default the
+        # launcher names (found in review, 2026-10-15: the default came first, 135 GB)
+        r = run(self, lanes("stopped", "image", text_state="ready") + r"""
+        feed({lanes_ready: {image: true, video: true, kolibri: null, flash: false}});
+        const steps = laneJourneySteps('flash-nvda');
+        report({prep: steps[0].params, cmd: argvFor(steps[0].name, steps[0].params).join(' '),
+                switch: (steps.find(s => s.name === 'switch') || {}).params});
+        """)
+        self.assertEqual(r["prep"], {"target": "flash-nvda"})
+        self.assertEqual(r["cmd"], "bash prepare-lane.sh flash flash-nvda")
+        self.assertEqual(r["switch"], {"target": "flash-nvda"})
 
     def test_the_27b_beside_a_serving_flash_not_prepared_is_prepared_first_too(self):
         r = run(self, lanes("stopped", "image") + r"""
         feed({lanes_ready: {image: true, video: true, kolibri: null, flash: true, '27b': false}});
         const steps = laneJourneySteps('stock');
-        report({steps: steps.map(s => s.name + (s.params.lane ? ' ' + s.params.lane : '')), desc: steps[0].desc,
+        report({steps: steps.map(s => s.name + (s.name === 'prepare' ? ' ' + laneOfTarget(s.params.target) : '')), desc: steps[0].desc,
                 cmd: argvFor(steps[0].name, steps[0].params).join(' '), start: !LCARDS.has(U27) || true});
         """)
         self.assertEqual(r["steps"][0], "prepare 27b")
         self.assertIn("its DFlash2 draft and its checkpoint", r["desc"])
         self.assertNotIn("The next step fetches", r["desc"])
-        self.assertEqual(r["cmd"], "bash prepare-lane.sh 27b")
+        self.assertEqual(r["cmd"], "bash prepare-lane.sh 27b stock")
 
     def test_the_window_does_not_time_a_first_load_by_its_boot_alone(self):
         # "4 steps, about 90 s in all" stood over 8 minutes of preparation and download on the

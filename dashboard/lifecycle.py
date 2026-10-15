@@ -416,7 +416,9 @@ def blocked_reasons(action: str, params: dict, states: dict) -> list[str]:
                     reasons.append(
                         f"{other} is {st(other)}: two engines never run at once "
                         f"on unified memory (stop it first)")
-    elif action in ("switch", "update_stack"):
+    elif action in ("switch", "update_stack", "prepare"):
+        # prepare: a first Load's pip and docker pull beside a lane loading its weights, on the
+        # same unified memory (found in review, 2026-10-15)
         for u in ENGINE_UNITS:
             if st(u) in TRANSITIONAL:
                 reasons.append(f"{u} is {st(u)}: wait for it to settle")

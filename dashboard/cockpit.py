@@ -141,7 +141,9 @@ def job_phrase(action: str, params: dict) -> str:
     if action == "fetch":
         return f"download the {p.get('target', '')} checkpoint"
     if action == "prepare":
-        return f"build the {p.get('lane', '')} lane's runtime"
+        t = p.get("target", "")
+        lane = target_lane(t) if t else ""
+        return f"build the {lane} lane's runtime" + (f" for {t}" if lane in ("flash", "27b") else "")
     return action + (" " + ", ".join(f"{k} {v}" for k, v in p.items()) if p else "")
 
 
@@ -2204,14 +2206,36 @@ ACTIONS["fetch"] = {
     "argv": lambda p: ["bash", str(REPO_DIR / "switch-model.sh"), p["target"], "--fetch"],
     "timeout": 7200,
 }
-# The image, video and Kolibri lanes are installed on demand: their units at install, their
-# runtime at their first Load, built as the user by their installer's --prepare (no sudo),
-# through prepare-lane.sh, which takes the lane as an argument of its own.
+# Every lane but the one that serves is installed on demand: its units at install, its runtime
+# at its first Load, built as the user (no sudo) by prepare-lane.sh, which takes the lane as an
+# argument of its own. The target the Load loads names the lane, and goes over too for the flash
+# and 27B lanes, whose preparation fetches that target's checkpoint (the flash lane's draft
+# vocabulary is built from it): it fetched the one their launcher or unit named, the default,
+# and the switch then fetched the one loaded (135 GB more for a first Load of flash-nvda, and a
+# switch refused for room after that, found in review, 2026-10-15).
+def target_lane(target: str) -> str:
+    """The lane a switch target belongs to, by prepare-lane.sh's names."""
+    if target in ("image", "image-turbo"):
+        return "image"
+    if target == "video":
+        return "video"
+    if target.startswith("kolibri"):
+        return "kolibri"
+    if target.startswith("flash"):
+        return "flash"
+    return "27b"
+
+
 ACTIONS["prepare"] = {
     "danger": "low",
-    "params": {"lane": ["27b", "flash", "image", "kolibri", "video"]},
-    "argv": lambda p: ["bash", str(REPO_DIR / "prepare-lane.sh"), p["lane"]],
-    "timeout": 5400,
+    "params": {"target": ACTIONS["switch"]["params"]["target"]},
+    "argv": lambda p: ["bash", str(REPO_DIR / "prepare-lane.sh"), target_lane(p["target"])]
+                      + ([p["target"]] if target_lane(p["target"]) in ("flash", "27b") else []),
+    # The flash lane's image (15 GB) and its checkpoint (up to 136 GB) in one job: the switch's
+    # 7200 s are for a checkpoint alone, and 5400 failed a first Load under about 30 MB/s
+    # (found in review, 2026-10-15). Past it the job's process group is stopped (run_job); a
+    # Load again resumes what came.
+    "timeout": 10800,
 }
 
 
@@ -4119,7 +4143,7 @@ def start_action(name: str, params: dict, origin: str = "ui") -> tuple[int, dict
         audit({"kind": "action_blocked", "action": name, "params": clean, "reasons": [KOLIBRI_CANNOT[name]]})
         return 409, {"error": "blocked", "reasons": [KOLIBRI_CANNOT[name]]}
     warnings = []
-    if name in ("unit", "switch"):
+    if name in ("unit", "switch", "prepare"):
         with LIFE_LOCK:
             states = dict(LIFE.get("states", {}))
         reasons = lc.blocked_reasons(name, clean, states)

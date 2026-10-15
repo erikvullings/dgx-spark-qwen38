@@ -186,9 +186,12 @@ class TheDispatcher(unittest.TestCase):
     own (the cockpit never builds one argument out of a parameter), mapped to its installer's
     --prepare, and nothing else is taken."""
 
-    def run_it(self, *args):
+    def run_it(self, *args, units=("image", "video", "kolibri")):
         d = pathlib.Path(tempfile.mkdtemp(prefix="prepare-lane-"))
-        (d / "prepare-lane.sh").write_text((REPO / "prepare-lane.sh").read_text())
+        (d / "units").mkdir()
+        for lane in units:
+            (d / "units" / f"qwen38-{lane}.service").write_text("[Unit]\n")
+        (d / "prepare-lane.sh").write_text((REPO / "prepare-lane.sh").read_text().replace("/etc/systemd/system/", f"{d}/units/"))
         for lane in ("image", "video", "kolibri"):
             (d / f"install-{lane}.sh").write_text(f'echo "install-{lane}.sh $*"\n')
         r = subprocess.run(["bash", str(d / "prepare-lane.sh"), *args], capture_output=True, text=True, timeout=30)
@@ -199,8 +202,18 @@ class TheDispatcher(unittest.TestCase):
             with self.subTest(lane=lane):
                 self.assertEqual(self.run_it(lane), (0, f"install-{lane}.sh --prepare"))
 
+    def test_a_lane_with_no_unit_is_not_prepared(self):
+        # its units come with ./install.sh; a preparation alone would build what nothing runs
+        for lane in ("image", "video", "kolibri"):
+            with self.subTest(lane=lane):
+                rc, out = self.run_it(lane, units=())
+                self.assertEqual(rc, 1, out)
+                self.assertIn("not installed on this box", out)
+                self.assertNotIn("--prepare", out)
+
     def test_anything_else_is_refused(self):
-        for args in ((), ("27B",), ("../install",), ("image", "--uninstall"), ("",)):
+        for args in ((), ("27B",), ("../install",), ("image", "--uninstall"), ("image", "image"), ("",),
+                     ("flash", "flash-nvda", "x")):
             with self.subTest(args=args):
                 rc, out = self.run_it(*args)
                 self.assertEqual(rc, 2, out)
@@ -266,8 +279,8 @@ class TextBox:
             + f"    --speculative-algorithm DFLASH --speculative-draft-model-path {draft} \\\n"
             f"    --speculative-draft-model-revision {drev} \\\n")
 
-    def run(self, lane, **env):
-        r = subprocess.run(["bash", str(self.d / "prepare-lane.sh"), lane], capture_output=True, text=True, timeout=60,
+    def run(self, lane, *rest, **env):
+        r = subprocess.run(["bash", str(self.d / "prepare-lane.sh"), lane, *rest], capture_output=True, text=True, timeout=60,
                            env={"PATH": f"{self.t}/bin:/usr/bin:/bin", "HOME": str(self.t / "home"), **env})
         calls = (self.t / "calls").read_text().splitlines() if (self.t / "calls").exists() else []
         return r.returncode, r.stdout + r.stderr, calls
@@ -308,6 +321,27 @@ class TheFlashPreparation(unittest.TestCase):
         self.assertEqual(rc, 0, out)
         self.assertIn("switch-model.sh flash-nvda --fetch", calls)
         self.assertNotIn("docker pull", heads(calls))
+
+    def test_the_target_the_load_loads_is_the_one_fetched(self):
+        # the Load names its target: that checkpoint is fetched and the vocabulary built from it,
+        # not the launcher's (found in review, 2026-10-15: a first Load of flash-nvda fetched the
+        # default, 135 GB, then its switch fetched the NVIDIA export)
+        b = self.box()                                                  # the launcher serves the default
+        nv, nv_rev = b.PINS["FLASH_NVDA_REPO"], b.PINS["FLASH_NVDA_REV"]
+        (b.hf / "hub" / ("models--" + nv.replace("/", "--")) / "snapshots" / nv_rev).mkdir(parents=True)
+        rc, out, calls = b.run("flash", "flash-nvda")
+        self.assertEqual(rc, 0, out)
+        self.assertIn("switch-model.sh flash-nvda --fetch", calls)
+        self.assertNotIn("switch-model.sh flash --fetch", calls)
+        self.assertIn(f"models--{nv.replace('/', '--')}/snapshots/{nv_rev} --out /out/token-map-65536.pt", calls[-1])
+
+    def test_a_target_of_another_lane_is_refused_before_anything(self):
+        for target in ("stock", "image", "flash-turbo"):
+            with self.subTest(target=target):
+                rc, out, calls = self.box().run("flash", target)
+                self.assertEqual(rc, 1, out)
+                self.assertIn("is not a flash lane target", out)
+                self.assertEqual(calls, [])
 
     def test_an_image_an_operator_named_by_tag_is_read_too(self):
         tag = "lmsysorg/sglang:dev-qwen38-next-local"
@@ -375,6 +409,17 @@ class TheTwentySevenBPreparation(unittest.TestCase):
                 rc, out, calls = self.box(repo_var=repo_var, image_here=True).run("27b")
                 self.assertEqual(rc, 0, out)
                 self.assertEqual(calls[-1], f"switch-model.sh {target} --fetch")
+
+    def test_the_target_the_load_loads_is_the_one_fetched(self):
+        # an uncensored unit, a Load of fp8: fp8 is fetched, not the unit's (2026-10-15)
+        rc, out, calls = self.box(repo_var="UNC", image_here=True).run("27b", "fp8")
+        self.assertEqual(rc, 0, out)
+        self.assertEqual(calls[-1], "switch-model.sh fp8 --fetch")
+        rc, out, calls = self.box().run("27b", "flash")
+        self.assertEqual(rc, 1, out)
+        self.assertIn("is not a 27B lane target", out)
+        self.assertEqual(calls, [])
+
 
     def test_a_token_goes_by_its_name_only(self):
         rc, out, calls = self.box(image_here=True).run("27b", HF_TOKEN="hf_value_never_shown")

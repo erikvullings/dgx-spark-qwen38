@@ -10,16 +10,27 @@
 # draft, its config set for the window the unit serves. Each download is refused before its
 # first byte when its room is not there.
 #
-#   ./prepare-lane.sh image|video|kolibri|flash|27b
+#   ./prepare-lane.sh image|video|kolibri
+#   ./prepare-lane.sh flash|27b [<target>]
 #
-# The lane is an argument of its own: the cockpit's actions never build one argument out of a
-# parameter (tests/test_cockpit_http.py holds them to that).
+# The target is the one the Load loads, for the two lanes whose preparation fetches a
+# checkpoint: flash, flash-nvda or flash-uncensored; stock, uncensored, fp8 or uncensored-fp8.
+# Without one, the target the launcher or unit serves. The preparation fetched that one only,
+# the default on a new box, and the Load's switch then fetched the target loaded (found in
+# review, 2026-10-15). The lane and the target are arguments of their own: the cockpit's
+# actions never build one argument out of a parameter (tests/test_cockpit_http.py holds them
+# to that).
 set -euo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-usage(){ echo "usage: ./prepare-lane.sh <image|video|kolibri|flash|27b>" >&2; exit 2; }
+usage(){ echo "usage: ./prepare-lane.sh <image|video|kolibri> | <flash|27b> [<target>]" >&2; exit 2; }
 die(){ printf '\n\033[1;31mERROR:\033[0m %s\n' "$*" >&2; exit 1; }
 section(){ printf '\n\033[1;36m── %s\033[0m\n' "$*"; }
-[ "$#" -eq 1 ] || usage
+case "${1:-}" in
+  image|video|kolibri) [ "$#" -eq 1 ] || usage ;;
+  flash|27b) [ "$#" -le 2 ] || usage ;;
+  *) usage ;;
+esac
+TARGET="${2:-}"
 
 # What a launcher or unit says. head -1 each time: -m1 stops at the first line, and -o prints
 # every match on it (the flash lane's draft vocabulary line names its file twice).
@@ -61,11 +72,12 @@ prepare_flash(){
   if [ -z "$img" ] || [ -z "$model" ] || [ -z "$hf" ]; then
     die "$launch names no image, model or cache where this expects it (hand-edited?): ./install.sh writes it again"
   fi
-  case "$model" in
-    "$FLASH_REPO") target=flash; rev="$FLASH_REV" ;;
-    "$FLASH_NVDA_REPO") target=flash-nvda; rev="$FLASH_NVDA_REV" ;;
-    "$FLASH_UNC_REPO") target=flash-uncensored; rev="$FLASH_UNC_REV" ;;
-    *) die "the flash launcher serves $model, which no flash target names: ./switch-model.sh flash points it at one" ;;
+  case "${TARGET:-$model}" in
+    flash|"$FLASH_REPO") target=flash; model="$FLASH_REPO"; rev="$FLASH_REV" ;;
+    flash-nvda|"$FLASH_NVDA_REPO") target=flash-nvda; model="$FLASH_NVDA_REPO"; rev="$FLASH_NVDA_REV" ;;
+    flash-uncensored|"$FLASH_UNC_REPO") target=flash-uncensored; model="$FLASH_UNC_REPO"; rev="$FLASH_UNC_REV" ;;
+    *) if [ -n "$TARGET" ]; then die "$TARGET is not a flash lane target (flash, flash-nvda or flash-uncensored)"; fi
+       die "the flash launcher serves $model, which no flash target names: ./switch-model.sh flash points it at one" ;;
   esac
   pull_image "$img" flash 35
   bash "$HERE/switch-model.sh" "$target" --fetch
@@ -85,19 +97,20 @@ prepare_flash(){
 }
 
 prepare_27b(){
-  local unit=/etc/systemd/system/qwen38-sglang.service img model draft drev hf target tok=()
+  local unit=/etc/systemd/system/qwen38-sglang.service img model draft drev hf target trepo trev tok=()
   [ -f "$unit" ] || die "the 27B lane is not installed on this box (no $unit): ./install.sh installs it"
   img="$(engine_image "$unit")"; model="$(arg_of "$unit" --model-path)"; hf="$(mount_of "$unit" /root/.cache/huggingface)"
   draft="$(arg_of "$unit" --speculative-draft-model-path)"; drev="$(arg_of "$unit" --speculative-draft-model-revision)"
   if [ -z "$img" ] || [ -z "$model" ] || [ -z "$hf" ]; then
     die "$unit names no image, model or cache where this expects it (hand-edited?): ./install.sh writes it again"
   fi
-  case "$model" in
-    "$STOCK_REPO") target=stock ;;
-    "$UNC_REPO") target=uncensored ;;
-    "$FP8_REPO") target=fp8 ;;
-    "$UNCFP8_REPO") target=uncensored-fp8 ;;
-    *) die "the 27B unit serves $model, which no 27B target names: ./switch-model.sh stock points it at one" ;;
+  case "${TARGET:-$model}" in
+    stock|"$STOCK_REPO") target=stock; trepo="$STOCK_REPO"; trev="$STOCK_REV" ;;
+    uncensored|"$UNC_REPO") target=uncensored; trepo="$UNC_REPO"; trev="$UNC_REV" ;;
+    fp8|"$FP8_REPO") target=fp8; trepo="$FP8_REPO"; trev="$FP8_REV" ;;
+    uncensored-fp8|"$UNCFP8_REPO") target=uncensored-fp8; trepo="$UNCFP8_REPO"; trev="$UNCFP8_REV" ;;
+    *) if [ -n "$TARGET" ]; then die "$TARGET is not a 27B lane target (stock, uncensored, fp8 or uncensored-fp8)"; fi
+       die "the 27B unit serves $model, which no 27B target names: ./switch-model.sh stock points it at one" ;;
   esac
   pull_image "$img" 27b 40
   if [ -n "$draft" ]; then
@@ -123,7 +136,10 @@ prepare_27b(){
 }
 
 case "$1" in
-  image|video|kolibri) exec bash "$HERE/install-$1.sh" --prepare ;;
+  image|video|kolibri)
+    # its checkpoint comes with its switch, as for any Load: no target here
+    [ -f "/etc/systemd/system/qwen38-$1.service" ] || die "the $1 lane is not installed on this box (no unit): ./install.sh installs its units"
+    exec bash "$HERE/install-$1.sh" --prepare ;;
   flash|27b)
     CONFIG_DIR="$HOME/.config/qwen38"; REPO_DIR="$HERE"
     # shellcheck source=lanes.sh

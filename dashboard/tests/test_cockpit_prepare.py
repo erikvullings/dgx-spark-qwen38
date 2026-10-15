@@ -129,17 +129,58 @@ class Prepare(unittest.TestCase):
         (self.tmp / "lane-image" / "sglang-wheel").unlink()
         self.assertIs(self.cp.collect_lanes_ready()["image"], False)
 
-    def test_the_action_runs_the_installers_prepare_and_takes_no_other_lane(self):
-        code, body = self.cp.start_action("prepare", {"lane": "kolibri"})
-        self.assertEqual(code, 202, body)
-        self.assertEqual(body["argv"], ["bash", str(REPO / "prepare-lane.sh"), "kolibri"])
-        for _ in range(100):
-            if self.cp.JOBS[body["job"]].status != "running":
-                break
+    def wait(self, job):
+        for _ in range(200):
+            if self.cp.JOBS[job].status != "running":
+                return
             __import__("time").sleep(0.05)
-        for lane in ("27B", "stock", "../install", "", "flash "):
-            with self.subTest(lane=lane):
-                self.assertEqual(self.cp.start_action("prepare", {"lane": lane})[0], 400)
+
+    def test_the_action_prepares_the_target_a_load_loads_and_takes_nothing_else(self):
+        # the lane from the target, and the target too for the two lanes whose preparation fetches
+        # a checkpoint: it fetched the default, then the switch the one loaded (2026-10-15)
+        for target, args in (("kolibri", ["kolibri"]), ("image-turbo", ["image"]), ("video", ["video"]),
+                             ("flash-nvda", ["flash", "flash-nvda"]), ("fp8", ["27b", "fp8"])):
+            with self.subTest(target=target):
+                code, body = self.cp.start_action("prepare", {"target": target})
+                self.assertEqual(code, 202, body)
+                self.assertEqual(body["argv"], ["bash", str(REPO / "prepare-lane.sh"), *args])
+                self.wait(body["job"])
+        for params in ({"target": "27B"}, {"target": "../install"}, {"target": ""}, {"target": "flash "},
+                       {"lane": "kolibri"}, {}):
+            with self.subTest(params=params):
+                self.assertEqual(self.cp.start_action("prepare", params)[0], 400)
+        self.assertGreaterEqual(self.cp.ACTIONS["prepare"]["timeout"], self.cp.ACTIONS["switch"]["timeout"])
+
+
+    def test_a_preparation_waits_for_a_lane_that_is_starting(self):
+        # a first Load's pip and docker pull beside a lane loading its weights, on the same unified
+        # memory: refused as a switch is (found in review, 2026-10-15)
+        with self.cp.LIFE_LOCK:
+            before = dict(self.cp.LIFE.get("states", {}))
+            self.cp.LIFE["states"] = {**before, "qwen38-sglang.service": "starting"}
+        try:
+            code, body = self.cp.start_action("prepare", {"target": "kolibri"})
+            self.assertEqual(code, 409, body)
+            self.assertEqual(body["error"], "blocked")
+        finally:
+            with self.cp.LIFE_LOCK:
+                self.cp.LIFE["states"] = before
+
+    def test_a_preparation_goes_beside_a_lane_that_is_steady(self):
+        # only a lane starting or stopping holds it back: ready, degraded, wedged, orphan or failed,
+        # a Load's first step goes (a gate on any of them refused every Load)
+        for state in ("ready", "degraded", "wedged", "orphan", "failed"):
+            with self.subTest(state=state):
+                with self.cp.LIFE_LOCK:
+                    before = dict(self.cp.LIFE.get("states", {}))
+                    self.cp.LIFE["states"] = {**before, "qwen38-sglang.service": state}
+                try:
+                    code, body = self.cp.start_action("prepare", {"target": "kolibri"})
+                    self.assertEqual(code, 202, body)
+                    self.wait(body["job"])
+                finally:
+                    with self.cp.LIFE_LOCK:
+                        self.cp.LIFE["states"] = before
 
 
 if __name__ == "__main__":
