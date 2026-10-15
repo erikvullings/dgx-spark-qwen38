@@ -86,7 +86,7 @@ class LoadingIt(unittest.TestCase):
         """)
         self.assertEqual(r["steps"][0], "prepare flash")
         self.assertIn("switch", r["steps"])
-        self.assertIn("checkpoint (about 136 GB)", r["desc"])
+        self.assertIn("checkpoint (about 135 GB)", r["desc"])
         self.assertNotIn("The next step fetches", r["desc"])
         self.assertEqual(r["cmd"], "bash prepare-lane.sh flash flash")
 
@@ -111,7 +111,7 @@ class LoadingIt(unittest.TestCase):
                 cmd: argvFor(steps[0].name, steps[0].params).join(' '), start: !LCARDS.has(U27) || true});
         """)
         self.assertEqual(r["steps"][0], "prepare 27b")
-        self.assertIn("its DFlash2 draft and its checkpoint", r["desc"])
+        self.assertIn("its DFlash2 draft (about 1.5 GB) and its checkpoint", r["desc"])
         self.assertNotIn("The next step fetches", r["desc"])
         self.assertEqual(r["cmd"], "bash prepare-lane.sh 27b stock")
 
@@ -132,8 +132,8 @@ class LoadingIt(unittest.TestCase):
 
     def test_a_lane_not_prepared_offers_its_load_and_no_start(self):
         # Start as installed would start a unit with nothing to run (the flash lane's launcher
-        # would pull its 30 GB image inside the start, then find no checkpoint): its Load
-        # prepares it first, and that is the one verb it offers
+        # would pull its image inside the start, then find no checkpoint): its Load prepares it
+        # first, and that is the one verb it offers
         r = run(self, lanes("stopped", "image") + r"""
         feed({lanes_ready: {image: false, video: true, kolibri: null, flash: false}});
         showView('lanes');

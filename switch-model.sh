@@ -149,7 +149,7 @@ if [ "$CHOICE" = "kolibri" ] || [ "$CHOICE" = "kolibri-nvfp4" ]; then
   fi
   KOL_IMAGE="$(grep -m1 -oE 'qwen38-kolibri:[^ ]+' "$KOLIBRI_UNIT" || true)"
   [ -n "$KOL_IMAGE" ] && docker image inspect "$KOL_IMAGE" >/dev/null 2>&1 \
-    || die "the Kolibri lane's image (${KOL_IMAGE:-none named in its unit}) is missing: re-run ./install-kolibri.sh --no-smoke, it builds it again"
+    || die "the Kolibri lane's image (${KOL_IMAGE:-none named in its unit}) is missing: ./prepare-lane.sh kolibri builds it (no sudo; its first Load from the cockpit runs it), then switch again"
   KOL_HF="$(grep -m1 -oE -- '-v [^ :]+:/root/\.cache/huggingface' "$KOLIBRI_UNIT" | sed -e 's/^-v //' -e 's|:/root/\.cache/huggingface$||' || true)"
   KOL_HF="${KOL_HF:-$HF_CACHE}"
   printf '\n\033[1;36m── Verifying %s @ %s in the cache (resumable)\033[0m\n' "$KOL_MODEL" "${KOL_REV:0:12}"
@@ -284,7 +284,7 @@ if [ "$CHOICE" = "image" ] || [ "$CHOICE" = "image-turbo" ]; then
   [ -f "$IMAGE_UNIT" ] || die "the image lane is not installed on this box (no $IMAGE_UNIT). Install it once: ./install.sh --with-image (40 GB)"
   IMG_WD="$(grep -m1 -E '^WorkingDirectory=' "$IMAGE_UNIT" | cut -d= -f2- || true)"
   IMG_PY="${IMG_WD:-$HOME/.local/share/qwen38-image}/venv/bin/python"
-  [ -x "$IMG_PY" ] || die "the image lane's runtime is missing ($IMG_PY): re-run ./install-image.sh, it resumes"
+  [ -x "$IMG_PY" ] || die "the image lane's runtime is missing ($IMG_PY): ./prepare-lane.sh image builds it (no sudo; its first Load from the cockpit runs it), then switch again"
   # The lane's two checkpoints and their pinned revisions, from install-image.sh, the one
   # place they are declared.
   eval "$(grep -E '^(IMAGE_MODEL_PIN|IMAGE_MODEL_PIN_REV|IMAGE_TURBO_PIN|IMAGE_TURBO_PIN_REV)=' "$REPO_DIR/install-image.sh" || true)"
@@ -413,7 +413,7 @@ if [ "$CHOICE" = "video" ]; then
   [ -f "$VIDEO_UNIT" ] || die "the video lane is not installed on this box (no $VIDEO_UNIT). Install it once: ./install.sh --with-video (about 165 GB of headroom)"
   VID_WD="$(grep -m1 -E '^WorkingDirectory=' "$VIDEO_UNIT" | cut -d= -f2- || true)"
   VID_PY="${VID_WD:-$HOME/.local/share/qwen38-video}/venv/bin/python"
-  [ -x "$VID_PY" ] || die "the video lane's runtime is missing ($VID_PY): re-run ./install-video.sh, it resumes"
+  [ -x "$VID_PY" ] || die "the video lane's runtime is missing ($VID_PY): ./prepare-lane.sh video builds it (no sudo; its first Load from the cockpit runs it), then switch again"
   VID_MODEL="$(grep -oE -- '--model-path [^ ]+' "$VIDEO_UNIT" | head -1 | cut -d' ' -f2 || true)"
   VID_MODEL="${VID_MODEL:-MiniMaxAI/MiniMax-H3}"
   VID_HF="$(grep -m1 -E '^Environment=HF_HOME=' "$VIDEO_UNIT" | cut -d= -f3- || true)"
@@ -556,7 +556,7 @@ if [ "$TARGET_LANE" = "27b" ]; then
   INVOCATION="$SGL_UNIT"
   PIN_IMAGE="$SERVE_IMAGE"
 else
-  [ -f "$FLASH_UNIT" ] || die "the Flash-Next stack is not installed on this box (no $FLASH_UNIT). Install it once first: MODEL_CHOICE=$CHOICE ./install.sh (~126 GB download, no image build)"
+  [ -f "$FLASH_UNIT" ] || die "the Flash-Next stack is not installed on this box (no $FLASH_UNIT). Install it once first: MODEL_CHOICE=$CHOICE ./install.sh (~135 GB download, no image build)"
   TARGET_UNIT="$FLASH_UNIT"; TARGET_UNIT_NAME="qwen38-flash.service"
   OTHER_UNIT="$SGL_UNIT"; OTHER_UNIT_NAME="qwen38-sglang.service"
   INVOCATION="$CONFIG_DIR/launch-flash.sh"

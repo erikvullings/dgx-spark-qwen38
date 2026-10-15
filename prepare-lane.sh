@@ -40,6 +40,15 @@ arg_of(){  # $1 file, $2 flag: the value the file gives that flag
 mount_of(){  # $1 file, $2 the container path: the host folder mounted there
   { grep -m1 -oE -- "-v [^ :]+:$2( |$)" "$1" || true; } | head -1 | sed -e 's/^-v //' -e "s|:$2 *\$||"
 }
+# The switch the Load runs next reads an image named name:tag or name@sha256:... and serves its
+# pin for any other word: an image named with no tag was pulled here, then the switch died on a
+# pin the box did not have (found in review, 2026-10-15).
+image_as_the_switch_reads(){  # $1 the launcher or the unit, $2 the image it names (none: said after)
+  case "$2" in
+    ""|*:*) ;;
+    *) die "$1 names its image as $2, with no tag or digest: the switch reads name:tag or name@sha256:... only (hand-edited? ./install.sh writes it again)" ;;
+  esac
+}
 room_or_die(){  # $1 GB, $2 a path on the disk it goes to, $3 what for
   local free; free="$(free_gb_at "$2")"
   [ "${free:-0}" -ge "$1" ] || die "need ~$1 GB free under $2 for $3; found ${free:-unknown} GB. Free some space, then Load the lane again: what came already is kept."
@@ -69,6 +78,10 @@ prepare_flash(){
   [ -f "$launch" ] || die "the flash lane is not installed on this box (no $launch): ./install.sh installs it"
   img="$(engine_image "$launch")"; model="$(arg_of "$launch" --model-path)"; hf="$(mount_of "$launch" /root/.cache/huggingface)"
   ple="$(mount_of "$launch" /ple)"
+  # a flag where the image should be: a launcher edited by hand left another word there, and its
+  # pull failed as if the internet were down
+  case "$img" in -*) img="" ;; esac
+  image_as_the_switch_reads "$launch" "$img"
   if [ -z "$img" ] || [ -z "$model" ] || [ -z "$hf" ]; then
     die "$launch names no image, model or cache where this expects it (hand-edited?): ./install.sh writes it again"
   fi
@@ -99,7 +112,7 @@ prepare_flash(){
     section "The flash lane's reduced draft vocabulary"
     map="${map#token-map-}"
     flash_token_map "$img" "$hf" "$model" "$rev" "${map%.pt}" "its checkpoint did not come: re-run ./prepare-lane.sh flash" \
-      || die "building the reduced draft vocabulary failed (the lines above say why); the lane serves without it"
+      || die "building the reduced draft vocabulary failed (the lines above say why): this Load stops here, and a Load again tries again (./prepare-lane.sh flash $target in a terminal)"
   fi
   printf '\n\033[1;32m── Done: the flash lane is prepared; its Load switches to it and starts it\033[0m\n'
 }
@@ -109,6 +122,8 @@ prepare_27b(){
   [ -f "$unit" ] || die "the 27B lane is not installed on this box (no $unit): ./install.sh installs it"
   img="$(engine_image "$unit")"; model="$(arg_of "$unit" --model-path)"; hf="$(mount_of "$unit" /root/.cache/huggingface)"
   draft="$(arg_of "$unit" --speculative-draft-model-path)"; drev="$(arg_of "$unit" --speculative-draft-model-revision)"
+  case "$img" in -*) img="" ;; esac                  # a flag where the image should be, as for the flash lane
+  image_as_the_switch_reads "$unit" "$img"
   if [ -z "$img" ] || [ -z "$model" ] || [ -z "$hf" ]; then
     die "$unit names no image, model or cache where this expects it (hand-edited?): ./install.sh writes it again"
   fi
@@ -130,13 +145,14 @@ prepare_27b(){
   pull_image "$img" 27b 48       # its peak, as install.sh counts it (DOCKER_NEED_GB)
   if [ -n "$draft" ]; then
     section "The 27B lane's DFlash2 draft ($draft @ ${drev:-main})"
-    room_or_die 5 "$hf" "its DFlash2 draft"
+    draft_in_cache "$unit" || room_or_die 5 "$hf" "its DFlash2 draft"
     # in the lane's own image, as install.sh fetches it; a token goes by name, never on a command line
     if [ -n "${HF_TOKEN:-}" ]; then export HF_TOKEN; tok=(-e HF_TOKEN); fi
-    docker run --rm --network host --user "$(id -u):$(id -g)" --entrypoint python3 \
+    # --init: a job the cockpit stops takes its container with it (switch-model.sh says why)
+    docker run --rm --init --network host --user "$(id -u):$(id -g)" --entrypoint python3 \
       -e HF_HOME=/hf -e HF_HUB_DOWNLOAD_TIMEOUT=30 -e HF_HUB_DISABLE_XET=1 ${tok[@]+"${tok[@]}"} \
       -v "$HERE/ckpt-fetch.py:/opt/qwen38/ckpt-fetch.py:ro" -v "$hf":/hf \
-      "$img" /opt/qwen38/ckpt-fetch.py "$draft" "${drev:-main}" --refs-main fill \
+      "$img" /opt/qwen38/ckpt-fetch.py "$draft" "${drev:-main}" --offline-first --refs-main fill \
       || die "the DFlash2 draft did not come (no internet, or HuggingFace throttling: set HF_TOKEN, or Load again: downloads resume)"
     # Its config carries the YaRN patch when the unit serves the 1M window, or the draft crashes
     # at load; the switch patches the target's (install.sh does both, at once).

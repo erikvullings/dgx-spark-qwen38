@@ -1337,11 +1337,11 @@ fi
 echo "OK (aarch64, ${TOTAL_GB} GB RAM, ${FREE_DISK_GB} GB free)"
 
 if [ "$UNITS_ONLY" -eq 1 ]; then
-  if [ "$LANE" = "flash" ]; then step "2/10 The Flash-Next image: pulled at the lane's first Load (~30 GB)"
+  if [ "$LANE" = "flash" ]; then step "2/10 The Flash-Next image: pulled at the lane's first Load (~15 GB to download, 34 GB on disk)"
   else step "2/10 The SGLang image: pulled at the lane's first Load (~15 GB to download)"; fi
   PULLED_IMAGE="$PULL_TARGET"
 elif [ "$LANE" = "flash" ]; then
-  step "2/10 Pulling the official SGLang Flash-Next image (~30 GB, one-time, resumable)"
+  step "2/10 Pulling the official SGLang Flash-Next image (~15 GB to download, 34 GB on disk, one-time, resumable)"
   docker pull "$PULL_TARGET" || die "docker pull failed. Causes: no internet, Docker Hub rate limit (retry in a few minutes or 'docker login'), or the pinned digest was removed upstream: try FLASH_IMAGE=lmsysorg/sglang:dev-qwen38-next-local ./install.sh"
   PULLED_IMAGE="$PULL_TARGET"
 else
@@ -1388,13 +1388,13 @@ else
 fi
 
 if [ "$UNITS_ONLY" -eq 1 ]; then
-  if [ "$LANE" = "flash" ]; then step "4/10 The Flash-Next checkpoint: fetched at the lane's first Load (~136 GB)"
-  else step "4/10 The checkpoints (the target and its DFlash2 draft): fetched at the lane's first Load (~28 GB)"; fi
+  if [ "$LANE" = "flash" ]; then step "4/10 The Flash-Next checkpoint: fetched at the lane's first Load (~135 GB)"
+  else step "4/10 The checkpoints (the target and its DFlash2 draft): fetched at the lane's first Load (~23 GB, ~33 for an FP8 target)"; fi
 elif [ "$LANE" = "flash" ]; then
-  step "4/10 Downloading the Flash-Next checkpoint (~136 GB, one-time, reuses/resumes any local copy)"
+  step "4/10 Downloading the Flash-Next checkpoint (~135 GB, one-time, reuses/resumes any local copy)"
   echo "This is the big one: at 100 MB/s it takes ~25 min. Interrupting is safe, re-running resumes."
 else
-  step "4/10 Downloading checkpoints (~28 GB, one-time, reuses/resumes any local copy)"
+  step "4/10 Downloading checkpoints (~23 GB, ~33 for an FP8 target, one-time, reuses/resumes any local copy)"
 fi
 mkdir -p "$HF_CACHE" "$CONFIG_DIR/sglang-cache"
 # A kept custom model is already serving from this cache: skip its download.

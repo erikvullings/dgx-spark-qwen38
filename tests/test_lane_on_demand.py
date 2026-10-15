@@ -129,6 +129,10 @@ class TheImageAndVideoLanesInTwoHalves(unittest.TestCase):
                 self.assertFalse([c for c in calls if c.startswith(("sudo ", "systemctl ", "docker "))], calls)
                 self.assertFalse((box.units / unit).exists(), "--prepare wrote the unit")
                 self.assertFalse([c for c in calls if "ckpt-fetch.py" in c], calls)
+                # its checkpoint is not there, and not for it to fetch: it said "already cached"
+                self.assertIn("checkpoint left to the Load's switch", out)
+                self.assertNotIn("already cached", out)
+
     def test_a_preparation_stopped_on_the_way_leaves_no_note(self):
         # the note is what says prepared: a run that stops after the wheel (here its clone fails)
         # leaves none, and the next Load prepares again instead of serving the bare wheel, with
@@ -220,6 +224,9 @@ class TheKolibriLaneInTwoHalves(unittest.TestCase):
         self.assertFalse([c for c in calls if c.startswith(("sudo ", "systemctl ", "docker run"))], calls)
         self.assertFalse((box.units / "qwen38-kolibri.service").exists())
         self.assertIn("image is ready", out)
+        # its checkpoint is not for it to fetch, nor in the cache: it said "already cached"
+        self.assertIn("checkpoint left to the Load's switch", out)
+        self.assertNotIn("already cached", out)
 
     def test_the_build_step_calls_no_sudo(self):
         text = (REPO / "install-kolibri.sh").read_text()
@@ -266,6 +273,20 @@ class TheDispatcher(unittest.TestCase):
                 self.assertEqual(rc, 2, out)
                 self.assertIn("usage", out)
 
+
+
+class TheSwitchSendsALaneNotBuiltToItsPreparation(unittest.TestCase):
+    """A switch to a side lane whose runtime is not built sent its user to re-run its whole
+    installer (sudo, the weights, a smoke that stops the lane that serves): it names the
+    preparation (found in review, 2026-10-15)."""
+
+    def test_each_side_lane_names_prepare_lane(self):
+        text = (REPO / "switch-model.sh").read_text()
+        for lane in ("image", "video", "kolibri"):
+            with self.subTest(lane=lane):
+                self.assertIn(f"./prepare-lane.sh {lane} builds it (no sudo; its first Load from the cockpit runs it), then switch again", text)
+        self.assertNotIn("runtime is missing ($IMG_PY): re-run", text)
+        self.assertNotIn("runtime is missing ($VID_PY): re-run", text)
 
 
 class TextBox:
@@ -397,6 +418,13 @@ class TheFlashPreparation(unittest.TestCase):
         self.assertNotIn("switch-model.sh flash --fetch", calls)
         self.assertIn(f"models--{nv.replace('/', '--')}/snapshots/{nv_rev} --out /out/token-map-65536.pt", calls[-1])
 
+    def test_the_vocabulary_build_stops_with_its_job(self):
+        # --init: a job the cockpit stops takes the build's container with it (found in review,
+        # 2026-10-15: it ran on)
+        rc, out, calls = self.box().run("flash")
+        self.assertEqual(rc, 0, out)
+        self.assertTrue(calls[-1].startswith("docker run --rm --init "), calls[-1])
+
     def test_a_target_of_another_lane_is_refused_before_anything(self):
         for target in ("stock", "image", "flash-turbo"):
             with self.subTest(target=target):
@@ -411,6 +439,23 @@ class TheFlashPreparation(unittest.TestCase):
         self.assertEqual(rc, 0, out)
         self.assertIn(f"docker pull {tag}", calls)
         self.assertNotIn("docker tag", heads(calls))          # a tag needs none
+
+    def test_a_launcher_with_no_image_where_it_should_be_is_refused_before_a_pull(self):
+        # edited by hand, another word on that line: its pull failed as if the internet were down
+        rc, out, calls = self.box(image="-e").run("flash")
+        self.assertEqual(rc, 1, out)
+        self.assertIn("names no image, model or cache where this expects it", out)
+        self.assertEqual(calls, [])
+
+    def test_an_image_named_with_no_tag_is_refused_before_a_pull(self):
+        # the switch the Load runs next reads name:tag or name@sha256:... and serves its pin for
+        # any other word: an image named alone was pulled here, then the switch died on a pin the
+        # box did not have (found in review, 2026-10-15)
+        rc, out, calls = self.box(image="qwen38-custom", image_here=True).run("flash")
+        self.assertEqual(rc, 1, out)
+        self.assertIn("names its image as qwen38-custom, with no tag or digest", out)
+        self.assertEqual(calls, [])
+        self.assertEqual(self.box(image="qwen38-custom:latest", image_here=True).run("flash")[0], 0)
 
     def test_a_checkpoint_already_whole_asks_its_caches_only(self):
         # as install.sh: 10 for a target whole in the cache, which a Download from Library fetched
@@ -465,6 +510,20 @@ class TheFlashPreparation(unittest.TestCase):
         rc, out, calls = b.run("flash")
         self.assertEqual(rc, 0, out)
 
+    def test_a_vocabulary_that_does_not_build_stops_the_load_and_says_so(self):
+        # it said the lane serves without it, as the Load stopped (found in review, 2026-10-15)
+        b = self.box(image_here=True)
+        b.stub("docker", f'echo "docker $*" >> "{b.t}/calls"\n'
+               'case "$1 $2" in\n'
+               f'  "info "*) echo "{b.t}/docker-root" ;;\n'
+               '  "image inspect") case "$3" in qwen38-pinned:*) exit 1 ;; esac; echo sha256:abc ;;\n'
+               '  "run "*) exit 1 ;;\n'
+               'esac\nexit 0\n')
+        rc, out, calls = b.run("flash")
+        self.assertEqual(rc, 1, out)
+        self.assertIn("this Load stops here, and a Load again tries again", out)
+        self.assertNotIn("serves without it", out)
+
     def test_no_vocabulary_asked_none_built(self):
         rc, out, calls = self.box(map_line=False).run("flash")
         self.assertEqual(rc, 0, out)
@@ -515,7 +574,8 @@ class TheTwentySevenBPreparation(unittest.TestCase):
                                         "docker image", "docker info", "docker pull", "docker image", "docker image",
                                         "docker tag", "docker run", "patch-yarn.py " + str(b.hf), "switch-model.sh uncensored"])
         run = next(c for c in calls if c.startswith("docker run"))
-        self.assertIn(f"-v {b.hf}:/hf {self.IMG} /opt/qwen38/ckpt-fetch.py {self.DRAFT} {self.DREV} --refs-main fill", run)
+        # the cache first (--offline-first): a draft already whole asks the Hub nothing
+        self.assertIn(f"-v {b.hf}:/hf {self.IMG} /opt/qwen38/ckpt-fetch.py {self.DRAFT} {self.DREV} --offline-first --refs-main fill", run)
         self.assertIn(f"patch-yarn.py {b.hf} {self.DRAFT} {self.DREV}", calls)
         self.assertIn("switch-model.sh uncensored --fetch", calls)
         self.assertIn(f"docker tag {self.IMG} qwen38-pinned:27b-eeeeeeeeeeee", calls)
@@ -543,6 +603,14 @@ class TheTwentySevenBPreparation(unittest.TestCase):
         self.assertIn("is not a 27B lane target", out)
         self.assertEqual(calls, [])
 
+    def test_the_drafts_fetch_stops_with_its_job(self):
+        # --init: a job the cockpit stops takes its container with it (found in review,
+        # 2026-10-15: it ran on)
+        rc, out, calls = self.box(image_here=True).run("27b")
+        self.assertEqual(rc, 0, out)
+        run = next(c for c in calls if c.startswith("docker run"))
+        self.assertTrue(run.startswith("docker run --rm --init "), run)
+
     def test_the_room_is_the_one_of_the_target_it_loads(self):
         # the unit on uncensored, the Load on fp8: what the cache holds of fp8 comes off (30 GiB)
         b = self.box(image_here=True, free_gb=20)
@@ -563,6 +631,14 @@ class TheTwentySevenBPreparation(unittest.TestCase):
         rc, out, calls = b.run("27b", "fp8")
         self.assertEqual(rc, 0, out)
 
+    def test_an_image_named_with_no_tag_is_refused_before_a_pull(self):
+        b = TextBox(image_here=True)
+        b.unit27(b.PINS["UNC_REPO"], "qwen38-custom", "1m", self.DRAFT, self.DREV)
+        rc, out, calls = b.run("27b")
+        self.assertEqual(rc, 1, out)
+        self.assertIn("names its image as qwen38-custom, with no tag or digest", out)
+        self.assertEqual(calls, [])
+
     def test_no_room_for_what_it_downloads_is_refused_before_the_first_byte(self):
         # its image, its checkpoint with its draft and their caches, summed on their one disk
         rc, out, calls = self.box(free_gb=60).run("27b")
@@ -573,6 +649,15 @@ class TheTwentySevenBPreparation(unittest.TestCase):
         self.assertIn("for this first Load (48 for its image; 45 for its checkpoint, its DFlash2 draft and their caches)", out)
         self.assertEqual(heads(calls), ["docker image", "docker info"])
 
+    def test_a_unit_with_no_image_where_it_should_be_is_refused_before_a_pull(self):
+        # a flag where the image should be, as for the flash lane (its pull failed as if the
+        # internet were down)
+        b = TextBox()
+        b.unit27(b.PINS["UNC_REPO"], "-e", "1m", self.DRAFT, self.DREV)
+        rc, out, calls = b.run("27b")
+        self.assertEqual(rc, 1, out)
+        self.assertIn("names no image, model or cache where this expects it", out)
+        self.assertEqual(calls, [])
 
     def test_a_token_goes_by_its_name_only(self):
         rc, out, calls = self.box(image_here=True).run("27b", HF_TOKEN="hf_value_never_shown")

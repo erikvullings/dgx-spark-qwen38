@@ -128,7 +128,8 @@ flash_token_map(){  # $1 image, $2 HF cache, $3 repo, $4 revision, $5 size, $6 w
     return 0
   fi
   [ -s "$CONFIG_DIR/corpus.jsonl" ] && corpus=(--corpus /out/corpus.jsonl)
-  docker run --rm --entrypoint python3 \
+  # --init: a job the cockpit stops takes its container with it (switch-model.sh says why)
+  docker run --rm --init --entrypoint python3 \
     -v "$hf":/root/.cache/huggingface \
     -v "$CONFIG_DIR":/out \
     -v "$REPO_DIR":/repo:ro \

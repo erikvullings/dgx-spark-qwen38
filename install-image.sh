@@ -280,7 +280,7 @@ if [ "$MODE" = units ]; then
   echo "  a terminal : ./install-image.sh --prepare, then ./switch-model.sh image and the commands it prints"
   exit 0
 fi
-echo "OK: $(uname -m), key present, checkpoint $([ "$WEIGHTS_NEED" -eq 0 ] && echo 'already cached' || echo "$WEIGHTS_NEED GB to download") into $HF_CACHE"
+echo "OK: $(uname -m), key present, checkpoint $([ "$MODE" = prepare ] && echo "left to the Load's switch" || { [ "$WEIGHTS_NEED" -eq 0 ] && echo 'already cached'; } || echo "$WEIGHTS_NEED GB to download") into $HF_CACHE"
 
 step "2/6 Runtime ($LANE_DIR)"
 mkdir -p "$LANE_DIR"

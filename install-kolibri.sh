@@ -299,7 +299,7 @@ if [ "$MODE" = units ]; then
   echo "OK: $(uname -m), key present; the image and the checkpoint come with the lane's first Load"
   install_service
   step "Done: the Kolibri lane is installed; its first Load prepares it"
-  echo "  the cockpit: Load on Kolibri-1 in the Lanes view builds its image (about $IMAGE_GB GB),"
+  echo "  the cockpit: Load on Kolibri-1 in the Lanes view builds its image (about 22 GB, 10 to download),"
   echo "               fetches its checkpoint (about $WEIGHTS_GB GB), then starts it"
   echo "  a terminal : ./install-kolibri.sh --prepare, then ./switch-model.sh kolibri and the commands it prints"
   exit 0
@@ -313,7 +313,7 @@ else
   [ "${FREE_D:-0}" -ge "$IMAGE_NEED" ] \
     || die "${FREE_D:-?} GB free under $DOCKER_ROOT, the image needs about $IMAGE_NEED GB. Free some space, or ./install.sh --no-kolibri."
 fi
-echo "OK: $(uname -m), key present, checkpoint $([ "$WEIGHTS_NEED" -eq 0 ] && echo 'already cached' || echo "$WEIGHTS_NEED GB to download") into $HF_CACHE, engine on $ENGINE_BIND:$PORT"
+echo "OK: $(uname -m), key present, checkpoint $([ "$MODE" = prepare ] && echo "left to the Load's switch" || { [ "$WEIGHTS_NEED" -eq 0 ] && echo 'already cached'; } || echo "$WEIGHTS_NEED GB to download") into $HF_CACHE, engine on $ENGINE_BIND:$PORT"
 
 step "2/5 Image ($LOCAL_IMAGE)"
 if docker image inspect "$LOCAL_IMAGE" >/dev/null 2>&1; then
