@@ -98,49 +98,52 @@ class Box:
         return r.returncode, r.stdout + r.stderr, calls
 
 
-class TheImageLaneInTwoHalves(unittest.TestCase):
-    INSTALLER = "install-image.sh"
-    LANE = ".local/share/qwen38-image"
-    UNIT = "qwen38-image.service"
+# The image and video lanes' installers have the same two halves: one test each, with a subTest
+# per lane (the CI counts every test once against what unittest runs, and a test class inheriting
+# another's tests ran them twice under one name).
+LANES_IN_TWO_HALVES = (("install-image.sh", ".local/share/qwen38-image", "qwen38-image.service"),
+                       ("install-video.sh", ".local/share/qwen38-video", "qwen38-video.service"))
 
+
+class TheImageAndVideoLanesInTwoHalves(unittest.TestCase):
     def test_units_only_puts_in_the_unit_and_nothing_heavy(self):
-        box = Box(self.INSTALLER, root_ok=True)
-        rc, out, calls = box.run("--units-only")
-        self.assertEqual(rc, 0, out)
-        self.assertTrue((box.units / self.UNIT).exists(), out)
-        self.assertFalse((box.home / self.LANE / "venv").exists(), "a venv was made")
-        self.assertFalse([c for c in calls if c.startswith(("git ", "python -m pip", "python -m venv"))], calls)
-        self.assertFalse([c for c in calls if "ckpt-fetch.py" in c], calls)
-        self.assertIn("first Load", out)
+        for installer, lane, unit in LANES_IN_TWO_HALVES:
+            with self.subTest(installer=installer):
+                box = Box(installer, root_ok=True)
+                rc, out, calls = box.run("--units-only")
+                self.assertEqual(rc, 0, out)
+                self.assertTrue((box.units / unit).exists(), out)
+                self.assertFalse((box.home / lane / "venv").exists(), "a venv was made")
+                self.assertFalse([c for c in calls if c.startswith(("git ", "python -m pip", "python -m venv"))], calls)
+                self.assertFalse([c for c in calls if "ckpt-fetch.py" in c], calls)
+                self.assertIn("first Load", out)
 
     def test_prepare_builds_the_runtime_with_no_sudo_and_no_unit(self):
-        box = Box(self.INSTALLER)
-        rc, out, calls = box.run("--prepare")
-        self.assertEqual(rc, 0, out)
-        self.assertTrue((box.home / self.LANE / "venv/bin/python").exists(), out)
-        self.assertTrue((box.home / self.LANE / "sglang-wheel").exists(), out)
-        self.assertFalse([c for c in calls if c.startswith(("sudo ", "systemctl ", "docker "))], calls)
-        self.assertFalse((box.units / self.UNIT).exists(), "--prepare wrote the unit")
-        self.assertFalse([c for c in calls if "ckpt-fetch.py" in c], calls)
+        for installer, lane, unit in LANES_IN_TWO_HALVES:
+            with self.subTest(installer=installer):
+                box = Box(installer)
+                rc, out, calls = box.run("--prepare")
+                self.assertEqual(rc, 0, out)
+                self.assertTrue((box.home / lane / "venv/bin/python").exists(), out)
+                self.assertTrue((box.home / lane / "sglang-wheel").exists(), out)
+                self.assertFalse([c for c in calls if c.startswith(("sudo ", "systemctl ", "docker "))], calls)
+                self.assertFalse((box.units / unit).exists(), "--prepare wrote the unit")
+                self.assertFalse([c for c in calls if "ckpt-fetch.py" in c], calls)
 
     def test_the_two_halves_are_asked_for_one_at_a_time(self):
-        rc, out, calls = Box(self.INSTALLER).run("--units-only", "--prepare")
-        self.assertNotEqual(rc, 0)
-        self.assertEqual(calls, [])
+        for installer, _lane, _unit in LANES_IN_TWO_HALVES:
+            with self.subTest(installer=installer):
+                rc, out, calls = Box(installer).run("--units-only", "--prepare")
+                self.assertNotEqual(rc, 0)
+                self.assertEqual(calls, [])
 
 
-
-class TheVideoLaneInTwoHalves(TheImageLaneInTwoHalves):
-    INSTALLER = "install-video.sh"
-    LANE = ".local/share/qwen38-video"
-    UNIT = "qwen38-video.service"
-
+class TheVideoLaneTurboAdapter(unittest.TestCase):
     def test_prepare_fetches_the_turbo_adapter_and_not_the_checkpoint(self):
         # the switch fetches the checkpoint; the adapter is the installer's alone to fetch
-        rc, out, calls = Box(self.INSTALLER).run("--prepare")
+        rc, out, calls = Box("install-video.sh").run("--prepare")
         self.assertEqual(rc, 0, out)
         self.assertIn("python - larryvrh/MiniMax-H3-Turbo-Lora", "\n".join(calls))
-
 
 
 class TheKolibriLaneInTwoHalves(unittest.TestCase):
