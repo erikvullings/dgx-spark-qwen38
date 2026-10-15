@@ -117,8 +117,10 @@ cd dgx-spark-qwen38 && git pull && ./install.sh
 
 **v1.19 -> v1.20 installs the lanes a box does not have yet**: since v1.20 a plain run installs
 every lane, so the first update of a box with one text lane brings the other one (the flash lane
-is 203 GB, the 27B 54), the image lane (40) and the video lane (about 150 of headroom), each
-proved once, the served lane stopped meanwhile and proved again after. To keep a box as it is,
+is 206 GB, the 27B 54), the image lane (40) and the video lane (about 165 of headroom). Since
+v1.33 they come on demand: that update gives each its units, and each is built at its first Load
+from the cockpit; `--all-weights` builds them all on that run and proves each, the served lane
+stopped meanwhile and proved again after. To keep a box as it is,
 say so on that run and later runs remember it: `./install.sh --no-flash --no-image --no-video`
 (or `--no-27b` on a flash box). A lane already installed is updated and not proved again.
 

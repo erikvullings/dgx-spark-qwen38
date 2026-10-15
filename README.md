@@ -1,7 +1,7 @@
 # One command turns a DGX Spark into a private AI server
 
 **Qwen3.8-27B at 71.4 tok/s with a 1M context, Qwen3.8-Flash-Next 176B on a single box, images,
-video and Kolibri-1: installed, pinned and proved by one command**, on a DGX Spark or another
+video and Kolibri-1: installed and pinned by one command**, the lane that serves proved before it ends and every other built at its first Load, on a DGX Spark or another
 GB10 box such as the ASUS Ascent GX10. No prompt, image or video leaves the box.
 
 ```bash
@@ -22,8 +22,8 @@ after: five models take turns in one 128 GB pool, SGLang's memory accounting mis
 transient allocations in it, and a pool pushed to zero freezes the box until a power cycle
 ([the unified-memory trap](docs/gb10-memory.md)). This repo is what lets them live on one box:
 
-- **Pinned and proved.** Images by digest, checkpoints by revision; every lane proves it
-  serves, the text lanes before the install ends, the others at their first Load, and an
+- **Pinned and proved.** Images by digest, checkpoints by revision; the lane that serves
+  proves it serves before the install ends (`--all-weights` proves every lane it builds), and an
   update is the same command.
 - **One pool, lanes that take turns.** The cockpit shows what holds the memory and loads a lane
   with one button, from a laptop or a phone.
@@ -57,8 +57,8 @@ switchable targets, 27B at 71 tok/s and Flash-Next 176B on one box), **typed dec
 (a System One endpoint speaking TypeSafe's Jev contract: calibrated probabilities
 instead of generated text), **image generation** (Qwen-Image 2.1) and **video generation**
 (MiniMax-H3), and since v1.29 **Aleph Alpha's Kolibri-1** on vLLM. The one command installs
-all of it: both Qwen text lanes, the Kolibri lane, the image lane and the video lane, each
-proved before the run ends. One cockpit drives the five lanes, one Load button moves
+all of it: the lane that serves, proved before the run ends, and every other lane on demand,
+built at its first Load from the cockpit (`--all-weights` builds and proves them all at install). One cockpit drives the five lanes, one Load button moves
 between them, and text answers on the same OpenAI-compatible API.
 
 The text lanes come with **seven switchable targets** and **zero quality loss** on each (NVFP4 is the quantization floor, Qwen's own FP8 is available above it; every speculative path is lossless by construction). Since v1.8 the flash lane serves an **official SGLang image** for this hardware with nothing added, serves **8 concurrent requests** by default where it used to serve one (since v1.19; opencode keeps a 205,000-token window on it since v1.20.3, and eight sessions that outgrow the pool queue rather than fail; `FLASH_TIER=context` keeps 4, so fewer sessions share the pool), and got **14 to 25% of its decode back from one flag** (`--speculative-token-map`, see below):
@@ -136,9 +136,9 @@ The engine answers `/health` even when it is wedged, so the cockpit runs a real 
 
 Requirements: DGX Spark or other GB10 machine (128 GB unified), stock DGX OS (Docker + NVIDIA container toolkit). The image and video lanes also build one package against Python's headers, which DGX OS leaves out: `sudo apt-get install -y python3-dev` first (each lane asks for it before it downloads anything). Free disk for the whole box: about **560 GB**, as the lanes measure on the reference box: the 27B lane 54 GB (21 checkpoint, 1.5 draft, 31 image), the flash lane 206 (126 checkpoint, 32 image, 48 for the PLE table it rewrites at every boot), the image lane 40 (31 checkpoint, 9 runtime), the video lane 160 (135 checkpoint and its Turbo adapter, 9 runtime, 16 for the runtime's own caches) and the Kolibri lane 102 (79 checkpoint, 23 image). Each lane checks its own room before it downloads anything (a lane on demand, at its first Load), and a lane installed whole that does not fit is left out and named at the end, with the command that adds it later, while the rest installs. What the text lanes check, in detail: for a 27B target, **45 GB** on the disk of `HF_CACHE` (`~/.cache/huggingface` by default) for the checkpoints and caches, and **48 GB** on the disk of Docker's images (`/var/lib/docker` on a stock box) for its 31 GB image (a pull's peak: Docker's containerd image store keeps the download beside the image); for a flash target, **230 GB** on the disk of `HF_CACHE` (180 for the checkpoint and its caches, 50 for the 47.7 GiB PLE table the lane rewrites at every boot, counted on the disk of `PLE_DIR` instead when that is another one) and **49 GB** there for its 32 GB image. When both are one disk, as on a stock box, the installer asks for the sum there: **93 GB** for a 27B target, **279 GB** for a flash one. What the cache already holds of a checkpoint comes off its share (a checkpoint that is all there needs 10 GB of working room instead), and an image already pulled needs 5 GB instead of its own size. Caching the other 27B targets adds ~22 GB per NVFP4 target and ~31 GB per FP8 one.
 
-One command, first install and updates alike. It clones or updates `~/dgx-spark-qwen38`, then runs the pinned installer, which installs the 27B, which serves, the keepalive proxy with its typed-decision endpoint, the opencode wiring, the cockpit and its Agent view, and every other lane **on demand**: their units now, and each one prepared at its first Load from the cockpit, as you, with no sudo, then its weights (Flash-Next 176B beside the 27B: 203 GB; images 40, video 144, Kolibri 102). The 27B proves it serves before the run ends; the other lanes prove themselves at their first Load. A new box downloads about 43 GB for the 27B (about 7 minutes at 100 MB/s). `--all-weights` installs the whole box now instead, as every run did before: about an hour and a half of work (92 minutes measured, the weights cached), plus about 530 GB of downloads (90 minutes at 100 MB/s). It ends by printing the cockpit URL, and there is nothing left to run by hand.
+One command, first install and updates alike. It clones or updates `~/dgx-spark-qwen38`, then runs the pinned installer, which installs the 27B, which serves, the keepalive proxy with its typed-decision endpoint, the opencode wiring, the cockpit and its Agent view, and every other lane **on demand**: their units now, and each one prepared at its first Load from the cockpit, as you, with no sudo, then its weights (Flash-Next 176B beside the 27B: 206 GB; images 40, video 160, Kolibri 102). The 27B proves it serves before the run ends; each other lane is built and started by its first Load. A new box downloads about 38 GB for the 27B (about 6 to 7 minutes at 100 MB/s). `--all-weights` installs the whole box now instead, as every run did before: about an hour and a half of work (92 minutes measured, the weights cached), plus about 460 GB of downloads (about 75 minutes at 100 MB/s). It ends by printing the cockpit URL, and there is nothing left to run by hand.
 
-**Updating a box adds the lanes it does not have yet, on demand.** A lane a box never had (the flash beside the 27B, images, video, Kolibri) gets its units, and its first Load from the cockpit prepares it; a lane already built is updated whole, as before. `--all-weights` builds the new ones now and proves them, and `--with-<lane>` does it for one lane. To keep a box as it is, say so once, and later runs remember it: `--no-kolibri`, `--no-flash` (or `--no-27b` on a flash box), `--no-image`, `--no-video`, after `bash -s --` on the one-liner.
+**Updating a box adds the lanes it does not have yet, on demand.** A lane a box never had (the flash beside the 27B, images, video, Kolibri) gets its units, and its first Load from the cockpit prepares it; a lane already on the box (installed whole, from any version, or begun by a first Load) is updated whole, as before. `--all-weights` builds the new ones now and proves them, and `--with-<lane>` does it for one lane. To keep a box as it is, say so once, and later runs remember it: `--no-kolibri`, `--no-flash` (or `--no-27b` on a flash box), `--no-image`, `--no-video`, after `bash -s --` on the one-liner.
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/hasso5703/dgx-spark-qwen38/main/get.sh | bash
@@ -189,10 +189,10 @@ Everything below is optional and combinable. Variables ride on the `bash` side o
 | Context mode (27B) | `CONTEXT_MODE=native` or `1m` | **`1m`** since v1.12.1 | 1,010,000 window via YaRN, mem-fraction 0.76, proxy required, limits fitted to the real pool at the end of the install (see the 1M section). The flash lane and `--no-service` are native either way, with no refusal, except `--no-service` on a box whose installed unit serves 1m: that is refused with both ways out, since it would leave the unit on configs it cannot start from. A re-run keeps whatever is already installed, both directions |
 | systemd service | default, or `--no-service` | service | `--no-service`: foreground with `./run.sh`, no sudo, 27B native only |
 | Start now | default, or `--no-start` | starts | install and enable the engine and the proxy without starting them (`sudo systemctl start` later, as the installer prints); that path installs the other text lane too, and skips the smoke test, the fit of the 1M limits, the cockpit with its Agent view, and the image and video lanes |
-| The other text lane | default, or `--no-flash` (on a 27B box), `--no-27b` (on a flash box) | installed beside the serving one, not enabled at boot | since v1.20: the same installer, started again for that lane, with its own target kept across updates; proved once, when it is new. `--with-flash` / `--with-27b` bring it back, and prove it |
-| Image lane | default, or `--no-image` | installed, not serving | Qwen-Image 2.1, 40 GB, proved once when it is new; `--with-image` brings it back after a `--no-image` |
-| Video lane | default, or `--no-video` | installed, not serving | MiniMax-H3, about 165 GB of headroom, proved once when it is new (about 23 min); `--with-video` brings it back |
-| Kolibri lane | default, or `--no-kolibri` | installed, not serving | Aleph Alpha's Kolibri-1 on vLLM, 102 GB (79 checkpoint, 23 image), proved once when it is new (about 10 min); `--with-kolibri` brings it back, and proves it |
+| The other text lane | default, or `--no-flash` (on a 27B box), `--no-27b` (on a flash box) | beside the serving one, on demand: its units, built at its first Load | since v1.20: the same installer, started again for that lane, with its own target kept across updates; since v1.33 its image, checkpoint and draft (or vocabulary) come with its first Load. `--with-flash` / `--with-27b` install it whole now and prove it, and bring it back |
+| Image lane | default, or `--no-image` | on demand: its units, built at its first Load | Qwen-Image 2.1, 40 GB; `--with-image` installs it whole now and proves it, and brings it back after a `--no-image` |
+| Video lane | default, or `--no-video` | on demand: its units, built at its first Load | MiniMax-H3, about 165 GB of headroom; `--with-video` installs it whole now and proves it (about 23 min), and brings it back |
+| Kolibri lane | default, or `--no-kolibri` | on demand: its units, built at its first Load | Aleph Alpha's Kolibri-1 on vLLM, 102 GB (79 checkpoint, 23 image); `--with-kolibri` installs it whole now and proves it (about 10 min), and brings it back |
 | opencode integration | default, or `--no-opencode` | on | on = ready config + `oc` launcher + default model following every switch; off = none of that, your own opencode config is never touched. `--with-opencode` turns it back on |
 | Ports | `PORT=`, `PROXY_PORT=` | 30000, 30001 | agent clients use the proxy port |
 | Storage | `HF_CACHE=`, `PLE_DIR=` | `~/.cache/huggingface`, `~/flashnext-ple` | checkpoints, and the 48 GB flash PLE backing file |
@@ -205,7 +205,7 @@ Combinations that make sense:
 ```bash
 # one-liner forms (variables on the bash side, flags after "bash -s --")
 curl -fsSL https://raw.githubusercontent.com/hasso5703/dgx-spark-qwen38/main/get.sh | bash                                  # 27B stock serving (1M), opencode, cockpit; flash, images, video and Kolibri prepared at their first Load
-curl -fsSL https://raw.githubusercontent.com/hasso5703/dgx-spark-qwen38/main/get.sh | bash -s -- --all-weights              # the whole box now, every lane built and proved (about 530 GB)
+curl -fsSL https://raw.githubusercontent.com/hasso5703/dgx-spark-qwen38/main/get.sh | bash -s -- --all-weights              # the whole box now, every lane built and proved (about 460 GB of downloads, 560 of disk)
 curl -fsSL https://raw.githubusercontent.com/hasso5703/dgx-spark-qwen38/main/get.sh | bash -s -- --no-flash --no-video --no-kolibri   # a smaller disk: the 27B and images only
 curl -fsSL https://raw.githubusercontent.com/hasso5703/dgx-spark-qwen38/main/get.sh | CONTEXT_MODE=native bash              # the 262144 window instead
 curl -fsSL https://raw.githubusercontent.com/hasso5703/dgx-spark-qwen38/main/get.sh | MODEL_CHOICE=uncensored bash           # abliterated 27B, 1M context
@@ -216,7 +216,7 @@ curl -fsSL https://raw.githubusercontent.com/hasso5703/dgx-spark-qwen38/main/get
 ./install.sh --no-service && ./run.sh                    # no systemd, foreground, Ctrl+C stops it
 CONTEXT_MODE=native ./install.sh                         # the 262144 window on a 1M box
 ./install.sh --with-opencode                             # turn the opencode integration back on
-./switch-model.sh stock | uncensored | flash             # change model later, no reinstall (then stop/start the units it prints)
+./switch-model.sh stock | uncensored | flash             # change model later, no reinstall (then stop/start the units it prints; a lane installed on demand is built once first: ./prepare-lane.sh <lane>)
 ```
 
 Re-running the installer (upgrades included) remembers what you chose: the installed model, the context mode, the port, the HF cache, the opencode on/off choice, and the lanes you left out. Pass the variable or flag again only to change something. It restarts the engine only when something the engine reads changed since it started (its unit, image, chat template, checkpoint config, API key): an update that touches only the cockpit, the proxy or opencode keeps it serving, and `RESTART_ENGINE=1 ./install.sh` forces a restart. The same holds for the services around it since v1.18.7: the proxy, the cockpit and opencode-web restart only when what they run or read changed (the proxy also follows an engine restart), so a run that changes nothing cuts no request in flight and no turn of the Agent view. `./uninstall.sh --list` shows everything the repo put on the box before removing anything.
@@ -326,7 +326,7 @@ table and every trap on the way: **[docs/systemone.md](docs/systemone.md)**.
 
 Every plain install includes an image lane beside the two text ones since v1.20: text to
 image, image editing with up to ten references, and the native RGBA this model is built for.
-It costs 40 GB (31 checkpoint, 9 runtime) and proves itself with one image the first time.
+It costs 40 GB (31 checkpoint, 9 runtime). A plain install puts in its units, and its first Load from the cockpit builds its runtime, as you, with no sudo, and fetches its checkpoint; `--with-image` installs it whole now and proves it with one image.
 `--no-image` leaves it out, and later runs remember that; `--with-image` brings it back:
 
 ```bash
@@ -336,7 +336,8 @@ curl -fsSL https://raw.githubusercontent.com/hasso5703/dgx-spark-qwen38/main/get
 Then it is a third lane, driven like the other two: on the cockpit's Lanes view, pick
 **Qwen-Image 2.1** and press **Load**: one action that switches the boot, stops the serving
 lane and starts this one (about a minute to answer). From a terminal,
-`./switch-model.sh image` does the switch and prints the rest. **Qwen-Image 2.1 Turbo**, Qwen's
+`./prepare-lane.sh image` builds the lane the first time (no sudo), and `./switch-model.sh image`
+does the switch and prints the rest. **Qwen-Image 2.1 Turbo**, Qwen's
 eight-step distillation of the same model, is a second checkpoint of the lane, loaded the same
 way (`./switch-model.sh image-turbo`, 32.5 GB on its first switch): about four and a half times
 faster, close to the base on photographs, portraits, illustrations and short text
@@ -378,7 +379,9 @@ Every number, every refusal and how the runtime is pinned: **[docs/image-lane.md
 
 Every plain install includes a video lane beside the others since v1.20: text to video
 with joint video-and-audio, plus first/last-frame conditioning. It needs about 165 GB of
-headroom and proves itself with one 4 s video the first time (about 23 minutes with its boot).
+headroom. A plain install puts in its units, and its first Load from the cockpit builds its runtime
+and fetches its checkpoint; `--with-video` installs it whole now and proves it with one 4 s video
+(about 23 minutes with its boot).
 `--no-video` leaves it out, and later runs remember that; `--with-video` brings it back:
 
 ```bash
@@ -388,7 +391,8 @@ curl -fsSL https://raw.githubusercontent.com/hasso5703/dgx-spark-qwen38/main/get
 Then it is a lane driven like the others: on the cockpit's Lanes view, pick
 **MiniMax-H3** and press **Load**: one action that switches the boot, stops the serving
 lane and starts this one (about 12 min to answer). From a terminal,
-`./switch-model.sh video` does the switch and prints the rest.
+`./prepare-lane.sh video` builds the lane the first time (no sudo), and `./switch-model.sh video`
+does the switch and prints the rest.
 
 It serves the SGLang cookbook's MiniMax-H3 recipe as upstream wrote it, on the v0.5.21
 release, with one local patch (an idle lane waits on its socket instead of holding a CPU
@@ -419,7 +423,8 @@ on the box, and its first Load from the cockpit builds its image and fetches its
 `--with-kolibri` brings it back.
 
 On the cockpit's Lanes view, pick **Kolibri-1** and press **Load** (about 10 minutes to answer);
-from a terminal, `./switch-model.sh kolibri`. Two checkpoints, measured here:
+from a terminal, `./prepare-lane.sh kolibri` the first time (it builds its image, no sudo), then
+`./switch-model.sh kolibri`. Two checkpoints, measured here:
 
 | | decode, 1 / 8 / 16 streams | weights | quality against the official FP8 |
 |---|---|---|---|

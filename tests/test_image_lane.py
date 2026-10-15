@@ -570,8 +570,8 @@ class TheOneLinerReachesIt(unittest.TestCase):
 
     def test_the_help_says_what_it_costs_before_someone_spends_it(self):
         self.assertIn("--no-image            leave the Qwen-Image 2.1 lane out (40 GB)", self.text)
-        self.assertIn("about 43 GB of downloads", self.text)     # a plain run: the lane that serves
-        self.assertIn("about 540 GB of disk", self.text)         # --all-weights: the whole box
+        self.assertIn("about 38 GB of\ndownloads", self.text)   # a plain run: the lane that serves
+        self.assertIn("about 560 GB of disk", self.text)         # --all-weights: the whole box
 
 
 class AnUpdateKeepsTheImageLaneAsTheBootLane(unittest.TestCase):

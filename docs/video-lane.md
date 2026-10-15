@@ -42,7 +42,9 @@ from the same three controls at the top of the cockpit, and it obeys the same ru
    follow the boot in the engine's own words, and Generate turns on by itself.
 
 Back is the same three moves the other way. From a terminal the switch is
-`./switch-model.sh video` (or `stock`), and it prints the two commands that follow.
+`./switch-model.sh video` (or `stock`), and it prints the two commands that follow; a lane
+installed on demand is built first by `./prepare-lane.sh video` (no sudo), which its first Load
+from the cockpit runs.
 
 **Never two engines at once.** The video checkpoint (fl2va partition plus shared
 components) does not fit beside any serving

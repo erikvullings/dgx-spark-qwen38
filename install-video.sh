@@ -5,6 +5,9 @@
 #   ./install-video.sh                 first install, or update in place
 #   ./install-video.sh --no-smoke      skip the generation at the end
 #   ./install-video.sh --uninstall     remove the unit and the venv (weights kept)
+#   ./install-video.sh --units-only    the unit alone: no runtime, no weights (install.sh, on demand)
+#   ./install-video.sh --prepare       the runtime and the Turbo adapter, no sudo: the cockpit's
+#                                      first Load runs it (./prepare-lane.sh video)
 #
 # install.sh runs this on every plain install since v1.20: a box gets every lane. The
 # checkpoint (the fl2va partition plus the shared components and the Turbo adapter, 135

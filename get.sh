@@ -3,8 +3,9 @@
 #   curl -fsSL https://raw.githubusercontent.com/hasso5703/dgx-spark-qwen38/main/get.sh | bash
 # NO sudo in front, ever: install.sh calls sudo itself for the steps that need
 # it, and under sudo every path it writes moves to /root (refused below).
-# It installs the whole box, engine and proxy and cockpit, and prints the
-# cockpit URL when it is done.
+# It installs the box: the lane that serves, the proxy and the cockpit, and
+# every other lane on demand (its first Load from the cockpit builds it), and
+# prints the cockpit URL when it is done.
 # Pass install.sh options after `bash -s --`, e.g.:
 #   curl -fsSL .../get.sh | bash -s -- --no-service
 # Env overrides pass through (PORT=, HF_CACHE=, DIR= for a custom clone location).

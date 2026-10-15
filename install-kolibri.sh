@@ -6,6 +6,9 @@
 #   ./install-kolibri.sh                 first install, or update in place
 #   ./install-kolibri.sh --no-smoke      skip the proof at the end
 #   ./install-kolibri.sh --uninstall     remove the unit and the local image (weights kept)
+#   ./install-kolibri.sh --units-only    the unit alone: no image, no weights (install.sh, on demand)
+#   ./install-kolibri.sh --prepare       its image, built with no sudo: the cockpit's first Load
+#                                        runs it (./prepare-lane.sh kolibri)
 #
 # install.sh runs this on every plain install, like the other lanes; ./install.sh
 # --no-kolibri leaves it out for good (a marker file remembers it). It takes 79 GB of

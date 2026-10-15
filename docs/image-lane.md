@@ -35,7 +35,9 @@ same single Load control, and it obeys the same rule.
    all follow the boot in the engine's own words, and Generate turns on by itself.
 
 Back to text is the same three moves the other way. From a terminal the switch is
-`./switch-model.sh image` (or `stock`), and it prints the two commands that follow.
+`./switch-model.sh image` (or `stock`), and it prints the two commands that follow; a lane
+installed on demand is built first by `./prepare-lane.sh image` (no sudo), which its first Load
+from the cockpit runs.
 
 **Two checkpoints, one lane.** The Lanes card offers `Qwen-Image 2.1` and `Qwen-Image 2.1
 Turbo`, Qwen's eight-step distillation of the same model (`./switch-model.sh image-turbo` from

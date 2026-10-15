@@ -504,12 +504,12 @@ default), which serves, the keepalive proxy with its typed decision endpoint,
 the opencode wiring, the cockpit and its Agent view, and every other lane on
 demand: a run puts in its units, and the first Load of each from the cockpit
 prepares it as the user, with no sudo, and fetches its weights. That is the
-other text lane (the flash beside the 27B, its image and checkpoint, 203 GB;
-or the 27B beside a serving flash, its image, draft and checkpoint, 54), the
-image lane (40), the video lane (144) and the Kolibri lane (Aleph Alpha's
-Kolibri-1, on vLLM, 102). The lane that serves proves it serves before the run
-ends; on a new box the 27B takes 54 GB of disk, about 43 GB of downloads (about
-7 minutes at 100 MB/s). A lane installed whole (--all-weights, --with-<lane>)
+other text lane (the flash beside the 27B, its image, checkpoint and PLE table,
+206 GB; or the 27B beside a serving flash, its image, draft and checkpoint,
+54), the image lane (40), the video lane (160) and the Kolibri lane (Aleph
+Alpha's Kolibri-1, on vLLM, 102). The lane that serves proves it serves before
+the run ends; on a new box the 27B takes 54 GB of disk, about 38 GB of
+downloads (about 6 to 7 minutes at 100 MB/s). A lane installed whole (--all-weights, --with-<lane>)
 that does not fit on the disk is left out and named at the end, with the
 command that adds it later. When it finishes it prints the
 cockpit URL, and from there you start, stop, switch, watch and benchmark
@@ -530,11 +530,11 @@ without a terminal.
                         by later runs; a lane already installed stays in place,
                         not updated (./install-image.sh --uninstall removes it)
   --with-image          bring it back after a --no-image
-  --no-video            leave the MiniMax-H3 video lane out (144 GB),
+  --no-video            leave the MiniMax-H3 video lane out (160 GB),
                         remembered the same way (./install-video.sh --uninstall)
   --with-video          bring it back after a --no-video
   --no-flash            leave the flash 176B lane out when it is not the one
-                        serving (203 GB), remembered the same way
+                        serving (206 GB), remembered the same way
   --with-flash          bring it back after a --no-flash
   --no-27b              leave the 27B lane out when it is not the one serving
                         (54 GB), remembered the same way
@@ -544,7 +544,7 @@ without a terminal.
   --with-kolibri        bring it back after a --no-kolibri
   --all-weights         install every lane whole now (the flash beside the 27B,
                         the image, video and Kolibri lanes), runtime and
-                        weights, about 540 GB of disk, and prove each new one
+                        weights, about 560 GB of disk, and prove each new one
                         (without it, each is prepared at its first Load from
                         the cockpit; --with-<lane> does the same for that one
                         lane)
@@ -573,15 +573,15 @@ box, the 27B image on 2026-10-09):
                                      against 887,797 for NVFP4, 2026-09-18)
   MODEL_CHOICE=uncensored-fp8        the huihui abliteration in that same FP8 format
   MODEL_CHOICE=flash                 serve Qwen3.8-Flash-Next (176B hybrid MoE,
-                                     NVFP4, SGLang engine, ~126 GB download; the
+                                     NVFP4, SGLang engine, ~135 GB download; the
                                      47.7 GiB N-gram table is served from a file
                                      on NVMe, with prefix caching and vision)
   MODEL_CHOICE=flash-uncensored      the abliterated build of the same tree
-                                     (~126 GB): 205 of its 206 shards are
+                                     (~135 GB): 205 of its 206 shards are
                                      byte-identical in size to the stock export,
                                      so every serving flag is the same one
   MODEL_CHOICE=flash-nvda            the same model from NVIDIA's own mixed-
-                                     precision export (~124 GB download), served
+                                     precision export (~133 GB download), served
                                      with no --quantization and a pinned MoE
                                      runner; measured here as a tie with stock
   SPEC_TOKEN_MAP_SIZE=0              flash: serve without the reduced draft
@@ -609,8 +609,8 @@ box, the 27B image on 2026-10-09):
   PROXY_PORT=30001                   keepalive proxy port (default: PORT+1)
   SERVE_IMAGE=ref                    serving image for the 27B lane
   FLASH_SERVE_IMAGE=ref              serving image for the Flash-Next lane
-  HF_CACHE=/path                     HuggingFace cache location (~28 GB for a 27B
-                                     target, ~126 GB for flash)
+  HF_CACHE=/path                     HuggingFace cache location (~23 GB for a 27B
+                                     target and its draft, ~135 GB for flash)
   PORT=30000                         serving port
 HLP
       exit 0 ;;
@@ -2894,12 +2894,12 @@ except Exception as e:
       esac
     }
     if [ "$SECOND_LANE" = flash ]; then
-      lane_line "Flash 176B " "$SECOND_STATE" flash flash "203 GB" "$FLASH_UNIT_PATH"
+      lane_line "Flash 176B " "$SECOND_STATE" flash flash "206 GB" "$FLASH_UNIT_PATH"
     elif [ "$SECOND_LANE" = 27b ]; then
       lane_line "Qwen3.8 27B" "$SECOND_STATE" 27b stock "54 GB" "$SGL_UNIT_PATH"
     fi
     lane_line "Images     " "$IMAGE_STATE" image image "40 GB" /etc/systemd/system/qwen38-image.service
-    lane_line "Videos     " "$VIDEO_STATE" video video "144 GB" /etc/systemd/system/qwen38-video.service
+    lane_line "Videos     " "$VIDEO_STATE" video video "160 GB" /etc/systemd/system/qwen38-video.service
     lane_line "Kolibri-1  " "$KOLIBRI_STATE" kolibri kolibri "102 GB" "$KOLIBRI_UNIT_PATH"
     [ "$LANE" = "27b" ] && echo "  Benchmark  : ./bench.sh"
     exit 0

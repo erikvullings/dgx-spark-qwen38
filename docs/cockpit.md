@@ -60,6 +60,12 @@ that script with `AGENT_BIND=`.
 
 *Lanes: each lane with what it serves, what its boots took on this box and the KV pool each one won, and one button that loads it: switch, stop, start, each step asking first and showing its command.*
 
+A lane installed on demand says so on its card (built at its first Load): its Load builds it first,
+as you, with no sudo (`./prepare-lane.sh <lane>`, with the target it loads for the two text lanes,
+whose preparation fetches that checkpoint), then switches, stops and starts. Its Start, which starts
+the unit as it is with no switch, appears once a Load has switched to it: before, the unit had no
+checkpoint or chat template to run.
+
 ![The Traffic view: the running, waiting and KV counters, the requests the keepalive proxy relayed with client, route, size, duration and outcome, and the abandoned-request guard](img/cockpit-traffic.png)
 
 *Traffic: both sides of the wire. The feed is what the proxy relayed; the guard is whether any client walked away from an answer the engine is still generating.*
@@ -130,7 +136,7 @@ marks and scripts are all served by the box: the page fetches nothing from elsew
   job scans again before it deletes, and the page sends no name and no path. It is the
   one cleanup the page runs; the rest of the reclaim stays a command. Below, each target a
   Load can switch to says whether its checkpoint is on disk (whole for what its lane
-  serves), begun or not downloaded, and Download fetches it where its lane is installed:
+  serves), begun or not downloaded, and Download fetches it where its lane is installed and built:
   `./switch-model.sh <target> --fetch`, the switch's own fetch (the cache first, resumable,
   its room checked), which changes nothing else, no unit, no boot, no engine.
 
