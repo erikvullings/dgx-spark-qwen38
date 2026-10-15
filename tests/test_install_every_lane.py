@@ -393,7 +393,7 @@ class TheOtherTextLaneOnDemand(unittest.TestCase):
                 with self.subTest(lane=lane, units_only=units_only):
                     script = (f'set -euo pipefail\ndie(){{ echo "DIE $*"; exit 1; }}\nLANE={lane}; UNITS_ONLY={units_only}\n'
                               f'HF_CACHE="{t}/hf"; PLE_DIR="{t}/ple"; MODEL_REPO=org/model; MODEL_REV=abc; IMAGE=img27; FLASH_IMAGE=imgflash\n'
-                              + section + '\necho ROOM-OK\n')
+                              f'. "{REPO}/lanes.sh"\n' + section + '\necho ROOM-OK\n')
                     r = subprocess.run(["bash", "-c", script], capture_output=True, text=True, timeout=60, env={"PATH": f"{t}:/usr/bin:/bin"})
                     self.assertEqual(r.returncode, rc, r.stdout + r.stderr)
                     self.assertIn("ROOM-OK" if rc == 0 else "DIE Need ~", r.stdout)
@@ -426,19 +426,36 @@ class TheOtherTextLaneOnDemand(unittest.TestCase):
         self.assertEqual(self.map_line(65536, built=False, tier="--mem-fraction-static 0.8")[1], "")
 
 
+class TheWholeBoxNeedsTheFullInstall(unittest.TestCase):
+    """--all-weights with --no-service did none of what it says, and with --no-start the other
+    text lane alone: refused at parse time, as --with-<lane> is (found in review, 2026-10-15)."""
+
+    def test_it_is_refused_with_no_start_or_no_service(self):
+        for flag in ("--no-start", "--no-service"):
+            with self.subTest(flag=flag):
+                e = {"PATH": "/usr/local/bin:/usr/bin:/bin", "HOME": str(tmp("aw-home-")), "MODEL_CHOICE": "stock"}
+                r = subprocess.run([str(REPO / "install.sh"), "--all-weights", flag],
+                                   capture_output=True, text=True, env=e, cwd=str(REPO), timeout=60)
+                self.assertNotEqual(r.returncode, 0, flag)
+                self.assertIn("--all-weights needs the full install", r.stdout + r.stderr, flag)
+
+
 class TheParentStartsIt(unittest.TestCase):
     """The block before step 7 that starts the run for the other lane, against a stub
     install.sh that prints what it was given."""
-    BLOCK = between('SECOND_LANE=""; SECOND_UNIT=""; SECOND_FRESH=0; SECOND_STATE=""; SECOND_UNITS=0\n',
+    BLOCK = between('SECOND_LANE=""; SECOND_UNIT=""; SECOND_FRESH=0; SECOND_NEW=0; SECOND_STATE=""; SECOND_UNITS=0\n',
                     '\nif [ -n "$SECONDARY" ]; then\n  step "7/10')
     PREPARED = between("text_lane_prepared(){", "\n}\n") + "\n}\n"
     IMG_FLASH, IMG_27B = "lmsysorg/sglang@sha256:" + "a" * 64, "lmsysorg/sglang:v0.5.21"
 
     def parent(self, lane, want, unit_there, child_rc=0, no_service=0, flash_ready=False, all_weights=0, with_flash=0,
-               ready_27b=False, image_27b=False, with_27b=0):
+               ready_27b=False, image_27b=False, with_27b=0, map_waits=False, map_built=False, served=None):
         """flash_ready: the image the flash launcher runs is on the box. ready_27b: the image the
         27B unit runs (a tag here, as an operator may pass) and its DFlash2 draft are; image_27b:
-        the image alone. The launcher and the unit are written as their templates write them."""
+        the image alone. served: the checkpoint the launcher or the unit serves is whole in the
+        cache it mounts (by default when the lane is ready; False: a Load stopped before its
+        switch). map_built: the draft vocabulary, "" for an empty file. The launcher and the unit
+        are written as their templates write them."""
         t = tmp("lane-parent-")
         (t / "cfg").mkdir()
         units = t / "units"
@@ -448,7 +465,11 @@ class TheParentStartsIt(unittest.TestCase):
         if flash_ready:
             (t / "cfg" / "launch-flash.sh").write_text(
                 f"exec /usr/bin/docker run --rm \\\n  -v {hf}:/root/.cache/huggingface \\\n  {self.IMG_FLASH} \\\n"
-                "  python3 -m sglang.launch_server \\\n    --model-path org/flash --tp-size 1\n")
+                "  python3 -m sglang.launch_server \\\n    --model-path org/flash --tp-size 1\n"
+                # a launcher of this version: it waits for its draft vocabulary
+                + (f'[ -s "{t}/cfg/token-map-65536.pt" ] && TIER+=(--speculative-token-map /out/token-map-65536.pt)\n' if map_waits else ""))
+            if map_built is not False:
+                (t / "cfg" / "token-map-65536.pt").write_text("map" if map_built is True else map_built)
             present.append(self.IMG_FLASH)
         if ready_27b or image_27b or (unit_there and lane == "flash"):
             (units / "qwen38-sglang.service").write_text(
@@ -463,6 +484,12 @@ class TheParentStartsIt(unittest.TestCase):
             snap.mkdir(parents=True)
             (snap / "config.json").write_text("{}")
             (snap / "model.safetensors").write_text("w")
+        for repo, ready in (("org--flash", flash_ready), ("org--27b", ready_27b)):
+            if served if served is not None else ready:
+                (hf / "hub" / f"models--{repo}" / "refs").mkdir(parents=True)
+                (hf / "hub" / f"models--{repo}" / "refs" / "main").write_text("c" * 40)
+                (hf / "hub" / f"models--{repo}" / "snapshots" / ("c" * 40)).mkdir(parents=True)
+                (hf / "hub" / f"models--{repo}" / "snapshots" / ("c" * 40) / "model.safetensors").write_text("w")
         (t / "present").write_text("".join(i + "\n" for i in present))
         (t / "bin").mkdir()
         stub(t / "bin" / "docker", f'[ "$1 $2" = "image inspect" ] && grep -qxF -- "$3" "{t}/present"')
@@ -484,7 +511,7 @@ class TheParentStartsIt(unittest.TestCase):
                   f'. "{REPO}/lanes.sh"\n'
                   + self.PREPARED +
                   'PORT=31000; HF_CACHE=/data/hf; ENGINE_BIND=127.0.0.1; PROXY_BIND=0.0.0.0; PROXY_PORT=31001\n'
-                  + block + '\necho "AFTER FRESH=$SECOND_FRESH STATE=$SECOND_STATE"\n')
+                  + block + '\necho "AFTER FRESH=$SECOND_FRESH STATE=$SECOND_STATE"\necho "NEW=$SECOND_NEW"\n')
         env = {"PATH": f"{t}/bin:/usr/bin:/bin", "MODEL_CHOICE": "stock", "MODEL_REV": "main", "CONTEXT_MODE": "1m"}
         r = subprocess.run(["bash", "-c", script], capture_output=True, text=True, timeout=30, env=env)
         self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
@@ -497,6 +524,38 @@ class TheParentStartsIt(unittest.TestCase):
                       "PORT=31000 HF_CACHE=/data/hf ENGINE_BIND=127.0.0.1 PROXY_BIND=0.0.0.0 PROXY_PORT=31001 "
                       "UNITS_ONLY=1", out)
         self.assertIn("AFTER FRESH=1 STATE=units", out)
+
+    def test_a_flash_lane_whose_load_stopped_after_its_pull_stays_on_demand(self):
+        # its image there, the vocabulary its launcher waits for not: the cockpit reads it not
+        # built, and an update gave it a whole run on the target its launcher named, the default
+        # (found in review, 2026-10-15); with its vocabulary, it is updated whole as before
+        out = self.parent("27b", 1, unit_there=True, flash_ready=True, map_waits=True)
+        self.assertIn("UNITS_ONLY=1", out)
+        out = self.parent("27b", 1, unit_there=True, flash_ready=True, map_waits=True, map_built=True)
+        self.assertIn("UNITS_ONLY=unset", out)
+
+    def test_a_load_stopped_before_its_switch_stays_on_demand(self):
+        # its runtime built, the checkpoint its launcher or unit names not there (the Load fetched
+        # another target, then the page closed): an update built it whole on that target, a flash
+        # checkpoint of 135 GB nobody chose, or stock for a 27B Load of fp8 (found in review,
+        # 2026-10-15)
+        out = self.parent("27b", 1, unit_there=True, flash_ready=True, map_waits=True, map_built=True, served=False)
+        self.assertIn("UNITS_ONLY=1", out)
+        out = self.parent("flash", 1, unit_there=True, ready_27b=True, served=False)
+        self.assertIn("UNITS_ONLY=1", out)
+
+    def test_an_empty_vocabulary_is_none(self):
+        out = self.parent("27b", 1, unit_there=True, flash_ready=True, map_waits=True, map_built="")
+        self.assertIn("UNITS_ONLY=1", out)
+
+    def test_a_lane_built_whole_from_its_units_only_is_new_to_the_proofs(self):
+        # its unit there, its runtime not (installed on demand): --all-weights builds it whole and
+        # the proofs at the end take it as new; one prepared is not (found in review, 2026-10-15)
+        out = self.parent("27b", 1, unit_there=True, all_weights=1)
+        self.assertIn("AFTER FRESH=0", out)
+        self.assertIn("NEW=1", out)
+        out = self.parent("27b", 1, unit_there=True, flash_ready=True)
+        self.assertIn("NEW=0", out)
 
     def test_a_flash_lane_prepared_all_weights_or_named_is_installed_whole(self):
         for kw in ({"flash_ready": True}, {"all_weights": 1}, {"with_flash": 1}):
@@ -546,11 +605,11 @@ class TheOtherLanesAndTheirProofs(unittest.TestCase):
     what is installed and how (whole, or its units only, prepared at its first Load), what is
     proved, in which order, and that the served lane comes back."""
     BLOCK = between("    # ── Every other lane", "    printf '\\n\\033[1;32m✅ Installed")
-    MODES = between("side_prepared(){", "\n}\n") + "\n}\n" + between("side_mode(){", "\n}\n") + "\n}\n"
+    MODES = between("side_lane_dir(){", "\n# The other text lane") + "\n" + between("side_mode(){", "\n}\n") + "\n}\n"
 
     def end(self, units=(), want_image=1, want_video=1, with_image=0, with_video=0, with_flash=0,
             second_state="installed", second_fresh=1, image_rc=0, video_rc=0, prove_fail="",
-            want_kolibri=1, with_kolibri=0, kolibri_rc=0, prepared=(), all_weights=0):
+            want_kolibri=1, with_kolibri=0, kolibri_rc=0, prepared=(), all_weights=0, begun=(), second_new=None):
         t = tmp("lane-end-")
         unit_dir = t / "units"
         unit_dir.mkdir()
@@ -565,6 +624,13 @@ class TheOtherLanesAndTheirProofs(unittest.TestCase):
                 (d / "venv" / "bin" / "python").write_text("#!/bin/sh\n")
                 (d / "venv" / "bin" / "python").chmod(0o755)
                 (d / "sglang-wheel").write_text("0.5.21\n")
+        # begun: its venv and no wheel's note (a lane installed before the note, or a first Load
+        # that stopped on the way)
+        for lane in begun:
+            d = t / "home" / ".local" / "share" / f"qwen38-{lane}"
+            (d / "venv" / "bin").mkdir(parents=True)
+            (d / "venv" / "bin" / "python").write_text("#!/bin/sh\n")
+            (d / "venv" / "bin" / "python").chmod(0o755)
         repo = t / "repo"
         repo.mkdir()
         log = t / "calls"
@@ -589,7 +655,7 @@ class TheOtherLanesAndTheirProofs(unittest.TestCase):
                   'KEEPALIVE_UNIT=qwen38-keepalive.service; PORT=30000; PROXY_PORT=30001; CONTEXT_MODE=1m; OPENCODE=1; KA_CHANGED=0\n'
                   f"WANT_IMAGE={want_image}; WANT_VIDEO={want_video}; WITH_IMAGE={with_image}; WITH_VIDEO={with_video}\n"
                   f"WITH_FLASH={with_flash}; WITH_27B=0; WANT_KOLIBRI={want_kolibri}; WITH_KOLIBRI={with_kolibri}\n"
-                  f"SECOND_LANE=flash; SECOND_UNIT=qwen38-flash.service; SECOND_STATE={second_state}; SECOND_FRESH={second_fresh}\n"
+                  f"SECOND_LANE=flash; SECOND_UNIT=qwen38-flash.service; SECOND_STATE={second_state}; SECOND_FRESH={second_fresh}; SECOND_NEW={second_fresh if second_new is None else second_new}\n"
                   + block + '\necho "STATES second=$SECOND_STATE image=$IMAGE_STATE video=$VIDEO_STATE kolibri=$KOLIBRI_STATE"\n')
         r = subprocess.run(["bash", "-c", script], capture_output=True, text=True, timeout=30,
                            env={"PATH": f"{bin_}:/usr/bin:/bin"})
@@ -634,6 +700,32 @@ class TheOtherLanesAndTheirProofs(unittest.TestCase):
         self.assertEqual(calls, ["install-image.sh --no-smoke", "install-video.sh --no-smoke",
                                  "install-kolibri.sh --no-smoke"])
         self.assertIn("STATES second=installed image=installed video=installed kolibri=installed", out)
+
+    def test_a_lane_from_before_the_wheels_note_is_updated_whole(self):
+        # its venv and no note: installed whole before v1.24.0 (image) or v1.25.0 (video), when
+        # the note did not exist; an update takes it whole, as every version did, and proves
+        # nothing (found in review, 2026-10-15: it was given its units only, its runtime left)
+        rc, out, calls = self.end(units=("qwen38-image.service", "qwen38-video.service", "qwen38-kolibri.service"),
+                                  second_fresh=0, begun=("image", "video"), prepared=("kolibri",))
+        self.assertEqual(rc, 0, out)
+        self.assertEqual(calls, ["install-image.sh --no-smoke", "install-video.sh --no-smoke",
+                                 "install-kolibri.sh --no-smoke"])
+        self.assertIn("STATES second=installed image=installed video=installed kolibri=installed", out)
+
+    def test_all_weights_proves_the_lanes_a_box_had_the_units_of_only(self):
+        # a box installed on demand (every unit there, no runtime): --all-weights builds each lane
+        # whole and, new to it, proves each (found in review, 2026-10-15: it proved none)
+        units = ("qwen38-image.service", "qwen38-video.service", "qwen38-kolibri.service")
+        rc, out, calls = self.end(units=units, second_fresh=0, second_new=1, all_weights=1)
+        self.assertEqual(rc, 0, out)
+        self.assertEqual(calls, [
+            "install-image.sh --no-smoke", "install-video.sh --no-smoke", "install-kolibri.sh --no-smoke",
+            "sudo systemctl stop qwen38-sglang.service",
+            "prove qwen38-flash.service qwen3.8-flash-next stop",
+            "install-image.sh ", "install-video.sh ", "install-kolibri.sh ",
+            "prove qwen38-sglang.service qwen3.8-27b",
+            "sudo systemctl restart qwen38-keepalive.service", "oc-fit-limits"])
+        self.assertIn("STATES second=proved image=proved video=proved kolibri=proved", out)
 
     def test_a_lane_left_out_is_not_touched(self):
         rc, out, calls = self.end(units=("qwen38-video.service",), want_image=0, want_kolibri=0, second_fresh=0,
@@ -681,7 +773,7 @@ class TheOtherLanesAndTheirProofs(unittest.TestCase):
     def test_a_proof_that_fails_is_said_and_the_served_lane_still_comes_back(self):
         rc, out, calls = self.end(prove_fail="qwen38-flash.service")
         self.assertEqual(rc, 0, out)
-        self.assertIn("second=failed", out)
+        self.assertIn("second=unproved", out)
         self.assertEqual(calls[-3], "prove qwen38-sglang.service qwen3.8-27b")
 
     def test_a_served_lane_that_does_not_come_back_ends_the_run_and_says_how(self):

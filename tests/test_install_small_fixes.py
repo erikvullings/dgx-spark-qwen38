@@ -172,12 +172,12 @@ class TheSummarySaysWhatBecameOfEachOtherLane(unittest.TestCase):
     START = TEXT.index("    lane_line(){")
     FUNC = TEXT[START:TEXT.index("\n    }\n", START) + 7]
 
-    def line(self, state, on_the_box):
+    def line(self, state, on_the_box, cockpit=1):
         d = pathlib.Path(tempfile.mkdtemp(prefix="lane-line-"))
         unit = d / "qwen38-image.service"
         if on_the_box:
             unit.write_text("[Unit]\n")
-        script = ("set -euo pipefail\n" + self.FUNC +
+        script = (f"set -euo pipefail\nCOCKPIT={cockpit}\n" + self.FUNC +
                   f'\nlane_line "Images     " {state} image image "40 GB" "{unit}"\n')
         r = subprocess.run(["bash", "-c", script], capture_output=True, text=True, timeout=30,
                            env={"PATH": "/usr/bin:/bin"})
@@ -196,14 +196,33 @@ class TheSummarySaysWhatBecameOfEachOtherLane(unittest.TestCase):
     def test_proved_installed_and_failed(self):
         self.assertIn("installed and proved it serves", self.line("proved", True))
         self.assertIn("installed and up to date", self.line("installed", True))
-        self.assertIn("a plain ./install.sh tries again", self.line("failed", False))
+        self.assertIn("./install.sh --with-image installs it whole", self.line("failed", False))
 
     def test_a_lane_installed_whose_proof_failed_is_told_how_to_prove_it(self):
         # its unit is on the box, so the next plain run finds it not new, updates it and proves
         # nothing: the line promised a retry that never came (found in review, 2026-10-14)
-        out = self.line("failed", True)
+        out = self.line("unproved", True)
         self.assertIn("./install.sh --with-image proves it again", out)
-        self.assertNotIn("a plain ./install.sh tries again", out)
+        self.assertNotIn("tries again", out)
+
+    def test_a_lane_that_did_not_install_is_not_said_to_have_failed_its_proof(self):
+        # its room or a download stopped it; with its unit there (installed on demand) it read
+        # "installed but did not prove it serves", and a plain run gives such a lane its units
+        # only, trying nothing again (found in review, 2026-10-15)
+        out = self.line("failed", True)
+        self.assertIn("it did not install", out)
+        self.assertIn("(it did not install): ./install.sh --with-image installs it whole", out)
+        self.assertNotIn("prove", out)
+        # a lane named with --with-<lane> that died before its runtime (its room, a download) is
+        # given its units only by a plain run: "a plain ./install.sh tries the same again" was
+        # not so (found in review, 2026-10-15)
+        self.assertNotIn("a plain ./install.sh", out)
+
+    def test_with_no_cockpit_a_lane_on_demand_is_told_its_terminal_commands(self):
+        self.assertIn("its first Load from the cockpit's Lanes view builds it", self.line("units", True))
+        out = self.line("units", True, cockpit=0)
+        self.assertIn("./prepare-lane.sh image builds it, then ./switch-model.sh image switches to it", out)
+        self.assertNotIn("cockpit", out)
 
 
 class OneDiskForBoth(unittest.TestCase):

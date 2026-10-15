@@ -59,7 +59,7 @@ def run(lane, root, free_gb=1000, ple_other_disk=None):
         for f in ("stat", "df"):
             (t / f).chmod(0o755)
         stub = f'PATH="{t}:$PATH"\n'
-    script = (stub + "set -euo pipefail\ndie(){ echo \"DIE: $*\"; exit 1; }\n"
+    script = (stub + "set -euo pipefail\ndie(){ echo \"DIE: $*\"; exit 1; }\n" + f'. "{REPO}/lanes.sh"\n'
               f'HF_CACHE="{root}"; MODEL_REPO=org/model; MODEL_REV=abc123; LANE={lane}\n'
               f'PLE_DIR="{ple}"; FREE_DISK_GB={free_gb}; UNITS_ONLY=0   # a whole install (an on-demand one takes no room)\n'
               + BLOCK + 'echo "NEED=$NEED_GB"\n')

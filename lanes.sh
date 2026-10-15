@@ -165,6 +165,21 @@ pin_tag() {   # $1 lane, $2 image: a digest reference present on this box gets i
 engine_image(){  # $1 the launcher or the unit
   { grep -B1 -m1 -- 'python3 -m sglang.launch_server' "$1" 2>/dev/null || true; } | head -1 | awk '{print $1}'
 }
+# Whether a checkpoint is whole in a cache: every shard its index names is in the snapshot of the
+# revision, since a file appears there only once its blob is whole (a link to a blob gone is not).
+ckpt_cached(){  # $1 = the repo's cache folder, $2 = the revision (a commit or a ref name)
+  python3 - "$1" "$2" <<'PY'
+import json, pathlib, sys
+repo, rev = pathlib.Path(sys.argv[1]), sys.argv[2]
+ref = repo / "refs" / rev
+snap = repo / "snapshots" / (ref.read_text().strip() if ref.is_file() else rev)
+try:
+    shards = set(json.loads((snap / "model.safetensors.index.json").read_text())["weight_map"].values())
+except (OSError, ValueError, KeyError, TypeError, AttributeError):
+    shards = {"model.safetensors"}
+sys.exit(0 if shards and all((snap / s).exists() for s in shards) else 1)
+PY
+}
 # Whether the DFlash2 draft a 27B unit names is in the cache it mounts, at its revision (a ref
 # such as main read through refs/): its config and a weights file (a snapshot links a file only
 # once it is whole).

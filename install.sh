@@ -1047,6 +1047,13 @@ if [ "$WITH_KOLIBRI" -eq 1 ] && { [ "$NO_START" -eq 1 ] || [ "$NO_SERVICE" -eq 1
   printf -- 'Run ./install.sh without --no-start/--no-service, or ./install-kolibri.sh on its own.\n' >&2
   exit 1
 fi
+# the same for the whole box: --no-service did none of it, --no-start the other text lane alone
+# (found in review, 2026-10-15)
+if [ "$ALL_WEIGHTS" -eq 1 ] && { [ "$NO_START" -eq 1 ] || [ "$NO_SERVICE" -eq 1 ]; }; then
+  printf -- '--all-weights needs the full install: it installs every lane whole and proves each it builds.\n' >&2
+  printf -- 'Run ./install.sh --all-weights without --no-start/--no-service.\n' >&2
+  exit 1
+fi
 # Since v1.12 the cockpit is part of a plain install: the one-liner has to leave
 # a box you can open and drive, not a box plus a second command to find in a
 # README. The choice persists exactly like the opencode one, in a marker file,
@@ -1098,34 +1105,57 @@ fi
 # as the user (--prepare) and fetches its weights (its switch). A lane already prepared
 # (its runtime on the box, as on every box installed before this) is updated whole, as
 # before; --all-weights, or a lane asked for by name (--with-<lane>), is installed whole now
-# and proved when it is new. The runtime is what says prepared: the venv and the note of
-# its wheel for the image and video lanes, the image its unit names for Kolibri.
-side_prepared(){  # $1 lane (image, video, kolibri)
-  local unit dir img
+# and proved when it is new. A lane counts as on the box once its runtime is begun: its venv
+# for the image and video lanes, the image its unit names for Kolibri (tagged once built).
+# The venv alone, not the note of its wheel: a lane installed whole before that note existed
+# (v1.24.0 for the image lane, v1.25.0 for the video lane) has none and was given its units
+# only, its runtime left as it was (found in review, 2026-10-15); a first Load that stopped
+# on the way is finished by the update. The cockpit reads the note, which the installer writes
+# once the whole runtime is in, to build what a Load needs first (dashboard/cockpit.py).
+side_lane_dir(){  # $1 image|video: the folder its unit runs in
+  local unit="/etc/systemd/system/qwen38-$1.service" dir
+  dir="$({ grep -m1 -E '^WorkingDirectory=' "$unit" 2>/dev/null || true; } | cut -d= -f2-)"
+  echo "${dir:-$HOME/.local/share/qwen38-$1}"
+}
+side_kolibri_image(){
+  local img
+  img="$({ grep -m1 -oE 'qwen38-kolibri:[^ ]+' "$KOLIBRI_UNIT_PATH" 2>/dev/null || true; })"
+  [ -n "$img" ] && docker image inspect "$img" >/dev/null 2>&1
+}
+side_begun(){  # $1 lane (image, video, kolibri)
   case "$1" in
-    image|video)
-      unit="/etc/systemd/system/qwen38-$1.service"
-      dir="$({ grep -m1 -E '^WorkingDirectory=' "$unit" 2>/dev/null || true; } | cut -d= -f2-)"
-      dir="${dir:-$HOME/.local/share/qwen38-$1}"
-      [ -x "$dir/venv/bin/python" ] && [ -s "$dir/sglang-wheel" ] ;;
-    kolibri)
-      img="$({ grep -m1 -oE 'qwen38-kolibri:[^ ]+' "$KOLIBRI_UNIT_PATH" 2>/dev/null || true; })"
-      [ -n "$img" ] && docker image inspect "$img" >/dev/null 2>&1 ;;
+    image|video) [ -x "$(side_lane_dir "$1")/venv/bin/python" ] ;;
+    kolibri) side_kolibri_image ;;
     *) return 1 ;;
   esac
 }
-# The other text lane, installed beside the lane that serves, is on demand too: prepared when the
-# image its launcher (flash) or unit (27B) runs is on the box, with the 27B's DFlash2 draft in
-# the cache (every box installed before this is).
+# The other text lane, installed beside the lane that serves, is on demand too: an update builds
+# it whole only when it is installed as its launcher (flash) or unit (27B) names it, the image
+# it runs on the box, the draft vocabulary the flash launcher waits for when it waits for one,
+# the 27B's DFlash2 draft, and the checkpoint it serves whole in the cache it mounts (every box
+# installed before this is). An update builds a lane whole on that target: the image alone read
+# as prepared, and a first Load of flash-nvda stopped after its pull was finished on the default;
+# with the vocabulary, a Load stopped before its switch (the page closed, then an update) still
+# was, a checkpoint of 135 GB nobody chose, and a 27B Load of fp8 stopped in its download was
+# finished on stock (found in review, 2026-10-15).
 text_lane_prepared(){  # $1 flash|27b
-  local f img
+  local f img map model rev hf
   if [ "$1" = flash ]; then f="$CONFIG_DIR/launch-flash.sh"; else f="$SGL_UNIT_PATH"; fi
   img="$(engine_image "$f")"
   if [ -z "$img" ] || ! docker image inspect "$img" >/dev/null 2>&1; then return 1; fi
-  [ "$1" = flash ] || draft_in_cache "$f"
+  if [ "$1" = flash ]; then
+    map="$({ grep -m1 -oE '\[ -s "[^"]+" \] && TIER\+=\(--speculative-token-map' "$f" 2>/dev/null || true; } | head -1 | cut -d'"' -f2)"
+    [ -z "$map" ] || [ -s "$map" ] || return 1
+  else
+    draft_in_cache "$f" || return 1
+  fi
+  model="$({ grep -m1 -oE -- '--model-path [^ ]+' "$f" 2>/dev/null || true; } | head -1 | cut -d' ' -f2)"
+  rev="$({ grep -m1 -oE -- '--revision [^ ]+' "$f" 2>/dev/null || true; } | head -1 | cut -d' ' -f2)"
+  hf="$({ grep -m1 -oE -- '-v [^ :]+:/root/\.cache/huggingface' "$f" 2>/dev/null || true; } | head -1 | sed -e 's/^-v //' -e 's|:/root/\.cache/huggingface$||')"
+  [ -n "$model" ] && ckpt_cached "${hf:-$HF_CACHE}/hub/models--${model//\//--}" "${rev:-main}"
 }
 side_mode(){  # $1 lane, $2 --with-<lane> given: the installer's option for this run
-  if [ "$ALL_WEIGHTS" -eq 1 ] || [ "$2" -eq 1 ] || side_prepared "$1"; then echo --no-smoke; else echo --units-only; fi
+  if [ "$ALL_WEIGHTS" -eq 1 ] || [ "$2" -eq 1 ] || side_begun "$1"; then echo --no-smoke; else echo --units-only; fi
 }
 
 if [ "$NO_SERVICE" -eq 1 ] && [ "$CONTEXT_MODE" = "1m" ]; then
@@ -1203,20 +1233,8 @@ fi
 # folder there said nothing, and a flash download interrupted at 74 GB of 124 was checked
 # against 10 on its resume (found in review, 2026-09-24). A snapshot is cached when every
 # shard its index names is in it, since a file appears there only once its blob is whole;
-# otherwise what the cache already holds for this repo comes off the need.
-ckpt_cached(){  # $1 = the repo's cache folder, $2 = the revision (a commit or a ref name)
-  python3 - "$1" "$2" <<'PY'
-import json, pathlib, sys
-repo, rev = pathlib.Path(sys.argv[1]), sys.argv[2]
-ref = repo / "refs" / rev
-snap = repo / "snapshots" / (ref.read_text().strip() if ref.is_file() else rev)
-try:
-    shards = set(json.loads((snap / "model.safetensors.index.json").read_text())["weight_map"].values())
-except (OSError, ValueError, KeyError, TypeError, AttributeError):
-    shards = {"model.safetensors"}
-sys.exit(0 if shards and all((snap / s).exists() for s in shards) else 1)
-PY
-}
+# otherwise what the cache already holds for this repo comes off the need (lanes.sh ckpt_cached,
+# which the switch and a first Load read through ckpt_room_gb).
 HF_REPO_CACHE="$HF_CACHE/hub/models--${MODEL_REPO//\//--}"
 if ckpt_cached "$HF_REPO_CACHE" "$MODEL_REV"; then
   NEED_GB=10
@@ -1559,7 +1577,7 @@ apply_context_configs(){
 # cache, the binds) goes over explicitly; what belongs to one lane (its target, revision
 # and context mode) does not: a MODEL_CHOICE given for this lane must not pick the other
 # one's. A lane not installed yet gets its default target; one installed keeps its own.
-SECOND_LANE=""; SECOND_UNIT=""; SECOND_FRESH=0; SECOND_STATE=""; SECOND_UNITS=0
+SECOND_LANE=""; SECOND_UNIT=""; SECOND_FRESH=0; SECOND_NEW=0; SECOND_STATE=""; SECOND_UNITS=0
 if [ -z "$SECONDARY" ] && [ "$NO_SERVICE" -eq 0 ]; then
   if [ "$LANE" = "27b" ]; then
     SECOND_LANE=flash; SECOND_UNIT=qwen38-flash.service; SECOND_WANT="$WANT_FLASH"; SECOND_TARGET=flash
@@ -1568,6 +1586,10 @@ if [ -z "$SECONDARY" ] && [ "$NO_SERVICE" -eq 0 ]; then
   fi
   if [ "$SECOND_WANT" -eq 1 ]; then
     [ -f "/etc/systemd/system/$SECOND_UNIT" ] || SECOND_FRESH=1
+    # new for the proofs at the end: no unit yet, or its units only (on demand, not prepared),
+    # which a run that builds it whole proves (--all-weights proved none of them, 2026-10-15)
+    SECOND_PREPARED=0; text_lane_prepared "$SECOND_LANE" && SECOND_PREPARED=1
+    SECOND_NEW="$SECOND_FRESH"; [ "$SECOND_PREPARED" -eq 1 ] || SECOND_NEW=1
     step "The ${SECOND_LANE/27b/27B} lane, installed beside the ${LANE/27b/27B} lane (it serves when it is loaded)"
     SECOND_ENV=()
     [ "$SECOND_FRESH" -eq 1 ] && SECOND_ENV=(MODEL_CHOICE="$SECOND_TARGET")
@@ -1575,7 +1597,7 @@ if [ -z "$SECONDARY" ] && [ "$NO_SERVICE" -eq 0 ]; then
     # (--with-flash, --with-27b) or --all-weights; its first Load from the cockpit prepares it.
     SECOND_UNITS=0
     SECOND_NAMED="$WITH_FLASH"; [ "$SECOND_LANE" = 27b ] && SECOND_NAMED="$WITH_27B"
-    if [ "$ALL_WEIGHTS" -eq 0 ] && [ "$SECOND_NAMED" -eq 0 ] && ! text_lane_prepared "$SECOND_LANE"; then
+    if [ "$ALL_WEIGHTS" -eq 0 ] && [ "$SECOND_NAMED" -eq 0 ] && [ "$SECOND_PREPARED" -eq 0 ]; then
       SECOND_UNITS=1; SECOND_ENV+=(QWEN38_UNITS_ONLY=1)
     fi
     if env -u MODEL_CHOICE -u MODEL_REV -u CONTEXT_MODE -u RESTART_ENGINE \
@@ -2704,10 +2726,13 @@ except Exception as e:
     # before the run says it is done. A routine update proves nothing twice: it updates
     # the lanes it finds and leaves this one serving. A lane that does not install (a
     # disk too small for it, a download that fails) is said, and the rest goes on.
+    # New here, and proved when this run builds it whole: a lane with no unit yet, or one whose
+    # runtime is not on the box (installed on demand, its units only: --all-weights on such a
+    # box built every lane and proved none, found in review, 2026-10-15).
     IMAGE_FRESH=0; VIDEO_FRESH=0; KOLIBRI_FRESH=0
-    [ -f /etc/systemd/system/qwen38-image.service ] || IMAGE_FRESH=1
-    [ -f /etc/systemd/system/qwen38-video.service ] || VIDEO_FRESH=1
-    [ -f "$KOLIBRI_UNIT_PATH" ] || KOLIBRI_FRESH=1
+    { [ -f /etc/systemd/system/qwen38-image.service ] && side_begun image; } || IMAGE_FRESH=1
+    { [ -f /etc/systemd/system/qwen38-video.service ] && side_begun video; } || VIDEO_FRESH=1
+    { [ -f "$KOLIBRI_UNIT_PATH" ] && side_begun kolibri; } || KOLIBRI_FRESH=1
     IMAGE_STATE=off; VIDEO_STATE=off; KOLIBRI_STATE=off
     if [ "$WANT_IMAGE" -eq 1 ]; then
       step "Qwen-Image 2.1 lane (text-to-image, editing, native RGBA)"
@@ -2739,7 +2764,7 @@ except Exception as e:
     { [ "$SECOND_LANE" = flash ] && [ "$WITH_FLASH" -eq 1 ]; } && SECOND_WITH=1
     { [ "$SECOND_LANE" = 27b ] && [ "$WITH_27B" -eq 1 ]; } && SECOND_WITH=1
     PROVE_SECOND=0; PROVE_IMAGE=0; PROVE_VIDEO=0; PROVE_KOLIBRI=0
-    { [ "$SECOND_STATE" = installed ] && { [ "$SECOND_FRESH" -eq 1 ] || [ "$SECOND_WITH" -eq 1 ]; }; } && PROVE_SECOND=1
+    { [ "$SECOND_STATE" = installed ] && { [ "$SECOND_NEW" -eq 1 ] || [ "$SECOND_WITH" -eq 1 ]; }; } && PROVE_SECOND=1
     { [ "$IMAGE_STATE" = installed ] && { [ "$IMAGE_FRESH" -eq 1 ] || [ "$WITH_IMAGE" -eq 1 ]; }; } && PROVE_IMAGE=1
     { [ "$VIDEO_STATE" = installed ] && { [ "$VIDEO_FRESH" -eq 1 ] || [ "$WITH_VIDEO" -eq 1 ]; }; } && PROVE_VIDEO=1
     { [ "$KOLIBRI_STATE" = installed ] && { [ "$KOLIBRI_FRESH" -eq 1 ] || [ "$WITH_KOLIBRI" -eq 1 ]; }; } && PROVE_KOLIBRI=1
@@ -2749,17 +2774,17 @@ except Exception as e:
       if [ "$PROVE_SECOND" -eq 1 ]; then
         SECOND_MODEL=qwen3.8-27b; [ "$SECOND_LANE" = flash ] && SECOND_MODEL=qwen3.8-flash-next
         echo "starting the ${SECOND_LANE/27b/27B} lane ($SECOND_UNIT)"
-        if prove_text_lane "$SECOND_UNIT" "$SECOND_MODEL" stop; then SECOND_STATE=proved; else SECOND_STATE=failed; fi
+        if prove_text_lane "$SECOND_UNIT" "$SECOND_MODEL" stop; then SECOND_STATE=proved; else SECOND_STATE=unproved; fi
       fi
       # Nothing serves while they run, so each leaves the box as it found it: stopped.
       if [ "$PROVE_IMAGE" -eq 1 ]; then
-        if "$REPO_DIR/install-image.sh"; then IMAGE_STATE=proved; else IMAGE_STATE=failed; fi
+        if "$REPO_DIR/install-image.sh"; then IMAGE_STATE=proved; else IMAGE_STATE=unproved; fi
       fi
       if [ "$PROVE_VIDEO" -eq 1 ]; then
-        if "$REPO_DIR/install-video.sh"; then VIDEO_STATE=proved; else VIDEO_STATE=failed; fi
+        if "$REPO_DIR/install-video.sh"; then VIDEO_STATE=proved; else VIDEO_STATE=unproved; fi
       fi
       if [ "$PROVE_KOLIBRI" -eq 1 ]; then
-        if "$REPO_DIR/install-kolibri.sh"; then KOLIBRI_STATE=proved; else KOLIBRI_STATE=failed; fi
+        if "$REPO_DIR/install-kolibri.sh"; then KOLIBRI_STATE=proved; else KOLIBRI_STATE=unproved; fi
       fi
       step "The ${LANE/27b/27B} lane again"
       prove_text_lane "$UNIT_NAME" "$SMOKE_MODEL" \
@@ -2833,14 +2858,18 @@ except Exception as e:
       case "$2" in
         proved)    echo "  $1: installed and proved it serves; Load it from the cockpit's Lanes view (or ./switch-model.sh $4)" ;;
         installed) echo "  $1: installed and up to date; Load it from the cockpit's Lanes view (or ./switch-model.sh $4)" ;;
-        units)     echo "  $1: installed, ready to load: its first Load from the cockpit's Lanes view builds it and fetches its weights ($5)" ;;
-        failed)    if [ -f "$6" ]; then
-                     # installed, then its proof failed: a plain run updates it and proves nothing
-                     # (it is no longer new), so the line said a retry that never came (review, 2026-10-14)
-                     echo "  $1: NOT ready, see its NOTE above; it is installed but did not prove it serves: ./install.sh --with-$3 proves it again"
+        units)     if [ "$COCKPIT" -eq 1 ]; then
+                     echo "  $1: installed, ready to load: its first Load from the cockpit's Lanes view builds it and fetches its weights ($5)"
                    else
-                     echo "  $1: NOT ready, see its NOTE above; a plain ./install.sh tries again (it resumes what it did)"
+                     echo "  $1: installed, ready to load ($5 in all): ./prepare-lane.sh $3 builds it, then ./switch-model.sh $4 switches to it"
                    fi ;;
+        # installed, then its proof failed: a plain run updates it and proves nothing (it is no
+        # longer new), so the line said a retry that never came (review, 2026-10-14)
+        unproved)  echo "  $1: NOT ready, see its NOTE above; it is installed but did not prove it serves: ./install.sh --with-$3 proves it again" ;;
+        # it did not install (its room, a download): a lane installed on demand is given its
+        # units only by a plain run, which tried nothing again, and one already there read as
+        # unproved (found in review, 2026-10-15); a run that names it installs it whole
+        failed)    echo "  $1: NOT ready, see its NOTE above (it did not install): ./install.sh --with-$3 installs it whole" ;;
         off)       if [ -f "$6" ]; then
                      echo "  $1: left out by --no-$3, so not updated; ./install.sh --with-$3 brings it back"
                    else
