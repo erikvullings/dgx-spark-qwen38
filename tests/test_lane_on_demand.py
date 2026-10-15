@@ -9,7 +9,6 @@ everything that acts on the machine: sudo, systemctl and docker record their cal
 runs what follows it only when the test allows root), python3 and git stand in for the venv,
 the wheel and the source, and uname says aarch64 on any machine the suite runs on.
 """
-import os
 import pathlib
 import re
 import subprocess

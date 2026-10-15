@@ -544,9 +544,10 @@ without a terminal.
   --with-kolibri        bring it back after a --no-kolibri
   --all-weights         install every lane whole now (the flash beside the 27B,
                         the image, video and Kolibri lanes), runtime and
-                        weights, and prove each new one (without it, each is
-                        prepared at its first Load from the cockpit;
-                        --with-<lane> does the same for that one lane)
+                        weights, about 540 GB of disk, and prove each new one
+                        (without it, each is prepared at its first Load from
+                        the cockpit; --with-<lane> does the same for that one
+                        lane)
 
 Re-running over an existing install keeps the operator's choices: the target
 model (any of the seven), the context mode (native/1m), the flash serving tier,
@@ -2390,7 +2391,7 @@ sudo systemctl daemon-reload
 if [ -n "$SECONDARY" ]; then
   # Installed, not enabled and not started: the serving run proves it once it is new.
   if [ "$UNITS_ONLY" -eq 1 ]; then
-    step "Done: installed as $UNIT_NAME ($MODEL_CHOICE), not enabled at boot; its first Load prepares it"
+    step "Done: installed as $UNIT_NAME ($MODEL_CHOICE), not enabled at boot, not prepared yet"
   else
     step "Done: installed as $UNIT_NAME ($MODEL_CHOICE), not enabled at boot"
   fi

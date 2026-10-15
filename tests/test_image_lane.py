@@ -243,9 +243,13 @@ class TheInstaller(unittest.TestCase):
     def test_a_routine_rerun_does_not_stop_the_engine_to_redo_the_smoke_test(self):
         """An upgrade of a box that has the lane must not cost it minutes of unserved
         traffic. Since v1.20 the lane is prepared without its smoke test on every run, and
-        proved only by the run that installs it, or that names it."""
+        proved only by the run that installs it, or that names it. Since v1.33 a run gives
+        the installer what side_mode says, --no-smoke for a lane prepared and --units-only
+        for one installed on demand: neither runs the smoke test."""
         text = (REPO / "install.sh").read_text()
-        self.assertIn('if "$REPO_DIR/install-image.sh" --no-smoke; then IMAGE_STATE=installed; else', text)
+        self.assertIn('IMAGE_MODE="$(side_mode image "$WITH_IMAGE")"', text)
+        self.assertIn('if "$REPO_DIR/install-image.sh" "$IMAGE_MODE"; then IMAGE_STATE=installed;', text)
+        self.assertIn("then echo --no-smoke; else echo --units-only; fi", text[text.index("side_mode(){"):])
         self.assertIn('{ [ "$IMAGE_STATE" = installed ] && { [ "$IMAGE_FRESH" -eq 1 ] || [ "$WITH_IMAGE" -eq 1 ]; }; } && PROVE_IMAGE=1', text)
 
     def test_flags_that_would_silently_do_nothing_are_refused_at_parse_time(self):
@@ -566,7 +570,8 @@ class TheOneLinerReachesIt(unittest.TestCase):
 
     def test_the_help_says_what_it_costs_before_someone_spends_it(self):
         self.assertIn("--no-image            leave the Qwen-Image 2.1 lane out (40 GB)", self.text)
-        self.assertIn("about 540 GB", self.text)
+        self.assertIn("about 43 GB of downloads", self.text)     # a plain run: the lane that serves
+        self.assertIn("about 540 GB of disk", self.text)         # --all-weights: the whole box
 
 
 class AnUpdateKeepsTheImageLaneAsTheBootLane(unittest.TestCase):
@@ -625,7 +630,7 @@ class TheBootLaneConvergenceHoldsEveryWay(unittest.TestCase):
     def test_the_image_boot_path_respects_a_left_out_image_lane(self):
         i = self.text.index('if [ "$IMAGE_BOOT" -eq 0 ] && [ "$VIDEO_BOOT" -eq 0 ] && [ "$KOLIBRI_BOOT" -eq 0 ]; then')
         early = self.text[i:self.text.index("exit 0", i)]
-        call = early.index('"$REPO_DIR/install-image.sh" --no-smoke')
+        call = early.index('"$REPO_DIR/install-image.sh" "$(side_mode image')
         self.assertIn('if [ "$WANT_IMAGE" -eq 1 ]', early[:call])
 
     def test_the_text_lane_used_before_images_is_the_one_brought_up_to_date(self):
