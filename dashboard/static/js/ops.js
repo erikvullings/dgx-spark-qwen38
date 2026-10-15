@@ -336,8 +336,14 @@ async function scanInventory(){
   }catch(e){ setText(b, 'Retry'); setText('inv-line', 'The scan failed: ' + e.message); }
   finally{ b.disabled = false; }
 }
-on('job_finished', j => { if (j.action === 'switch' || j.action === 'unit'){ LOADED.recipes = false; if (activeView === 'library') loadRecipes(); }
-  if ((j.action === 'delete_strays' || j.action === 'fetch') && activeView === 'library') scanRegistry(); });
+// A job that changes the lanes or the caches: Library reads them again, at once when it is open,
+// else at its next opening. The checkpoints were read once per page, so a Load or a Download
+// made elsewhere left Library saying what was there before (found in review, 2026-10-15).
+on('job_finished', j => {
+  if (['switch', 'unit', 'prepare'].includes(j.action)) LOADED.recipes = false;
+  if (['switch', 'prepare', 'fetch', 'delete_strays'].includes(j.action)) LOADED.registry = false;
+  if (activeView === 'library'){ if (!LOADED.recipes) loadRecipes(); if (!LOADED.registry) scanRegistry(); }
+});
 // the registry with them: the checkpoints, what each lane can load (its Download), the images
 // and the other models waited for a Scan, below recipes the same opening had read (2026-10-15)
 onShow('library', async () => { if (!LOADED.recipes) await loadRecipes(); if (!LOADED.registry) scanRegistry(false); });
@@ -349,8 +355,11 @@ let followTimer = null, logTouched = false, logLines = [];
 // load every second and its engine read every 30 s (current routes and the legacy ones),
 // the health probes, the video poll. The load alone filled the whole view (2026-10-02). The
 // Kolibri engine logs every request: its metrics read every few seconds, its version and its
-// model list were the whole of its journal (2026-10-15).
-const POLLED = /GET \/(health|v1\/videos|v1\/loads|server_info|get_load|get_server_info|metrics|version|v1\/models)/;
+// model list were the whole of its journal (2026-10-15). Dimmed when they were answered (an
+// engine's 200, the proxy's "ok get") and not otherwise: the proxy's journal is its clients'
+// requests too, and their refusals (a 401 without the key, a 503 with no engine) were dimmed
+// among thousands of lines (found in review, 2026-10-15).
+const POLLED = /GET \/(health|v1\/videos|v1\/loads|server_info|get_load|get_server_info|metrics|version|v1\/models)\b.*?(" 200 |\bok get\b)/;
 function drawLog(){
   const v = $('log-view'), q = $('log-filter').value.trim().toLowerCase();
   clear(v);

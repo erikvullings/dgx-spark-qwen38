@@ -107,7 +107,11 @@ function s1Problem(){
 function s1Sync(){
   const b = $('s1-run'); if (!b) return;
   const wait = laneWorkWaits();
-  const why = wait || (s1Available === false ? 'System One is not served right now: the 27B or the flash lane answers it.' : s1Running ? '' : s1Problem());
+  // with a text lane serving, what holds it back is the note's to say (the proxy mute, a 401):
+  // the line named the lanes that answer it over the one that served (found in review, 2026-10-15)
+  const text = (() => { const s = servingEngine(); return !!s && (s[0] === U27 || s[0] === UFLASH); })();
+  const off = text ? 'System One does not answer right now: the note says why.' : 'System One is not served right now: the 27B or the flash lane answers it.';
+  const why = wait || (s1Available === false ? off : s1Running ? '' : s1Problem());
   b.disabled = !!wait || s1Available === false || s1Running || !!s1Problem();
   show('s1-why', !!why && !s1Running); setText('s1-why', why);
 }

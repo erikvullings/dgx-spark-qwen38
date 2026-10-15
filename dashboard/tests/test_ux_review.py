@@ -47,6 +47,39 @@ class LibraryFillsItself(unittest.TestCase):
         self.assertEqual(r, ["/api/registry?refresh=1"])
 
 
+class LibraryReadsAgainWhatAJobChanged(unittest.TestCase):
+    """Read once per page, the checkpoints stayed as they were after a Load or a Download made
+    outside Library: what changes the caches has it read them again, at once when it is open,
+    else at its next opening (found in review, 2026-10-15)."""
+
+    def reads(self, action, library_open):
+        return run(self, r"""
+        __fetch = async (url, init) => url.startsWith('/api/recipes') ? __response(200, {builtin: [], custom: [], custom_dir: ''})
+          : url.startsWith('/api/registry') ? __response(200, %s) : new Promise(() => {});
+        feed({config: CONFIG, units: UNITS, lifecycle: life({'qwen38-sglang.service': eng('ready')})});
+        showView('library'); await __settle(); await __settle();
+        if (!%s){ showView('now'); await __settle(); }
+        const before = __fetches.length;
+        (HANDLERS.job_finished || []).forEach(f => f({action: %s, id: 'j1'}));
+        await __settle(); await __settle();
+        const now = __fetches.slice(before).map(f => f.url).filter(u => u.startsWith('/api/registry'));
+        showView('library'); await __settle(); await __settle();
+        report({now, then: __fetches.slice(before).map(f => f.url).filter(u => u.startsWith('/api/registry'))});
+        """ % (json.dumps(REG), "true" if library_open else "false", json.dumps(action)))
+
+    def test_a_download_or_a_load_has_it_read_again(self):
+        for action in ("fetch", "switch", "prepare", "delete_strays"):
+            with self.subTest(action=action, library="closed"):
+                r = self.reads(action, False)
+                self.assertEqual(r["now"], [])
+                self.assertEqual(len(r["then"]), 1)                    # at its next opening
+            with self.subTest(action=action, library="open"):
+                self.assertEqual(len(self.reads(action, True)["now"]), 1)   # at once
+
+    def test_a_start_or_a_stop_leaves_the_caches_read(self):
+        self.assertEqual(self.reads("unit", False)["then"], [])
+
+
 class TheMedianOfAnEvenCount(unittest.TestCase):
     """"Last 2 boots: 14 min 47, 15 min 37. Median 15 min 37": the upper of the two middle
     values stood for the median, and for every "answers in about" said from it."""
@@ -100,6 +133,20 @@ class TheEnginesOwnPollsAreDimmed(unittest.TestCase):
         """)
         self.assertEqual(r, ["l-dim", "l-dim", "l-dim", "l-dim", ""])
 
+    def test_a_poll_refused_stands_out(self):
+        # the proxy's journal is its clients' requests too: a 401 without the key, a 503 with no
+        # engine, were dimmed among the polls it answered (found in review, 2026-10-15)
+        r = run(self, r"""
+        logLines = ['[proxy] 10.0.0.2:5 GET /v1/models ok get in 0.0s',
+                    '[proxy] 10.0.0.2:6 GET /v1/models 401 without the serving key in 0.0s',
+                    '[proxy] 10.0.0.2:7 GET /v1/models 503 engine unreachable in 0.0s',
+                    '[proxy] 10.0.0.2:8 GET /metrics ok get in 0.0s',
+                    '(APIServer pid=1) INFO:     127.0.0.1:9 - "GET /v1/models HTTP/1.1" 401 Unauthorized'];
+        drawLog();
+        report([...$('log-view').querySelectorAll('span')].map(s => s.className || ''));
+        """)
+        self.assertEqual(r, ["l-dim", "", "", "l-dim", ""])
+
 
 class SystemOneNamesTheLanesThatServeIt(unittest.TestCase):
     """Under Ask, Decide said System One "needs a text lane" while the Kolibri text lane served,
@@ -115,6 +162,19 @@ class SystemOneNamesTheLanesThatServeIt(unittest.TestCase):
         """)
         self.assertIn("the 27B or the flash lane", r)
         self.assertNotIn("needs a text lane", r)
+
+    def test_with_a_text_lane_serving_the_line_defers_to_the_note(self):
+        # the 27B serves and the proxy does not answer: the line said the 27B or the flash lane
+        # answers it, over the 27B serving (found in review, 2026-10-15)
+        r = run(self, r"""
+        __fetch = async url => url === '/api/systemone' ? __response(200, {available: false, lane: '',
+          reason: 'the proxy in front of this box does not answer /v1/systemone'}) : new Promise(() => {});
+        feed({config: CONFIG, units: UNITS, lifecycle: life({'qwen38-sglang.service': eng('ready')})});
+        showView('decide'); await __settle();
+        report({why: txt('s1-why'), note: txt('s1-note')});
+        """)
+        self.assertEqual(r["why"], "System One does not answer right now: the note says why.")
+        self.assertIn("does not answer /v1/systemone", r["note"])
 
 
 if __name__ == "__main__":
