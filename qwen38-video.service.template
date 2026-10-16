@@ -26,6 +26,12 @@ Environment=PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
 # The memory the last engine held has to be back before this one starts: a start piled on
 # memory the driver kept is how sglang#40948 froze a DGX Spark (see engine-preflight.sh).
 ExecStartPre=/bin/bash __HOME__/.config/qwen38/engine-preflight.sh qwen38-video.service
+# This lane has no key and takes paths from whoever reaches it (dump and output paths),
+# with this user's rights; ~/.config/qwen38 holds the serving key and the engine-preflight.sh
+# every lane runs before it starts, and the lane writes nothing there (2026-10-16: found in
+# review, a lane bound past loopback could overwrite either). engine-preflight.sh writes
+# nothing either.
+ReadOnlyPaths=__HOME__/.config/qwen38
 # The cookbook's DGX Spark recipe, and nothing else: every component resident, no
 # offload flags. The cookbook verifies about 12.1 s per denoise step, about 40 s of
 # decode and about 12 min per warm request at 480P with no flags at all, and adding
