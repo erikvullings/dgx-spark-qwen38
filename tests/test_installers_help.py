@@ -14,7 +14,11 @@ import unittest
 
 REPO = pathlib.Path(__file__).resolve().parents[1]
 INSTALLERS = ("install-image.sh", "install-video.sh", "install-kolibri.sh", "install-nemotron.sh",
-              "install-nemotron-super.sh")
+              "install-nemotron-super.sh", "install-speech.sh")
+# What the header's last paragraph opens with. The GPU lanes end on the rule that one engine runs
+# at a time; the speech lane runs on the CPU beside any of them, and ends on why the one command
+# leaves it out.
+LAST_PARAGRAPH = {"install-speech.sh": "NOT IN THE ONE COMMAND YET"}
 
 
 class TheHelpIsTheHeader(unittest.TestCase):
@@ -32,7 +36,8 @@ class TheHelpIsTheHeader(unittest.TestCase):
                 self.assertEqual(out, lines[1:end])
                 self.assertGreater(len(out), 10)
                 self.assertTrue(all(ln.startswith("#") for ln in out), "no line of code")
-                self.assertIn("ONE ENGINE AT A TIME", "\n".join(out), "the header's last paragraph is there")
+                self.assertIn(LAST_PARAGRAPH.get(script, "ONE ENGINE AT A TIME"), "\n".join(out),
+                              "the header's last paragraph is there")
 
 
 if __name__ == "__main__":
