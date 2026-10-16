@@ -17,8 +17,9 @@ import tempfile
 import unittest
 
 REPO = pathlib.Path(__file__).resolve().parents[1]
-SCRIPTS = [p for p in ("install.sh", "install-image.sh", "install-video.sh", "install-kolibri.sh")
-           if (REPO / p).exists()]
+# every shell script of the repository: the vLLM lanes' room moved from their installers to
+# vllm-lane.sh, which a fixed list missed (found in review, 2026-10-16)
+SCRIPTS = sorted(p.name for p in REPO.glob("*.sh"))
 
 
 class TheDiskChecksFollowSymlinks(unittest.TestCase):
@@ -28,6 +29,12 @@ class TheDiskChecksFollowSymlinks(unittest.TestCase):
                 bad = [f"{i}: {ln.strip()}" for i, ln in enumerate((REPO / name).read_text().splitlines(), 1)
                        if re.search(r"\bstat\s+-c\s+%d", ln)]
                 self.assertEqual(bad, [], f"{name} compares the device of a symlink, not of its target")
+
+    def test_the_scripts_that_compare_disks_follow_the_links(self):
+        # and the comparison is there to be checked: none of these passes for want of one
+        for name in ("install.sh", "install-image.sh", "install-video.sh", "vllm-lane.sh", "lanes.sh"):
+            with self.subTest(script=name):
+                self.assertRegex((REPO / name).read_text(), r"\bstat\s+-L\s+-c\s+%d", name)
 
     def test_a_link_to_another_disk_is_on_that_disk(self):
         # why the flag matters: /dev/shm is a tmpfs, another device than a temporary directory

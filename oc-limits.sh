@@ -254,6 +254,13 @@ case "$CHOICE" in
     #     205,000 - 20,000 + 43,863 + 32,000 = 260,863  <=  262,144
     CTX=205000; OUT=32000; LABEL="local, 262K"
     ;;
+  nemotron-super)
+    # The Nemotron Super lane serves Super VL's window of 1,048,576 tokens, and vLLM refuses any
+    # request whose prompt + max_tokens passes it. Its KV cache holds the window 1.2 times over
+    # (measured 2026-10-16), so the window decides here too, by the same rule:
+    #     990,000 - 20,000 + 43,863 + 32,000 = 1,045,863  <=  1,048,576
+    CTX=990000; OUT=32000; LABEL="local, 1M"
+    ;;
   *) printf 'oc-limits: unknown target "%s"\n' "$CHOICE" >&2; exit 2 ;;
 esac
 

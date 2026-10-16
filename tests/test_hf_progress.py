@@ -317,12 +317,16 @@ class EveryFetchCountsItsBytes(unittest.TestCase):
     def test_the_vllm_lanes_installers_mount_it_only_when_it_is_there_too(self):
         # docker -v of a host file that is not there makes a root-owned directory in its place,
         # here in the repository (found in review, 2026-10-14)
-        for script in ("install-kolibri.sh", "install-nemotron.sh"):
+        # the three vLLM lanes' installers fetch through what they share, vllm-lane.sh
+        text = (REPO / "vllm-lane.sh").read_text()
+        self.assertIn('[ -f "$HERE/hf-progress.py" ] && progress_args=(-v "$HERE/hf-progress.py:/opt/qwen38/hf-progress.py:ro")', text)
+        self.assertIn('-v "$HERE/ckpt-fetch.py:/opt/qwen38/ckpt-fetch.py:ro" "${progress_args[@]}"', text)
+        self.assertEqual(text.count("hf-progress.py:/opt/qwen38/hf-progress.py"), 1, "one mount, the guarded one")
+        for script in ("install-kolibri.sh", "install-nemotron.sh", "install-nemotron-super.sh"):
             with self.subTest(script=script):
-                text = (REPO / script).read_text()
-                self.assertIn('[ -f "$HERE/hf-progress.py" ] && DL_PROGRESS_ARGS=(-v "$HERE/hf-progress.py:/opt/qwen38/hf-progress.py:ro")', text)
-                self.assertIn('-v "$HERE/ckpt-fetch.py:/opt/qwen38/ckpt-fetch.py:ro" "${DL_PROGRESS_ARGS[@]}"', text)
-                self.assertEqual(text.count("hf-progress.py:/opt/qwen38/hf-progress.py"), 1, "one mount, the guarded one")
+                inst = (REPO / script).read_text()
+                self.assertNotIn("hf-progress.py", inst, "no mount of its own")
+                self.assertIn('\nvlane_fetch "$MODEL" "$MODEL_REV"\n', inst)
 
     def test_bars_go_only_without_a_terminal(self):
         self.assertIn('DL_NO_BARS=""; [ -t 1 ] || DL_NO_BARS=1', SWITCH)

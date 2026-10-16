@@ -10,6 +10,7 @@ makes sure it is there first (docker -v of a missing file makes a root-owned dir
 place).
 """
 import pathlib
+import re
 import unittest
 
 REPO = pathlib.Path(__file__).resolve().parents[1]
@@ -36,19 +37,18 @@ CALLS = {
     "switch-model.sh, the video lane":
         ("switch-model.sh", '"$VID_PY" "$REPO_DIR/ckpt-fetch.py" "$VID_MODEL" "$VID_REV" --allow "$VID_ALLOW" '
                             '--offline-first --refs-main fill'),
-    "install-kolibri.sh":
-        ("install-kolibri.sh", '"$LOCAL_IMAGE" /opt/qwen38/ckpt-fetch.py "$MODEL" "$MODEL_REV" --offline-first'),
+    "vllm-lane.sh, the checkpoints of the three vLLM lanes' installers":
+        ("vllm-lane.sh", '"$LOCAL_IMAGE" /opt/qwen38/ckpt-fetch.py "$1" "$2" --offline-first'),
     "switch-model.sh, the Kolibri lane":
         ("switch-model.sh", '"$KOL_IMAGE" /opt/qwen38/ckpt-fetch.py "$KOL_MODEL" "$KOL_REV" --offline-first \\\n'
                             '    --need-gb "$KOL_NEED_GB" --free-gb "$(dl_free_gb "$KOL_HF")"'),
-    "install-nemotron.sh, the model and its drafter":
-        ("install-nemotron.sh", '"$LOCAL_IMAGE" /opt/qwen38/ckpt-fetch.py "$1" "$2" --offline-first'),
     "switch-model.sh, the Nemotron lane":
         ("switch-model.sh", '"$NEM_IMAGE" /opt/qwen38/ckpt-fetch.py "$NEM_R" "$NEM_V" --offline-first \\\n'
                             '      --need-gb "$NEM_ASK" --free-gb "$(dl_free_gb "$NEM_HF")"'),
 }
 SCRIPTS = ("install.sh", "switch-model.sh", "install-image.sh", "install-video.sh", "install-kolibri.sh",
-           "install-nemotron.sh")
+           "install-nemotron.sh", "install-nemotron-super.sh", "vllm-lane.sh")
+VLLM_INSTALLERS = ("install-kolibri.sh", "install-nemotron.sh", "install-nemotron-super.sh")
 
 
 class EveryLaneFetchesThroughIt(unittest.TestCase):
@@ -84,15 +84,23 @@ class EveryLaneFetchesThroughIt(unittest.TestCase):
                  '-v "$REPO_DIR/ckpt-fetch.py:/opt/qwen38/ckpt-fetch.py:ro"'),
                 ("switch-model.sh", '[ -f "$REPO_DIR/ckpt-fetch.py" ] || die',
                  '-v "$REPO_DIR/ckpt-fetch.py:/opt/qwen38/ckpt-fetch.py:ro"'),
-                ("install-kolibri.sh", '[ -f "$HERE/ckpt-fetch.py" ]',
-                 '-v "$HERE/ckpt-fetch.py:/opt/qwen38/ckpt-fetch.py:ro"'),
-                ("install-nemotron.sh", '[ -f "$HERE/ckpt-fetch.py" ]',
+                ("vllm-lane.sh", '[ -f "$HERE/$f" ] || die',
                  '-v "$HERE/ckpt-fetch.py:/opt/qwen38/ckpt-fetch.py:ro"')):
             t = text(script)
             with self.subTest(script):
                 self.assertIn(check, t)
                 self.assertIn(mount, t)
                 self.assertLess(t.index(check), t.index(mount), "checked before it is mounted")
+
+    def test_each_vllm_installer_names_the_script_in_its_preflight_before_it_fetches(self):
+        # the three vLLM installers check ckpt-fetch.py in their preflight (vllm-lane.sh's
+        # vlane_preflight checks each file it is given), before their first vlane_fetch
+        for script in VLLM_INSTALLERS:
+            t = text(script)
+            with self.subTest(script):
+                pre = re.search(r"\nvlane_preflight [^\n]*\bckpt-fetch\.py\b", t)
+                self.assertIsNotNone(pre, "its preflight checks ckpt-fetch.py")
+                self.assertLess(pre.start(), t.index('\nvlane_fetch "'))
 
 
 if __name__ == "__main__":

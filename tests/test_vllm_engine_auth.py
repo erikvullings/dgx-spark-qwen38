@@ -133,9 +133,17 @@ class TheLaneLoadsIt(unittest.TestCase):
         self.assertIn("-v __HOME__/.config/qwen38:/out", unit, "where the key file is")
 
     def test_the_installer_puts_it_there(self):
-        inst = (REPO / "install-kolibri.sh").read_text()
-        self.assertIn('"$HERE/vllm_engine_auth.py"', inst)
-        self.assertIn("$CONFIG_DIR/vllm-auth/vllm_engine_auth.py", inst)
+        # in the service step the three vLLM lanes' installers share (vllm-lane.sh)
+        shared = (REPO / "vllm-lane.sh").read_text()
+        step = shared[shared.index("vlane_service_files(){"):]
+        step = step[:step.index("\n}\n")]
+        self.assertIn('"$HERE/vllm_engine_auth.py"', step)
+        self.assertIn("$CONFIG_DIR/vllm-auth/vllm_engine_auth.py", step)
+        for script in ("install-kolibri.sh", "install-nemotron.sh", "install-nemotron-super.sh"):
+            with self.subTest(script=script):
+                inst = (REPO / script).read_text()
+                service = inst[inst.index("install_service(){"):]
+                self.assertIn("vlane_service_files ", service[:service.index("\n}\n")])
 
 
 if __name__ == "__main__":

@@ -273,11 +273,20 @@ class AUnitIsPutInPlaceDatedByWhatItsEngineReads(unittest.TestCase):
                 self.assertNotIn("PUT=", r.stdout)
 
     def test_every_installer_puts_its_unit_through_it(self):
-        for script in ("install.sh", "install-image.sh", "install-video.sh", "install-kolibri.sh", "install-nemotron.sh"):
+        for script in ("install.sh", "install-image.sh", "install-video.sh"):
             with self.subTest(script=script):
                 text = (REPO / script).read_text()
                 self.assertIn('UNIT_PUT="$(unit_put "', text)
                 self.assertNotRegex(text, r'sudo install -m 644 "\$(RENDER|TMP_UNIT)"')
+        # the three vLLM lanes' installers, through what they share (vllm-lane.sh)
+        shared = (REPO / "vllm-lane.sh").read_text()
+        self.assertIn('put="$(unit_put "$1" "$INSTALLED")"', shared)
+        for script in ("install-kolibri.sh", "install-nemotron.sh", "install-nemotron-super.sh", "vllm-lane.sh"):
+            with self.subTest(script=script):
+                text = (REPO / script).read_text()
+                self.assertNotRegex(text, r'sudo install -m 644 "\$(RENDER|TMP_UNIT|1)"')
+                if script != "vllm-lane.sh":
+                    self.assertIn('vlane_put_unit "$RENDER"', text)
 
     def test_the_engine_keeps_running_when_only_those_lines_change(self):
         """The whole chain: the unit put back with a lane named in its Conflicts= and After=

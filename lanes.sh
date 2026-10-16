@@ -125,6 +125,24 @@ stale_since(){  # $1 unit, $2... its files: true when it does not serve, or serv
   lane_serves_older "$@"
 }
 
+# The builds of a vLLM lane's image that no installed unit names, once the unit names this run's.
+# One image can serve two lanes (the Nemotron lanes', install-nemotron-super.sh says why): a build
+# goes when no unit names it any more, and not when its own lane's unit names another, which took
+# away the build Super VL's unit still named, and its next Load looped on preparing one already
+# built (found in review, 2026-10-16). -w: a tag that is the start of another is not that one.
+lane_prune_images(){  # $1 the image's repository (qwen38-nemotron), $2 the build kept ("" for none)
+  local img
+  for img in $(docker images --format '{{.Repository}}:{{.Tag}}' "$1" 2>/dev/null); do
+    [ "$img" = "$2" ] && continue
+    if grep -qsFw -- "$img" "$LANES_UNIT_DIR"/qwen38-*.service; then
+      echo "image kept: $img, which an installed lane's unit names"
+    else
+      docker rmi "$img" >/dev/null 2>&1 && echo "image removed: $img"
+    fi
+  done
+  return 0
+}
+
 # The flash lane's reduced draft vocabulary, built once into $CONFIG_DIR, by install.sh and by the
 # lane's first Load when it is installed on demand (prepare-lane.sh flash). Built inside the
 # serving image, so the tokenizer that ranks the ids is the one the served model ships, not
@@ -207,12 +225,24 @@ PY
 # Whether the DFlash2 draft a 27B unit names is in the cache it mounts, at its revision (a ref
 # such as main read through refs/): its config and a weights file (a snapshot links a file only
 # once it is whole).
+# The Hugging Face cache the first of these units or launchers mounts (-v <cache>:/root/.cache/
+# huggingface), nothing when none does; and the nearest folder of a path that exists, where df and
+# stat can look. One reading each for every script: they were copied into a dozen places, a fix to
+# one missing from the next (found in review, 2026-10-16).
+unit_hf_cache(){  # $1... units or launchers
+  { grep -hoE -- '-v [^ :]+:/root/\.cache/huggingface' "$@" 2>/dev/null || true; } \
+    | head -1 | sed -e 's/^-v //' -e 's|:/root/\.cache/huggingface$||'
+}
+existing(){  # $1 a path
+  local p="$1"; while [ ! -e "$p" ]; do p="$(dirname "$p")"; done; printf '%s\n' "$p"
+}
+
 draft_in_cache(){  # $1 the 27B unit
   local repo rev hf snap f
   repo="$({ grep -oE -- '--speculative-draft-model-path [^ ]+' "$1" 2>/dev/null || true; } | head -1 | cut -d' ' -f2)"
   [ -n "$repo" ] || return 0   # no draft named: its image is all the lane needs
   rev="$({ grep -oE -- '--speculative-draft-model-revision [^ ]+' "$1" || true; } | head -1 | cut -d' ' -f2)"
-  hf="$({ grep -oE -- '-v [^ :]+:/root/\.cache/huggingface' "$1" || true; } | head -1 | sed -e 's/^-v //' -e 's|:/root/\.cache/huggingface$||')"
+  hf="$(unit_hf_cache "$1")"
   snap="$hf/hub/models--${repo//\//--}"
   [ -n "$rev" ] || rev=main
   if [ -f "$snap/refs/$rev" ]; then rev="$(cat "$snap/refs/$rev")"; fi
@@ -222,8 +252,7 @@ draft_in_cache(){  # $1 the 27B unit
 }
 # Room on the disk that holds a path, in GB: the nearest folder of it that exists.
 free_gb_at(){  # $1 a path
-  local p="$1"; while [ ! -e "$p" ]; do p="$(dirname "$p")"; done
-  { df -BG --output=avail "$p" 2>/dev/null || true; } | tail -1 | tr -dc '0-9'
+  { df -BG --output=avail "$(existing "$1")" 2>/dev/null || true; } | tail -1 | tr -dc '0-9'
 }
 
 # The video lane's runtime writes two caches of its own at its first start, reused after, on the
@@ -268,7 +297,7 @@ room_per_disk(){
   for part in "$@"; do
     IFS='|' read -r path gb w <<< "$part"
     [ "${gb:-0}" -gt 0 ] || continue
-    p="$path"; while [ ! -e "$p" ]; do p="$(dirname "$p")"; done
+    p="$(existing "$path")"
     dev="$(stat -L -c %d "$p")"
     need[$dev]=$(( ${need[$dev]:-0} + gb )); free[$dev]="$(free_gb_at "$path")"
     what[$dev]="${what[$dev]:+${what[$dev]}; }$gb for $w"; at[$dev]="${at[$dev]:+${at[$dev]} and }$path"

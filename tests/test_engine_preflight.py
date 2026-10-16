@@ -230,16 +230,20 @@ class WhereItRuns(unittest.TestCase):
         """Run on its own, install-image.sh or install-video.sh would leave a unit naming a
         script that is not there, and the lane would never start."""
         for inst, src in (("install.sh", "$REPO_DIR"), ("install-image.sh", "$HERE"), ("install-video.sh", "$HERE"),
-                          ("install-kolibri.sh", "$HERE")):
+                          ("vllm-lane.sh", "$HERE")):
             with self.subTest(inst=inst):
                 text = (REPO / inst).read_text()
                 self.assertIn(f'install -m 755 "{src}/engine-preflight.sh" "$CONFIG_DIR/engine-preflight.sh"', text)
                 # written only when it changed, so an unchanged run rewrites nothing
                 self.assertIn(f'cmp -s "{src}/engine-preflight.sh" "$CONFIG_DIR/engine-preflight.sh"', text)
-        for inst in ("install-image.sh", "install-video.sh", "install-kolibri.sh"):
+        for inst in ("install-image.sh", "install-video.sh"):
             text = (REPO / inst).read_text()
             # in place before the unit naming it is rendered ("$HERE/$UNIT.template")
             self.assertLess(text.index("engine-preflight.sh"), text.index('"$HERE/$UNIT.template"'), inst)
+        # the vLLM lanes put it in place through vllm-lane.sh's service step, before their render
+        for inst in ("install-kolibri.sh", "install-nemotron.sh", "install-nemotron-super.sh"):
+            text = (REPO / inst).read_text()
+            self.assertLess(text.index("  vlane_service_files "), text.index('"$HERE/$UNIT.template"'), inst)
         install = (REPO / "install.sh").read_text()
         self.assertLess(install.index('install -m 755 "$REPO_DIR/engine-preflight.sh"'),
                         install.index("qwen38-sglang.service.template"))

@@ -60,6 +60,9 @@ eval "$kline"
 # b12x wheel.
 nline="$(grep -E '^NEMOTRON_(BASE_IMAGE|B12X_VERSION|BOLT_REPO|BOLT_REV|BOLT_DRAFT_REPO|BOLT_DRAFT_REV)=' "$REPO_DIR/install-nemotron.sh")"
 eval "$nline"
+# The Nemotron Super lane's: the model and its drafter (its image is the Nemotron lane's, checked above).
+sline="$(grep -E '^NEMOTRON_SUPER_(REPO|REV|DRAFT_REPO|DRAFT_REV)=' "$REPO_DIR/install-nemotron-super.sh")"
+eval "$sline"
 
 # Hugging Face answers an anonymous request with 401 both for a gated repo and for one that
 # does not exist (or is private): only its x-error-code tells a gated repo apart, so the
@@ -237,6 +240,9 @@ echo "Nemotron lane"
 check_model  nemotron-bolt  "$NEMOTRON_BOLT_REPO" "$NEMOTRON_BOLT_REV"
 check_model  nemotron-draft "$NEMOTRON_BOLT_DRAFT_REPO" "$NEMOTRON_BOLT_DRAFT_REV"
 check_wheel  nemotron-b12x  b12x "$NEMOTRON_B12X_VERSION"
+echo "Nemotron Super lane"
+check_model  nemotron-super "$NEMOTRON_SUPER_REPO" "$NEMOTRON_SUPER_REV"
+check_model  super-draft    "$NEMOTRON_SUPER_DRAFT_REPO" "$NEMOTRON_SUPER_DRAFT_REV"
 
 echo "Images"
 img="$(grep -E '^(IMAGE|FLASH_IMAGE)=' "$REPO_DIR/install.sh")"

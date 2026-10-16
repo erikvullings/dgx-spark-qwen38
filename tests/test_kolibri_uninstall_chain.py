@@ -23,6 +23,8 @@ TEXT = (REPO / "install-kolibri.sh").read_text()
 START = TEXT.index('if [ "$ACTION" = uninstall ]; then')
 END = TEXT.index("\n  exit 0\nfi\n", START) + len("\n  exit 0\nfi\n")
 BLOCK = TEXT[START:END]
+# the installer's own names for what it shares with the other vLLM lanes (vllm-lane.sh)
+VLANE = next(ln for ln in TEXT.splitlines() if ln.startswith("VLANE="))
 
 
 class TheUninstallKeepsTheChain(unittest.TestCase):
@@ -66,7 +68,8 @@ class TheUninstallKeepsTheChain(unittest.TestCase):
         script = "\n".join([
             "set -euo pipefail",
             "step(){ :; }",
-            f'LANES_UNIT_DIR="{sd}"', f'. "{REPO}/lanes.sh"',   # the library the script sources
+            f'LANES_UNIT_DIR="{sd}"', f'. "{REPO}/lanes.sh"',   # the libraries the script sources
+            f'. "{REPO}/vllm-lane.sh"', VLANE,
             f'HERE="{REPO}"',
             "ACTION=uninstall",
             "UNIT=qwen38-kolibri.service",
@@ -150,8 +153,13 @@ class TheUninstallKeepsTheChain(unittest.TestCase):
                    "lane-before-image": "qwen38-kolibri.service"}
         self.run_block(d_files, kolibri_at_boot=True)
         self.assertEqual(self.enabled(), ["qwen38-flash.service"])
-        # the links are read while Kolibri is still the lane at boot, before its unit goes
-        self.assertLess(BLOCK.index("text_lane_migrate"), BLOCK.index('sudo systemctl disable --now "$UNIT"'))
+        # the links are read while Kolibri is still the lane at boot, before its unit goes (in the
+        # uninstall the three vLLM lanes share, vllm-lane.sh)
+        shared = (REPO / "vllm-lane.sh").read_text()
+        fn = shared[shared.index("vlane_uninstall_unit(){"):]
+        fn = fn[:fn.index("\n}\n")]
+        self.assertIn("vlane_uninstall_unit", BLOCK)
+        self.assertLess(fn.index("text_lane_migrate"), fn.index('sudo systemctl disable --now "$UNIT"'))
 
     def test_the_boot_goes_back_past_a_side_lane_removed_since(self):
         # flash, then image, then Kolibri; the image lane uninstalled: Kolibri's link named a unit
