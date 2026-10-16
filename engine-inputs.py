@@ -94,9 +94,9 @@ def inputs(unit, config_dir, hf_cache, ckpts):
     return files, images, containers
 
 
-def _image_id(ref):
+def _image_id(ref, timeout=None):
     r = subprocess.run(["docker", "image", "inspect", "--format", "{{.Id}}", ref],
-                       capture_output=True, text=True)
+                       capture_output=True, text=True, timeout=timeout)
     return r.stdout.strip() if r.returncode == 0 else "absent"
 
 
@@ -117,11 +117,16 @@ def fingerprint(unit, config_dir, hf_cache, ckpts):
     return h.hexdigest()
 
 
-def running(unit, config_dir, hf_cache, ckpts):
+def running(unit, config_dir, hf_cache, ckpts, extra=(), timeout=None):
+    """extra: files the engine reads that its unit does not name (the vLLM lanes' auth
+    middleware, mounted from a folder: vllm-lane.sh's LANE_FILES). timeout: seconds for each
+    systemctl or docker call. None, the installers' way, waits as before; the cockpit passes
+    one, since a docker that no longer answers held its whole tier with it (found in review,
+    2026-10-16). A call over it raises subprocess.TimeoutExpired, for the caller to handle."""
     name = os.path.basename(unit)
     r = subprocess.run(["systemctl", "show", name, "--timestamp=unix",
                         "-p", "ActiveState", "-p", "ExecMainStartTimestamp"],
-                       capture_output=True, text=True)
+                       capture_output=True, text=True, timeout=timeout)
     props = dict(line.split("=", 1) for line in r.stdout.splitlines() if "=" in line)
     if props.get("ActiveState") != "active":
         return f"no: {name} is {props.get('ActiveState') or 'unknown'}"
@@ -129,6 +134,7 @@ def running(unit, config_dir, hf_cache, ckpts):
     if not started.isdigit():
         return f"no: {name} has no start time"
     files, images, containers = inputs(unit, config_dir, hf_cache, ckpts)
+    files += [f for f in extra if os.path.exists(f) and f not in files]
     # Whole seconds on both sides, as install.sh's stale_since compares them: systemd gives
     # the start in whole seconds, and the installer writes the unit, then restarts the
     # engine in the same second. Compared with the file's fraction, that write read as a
@@ -141,9 +147,10 @@ def running(unit, config_dir, hf_cache, ckpts):
                 return f"no: {f} changed after {name} started"
         except OSError:
             return f"no: {f} is unreadable"
-    ids = {_image_id(ref) for ref in images} - {"absent"}
+    ids = {_image_id(ref, timeout) for ref in images} - {"absent"}
     for c in containers:
-        r = subprocess.run(["docker", "inspect", "--format", "{{.Image}}", c], capture_output=True, text=True)
+        r = subprocess.run(["docker", "inspect", "--format", "{{.Image}}", c], capture_output=True, text=True,
+                           timeout=timeout)
         if r.returncode != 0:
             return f"no: container {c} is not running"
         if ids and r.stdout.strip() not in ids:

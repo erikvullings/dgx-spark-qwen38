@@ -7,6 +7,8 @@ is now kept when it started after every file it reads was last written, the run 
 none of them by content, and it answers. These pin engine-inputs.py (what the engine
 reads, found from its unit) and the installer's own decision lines, run as written,
 against fake systemctl, docker, python3 and curl."""
+import importlib.util
+import inspect
 import os
 import pathlib
 import subprocess
@@ -313,6 +315,71 @@ class AUnitIsPutInPlaceDatedByWhatItsEngineReads(unittest.TestCase):
         self.assertEqual(r.stdout.strip(), "deps", r.stderr)
         self.assertEqual(box.run("fingerprint"), fp, "this run: nothing the engine reads changed")
         self.assertEqual(box.run("running"), "yes", "the next run: it still started after everything it reads")
+
+
+class WhatTheCockpitAsksFor(unittest.TestCase):
+    """The cockpit calls running() in its own process, on its 30 s tier: it bounds each
+    systemctl and docker call, and it hands the vLLM lanes the files their installer counts
+    beyond the unit (vllm-lane.sh's LANE_FILES). Found in review, 2026-10-16."""
+
+    def call(self, box, **kw):
+        spec = importlib.util.spec_from_file_location("engine_inputs_api", TOOL)
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+        before = dict(os.environ)
+        os.environ.update(PATH=f"{box.bin}:/usr/bin:/bin", FAKE_IMAGES=str(box.images),
+                          FAKE_ACTIVE=box.active, FAKE_STARTED=str(box.started))
+        try:
+            return mod.running(str(box.unit), str(box.cfg), str(box.hf), ["org/model@rev1"], **kw)
+        finally:
+            os.environ.clear()
+            os.environ.update(before)
+
+    def test_a_file_the_installer_counts_beyond_the_unit_is_one_more_input(self):
+        box = Box()
+        t = int(time.time()) - 100
+        for f in (box.unit, box.template, box.cfg / "api-key", box.config_json):
+            os.utime(f, (t, t))
+        box.started = t
+        auth = box.cfg / "vllm-auth" / "vllm_engine_auth.py"
+        auth.parent.mkdir()
+        auth.write_text("x\n")  # written now, after the start
+        self.assertEqual(self.call(box), "yes")  # the unit alone does not name it
+        self.assertEqual(self.call(box, extra=[str(auth)]),
+                         f"no: {auth} changed after qwen38-sglang.service started")
+        # an absent file is no input, as lane_serves_older's [ -e ] has it
+        self.assertEqual(self.call(box, extra=[str(box.cfg / "absent.py")]), "yes")
+
+    def test_a_call_that_does_not_answer_is_cut_when_a_bound_is_given(self):
+        box = Box()
+        (box.bin / "docker").write_text("#!/bin/sh\nexec sleep 30\n")
+        t0 = time.time()
+        with self.assertRaises(subprocess.TimeoutExpired):
+            self.call(box, timeout=1)
+        self.assertLess(time.time() - t0, 10)
+
+    def test_a_systemctl_that_does_not_answer_is_cut_too(self):
+        box = Box()
+        (box.bin / "systemctl").write_text("#!/bin/sh\nexec sleep 30\n")
+        with self.assertRaises(subprocess.TimeoutExpired):
+            self.call(box, timeout=1)
+
+    def test_a_container_inspect_that_does_not_answer_is_cut_too(self):
+        # the image lookup answers, the container's does not: the third call is bounded as well
+        box = Box()
+        fake = box.bin / "docker"
+        fake.write_text(FAKE_DOCKER.replace('if [ "$1" = image ]; then', 'if [ "$1" = inspect ]; then exec sleep 30; fi\nif [ "$1" = image ]; then', 1))
+        t0 = time.time()
+        with self.assertRaises(subprocess.TimeoutExpired):
+            self.call(box, timeout=1)
+        self.assertLess(time.time() - t0, 10)
+
+    def test_the_installers_still_wait_as_before(self):
+        spec = importlib.util.spec_from_file_location("engine_inputs_sig", TOOL)
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+        self.assertIsNone(inspect.signature(mod.running).parameters["timeout"].default)
+        self.assertEqual(inspect.signature(mod.running).parameters["extra"].default, ())
 
 
 class TheRunningVerdict(unittest.TestCase):

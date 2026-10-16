@@ -106,9 +106,10 @@ drafter's acceptance in the load. Library lists its checkpoint and its drafter w
   rewrites a lane's unit, a script it runs or its image and leaves the engine serving, so what it
   brought applies at the lane's next start, and only a NOTE line of the installer's output said so
   (Bolt's prefix cache settings above would have waited for a restart nobody was told about). Every
-  30 seconds the cockpit asks `engine-inputs.py`, the rule the installers go by; the banner strip
-  says what changed, and the lane's card offers "Restart <lane> to apply the update", a Load of one
-  step.
+  30 seconds the cockpit asks `engine-inputs.py`, the rule the installers go by (for the vLLM lanes,
+  with the auth middleware their installer counts too), each call bounded at 5 s so that a docker
+  that stops answering cannot freeze the page; the banner strip says what changed, and the lane's
+  card offers "Restart <lane> to apply the update", a Load of one step.
 - Library counted a Nemotron target whole with its checkpoint alone: Bolt read "on disk" with its
   drafter missing, which its Load then fetched. A Nemotron target is whole now with its drafter
   whole too (the Download fetches both), and a lane's Start, which loads both from the cache, is

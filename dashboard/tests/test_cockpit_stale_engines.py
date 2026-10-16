@@ -8,7 +8,9 @@ The update collector now names each engine an update left behind, with engine-in
 the one the installers go by."""
 import importlib.util
 import os
+import re
 import shutil
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -54,10 +56,13 @@ class AnUpdateOwedToAServingEngine(unittest.TestCase):
         """engine-inputs.py, answering per unit file as its running() does."""
         calls = []
 
+        self.kws = {}
+
         class EI:
             @staticmethod
-            def running(unit, config_dir, hf_cache, ckpts):
+            def running(unit, config_dir, hf_cache, ckpts, **kw):
                 calls.append(os.path.basename(unit))
+                self.kws[os.path.basename(unit)] = kw
                 return answers.get(os.path.basename(unit), "no: x is inactive")
         self.cp._ENGINE_INPUTS["mod"] = EI
         return calls
@@ -102,6 +107,67 @@ class AnUpdateOwedToAServingEngine(unittest.TestCase):
         self.assertEqual(out.get("stale_engines"), {"qwen38-nemotron.service": "Its unit changed (what it runs and how)"})
         self.fake({"qwen38-nemotron.service": "yes"})
         self.assertNotIn("stale_engines", self.cp.collect_update())
+
+    def test_every_call_is_bounded(self):
+        # a docker that no longer answers held the whole 30 s tier (found in review, 2026-10-16)
+        self.fake({})
+        self.cp.stale_engines()
+        self.assertTrue(self.kws)
+        self.assertEqual({u: kw.get("timeout") for u, kw in self.kws.items()},
+                         {u: self.cp.ENGINE_INPUTS_TIMEOUT_S for u in self.kws})
+
+    def test_a_check_that_does_not_answer_ends_the_round_with_what_it_had(self):
+        u = str(self.units / "qwen38-sglang.service")
+        calls = []
+
+        class EI:
+            @staticmethod
+            def running(unit, config_dir, hf_cache, ckpts, **kw):
+                name = os.path.basename(unit)
+                calls.append(name)
+                if name == "qwen38-image.service":
+                    raise subprocess.TimeoutExpired(["docker"], kw.get("timeout"))
+                if name == "qwen38-sglang.service":
+                    return f"no: {u} changed after qwen38-sglang.service started"
+                return "yes"
+        self.cp._ENGINE_INPUTS["mod"] = EI
+        self.assertEqual(self.cp.stale_engines(), {"qwen38-sglang.service": "Its unit changed (what it runs and how)"})
+        # the units after the one that did not answer are not asked this round
+        self.assertEqual(calls, ["qwen38-sglang.service", "qwen38-image.service"])
+
+    def test_the_vllm_lanes_count_the_files_their_installer_counts(self):
+        self.fake({})
+        self.cp.stale_engines()
+        cfg = self.cp.CONFIG_DIR
+        for unit in ("qwen38-kolibri.service", "qwen38-nemotron.service", "qwen38-nemotron-super.service"):
+            self.assertIn(unit, self.cp.VLLM_UNITS)
+        self.assertEqual(self.kws["qwen38-nemotron.service"]["extra"], [str(cfg / "vllm-auth/vllm_engine_auth.py")])
+        self.assertEqual(self.kws["qwen38-sglang.service"]["extra"], [])
+        self.assertEqual(self.kws["qwen38-image.service"]["extra"], [])
+
+    def test_those_files_are_the_vllm_installers_own_list(self):
+        # vllm-lane.sh's LANE_FILES: the unit and engine-secrets.sh (which every vLLM unit runs,
+        # so engine-inputs.py finds them), the start guard (no input of the engine, which
+        # engine-inputs.py leaves out by design), and the file the cockpit adds; nothing else
+        text = (DASH.parent / "vllm-lane.sh").read_text()
+        line = next(ln for ln in text.splitlines() if ln.strip().startswith("LANE_FILES=("))
+        named = set(re.findall(r'\$CONFIG_DIR/([A-Za-z0-9._/-]+)', line))
+        self.assertEqual(named - {"engine-secrets.sh", "engine-preflight.sh"}, set(self.cp.VLLM_LANE_FILES))
+        for tpl in ("qwen38-kolibri.service.template", "qwen38-nemotron.service.template",
+                    "qwen38-nemotron-super.service.template"):
+            self.assertIn("engine-secrets.sh", (DASH.parent / tpl).read_text(), tpl)
+        ei = (DASH.parent / "engine-inputs.py").read_text()
+        self.assertRegex(ei, r'NOT_INPUTS = \{[^}]*"engine-preflight\.sh"')
+
+    def test_the_vllm_units_are_the_installers_that_use_the_vllm_base(self):
+        # every installer that sources vllm-lane.sh names its unit in UNIT=; a lane added on
+        # that base and missing here would be checked without its middleware
+        units = set()
+        for inst in sorted(DASH.parent.glob("install-*.sh")):
+            text = inst.read_text()
+            if re.search(r'^\. "\$HERE/vllm-lane\.sh"', text, re.M):
+                units.add(re.search(r"^UNIT=(\S+)", text, re.M).group(1))
+        self.assertEqual(units, set(self.cp.VLLM_UNITS))
 
     def test_an_unreadable_rule_says_nothing_rather_than_fail(self):
         def boom():

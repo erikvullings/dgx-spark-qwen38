@@ -1531,6 +1531,17 @@ def _semver(tag):
 # after every input it reads was written; the banner strip and the lane's Load say what is owed.
 UNIT_DIR = Path(os.environ.get("COCKPIT_UNIT_DIR", "/etc/systemd/system"))
 _ENGINE_INPUTS: dict = {}
+# The vLLM lanes read one file their unit does not name, the auth middleware they mount from a
+# folder (vllm-lane.sh's LANE_FILES): without it here, an update of it got its NOTE from the
+# installer and nothing from the cockpit (found in review, 2026-10-16). Their start guard is in
+# that list too and stays out here, as engine-inputs.py has it: it runs before the engine and is
+# no input of it, so a new guard restarts nothing (docs/engine-restarts.md).
+VLLM_UNITS = ("qwen38-kolibri.service", "qwen38-nemotron.service", "qwen38-nemotron-super.service")
+VLLM_LANE_FILES = ("vllm-auth/vllm_engine_auth.py",)
+# Each systemctl or docker call engine-inputs.py makes for this collector: a docker that no
+# longer answers held the whole 30 s tier with it, every panel of that tier frozen exactly
+# when the cockpit is the way to see what is wrong (found in review, 2026-10-16).
+ENGINE_INPUTS_TIMEOUT_S = 5.0
 
 
 def _engine_inputs():
@@ -1569,8 +1580,12 @@ def stale_engines() -> dict:
         path = UNIT_DIR / unit
         if unit == "qwen38-keepalive.service" or not path.is_file():
             continue
+        extra = [str(CONFIG_DIR / f) for f in VLLM_LANE_FILES] if unit in VLLM_UNITS else []
         try:
-            reason = _owed_reason(unit, ei.running(str(path), str(CONFIG_DIR), hf, []))
+            reason = _owed_reason(unit, ei.running(str(path), str(CONFIG_DIR), hf, [],
+                                                   extra=extra, timeout=ENGINE_INPUTS_TIMEOUT_S))
+        except subprocess.TimeoutExpired:
+            break  # systemd or docker did not answer in time: nothing more is claimed this round
         except Exception:  # noqa: BLE001
             continue
         if reason:
