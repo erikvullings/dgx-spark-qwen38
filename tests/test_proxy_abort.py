@@ -145,8 +145,11 @@ class FakeEngine(http.server.BaseHTTPRequestHandler):
         with self.lock:
             FakeEngine.seen_rid_header.append((path, override))
         if path == "/v1/messages":
-            # the Anthropic route mints its own id and applies no header overrides
-            rid = uuid.uuid4().hex
+            # The Anthropic route mints the id its client sees (msg_<uuid>), and its rid is the
+            # header's when the engine honours overrides: it builds its request with the chat
+            # route's _convert_to_internal_request, which applies them (v0.5.19, v0.5.21 and the
+            # flash nightly, read 2026-10-16). This fake said "no overrides" until then.
+            rid = (override if FakeEngine.honour else None) or uuid.uuid4().hex
             self._register(rid)
             self._sse_head()
             self._write_events(rid, f"msg_{uuid.uuid4().hex}", prefill=0.0)
@@ -282,6 +285,36 @@ class Abort(unittest.TestCase):
         self.assertEqual(FakeEngine.ignored, [])
         self.assertEqual(len(FakeEngine.drained), 1,
                          "the abandoned Anthropic answer was not read to its end")
+
+    def test_an_abandoned_anthropic_stream_is_aborted_once_the_override_is_proven(self):
+        """Claude Code's dialect was drained for want of a rid, up to DRAIN_MAX_S of decode for
+        nobody (2026-10-16): the proxy now names it, and aborts it once a chat stream has shown
+        that the engine takes the name."""
+        self._prove_override()
+        self._send("/v1/messages", {"messages": [{"role": "user", "content": "hi"}]}, read_bytes=1)
+        self.assertTrue(self._wait(lambda: FakeEngine.aborted or FakeEngine.ignored or FakeEngine.drained))
+        sent = [rid for path, rid in FakeEngine.seen_rid_header if path == "/v1/messages"]
+        self.assertTrue(sent and sent[0] and len(sent[0]) == 32, f"no rid imposed: {sent!r}")
+        self.assertEqual(FakeEngine.aborted, sent, f"drained={FakeEngine.drained}")
+        self.assertEqual(FakeEngine.ignored, [])
+
+    def test_an_anthropic_stream_never_decides_whether_the_override_is_honoured(self):
+        """Its first event carries msg_<uuid>, never the rid: read as a proof, it would say
+        "ignored" and take the abort away from every route."""
+        s = socket.create_connection(("127.0.0.1", self.port), timeout=15)
+        raw = json.dumps({"messages": [{"role": "user", "content": "hi"}], "stream": True}).encode()
+        s.sendall(b"POST /v1/messages HTTP/1.1\r\nHost: p\r\nContent-Type: application/json\r\n"
+                  + f"Content-Length: {len(raw)}\r\n\r\n".encode() + raw)
+        s.settimeout(15)
+        got = b""
+        while b"[DONE]" not in got:
+            c = s.recv(4096)
+            if not c:
+                break
+            got += c
+        s.close()
+        self.assertIn(b"[DONE]", got)
+        self.assertIsNone(self.mod._rid_override_honoured)
 
     def test_engine_ignoring_the_header_is_drained_not_falsely_aborted(self):
         """SGLANG_ENABLE_REQUEST_HEADER_OVERRIDES is off by default, so the engine answers

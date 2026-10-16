@@ -3056,10 +3056,16 @@ _UPSTREAM_OPENER = urllib.request.build_opener(_UpstreamHTTP, _NoUpstreamRedirec
 #   - it must send the abort BEFORE it closes the upstream socket, or it races the
 #     deletion it is trying to beat.
 # The engine takes the rid from the caller on the routes below (x-override-rid,
-# request_headers.py). The Anthropic route builds its own request object and never
-# applies header overrides, so on /v1/messages the id the client sees (msg_<uuid>) is
-# NOT the engine's rid: there is nothing to abort with, and the proxy drains instead.
-RID_OVERRIDE_ROUTES = ("/v1/chat/completions", "/generate")
+# request_headers.py). On /v1/messages too, which this proxy drained for want of a rid until
+# 2026-10-16: the Anthropic route converts its body into a chat request and hands it to the
+# chat route's own _convert_to_internal_request with the raw request, which applies the header
+# overrides (read in the sources of v0.5.19, v0.5.21 and the flash nightly, 2026-10-16), so an
+# abandoned Claude Code answer kept decoding for up to DRAIN_MAX_S (found in review,
+# 2026-10-16). The id its client sees (msg_<uuid>) is still not the engine's rid, so only the
+# routes of RID_PROOF_ROUTES, whose first event carries the rid, tell whether the engine honours
+# the header, and only their observed id is a rid.
+RID_OVERRIDE_ROUTES = ("/v1/chat/completions", "/generate", "/v1/messages")
+RID_PROOF_ROUTES = ("/v1/chat/completions", "/generate")
 ABORT_TIMEOUT_S = float(os.environ.get("ABORT_TIMEOUT_S", "5"))
 # Ceiling on draining an abandoned generation that cannot be aborted. Reading it to its
 # natural end costs the same decode the zombie would have cost anyway, and saves the
@@ -3459,7 +3465,8 @@ class H(BaseHTTPRequestHandler):
                     if rid and rid != "keepalive":
                         self._rid = rid
                         forced = self._forced_rid()
-                        if forced and _rid_override_honoured is None:
+                        if (forced and _rid_override_honoured is None
+                                and self.path.split("?")[0] in RID_PROOF_ROUTES):
                             _rid_override_honoured = (rid == forced)
                             # v6.37: on vLLM the rid is never used (closing stops it), and the
                             # SGLang advice below was a wrong lead in its journal
@@ -3486,7 +3493,7 @@ class H(BaseHTTPRequestHandler):
         observed = getattr(self, "_rid", None)
         if forced and _rid_override_honoured is True:
             return forced
-        if observed and self.path.split("?")[0] in RID_OVERRIDE_ROUTES:
+        if observed and self.path.split("?")[0] in RID_PROOF_ROUTES:
             return observed         # engine ignored the override: its own id is the rid
         return None                 # Anthropic dialect: msg_<uuid> is not a rid
 
