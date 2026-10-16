@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Keepalive proxy in front of SGLang or vLLM (v6.39). No content logging, and the only
+"""Keepalive proxy in front of SGLang or vLLM (v6.40). No content logging, and the only
 rewriting is the tool-schema guard (role 4); one route, POST /v1/systemone, is answered
 here instead of relayed (role 5).
 
@@ -40,6 +40,11 @@ Six roles, nothing else:
    PROXY_HOLD_MAX_S, instead of failing at once. A streamed one hears from the proxy at
    once (200, then the keepalives of role 1); see "Holding a request" below.
 
+v6.40: the Nemotron lane (NVIDIA's Bolt on vLLM) takes a reasoning effort as its chat template
+reads it, enable_thinking and medium_effort: none and minimal turn the reasoning off, low and
+medium ask its shorter one, high and above its default. vLLM handed the template a top-level
+"none" it does not read, and the answer came back inside the reasoning, its content null
+(measured 2026-10-15); pi and the OpenAI SDKs send the field so.
 v6.39: an engine that has neither of SGLang's info routes is not asked them again. Every read of
 the pool on the Kolibri lane (vLLM) began with /server_info and /get_server_info, two 404s, and the
 hold's probe asked /server_info each time it looked: the proxy notes that this engine has none,
@@ -901,6 +906,53 @@ def qwen_effort_none(body, path):
     except Exception:
         return body, False
 
+
+
+# v6.40: Bolt's chat template (the Nemotron lane) reads enable_thinking and medium_effort, and no
+# reasoning effort: the box maps the levels onto those two (2026-10-15).
+NEMOTRON_EFFORTS = {"none": "off", "minimal": "off", "low": "medium", "medium": "medium",
+                    "high": "full", "xhigh": "full", "max": "full"}
+
+
+def nemotron_effort(body, path):
+    """(the body to forward, the level translated or None). v6.40: on the Nemotron lane (vLLM, a
+    served name starting nemotron-), a reasoning effort, top-level or in chat_template_kwargs,
+    becomes what Bolt's template reads: enable_thinking false for none and minimal, enable_thinking
+    and medium_effort for low and medium, enable_thinking alone for high and above. The effort
+    fields go: vLLM handed the template a top-level "none" it does not read, and the answer came
+    back inside the reasoning, its content null (measured 2026-10-15). A request that names
+    enable_thinking itself keeps its choice. Any other level, any other lane, any doubt: the body
+    goes as it came."""
+    if not body or path.split("?", 1)[0] != "/v1/chat/completions" or b'"reasoning_effort"' not in body:
+        return body, None
+    if _SERVED["engine"] != "vllm" or not any(str(n).startswith("nemotron-") for n in _SERVED["names"]):
+        return body, None
+    try:
+        j = json.loads(body)
+    except Exception:
+        return body, None
+    if not isinstance(j, dict):
+        return body, None
+    kw = j.get("chat_template_kwargs")
+    if kw is None:
+        kw = {}
+    elif not isinstance(kw, dict):
+        return body, None
+    level = kw["reasoning_effort"] if kw.get("reasoning_effort") is not None else j.get("reasoning_effort")
+    if not isinstance(level, str) or level not in NEMOTRON_EFFORTS:
+        return body, None
+    kw.pop("reasoning_effort", None)
+    j.pop("reasoning_effort", None)
+    if "enable_thinking" not in kw:
+        want = NEMOTRON_EFFORTS[level]
+        kw["enable_thinking"] = want != "off"
+        if want == "medium":
+            kw["medium_effort"] = True
+    j["chat_template_kwargs"] = kw
+    try:
+        return json.dumps(j).encode(), level
+    except Exception:
+        return body, None
 
 # OpenAI documents top_logprobs as "an integer between 0 and 20". SGLang declares it
 # Optional[int] with no constraint at all (checked in the served image: both
@@ -3887,7 +3939,7 @@ class H(BaseHTTPRequestHandler):
             self._done("503 engine unreachable"); return
 
     def _served_name(self, body):
-        """The body as the engine that serves now takes it (route_model_name, qwen_effort_none),
+        """The body as the engine that serves now takes it (route_model_name, qwen_effort_none, nemotron_effort),
         each change said once."""
         body, renamed = route_model_name(body, self.path)
         if renamed and _model_rename_logged.first(renamed):   # once per name, not per request
@@ -3898,6 +3950,14 @@ class H(BaseHTTPRequestHandler):
         if off and _effort_off_logged.first("none"):
             log(f"{self._peer} reasoning_effort none is not a level the Qwen template takes: "
                 f"relayed as enable_thinking false")
+        body, level = nemotron_effort(body, self.path)
+        if level and _effort_off_logged.first("nemotron " + level):
+            # what the level becomes (the line said "enable_thinking and medium_effort" for every
+            # level: found in review, 2026-10-16)
+            how = {"off": "enable_thinking false", "medium": "enable_thinking and medium_effort"}.get(
+                NEMOTRON_EFFORTS[level], "enable_thinking alone")
+            log(f"{self._peer} reasoning_effort {level} is not what the Nemotron template reads: "
+                f"relayed as {how}, unless the request names enable_thinking itself")
         return body
 
     def _forward(self, body, count_only):
@@ -4306,7 +4366,7 @@ if __name__ == "__main__":
     holds = (f"holds requests up to {HOLD_MAX_S:.0f}s while {' or '.join(HOLD_UNITS)} comes back"
              if HOLD_UNITS and HOLD_MAX_S > 0 else "holds nothing")
     # one f-string: the cockpit's tests render this line from the source
-    log(f"v6.39 on {BIND}:{port} -> {UPSTREAM} (keepalive {KEEPALIVE_S:.0f}s, max silence {MAX_SILENCE_S:.0f}s, {holds})")
+    log(f"v6.40 on {BIND}:{port} -> {UPSTREAM} (keepalive {KEEPALIVE_S:.0f}s, max silence {MAX_SILENCE_S:.0f}s, {holds})")
     if FLASH_PROMPT_CEILING_TOKENS > 0:
         log(f"one-prompt ceiling {FLASH_PROMPT_CEILING_TOKENS} tokens while the flash lane serves"
             + (f", {PROMPT_CEILING_TOKENS} on any lane" if PROMPT_CEILING_TOKENS > 0 else ""))
