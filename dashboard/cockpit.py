@@ -207,9 +207,10 @@ CODE_FILES = ("cockpit.py", "recipes.py", "lifecycle.py", "registry.py",
 
 
 # The repo's modules this process loads once are its code too: engine-inputs.py (stale_engines),
-# oc-fit-limits.py and oc-merge-limits.py (the opencode limits). A change to one of them alone
+# oc-fit-limits.py and oc-merge-limits.py (the opencode limits), conformity.py (the release
+# installed, and the box against what its clone recommends). A change to one of them alone
 # left the cockpit running the old code, and nothing said so (found in review, 2026-10-17).
-REPO_CODE_FILES = ("engine-inputs.py", "oc-fit-limits.py", "oc-merge-limits.py")
+REPO_CODE_FILES = ("engine-inputs.py", "oc-fit-limits.py", "oc-merge-limits.py", "conformity.py")
 
 
 def code_fingerprint() -> dict:
@@ -1674,11 +1675,51 @@ def refresh_owed():
         STATE["update"] = {"data": cur, "ts": time.time()}
 
 
+# This box against what its clone recommends (v1.36.0, 2026-10-17): conformity.py's plan for the
+# text lane the box serves from, with nothing set on a command line, so the same list the next
+# ./install.sh prints before its first step. Read again only once a file it reads has changed:
+# the units of the two text lanes and of the proxy, the flash launcher, installed.json, the API
+# key (whose date is the age of a box with no record), the clone's install.sh and CHANGELOG.md.
+_CONFORM_CACHE: dict = {}
+
+
+def _mtime_ns(path):
+    try:
+        return path.stat().st_mtime_ns
+    except OSError:
+        return None
+
+
+def conformity_state():
+    """{release, lane, items} or None when conformity.py cannot say (never a failed panel).
+    items: [{group (moves, yours, site), knob, value, recommended, why, old}]."""
+    try:
+        mod = _conformity()
+        rec = mod.load_record(CONFIG_DIR)[0]
+        lane = (rec or {}).get("lane")
+        if lane not in ("27b", "flash"):
+            try:
+                noted = (CONFIG_DIR / "text-lane").read_text().strip()
+            except OSError:
+                noted = ""
+            lane = "flash" if noted == "qwen38-flash.service" else "27b"
+        files = ([UNIT_DIR / n for n in ("qwen38-sglang.service", "qwen38-flash.service", "qwen38-keepalive.service")]
+                 + [CONFIG_DIR / n for n in ("launch-flash.sh", "installed.json", "api-key", "text-lane")]
+                 + [REPO_DIR / "install.sh", REPO_DIR / "CHANGELOG.md"])
+        key = (lane,) + tuple(_mtime_ns(f) for f in files)
+        if _CONFORM_CACHE.get("key") != key:
+            items = mod.plan(CONFIG_DIR, lane, {}, repo_dir=REPO_DIR, units_dir=UNIT_DIR)
+            _CONFORM_CACHE.update(key=key, value={"release": mod.clone_release(REPO_DIR), "lane": lane, "items": items})
+        return _CONFORM_CACHE["value"]
+    except Exception:  # noqa: BLE001 (what cannot be read is not said, never a failed panel)
+        return None
+
+
 @guard
 def collect_update():
-    """{installed, clone, behind_clone, latest, behind, stale_code, stale_engines}. Every field
-    past the first three is optional: a box with no network, or one that opted out, reports
-    what it knows and claims nothing else."""
+    """{installed, clone, behind_clone, latest, behind, stale_code, stale_engines, conformity}.
+    Every field past the first three is optional: a box with no network, or one that opted out,
+    reports what it knows and claims nothing else."""
     out = release_state()
     stale = code_is_stale()
     if stale:
@@ -1686,6 +1727,9 @@ def collect_update():
     owed = stale_engines()
     if owed:
         out["stale_engines"] = owed
+    conform = conformity_state()
+    if conform is not None:
+        out["conformity"] = conform
     if not UPDATE_CHECK:
         out["checked"] = False
         return out
