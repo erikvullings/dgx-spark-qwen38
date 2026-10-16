@@ -148,7 +148,7 @@ const TARGET_NOTE = {
   fp8: 'Qwen’s own FP8 release: the most faithful weights of this lane, and the heaviest. 30.9 GB against 21 GB for NVFP4, taken out of the KV pool: around 200,000 fewer tokens of context and a slower decode. The first switch downloads about 31 GB.',
   'uncensored-fp8': 'The abliterated weights in Qwen’s FP8 format: the same 30.9 GB and the same cost in pool and speed as FP8. The first switch downloads about 31 GB.',
   flash: 'The 176B Flash-Next lane: its own unit, its own image, and a 47.7 GiB N-gram table on the NVMe that the server rewrites at every boot.',
-  'flash-uncensored': 'The abliterated build of the same 176B tree, byte-identical in layout, so every serving flag is the same. The first switch downloads about 135 GB.',
+  'flash-uncensored': 'The abliterated build of the same 176B tree, byte-identical in layout, so every serving flag is the same. The first switch downloads about 136 GB.',
   'flash-nvda': 'NVIDIA’s own mixed-precision export of the same model, served with a pinned MoE runner. The first switch downloads about 133 GB.',
   image: 'Text to image, editing with up to ten references, native RGBA. 31 GB of weights that do not fit beside a text lane.',
   'image-turbo': 'Qwen’s eight-step distillation of the same model, for the same three uses: a 1024 × 1024 image in 7.5 s against 34 s, at the same memory, the eight steps fixed by the checkpoint. The first switch downloads about 33 GB.',

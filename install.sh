@@ -596,7 +596,7 @@ box, the 27B image on 2026-10-09):
                                      47.7 GiB N-gram table is served from a file
                                      on NVMe, with prefix caching and vision)
   MODEL_CHOICE=flash-uncensored      the abliterated build of the same tree
-                                     (~135 GB): 205 of its 206 shards are
+                                     (~136 GB): 205 of its 206 shards are
                                      byte-identical in size to the stock export,
                                      so every serving flag is the same one
   MODEL_CHOICE=flash-nvda            the same model from NVIDIA's own mixed-

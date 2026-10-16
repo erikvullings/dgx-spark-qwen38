@@ -300,7 +300,7 @@ for entry in ${FOUND_IMAGES[@]+"${FOUND_IMAGES[@]}"}; do
 done
 if [ "$UNTAGGED" -eq 1 ]; then
   echo "  # never 'docker image prune' on this box: an image above with no tag looks dangling"
-  echo "  # and prune deletes it (then a 30 GB re-pull before the lane reboots); ./install.sh tags them"
+  echo "  # and prune deletes it (then a re-pull of 15 to 16 GB before the lane reboots); ./install.sh tags them"
 fi
 while IFS= read -r cache; do
   for repo in $HF_REPOS; do

@@ -742,7 +742,7 @@ if [ "$TARGET_LANE" = "27b" ]; then
   INVOCATION="$SGL_UNIT"
   PIN_IMAGE="$SERVE_IMAGE"
 else
-  [ -f "$FLASH_UNIT" ] || die "the Flash-Next stack is not installed on this box (no $FLASH_UNIT). Install it once first: MODEL_CHOICE=$CHOICE ./install.sh (~136 GB download, no image build)"
+  [ -f "$FLASH_UNIT" ] || die "the Flash-Next stack is not installed on this box (no $FLASH_UNIT). Install it once first: MODEL_CHOICE=$CHOICE ./install.sh (~152 GB download: the checkpoint 136, the image 16; no image build)"
   TARGET_UNIT="$FLASH_UNIT"; TARGET_UNIT_NAME="qwen38-flash.service"
   OTHER_UNIT="$SGL_UNIT"; OTHER_UNIT_NAME="qwen38-sglang.service"
   INVOCATION="$CONFIG_DIR/launch-flash.sh"
