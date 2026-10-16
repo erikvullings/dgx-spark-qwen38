@@ -218,7 +218,12 @@ PYCTX
   done
   # vLLM writes its compile cache as root inside the container: what the user cannot remove, sudo does
   rm -rf "$CONFIG_DIR/kolibri-cache" 2>/dev/null || sudo rm -rf --one-file-system "$CONFIG_DIR/kolibri-cache"
-  rm -rf "$CONFIG_DIR/vllm-auth"
+  # The key's middleware is the Nemotron lane's too: it stays while that lane is installed.
+  if [ -f /etc/systemd/system/qwen38-nemotron.service ]; then
+    echo "vllm-auth kept: the Nemotron lane uses it too"
+  else
+    rm -rf "$CONFIG_DIR/vllm-auth"
+  fi
   echo "the base image $KOLIBRI_BASE_IMAGE stays (docker rmi it yourself if nothing else uses it)"
   for R in "$KOLIBRI_FP8_REPO" "$KOLIBRI_NVFP4_REPO"; do
     D="$HF_CACHE/hub/models--${R//\//--}"
@@ -378,7 +383,7 @@ if [ "$SMOKE" -eq 0 ]; then step "Done (proof skipped)"; exit 0; fi
 
 step "5/5 Proving it serves (a reply and a tool call, then the box goes back to the lane it was serving)"
 WAS=""
-for u in qwen38-sglang.service qwen38-flash.service qwen38-image.service qwen38-video.service qwen38-llamacpp.service; do
+for u in qwen38-sglang.service qwen38-flash.service qwen38-image.service qwen38-video.service qwen38-nemotron.service qwen38-llamacpp.service; do
   systemctl is-active --quiet "$u" 2>/dev/null && WAS="$u"
 done
 WAS_KOLIBRI=0

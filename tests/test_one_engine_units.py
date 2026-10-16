@@ -23,6 +23,7 @@ LANES = {
     "qwen38-image.service": ("qwen38-image.service.template",),
     "qwen38-video.service": ("qwen38-video.service.template",),
     "qwen38-kolibri.service": ("qwen38-kolibri.service.template",),
+    "qwen38-nemotron.service": ("qwen38-nemotron.service.template",),
 }
 ALL = set(LANES) | {"qwen38-llamacpp.service"}
 

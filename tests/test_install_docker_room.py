@@ -77,7 +77,7 @@ class TheRoomCoversAPullsPeak(unittest.TestCase):
     beside the unpacked image), in GiB as df -BG rounds them up. They asked for 40 and 35, the
     image alone, and Kolibri's installer 23 (found in review, 2026-10-15)."""
     # (GB unpacked, GB to download) of each image, from the registry and the reference box
-    PEAK = {"27b": (33.7, 14.8), "flash": (34.4, 15.3), "kolibri": (22.1, 9.6)}
+    PEAK = {"27b": (33.7, 14.8), "flash": (34.4, 15.3), "kolibri": (22.1, 9.6), "nemotron": (24.46, 10.30)}
 
     @staticmethod
     def need(unpacked, download):
@@ -93,8 +93,10 @@ class TheRoomCoversAPullsPeak(unittest.TestCase):
         self.assertGreaterEqual(n27, self.need(*self.PEAK["27b"]))
         self.assertGreaterEqual(nfl, self.need(*self.PEAK["flash"]))
         self.assertEqual((p27, pfl), (n27, nfl))          # one number each lane, the same in both
-        kol = (REPO / "install-kolibri.sh").read_text()
-        self.assertGreaterEqual(int(re.search(r'^IMAGE_GB=(\d+)', kol, re.M).group(1)), self.need(*self.PEAK["kolibri"]))
+        for lane in ("kolibri", "nemotron"):
+            with self.subTest(lane=lane):
+                inst = (REPO / f"install-{lane}.sh").read_text()
+                self.assertGreaterEqual(int(re.search(r'^IMAGE_GB=(\d+)', inst, re.M).group(1)), self.need(*self.PEAK[lane]))
 
 
 class TheCheckpointsRoomIsInOnePlace(unittest.TestCase):

@@ -191,6 +191,29 @@ class PiGen(unittest.TestCase):
         pi_entry = {k: v for k, v in entry.items() if k not in ("compat", "thinkingLevelMap")}
         self.assertEqual(omp_entry, pi_entry, "one build, two serializations; omp has no thinkingLevelMap")
 
+    def test_nemotron_is_sent_its_effort_starts_at_high_and_takes_images(self):
+        # Bolt reasons at its full depth unasked, as Kolibri does at high; the proxy turns the effort
+        # field into the template's words (keepalive-proxy.py, nemotron_effort), and Bolt reads images
+        art = json.loads(json.dumps(ARTIFACT))
+        art["provider"]["nemotron"] = {
+            "options": {"baseURL": "http://127.0.0.1:30001/v1", "apiKey": "{file:/keys/api-key}"},
+            "models": {"nemotron-3.5-bolt": {"name": "Nemotron 3.5 Bolt (local, 262K)",
+                                             "limit": {"context": 205000, "input": 205000, "output": 32000},
+                                             "variants": {"none": {}, "low": {}, "medium": {}, "high": {}},
+                                             "attachment": True,
+                                             "modalities": {"input": ["text", "image"], "output": ["text"]}}}}
+        art["model"] = "nemotron/nemotron-3.5-bolt"
+        with open(self.art, "w") as f:
+            f.write(json.dumps(art))
+        self.gen()
+        models, settings = self.read_pi()
+        entry = models["providers"]["nemotron"]["models"][0]
+        self.assertEqual(entry["compat"], {"supportsDeveloperRole": False, "supportsReasoningEffort": True})
+        self.assertEqual(entry["thinkingLevelMap"], {"off": "none", "minimal": "low", "xhigh": "high"})
+        self.assertEqual(entry["input"], ["text", "image"])
+        self.assertEqual(settings["modelThinkingLevels"]["nemotron/nemotron-3.5-bolt"], "high")
+        self.assertEqual(settings["modelThinkingLevels"]["qwen38/qwen3.8-27b"], "off", "the Qwen lanes as before")
+
     def test_idempotent(self):
         self.gen()
         again = self.gen()

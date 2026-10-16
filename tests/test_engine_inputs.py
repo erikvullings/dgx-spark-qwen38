@@ -273,7 +273,7 @@ class AUnitIsPutInPlaceDatedByWhatItsEngineReads(unittest.TestCase):
                 self.assertNotIn("PUT=", r.stdout)
 
     def test_every_installer_puts_its_unit_through_it(self):
-        for script in ("install.sh", "install-image.sh", "install-video.sh", "install-kolibri.sh"):
+        for script in ("install.sh", "install-image.sh", "install-video.sh", "install-kolibri.sh", "install-nemotron.sh"):
             with self.subTest(script=script):
                 text = (REPO / script).read_text()
                 self.assertIn('UNIT_PUT="$(unit_put "', text)
