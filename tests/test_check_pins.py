@@ -48,6 +48,12 @@ UPSTREAM = {
     "assets": {KOKORO_REPO: [{"name": f, "digest": None} for f in KOKORO_FILES]},
     "wheels": {"aleph-alpha-inference": {"url": pin(KOLIBRI, "KOLIBRI_PLUGIN_URL"), "sha256": pin(KOLIBRI, "KOLIBRI_PLUGIN_SHA256")},
                "b12x": {"url": pin(NEMOTRON, "NEMOTRON_B12X_URL"), "sha256": pin(NEMOTRON, "NEMOTRON_B12X_SHA256")}},
+    # sglang 0.5.21 requires cuda-tile==1.6.0rc5, a stub on PyPI whose wheels pypi.nvidia.com
+    # lists in a PEP 503 page, by relative link (both read on 2026-10-16)
+    "requires": {"sglang": ["cuda-tile==1.6.0rc5", "tilelang==0.1.12"]},
+    "nvidia": {"cuda-tile": ["cuda_tile-1.6.0rc5-cp312-cp312-manylinux2014_x86_64.whl",
+                             "cuda_tile-1.6.0rc5-cp312-cp312-manylinux2014_aarch64.whl",
+                             "cuda_tile-1.6.0rc5-cp313-cp313-manylinux2014_aarch64.whl"]},
 }
 
 # Answers the way huggingface.co, Docker Hub, GitHub and PyPI do. The scenario (JSON in
@@ -88,7 +94,9 @@ if body is None and url.startswith("https://pypi.org/pypi/"):
     package, version = url.rstrip("/").split("/")[-3:-1]
     pinned = up.get("wheels", {}).get(package)
     file = {"yanked": False, **({"url": pinned["url"], "digests": {"sha256": pinned["sha256"]}} if pinned else {})}
-    body = json.dumps({"info": {"version": version}, "urls": [file]})
+    body = json.dumps({"info": {"version": version, "requires_dist": up.get("requires", {}).get(package)}, "urls": [file]})
+elif body is None and url.startswith("https://pypi.nvidia.com/"):
+    body = "".join('<a href="%s#sha256=%s">%s</a><br/>\n' % (f, "0" * 64, f) for f in up.get("nvidia", {}).get(url.split("/")[3], []))
 elif body is None and "/releases/tags/" in url:
     repo = url.split("/repos/", 1)[1].split("/releases/", 1)[0]
     body = json.dumps({"assets": up.get("assets", {}).get(repo) or [{"name": "opencode-linux-arm64.tar.gz",
@@ -358,6 +366,42 @@ class ThePinsOutsideThePinBlock(PinsBase):
         self.assertEqual(rc, 0, out)
         self.assertIn(b12x["url"], json.dumps(UPSTREAM))
 
+    def test_cuda_tile_is_checked_where_an_install_gets_it(self):
+        """sglang==0.5.21 requires cuda-tile==1.6.0rc5, a "wheel-stub" sdist on PyPI that downloads
+        the real wheel from pypi.nvidia.com: an rc NVIDIA removes breaks a fresh image or video
+        lane, and nothing watched it (found in the audit of 2026-10-16)."""
+        rc, out = self.run_pins()
+        self.assertEqual(rc, 0, out)
+        for label in ("cuda-tile", "cuda-tile-video"):
+            self.assertIn("ok", self.line(out, label), out)
+        urls = [c["url"] for c in self.calls()]
+        wheel = "https://pypi.nvidia.com/cuda-tile/cuda_tile-1.6.0rc5-cp312-cp312-manylinux2014_aarch64.whl"
+        for u in ("https://pypi.org/pypi/cuda-tile/1.6.0rc5/json", "https://pypi.nvidia.com/cuda-tile/", wheel):
+            self.assertIn(u, urls)
+        # the wheel is asked about, never downloaded
+        self.assertTrue(all("-I" in c["argv"] for c in self.calls() if c["url"] == wheel))
+
+    def test_cuda_tile_gone_or_out_of_reach_fails(self):
+        x86_only = '<a href="cuda_tile-1.6.0rc5-cp312-cp312-manylinux2014_x86_64.whl#sha256=00">x</a>'
+
+        def sglang_requires(*reqs):
+            return {"bodies": {"pypi.org/pypi/sglang/": json.dumps({"info": {"version": "0.5.21", "requires_dist": list(reqs)},
+                                                                     "urls": [{"yanked": False}]})}}
+        for scen, said, dead in (
+                ({"bodies": {"pypi.nvidia.com/cuda-tile/": x86_only}}, "pypi.nvidia.com lists no cp312 aarch64 wheel of it", True),
+                ({"pypi.nvidia.com/cuda-tile/cuda_tile-": [404, ""]}, "HTTP 404 from pypi.nvidia.com for cuda_tile-1.6.0rc5-cp312", True),
+                ({"bodies": {"pypi.org/pypi/cuda-tile/": '{"message": "Not Found"}'}}, "PyPI's stub: not on PyPI", True),
+                ({"pypi.nvidia.com": [503, ""]}, "HTTP 503 from pypi.nvidia.com, so not checked", False),
+                # the version is the one the pinned sglang requires, so the check follows the pin
+                (sglang_requires("cuda-tile==1.7.0"), "cuda-tile==1.7.0 (pypi.nvidia.com lists no cp312 aarch64 wheel", True),
+                (sglang_requires("torch==2.13.0"), "requires no cuda-tile", True)):
+            with self.subTest(said=said):
+                rc, out = self.run_pins(scen, None, "cuda-tile")
+                self.assertEqual(rc, 1, out)
+                self.assertIn("FAIL", self.line(out, "cuda-tile"), out)
+                self.assertIn(said, self.line(out, "cuda-tile"), out)
+                self.assertEqual("could not be asked about" in out, not dead, out)
+
     def test_an_opencode_asset_whose_bytes_changed_fails(self):
         body = json.dumps({"assets": [{"name": "opencode-linux-arm64.tar.gz", "digest": "sha256:" + "0" * 64}]})
         rc, out = self.run_pins({"bodies": {"/releases/tags/": body}})
@@ -438,7 +482,7 @@ class TheEndpointsThatDoNotAnswer(PinsBase):
         for label in self.GITHUB:
             self.assertIn("HTTP 504 from the GitHub API, so not checked", self.line(out, label), out)
             self.assertNotIn("no such", self.line(out, label), out)
-        self.assertIn("6 of 37 pins could not be asked about", out)
+        self.assertIn("6 of 39 pins could not be asked about", out)
         self.assertIn("run it again before re-pinning anything", out)
         self.assertNotIn("A removed upstream revision", out)
 

@@ -228,12 +228,8 @@ check_commit() {  # $1 label, $2 owner/repo on GitHub, $3 commit: install-image.
   esac
 }
 
-check_wheel() {  # $1 label, $2 package, $3 version: released on PyPI, with a file not yanked,
-                 # [$4 the URL of the file an install downloads, $5 its sha256: still one of that release's files, that sum]
-  case "$1" in *"$FILTER"*) ;; *) return 0 ;; esac
-  CHECKED=$((CHECKED + 1))
-  local why
-  why="$(curl -s -m 25 "https://pypi.org/pypi/$2/$3/json" | python3 -c '
+wheel_why() {  # $1 package, $2 version, [$3 the URL of a file, $4 its sha256]: what PyPI lacks of it, or nothing
+  curl -s -m 25 "https://pypi.org/pypi/$1/$2/json" | python3 -c '
 import json, sys
 try:
     d = json.load(sys.stdin)
@@ -251,12 +247,90 @@ elif len(sys.argv) > 2:
         print("the pinned file is not one PyPI publishes for it")
     elif sha != sys.argv[3]:
         print("the pinned file has sha256 %s on PyPI: installs refuse it" % sha)
-' "$3" ${4:+"$4" "$5"})"
+' "$2" ${3:+"$3" "$4"}
+}
+
+check_wheel() {  # $1 label, $2 package, $3 version: released on PyPI, with a file not yanked,
+                 # [$4 the URL of the file an install downloads, $5 its sha256: still one of that release's files, that sum]
+  case "$1" in *"$FILTER"*) ;; *) return 0 ;; esac
+  CHECKED=$((CHECKED + 1))
+  local why
+  why="$(wheel_why "$2" "$3" ${4:+"$4" "$5"})"
   if [ -z "$why" ]; then
     printf '  \033[0;32mok\033[0m    %-14s %s==%s\n' "$1" "$2" "$3"
   else
     printf '  \033[0;31mFAIL\033[0m  %-14s %s==%s (%s)\n' "$1" "$2" "$3" "$why"
     case "$why" in *"so not checked"*) unasked ;; *) failed ;; esac
+  fi
+}
+
+# sglang==0.5.21, which the image and video lanes install, requires cuda-tile==1.6.0rc5, and PyPI
+# holds that release as a 7 KB "wheel-stub" sdist alone: building it downloads the real wheel
+# from pypi.nvidia.com, so a fresh lane needs both, and nothing watched either (found in the
+# audit of 2026-10-16). The version is read from the pinned sglang's own requirements, so the
+# check follows the pin. The wheel is the one a lane's venv takes, CPython 3.12 (DGX OS 7's
+# python3, which makes it) on aarch64, found in NVIDIA's PEP 503 page as the stub finds it, and
+# asked about with a HEAD: nothing is downloaded.
+check_cuda_tile() {  # $1 label, $2 the sglang release whose cuda-tile requirement is checked
+  case "$1" in *"$FILTER"*) ;; *) return 0 ;; esac
+  CHECKED=$((CHECKED + 1))
+  local ver why answer code wheel
+  ver="$(curl -s -m 25 "https://pypi.org/pypi/sglang/$2/json" | python3 -c '
+import json, re, sys
+try:
+    d = json.load(sys.stdin)
+except ValueError:
+    d = None
+if not isinstance(d, dict):
+    print("?")
+elif (d.get("info") or {}).get("version") != sys.argv[1]:
+    print("-")
+else:
+    print(next((m.group(1) for r in d["info"].get("requires_dist") or []
+                for m in [re.match(r"cuda[-_.]tile *== *([^ ;,]+)", r, re.I)] if m), ""))
+' "$2")"
+  case "$ver" in
+    "?") printf '  \033[0;31mFAIL\033[0m  %-14s cuda-tile of sglang==%s (no answer from PyPI, so not checked)\n' "$1" "$2"; unasked; return 0 ;;
+    -) printf '  \033[0;31mFAIL\033[0m  %-14s cuda-tile of sglang==%s (sglang==%s is not on PyPI)\n' "$1" "$2" "$2"; failed; return 0 ;;
+    "") printf '  \033[0;31mFAIL\033[0m  %-14s cuda-tile of sglang==%s (sglang==%s requires no cuda-tile: this check watches nothing, update it)\n' "$1" "$2" "$2"; failed; return 0 ;;
+  esac
+  why="$(wheel_why cuda-tile "$ver")"
+  if [ -n "$why" ]; then
+    printf "  \033[0;31mFAIL\033[0m  %-14s cuda-tile==%s (PyPI's stub: %s)\n" "$1" "$ver" "$why"
+    case "$why" in *"so not checked"*) unasked ;; *) failed ;; esac
+    return 0
+  fi
+  answer="$(curl -s -m 25 -w '\n%{http_code}' "https://pypi.nvidia.com/cuda-tile/")"
+  code="${answer##*$'\n'}"
+  if [ "$code" != 200 ]; then
+    if no_answer "$code"; then
+      printf '  \033[0;31mFAIL\033[0m  %-14s cuda-tile==%s (%s from pypi.nvidia.com, so not checked)\n' "$1" "$ver" "$(said "$code")"; unasked
+    else
+      printf '  \033[0;31mFAIL\033[0m  %-14s cuda-tile==%s (HTTP %s from pypi.nvidia.com for its index)\n' "$1" "$ver" "$code"; failed
+    fi
+    return 0
+  fi
+  wheel="$(printf '%s' "${answer%$'\n'*}" | python3 -c '
+import re, sys
+for href in re.findall(r"href=\"([^\"#]+)", sys.stdin.read()):
+    tags = href.rsplit("/", 1)[-1][:-4].split("-") if href.endswith(".whl") else []
+    if (len(tags) >= 5 and tags[0] == "cuda_tile" and tags[1] == sys.argv[1] and "cp312" in tags[-3].split(".")
+            and any(p.endswith("_aarch64") and "linux" in p for p in tags[-1].split("."))):
+        print(href)
+        break
+' "$ver")"
+  if [ -z "$wheel" ]; then
+    printf '  \033[0;31mFAIL\033[0m  %-14s cuda-tile==%s (pypi.nvidia.com lists no cp312 aarch64 wheel of it: a fresh image or video lane cannot install)\n' "$1" "$ver"; failed
+    return 0
+  fi
+  case "$wheel" in https://*) ;; /*) wheel="https://pypi.nvidia.com$wheel" ;; *) wheel="https://pypi.nvidia.com/cuda-tile/$wheel" ;; esac
+  code="$(curl -s -I -L -o /dev/null -m 25 -w '%{http_code}' "$wheel")"
+  if [ "$code" = 200 ]; then
+    printf '  \033[0;32mok\033[0m    %-14s cuda-tile==%s, %s on pypi.nvidia.com\n' "$1" "$ver" "${wheel##*/}"
+  elif no_answer "$code"; then
+    printf '  \033[0;31mFAIL\033[0m  %-14s cuda-tile==%s (%s from pypi.nvidia.com for %s, so not checked)\n' "$1" "$ver" "$(said "$code")" "${wheel##*/}"; unasked
+  else
+    printf '  \033[0;31mFAIL\033[0m  %-14s cuda-tile==%s (HTTP %s from pypi.nvidia.com for %s)\n' "$1" "$ver" "$code" "${wheel##*/}"; failed
   fi
 }
 
@@ -312,11 +386,13 @@ check_model  qwen-image     "$IMAGE_MODEL_PIN" "$IMAGE_MODEL_PIN_REV" model_inde
 check_model  qwen-image-turbo "$IMAGE_TURBO_PIN" "$IMAGE_TURBO_PIN_REV" model_index.json
 check_commit sglang-source  sgl-project/sglang "$IMAGE_PIN"
 check_wheel  sglang-wheel   sglang "$IMAGE_WHEEL"
+check_cuda_tile cuda-tile   "$IMAGE_WHEEL"
 echo "Video lane"
 check_model  minimax-h3     "$VIDEO_MODEL_PIN" "$VIDEO_MODEL_PIN_REV" model_index.json
 check_model  video-turbo    "$VIDEO_TURBO_REPO" "$VIDEO_TURBO_REV" "$VIDEO_TURBO_FILE"
 check_commit sglang-source-video sgl-project/sglang "$VIDEO_PIN"
 check_wheel  sglang-wheel-video sglang "$VIDEO_WHEEL"
+check_cuda_tile cuda-tile-video "$VIDEO_WHEEL"
 check_asset  opencode       anomalyco/opencode "v$OPENCODE_VERSION" opencode-linux-arm64.tar.gz "$OPENCODE_SHA256"
 echo "Kolibri lane"
 check_model  kolibri-fp8    "$KOLIBRI_FP8_REPO"   "$KOLIBRI_FP8_REV"
