@@ -607,6 +607,12 @@
           <p class="muted">The installer needs an interactive sudo, so it is not a button: a half-applied install is the one thing this cockpit must never cause. Run it on the box; your choices are remembered.</p>
           <div><pre class="cmd" id="st-update" style="margin-top:var(--s-3)">…</pre><div class="btn-row"><button class="btn sm ghost" id="st-copy" type="button">Copy</button></div></div>
         </section>
+        <section class="panel" data-src="update" id="settings-conformity">
+          <header><h2>This box against its release</h2><span class="cap" id="cf-cap">…</span></header>
+          <p class="muted" id="cf-head">…</p>
+          <ul class="cf-list" id="cf-list"></ul>
+          <p class="help" style="margin-top:var(--s-3)">On the box, <code>./install.sh --plan</code> prints the same list and changes nothing; every update prints it before its first step.</p>
+        </section>
         <!-- no data-src: these facts are the process's own, set once at its start, and the
              freshness rule read their age as the cockpit's uptime: "stale, 2 h 18 old" in
              ember on every box after 18 s (found 2026-10-02, there since the redesign) -->

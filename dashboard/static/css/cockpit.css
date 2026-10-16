@@ -43,6 +43,8 @@
   --brand:#8c6cff; --brand-hi:#c4b5ff; --brand-lo:#5b3fd9; --brand-ink:#1a0f42;
   /* state: green ready, amber on its way, red broken, grey idle */
   --ok:#4ade80; --ok-hi:#dcfce7; --warn:#fbbf24; --warn-hi:#ffe7b3; --bad:#f87171; --bad-hi:#ffdcd8; --idle:rgba(255,255,255,.5);
+  /* a box that differs from what its release recommends (v1.36.0): neither a fault nor a warning */
+  --orange:#fb923c; --orange-hi:#ffd8b8;
   /* memory that flows, and the pool's quiet parts: page cache (steel), system and apps (slate) */
   --mem:#7c9cff; --mem-lo:#4c6fe0; --steel:rgba(124,156,255,.35); --slate:rgba(255,255,255,.18);
   /* each lane's own hue: its share of the pool, the pool's legend, the head's gauge */
@@ -159,6 +161,7 @@ img,svg,video,canvas{display:block; max-width:100%}
 .lamp.ok{background:var(--ok); box-shadow:0 0 0 3px color-mix(in srgb, var(--ok) 22%, transparent), 0 0 14px 1px color-mix(in srgb, var(--ok) 50%, transparent)}
 .lamp.cool{background:var(--mem); box-shadow:0 0 0 3px color-mix(in srgb, var(--mem) 22%, transparent), 0 0 14px 1px color-mix(in srgb, var(--mem) 40%, transparent)}
 .lamp.warn{background:var(--warn); box-shadow:0 0 0 3px color-mix(in srgb, var(--warn) 22%, transparent)}
+.lamp.orange{background:var(--orange); box-shadow:0 0 0 3px color-mix(in srgb, var(--orange) 22%, transparent)}
 .lamp.err{background:var(--bad); box-shadow:0 0 0 3px color-mix(in srgb, var(--bad) 25%, transparent), 0 0 12px 1px color-mix(in srgb, var(--bad) 45%, transparent)}
 .lamp.live{animation:breathe 2.2s ease-in-out infinite}
 @keyframes breathe{50%{filter:brightness(.72); box-shadow:0 0 0 5px transparent}}
@@ -235,6 +238,7 @@ img,svg,video,canvas{display:block; max-width:100%}
 .banner b{font-weight:640}
 .banner.err{border-color:color-mix(in srgb, var(--bad) 50%, transparent); background:color-mix(in srgb, var(--bad) 10%, var(--ink-1))}
 .banner.info{border-color:var(--rule-2); background:rgba(255,255,255,.06); color:var(--fg-2)}
+.banner.orange{border-color:color-mix(in srgb, var(--orange) 50%, transparent); background:color-mix(in srgb, var(--orange) 10%, var(--ink-1))}
 
 /* ── panels: one frame, used when a group needs one ── */
 .panel{position:relative; border:1px solid rgba(255,255,255,.12); border-radius:var(--r-panel);
@@ -281,6 +285,10 @@ img,svg,video,canvas{display:block; max-width:100%}
 .cap .lamp{width:8px; height:8px}
 .cap.ok{border-color:color-mix(in srgb, var(--ok) 70%, transparent); background:color-mix(in srgb, var(--ok) 14%, rgba(8,4,28,.5)); color:var(--ok-hi)}
 .cap.warn{border-color:color-mix(in srgb, var(--warn) 70%, transparent); background:color-mix(in srgb, var(--warn) 14%, rgba(8,4,28,.5)); color:var(--warn-hi)}
+.cap.orange{border-color:color-mix(in srgb, var(--orange) 70%, transparent); background:color-mix(in srgb, var(--orange) 14%, rgba(8,4,28,.5)); color:var(--orange-hi)}
+.cf-list{list-style:none; margin:var(--s-3) 0 0; padding:0; display:flex; flex-direction:column; gap:var(--s-2)}
+.cf-list li{font-size:var(--t-14); line-height:1.45; overflow-wrap:anywhere}
+.cf-list li.moves b{color:var(--orange-hi)}
 .cap.err{border-color:color-mix(in srgb, var(--bad) 70%, transparent); background:color-mix(in srgb, var(--bad) 14%, rgba(8,4,28,.5)); color:var(--bad-hi)}
 .cap.cool{border-color:color-mix(in srgb, var(--mem) 70%, transparent); background:color-mix(in srgb, var(--mem) 14%, rgba(8,4,28,.5)); color:#dbe4ff}
 .tag:empty{display:none}

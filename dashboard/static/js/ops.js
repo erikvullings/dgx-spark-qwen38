@@ -485,7 +485,31 @@ on('repo', d => {
   setText('rp-dirty', d.dirty == null ? 'unknown (git did not answer)' : d.dirty ? 'modified, uncommitted changes' : d.untracked ? `clean, ${d.untracked} untracked` : 'clean');
   setText('rp-proxy', F.proxy && F.proxy.version ? F.proxy.version + (F.proxy.same_as_repo === false ? ', differs from the repo copy' : ', the repo copy') : 'unknown');
 });
+// This box against what its clone recommends (v1.36.0): the list install.sh prints before its
+// first step, one line per difference, what moves first.
+const CF_GROUP = {moves: 'moves at the next update', yours: 'stays, your choice', site: 'stays, a setting of this site'};
+const CF_WHY = {recorded: () => 'recorded as your choice', 'never-default': () => 'no release installed it by default',
+  'box-after': old => `this box was installed after ${old} moved the default`, 'box-unknown': () => 'the age of this box cannot be told',
+  env: () => 'set on a command line', site: () => 'updates never move it'};
+function renderConformity(d){
+  const list = $('cf-list'); if (!list) return;
+  clear(list);
+  const c = d.conformity;
+  if (!c){ cap('cf-cap', 'unknown', ''); setText('cf-head', 'The cockpit could not compare this box with its release (its journal says why).'); return; }
+  const items = c.items || [], rel = c.release || 'this release';
+  if (!items.length){ cap('cf-cap', 'as recommended', 'ok'); setText('cf-head', `Every setting this box serves is what ${rel} recommends.`); return; }
+  cap('cf-cap', items.length === 1 ? 'one differs' : `${items.length} differ`, 'orange');
+  setText('cf-head', `What this box serves, the ${c.lane === 'flash' ? 'flash' : '27B'} lane's units read, against what ${rel} recommends:`);
+  ['moves', 'yours', 'site'].forEach(g => items.filter(i => i.group === g).forEach(i => {
+    const why = g === 'moves' ? `the default until ${i.old}` : (CF_WHY[i.why] || (() => i.why))(i.old);
+    const keep = g !== 'moves' ? '' : i.knob === 'DRAFT2' ? ' The update prints the variables that keep it.' : ` To keep it: ${i.knob}=${i.value} ./install.sh`;
+    const li = el('li', 'cf ' + g);
+    li.append(el('b', null, `${cfName(i)} ${i.value}`), el('span', null, `: ${CF_GROUP[g]}, ${why} (recommended: ${i.recommended}).${keep}`));
+    list.append(li);
+  }));
+}
 on('update', d => {
+  renderConformity(d);
   const parts = [];
   if (d.installed) parts.push(d.installed);
   if (d.checked === false) parts.push('the update check is off');

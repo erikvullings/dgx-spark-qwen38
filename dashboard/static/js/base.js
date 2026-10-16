@@ -46,7 +46,7 @@ const shq = s => "'" + String(s).replace(/'/g, `'\\''`) + "'";
 function cap(id, text, kind, lamp){
   const e = typeof id === 'string' ? $(id) : id; if (!e) return;
   clear(e); e.className = 'cap' + (kind ? ' ' + kind : '');
-  if (lamp !== false){ const l = el('span', 'lamp' + (kind === 'ok' ? ' ok' : kind === 'warn' ? ' warn' : kind === 'err' ? ' err' : kind === 'cool' ? ' cool' : '') + (lamp === 'live' ? ' live' : '')); e.append(l); }
+  if (lamp !== false){ const l = el('span', 'lamp' + (kind === 'ok' ? ' ok' : kind === 'warn' ? ' warn' : kind === 'err' ? ' err' : kind === 'cool' ? ' cool' : kind === 'orange' ? ' orange' : '') + (lamp === 'live' ? ' live' : '')); e.append(l); }
   e.append(document.createTextNode(text));
 }
 // Each cell carries its column's name: on a phone a wide table stacks into cards, and a
@@ -907,6 +907,10 @@ function applyBusy(){
 }
 
 // ── banners: what you did not go looking for ──────────────────────────────────
+// The settings conformity.py compares that are no variable of their own, as the page names them
+// (v1.36.0): the same names install.sh's list gives them.
+const CF_NAME = {'target.27b': '27B target', 'target.flash': 'flash target', DRAFT2: '27B drafter'};
+const cfName = i => CF_NAME[i.knob] || i.knob;
 function wedgeNext(){
   const c = F.config || {};
   if (c.autoheal) return 'The autoheal belt restarts it' + (c.autoheal_grace_s ? ` after its ${fmtDur(c.autoheal_grace_s)} grace period` : '');
@@ -953,7 +957,18 @@ function renderBanners(state, errors){
   if (F.memFloor && F.memFloor.aborts && F.memFloor.last_abort && Date.now() / 1000 - F.memFloor.last_abort < 600)
     add('warn', 'The memory floor fired.', `Memory fell under ${F.memFloor.gib} GiB with requests running: every generation was aborted ${fmtDur(Date.now() / 1000 - F.memFloor.last_abort)} ago to keep the box out of a livelock.`);
   const upd = F.update || {};
-  if (upd.behind) add('info', `Version ${upd.latest} is out; this box runs ${upd.installed}.`, `Update with: ${updateCmd(F.config)}. It keeps your target, context mode, port and cache.`);
+  if (upd.behind) add('info', `Version ${upd.latest} is out; this box runs ${upd.installed}.`, `Update with: ${updateCmd(F.config)}. It keeps your choices, and moves a default an older release left to today's: it lists both before its first step.`);
+  // This box against what its clone recommends (v1.36.0, 2026-10-17): one orange banner while
+  // anything differs, so that nobody runs behind in silence; Settings lists each difference.
+  const cf = (upd.conformity || {}).items || [];
+  if (cf.length){
+    const rel = upd.conformity.release || 'this release', moves = cf.filter(i => i.group === 'moves'), kept = cf.length - moves.length;
+    if (moves.length) add('orange', `This box runs ${moves.length === 1 ? 'a default' : moves.length + ' defaults'} of an older release.`,
+      `${moves.map(i => `${cfName(i)} ${i.value}`).join(', ')}: the next update moves ${moves.length === 1 ? 'it' : 'them'} to what ${rel} recommends`
+      + (kept ? `, and keeps ${kept === 1 ? 'one setting' : kept + ' settings'} of yours` : '') + '. Settings lists each difference, and the variable that keeps it.');
+    else add('orange', `This box differs from what ${rel} recommends in ${cf.length === 1 ? 'one setting' : cf.length + ' settings'}, all yours.`,
+      `${cf.map(i => `${cfName(i)} ${i.value}`).join(', ')}: updates keep ${cf.length === 1 ? 'it' : 'them'}. Settings lists why each one stays.`);
+  }
   if ((upd.stale_code || []).length) add('warn', 'This cockpit runs older code than the files on disk.', `${upd.stale_code.join(', ')} changed under it. Restart it: sudo systemctl restart qwen38-dashboard.service`);
   const ocf = F.ocfit;
   if (ocf && !ocf.ok) add('warn', 'opencode asks for more than this engine can hold.', `${ocf.why}: opencode declares ${fmtN(ocf.asked)} tokens, and ${ocf.served} can serve ${fmtN(ocf.limit)}. A session would break when the proxy refuses the prompt. ` + (ocf.autofit === 'started' ? 'The cockpit is fitting the limits now.' : 'Settings has "Fit the limits to this engine".'));
@@ -969,7 +984,7 @@ function renderBanners(state, errors){
   box.dataset.sig = sig; clear(box);
   want.forEach(([kind, strong, text]) => {
     const b = el('div', 'banner ' + kind);
-    b.append(el('span', 'lamp ' + (kind === 'err' ? 'err' : kind === 'warn' ? 'warn' : '')));
+    b.append(el('span', 'lamp ' + (kind === 'err' ? 'err' : kind === 'warn' ? 'warn' : kind === 'orange' ? 'orange' : '')));
     const p = el('div'); p.append(el('b', null, strong + ' '), el('span', 't', text)); b.append(p); box.append(b);
   });
 }
