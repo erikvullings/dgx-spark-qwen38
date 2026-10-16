@@ -677,10 +677,16 @@ SERVER_INFO_ROUTES = frozenset({"/server_info", "/get_server_info"})
 # operator, and the operator's own calls (the cockpit's) go to the engine directly, on
 # 127.0.0.1:30000, not through here. An allow list, not a deny list: the engine's route table
 # grows with every image (73 routes in the v0.5.21 the 27B lane serves).
+# 2026-10-17: and the reading routes of the other dialects, which only read in SGLang v0.5.21
+# (http_server.py): Ollama's /api/tags and /api/show (a model list, a model card), SageMaker's
+# /ping (an empty 200) and the root ("is running"); they were refused as operator routes (found
+# in review, 2026-10-17). /encode and /classify stay out: they run the model outside the size
+# guard, and /v1/embeddings and /v1/classify, which it guards, are a client's way there.
 CLIENT_ROUTE_PREFIXES = ("/v1/", "/health", "/ready", "/metrics")
 CLIENT_ROUTES = SERVER_INFO_ROUTES | frozenset({
     "/generate", "/invocations", "/vertex_generate", "/api/chat", "/api/generate",
-    "/tokenize", "/detokenize", "/get_model_info", "/model_info"})
+    "/tokenize", "/detokenize", "/get_model_info", "/model_info",
+    "/api/tags", "/api/show", "/ping", "/"})
 # Without the identity wall, the engine's key is this port's one gate (README), and since
 # v6.34 the proxy applies it before reading a body. The rule is the engine's own, from
 # SGLang's srt/utils/auth.py (decide_request_auth, _check_bearer_token; the same in both

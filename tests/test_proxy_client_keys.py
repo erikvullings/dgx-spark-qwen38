@@ -411,6 +411,27 @@ class ClientKeys(unittest.TestCase):
                 self.assertEqual(status, 200)
                 self.assertEqual(Engine.last_auth, "Bearer engine-K")
 
+    def test_a_listed_key_reaches_the_reading_routes_of_the_other_dialects(self):
+        """Ollama's /api/tags and /api/show, SageMaker's /ping and the root only read, in SGLang
+        v0.5.21 (a model list, a model card, an empty 200, "is running"), and the wall refused
+        them as operator routes (found in review, 2026-10-17)."""
+        Engine.require_key = "engine-K"
+        port = self.live(self.keys_file('{"tok-alice":"alice"}'), upstream_key="engine-K")
+        for method, path in (("GET", "/ping"), ("GET", "/api/tags"), ("POST", "/api/show"), ("GET", "/")):
+            with self.subTest(method=method, path=path):
+                Engine.last_auth = None
+                status, body = call(port, method, path, "tok-alice")
+                self.assertEqual(status, 200, body)
+                self.assertEqual(Engine.last_auth, "Bearer engine-K")
+        # /encode and /classify run the model outside the size guard; /v1/embeddings and
+        # /v1/classify, which it guards, are a client's way there
+        for path in ("/encode", "/classify"):
+            with self.subTest(path=path):
+                Engine.last_auth = None
+                status, body = call(port, "POST", path, "tok-alice")
+                self.assertEqual(status, 403, body)
+                self.assertIsNone(Engine.last_auth)
+
     def test_server_info_never_carries_the_engine_key_through_the_proxy(self):
         """/server_info returns the engine's serving key in clear. Behind the wall that key
         is exactly what a named client must not learn; without the wall the caller already
