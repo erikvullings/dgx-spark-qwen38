@@ -43,13 +43,26 @@ class Box:
         repo.mkdir()
         (repo / "install.sh").write_text((REPO / "install.sh").read_text())
         text = SWITCH
-        for unit in ("qwen38-sglang.service", "qwen38-flash.service"):
+        for unit in ("qwen38-sglang.service", "qwen38-flash.service", "qwen38-nemotron.service"):
             old = f'"/etc/systemd/system/{unit}"'
             assert old in text, f"switch-model.sh no longer names {unit} that way"
             text = text.replace(old, f'"{units}/{unit}"')
         (repo / "switch-model.sh").write_text(text)
-        for f in ("lanes.sh", "ckpt-fetch.py"):
+        for f in ("lanes.sh", "ckpt-fetch.py", "install-nemotron.sh"):
             (repo / f).write_text((REPO / f).read_text())
+        # the Nemotron lane's unit, as install-nemotron.sh writes it: its image, its cache, the
+        # checkpoint and the memory share on lines of their own
+        pins = dict(line.split("=", 1) for line in (REPO / "install-nemotron.sh").read_text().splitlines()
+                    if line.startswith("NEMOTRON_BOLT_") and "=" in line)
+        self.nemotron_pins = {k: v.strip('"') for k, v in pins.items()}
+        self.nemotron_unit = units / "qwen38-nemotron.service"
+        self.nemotron_unit.write_text(
+            "[Service]\nExecStart=/usr/bin/docker run --rm --name qwen38-nemotron \\\n"
+            f"  -v {self.home}/.cache/huggingface:/root/.cache/huggingface \\\n"
+            "  qwen38-nemotron:test \\\n"
+            f"  {self.nemotron_pins['NEMOTRON_BOLT_REPO']} --revision {self.nemotron_pins['NEMOTRON_BOLT_REV']} \\\n"
+            f"  --gpu-memory-utilization {self.nemotron_pins['NEMOTRON_BOLT_GMU']} \\\n"
+            "  --port 30000\n")
         (repo / "switch-model.sh").chmod(0o755)
         self.bin = self.t / "bin"
         self.bin.mkdir()
@@ -84,6 +97,24 @@ class FetchOnly(unittest.TestCase):
         self.assertFalse([c for c in calls if re.search(r"\b(enable|disable|daemon-reload|restart|start|stop)\b", c)], calls)
         self.assertFalse((box.home / ".config/qwen38/text-lane").exists(), "--fetch wrote the text-lane record")
 
+    def test_the_nemotron_lane_fetches_its_drafter_before_it_stops(self):
+        # Library's Download of the Nemotron target stopped after the model, its drafter left for
+        # the Load (found in review, 2026-10-15): the lane loads both, so both are fetched first
+        box = Box()
+        unit_before = box.nemotron_unit.read_bytes()
+        rc, out, runs, calls = box.run("nemotron", "--fetch")
+        self.assertEqual(rc, 0, out)
+        self.assertIn("with its drafter, is in the cache; nothing else was changed", out)
+        pins = box.nemotron_pins
+        self.assertEqual(len(runs), 2, runs)
+        self.assertIn(f"/opt/qwen38/ckpt-fetch.py {pins['NEMOTRON_BOLT_REPO']} {pins['NEMOTRON_BOLT_REV']} ", runs[0])
+        self.assertIn(f"/opt/qwen38/ckpt-fetch.py {pins['NEMOTRON_BOLT_DRAFT_REPO']} {pins['NEMOTRON_BOLT_DRAFT_REV']} ", runs[1])
+        self.assertIn(f"--need-gb {pins['NEMOTRON_BOLT_GB']} ", runs[0])
+        self.assertIn("--need-gb 1 ", runs[1])
+        self.assertEqual(box.nemotron_unit.read_bytes(), unit_before)
+        self.assertFalse([c for c in calls if re.search(r"\b(enable|disable|daemon-reload|restart|start|stop)\b", c)], calls)
+        self.assertFalse((box.home / ".config/qwen38/text-lane").exists(), "--fetch wrote the text-lane record")
+
     def test_without_it_the_switch_goes_on_past_the_download(self):
         rc, out, runs, _ = Box().run("stock")
         self.assertEqual(len(runs), 1, out)
@@ -96,15 +127,18 @@ class FetchOnly(unittest.TestCase):
         self.assertEqual((runs, calls), ([], []))
 
     def test_every_lane_stops_right_after_its_own_download(self):
-        # the four branches that fetch (Kolibri, image, video, the text lanes): each one's
-        # fetch command is followed at once by the --fetch stop, before anything it writes
+        # the five branches that fetch (Kolibri, Nemotron, image, video, the text lanes): each
+        # one's fetch command is followed at once by the --fetch stop, before anything it writes;
+        # the Nemotron lane's loop over its model and its drafter ends first, with nothing else in it
         calls = [m.start() for m in re.finditer(r"ckpt-fetch\.py\"? \"\$", SWITCH)]
-        self.assertEqual(len(calls), 4)
+        self.assertEqual(len(calls), 5)
         for at in calls:
             rest = SWITCH[at:]
             die = rest.index("|| die ")
-            after = rest[rest.index("\n", die) + 1:]
-            self.assertTrue(after.lstrip().startswith("fetched "), after[:120])
+            after = rest[rest.index("\n", die) + 1:].splitlines()
+            while after and re.fullmatch(r"\s*(NEM_ASK=1|done|#.*)", after[0]):
+                after.pop(0)
+            self.assertTrue(after[0].lstrip().startswith("fetched "), after[:3])
 
 
 if __name__ == "__main__":

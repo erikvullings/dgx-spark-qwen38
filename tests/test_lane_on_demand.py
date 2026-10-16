@@ -197,41 +197,51 @@ class TheVideoLaneTurboAdapter(unittest.TestCase):
         self.assertIn("python - larryvrh/MiniMax-H3-Turbo-Lora", "\n".join(calls))
 
 
-class TheKolibriLaneInTwoHalves(unittest.TestCase):
-    """Kolibri's runtime is an image built on the box: --prepare builds it as the user (docker,
-    no sudo). Here the image is already built, as the fake docker says; the build itself is
-    the step's own lines, which call no sudo."""
+# The two vLLM lanes, Kolibri and Nemotron: one test each, with a subTest per lane (as above).
+VLLM_LANES = (("install-kolibri.sh", "qwen38-kolibri.service"), ("install-nemotron.sh", "qwen38-nemotron.service"))
 
-    def box(self, **kw):
-        box = Box("install-kolibri.sh", **kw)
+
+class TheVllmLanesInTwoHalves(unittest.TestCase):
+    """Kolibri's and Nemotron's runtime is an image built on the box: --prepare builds it as the
+    user (docker, no sudo). Here the image is already built, as the fake docker says; the build
+    itself is the step's own lines, which call no sudo."""
+
+    def box(self, installer, unit, **kw):
+        box = Box(installer, **kw)
         (box.bin / "docker").write_text(RECORD + 'case "$1" in info|images) exit 0 ;; image) exit 0 ;; esac\nexit 1\n')
-        for f in ("engine-secrets.sh", "vllm_engine_auth.py", "qwen38-kolibri.service.template"):
+        for f in ("engine-secrets.sh", "vllm_engine_auth.py", unit + ".template"):
             assert (box.script.parent / f).exists(), f
         return box
 
     def test_units_only_puts_in_the_unit_and_builds_nothing(self):
-        box = self.box(root_ok=True)
-        rc, out, calls = box.run("--units-only")
-        self.assertEqual(rc, 0, out)
-        self.assertTrue((box.units / "qwen38-kolibri.service").exists(), out)
-        self.assertFalse([c for c in calls if c.startswith(("docker build", "docker pull", "docker run"))], calls)
-        self.assertIn("first Load", out)
+        for installer, unit in VLLM_LANES:
+            with self.subTest(installer=installer):
+                box = self.box(installer, unit, root_ok=True)
+                rc, out, calls = box.run("--units-only")
+                self.assertEqual(rc, 0, out)
+                self.assertTrue((box.units / unit).exists(), out)
+                self.assertFalse([c for c in calls if c.startswith(("docker build", "docker pull", "docker run"))], calls)
+                self.assertIn("first Load", out)
 
     def test_prepare_readies_the_image_with_no_sudo_and_no_unit(self):
-        box = self.box()
-        rc, out, calls = box.run("--prepare")
-        self.assertEqual(rc, 0, out)
-        self.assertFalse([c for c in calls if c.startswith(("sudo ", "systemctl ", "docker run"))], calls)
-        self.assertFalse((box.units / "qwen38-kolibri.service").exists())
-        self.assertIn("image is ready", out)
-        # its checkpoint is not for it to fetch, nor in the cache: it said "already cached"
-        self.assertIn("checkpoint left to the Load's switch", out)
-        self.assertNotIn("already cached", out)
+        for installer, unit in VLLM_LANES:
+            with self.subTest(installer=installer):
+                box = self.box(installer, unit)
+                rc, out, calls = box.run("--prepare")
+                self.assertEqual(rc, 0, out)
+                self.assertFalse([c for c in calls if c.startswith(("sudo ", "systemctl ", "docker run"))], calls)
+                self.assertFalse((box.units / unit).exists())
+                self.assertIn("image is ready", out)
+                # its checkpoints are not for it to fetch, nor in the cache: it said "already cached"
+                self.assertRegex(out, r"checkpoints? left to the Load's switch")
+                self.assertNotIn("already cached", out)
 
     def test_the_build_step_calls_no_sudo(self):
-        text = (REPO / "install-kolibri.sh").read_text()
-        build = text[text.index('step "2/5 Image ($LOCAL_IMAGE)"'):text.index('step "3/5 Checkpoint')]
-        self.assertNotRegex(build, r"(^|[;&|(]\s*)sudo\b")
+        for installer, _ in VLLM_LANES:
+            with self.subTest(installer=installer):
+                text = (REPO / installer).read_text()
+                build = text[text.index('step "2/5 Image ($LOCAL_IMAGE)"'):text.index('step "3/5 Checkpoint')]
+                self.assertNotRegex(build, r"(^|[;&|(]\s*)sudo\b")
 
 
 
@@ -240,25 +250,25 @@ class TheDispatcher(unittest.TestCase):
     own (the cockpit never builds one argument out of a parameter), mapped to its installer's
     --prepare, and nothing else is taken."""
 
-    def run_it(self, *args, units=("image", "video", "kolibri")):
+    def run_it(self, *args, units=("image", "video", "kolibri", "nemotron")):
         d = pathlib.Path(tempfile.mkdtemp(prefix="prepare-lane-"))
         (d / "units").mkdir()
         for lane in units:
             (d / "units" / f"qwen38-{lane}.service").write_text("[Unit]\n")
         (d / "prepare-lane.sh").write_text((REPO / "prepare-lane.sh").read_text().replace("/etc/systemd/system/", f"{d}/units/"))
-        for lane in ("image", "video", "kolibri"):
+        for lane in ("image", "video", "kolibri", "nemotron"):
             (d / f"install-{lane}.sh").write_text(f'echo "install-{lane}.sh $*"\n')
         r = subprocess.run(["bash", str(d / "prepare-lane.sh"), *args], capture_output=True, text=True, timeout=30)
         return r.returncode, (r.stdout + r.stderr).strip()
 
     def test_each_lane_runs_its_installers_prepare(self):
-        for lane in ("image", "video", "kolibri"):
+        for lane in ("image", "video", "kolibri", "nemotron"):
             with self.subTest(lane=lane):
                 self.assertEqual(self.run_it(lane), (0, f"install-{lane}.sh --prepare"))
 
     def test_a_lane_with_no_unit_is_not_prepared(self):
         # its units come with ./install.sh; a preparation alone would build what nothing runs
-        for lane in ("image", "video", "kolibri"):
+        for lane in ("image", "video", "kolibri", "nemotron"):
             with self.subTest(lane=lane):
                 rc, out = self.run_it(lane, units=())
                 self.assertEqual(rc, 1, out)
@@ -282,7 +292,7 @@ class TheSwitchSendsALaneNotBuiltToItsPreparation(unittest.TestCase):
 
     def test_each_side_lane_names_prepare_lane(self):
         text = (REPO / "switch-model.sh").read_text()
-        for lane in ("image", "video", "kolibri"):
+        for lane in ("image", "video", "kolibri", "nemotron"):
             with self.subTest(lane=lane):
                 self.assertIn(f"./prepare-lane.sh {lane} builds it (no sudo; its first Load from the cockpit runs it), then switch again", text)
         self.assertNotIn("runtime is missing ($IMG_PY): re-run", text)

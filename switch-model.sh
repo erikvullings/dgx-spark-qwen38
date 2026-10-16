@@ -13,6 +13,7 @@
 #   ./switch-model.sh video           # MiniMaxAI/MiniMax-H3 (SGLang Diffusion, own venv)
 #   ./switch-model.sh kolibri         # Aleph-Alpha/Kolibri-1, the official FP8 (vLLM + Aleph Alpha's plugin)
 #   ./switch-model.sh kolibri-nvfp4   # Quantinine/Kolibri-1-NVFP4A16-FP8, its experts in NVFP4
+#   ./switch-model.sh nemotron        # nvidia/NVIDIA-Nemotron-3.5-Bolt-74B-A9B-24GB and its drafter (vLLM nightly + b12x)
 #   ./switch-model.sh <target> --fetch  # that target's checkpoint only, into the cache; nothing else changes
 #
 # Within the 27B lane (stock, uncensored, fp8, uncensored-fp8) it does what it
@@ -50,7 +51,7 @@ _ENV_HF_CACHE="${HF_CACHE:-}"      # before the pins below give it install.sh's 
 # 27B lane and restarting what follows it, where the usage was all anyone wanted (found
 # in review, 2026-09-24). MODEL_CHOICE= still names one, as install.sh takes it.
 CHOICE="${1:-${MODEL_CHOICE:-}}"
-case "$CHOICE" in stock|uncensored|fp8|uncensored-fp8|flash|flash-nvda|flash-uncensored|image|image-turbo|video|kolibri|kolibri-nvfp4) ;; *) printf 'usage: ./switch-model.sh <stock|uncensored|fp8|uncensored-fp8|flash|flash-nvda|flash-uncensored|image|image-turbo|video|kolibri|kolibri-nvfp4> [--fetch]\n' >&2; [ -z "$CHOICE" ] && exit 2; die "unknown target: $CHOICE" ;; esac
+case "$CHOICE" in stock|uncensored|fp8|uncensored-fp8|flash|flash-nvda|flash-uncensored|image|image-turbo|video|kolibri|kolibri-nvfp4|nemotron) ;; *) printf 'usage: ./switch-model.sh <stock|uncensored|fp8|uncensored-fp8|flash|flash-nvda|flash-uncensored|image|image-turbo|video|kolibri|kolibri-nvfp4|nemotron> [--fetch]\n' >&2; [ -z "$CHOICE" ] && exit 2; die "unknown target: $CHOICE" ;; esac
 # --fetch: the target's checkpoint only, fetched as a switch fetches it (the cache first,
 # resumable, its room checked), and nothing else: no unit, no boot, no engine, no record.
 # Library's Download runs it, and a lane installed without its weights gets them so.
@@ -200,7 +201,7 @@ if [ "$CHOICE" = "kolibri" ] || [ "$CHOICE" = "kolibri-nvfp4" ]; then
   done
   # The loop variable ends in UNIT_NAME on purpose: CI checks every
   # `sudo systemctl <verb> "$..UNIT_NAME"` against the cockpit's sudoers allowlist.
-  for TEXT_UNIT_NAME in qwen38-sglang.service qwen38-flash.service qwen38-image.service qwen38-video.service; do
+  for TEXT_UNIT_NAME in qwen38-sglang.service qwen38-flash.service qwen38-image.service qwen38-video.service qwen38-nemotron.service; do
     if systemctl is-enabled --quiet "$TEXT_UNIT_NAME" 2>/dev/null; then
       echo "disabling $TEXT_UNIT_NAME at boot (unit file kept for switching back)"
       sudo systemctl disable "$TEXT_UNIT_NAME"
@@ -210,7 +211,7 @@ if [ "$CHOICE" = "kolibri" ] || [ "$CHOICE" = "kolibri-nvfp4" ]; then
   sudo systemctl enable "$KOLIBRI_UNIT_NAME" >/dev/null 2>&1 || sudo systemctl enable "$KOLIBRI_UNIT_NAME"
   sudo systemctl daemon-reload
   RUNNING=""
-  for u in qwen38-sglang.service qwen38-flash.service qwen38-image.service qwen38-video.service qwen38-llamacpp.service; do
+  for u in qwen38-sglang.service qwen38-flash.service qwen38-image.service qwen38-video.service qwen38-nemotron.service qwen38-llamacpp.service; do
     systemctl is-active --quiet "$u" 2>/dev/null && RUNNING="$u"
   done
   printf '\n\033[1;32mSwitch queued: %s (%s)\033[0m\n' "$KOL_MODEL" "$KOLIBRI_UNIT_NAME"
@@ -266,6 +267,168 @@ if [ "$CHOICE" = "kolibri" ] || [ "$CHOICE" = "kolibri-nvfp4" ]; then
     fi
   fi
   echo "Clients reach it through the proxy on :30001 with the box's key, as model kolibri-1."
+  echo "Switch back:      ./switch-model.sh stock   (or any other target)"
+  exit 0
+fi
+
+# ── The Nemotron lane: a text lane on vLLM, switched to the way the Kolibri lane is ────
+# The same contract: verify the checkpoints (the model and its drafter; the first switch fetches
+# them), name them in the unit with the memory share install-nemotron.sh pins, make it the one
+# unit enabled at boot, never start or stop anything, print the exact commands.
+NEMOTRON_UNIT="/etc/systemd/system/qwen38-nemotron.service"
+NEMOTRON_UNIT_NAME="qwen38-nemotron.service"
+# Rewritten with sudo when its pins moved, so staged at a fixed path the cockpit's exact-argv
+# sudoers allowlist names, as the Kolibri unit is.
+NEM_STAGE="$CONFIG_DIR/qwen38-nemotron.service.switch-stage"
+if [ "$CHOICE" = "nemotron" ]; then
+  [ -f "$NEMOTRON_UNIT" ] || die "the Nemotron lane is not installed on this box (no $NEMOTRON_UNIT). Install it once: ./install.sh --with-nemotron (about 51 GB)"
+  # The checkpoint, its drafter, their pinned revisions, the memory share and the size, from
+  # install-nemotron.sh, the one place they are declared.
+  eval "$(grep -E '^NEMOTRON_BOLT_(REPO|REV|DRAFT_REPO|DRAFT_REV|GMU|GB)=' "$REPO_DIR/install-nemotron.sh" || true)"
+  for _v in NEMOTRON_BOLT_REPO NEMOTRON_BOLT_REV NEMOTRON_BOLT_DRAFT_REPO NEMOTRON_BOLT_DRAFT_REV NEMOTRON_BOLT_GMU NEMOTRON_BOLT_GB; do
+    eval "[ -n \"\${$_v:-}\" ]" || die "install-nemotron.sh no longer defines $_v (repo layout changed?)"
+  done
+  unset _v
+  NEM_MODEL="$NEMOTRON_BOLT_REPO"; NEM_REV="$NEMOTRON_BOLT_REV"; NEM_GMU="$NEMOTRON_BOLT_GMU"; NEM_NEED_GB="$NEMOTRON_BOLT_GB"
+  NEM_DRAFT="$NEMOTRON_BOLT_DRAFT_REPO"; NEM_DREV="$NEMOTRON_BOLT_DRAFT_REV"
+  NEM_IMAGE="$(grep -m1 -oE 'qwen38-nemotron:[^ ]+' "$NEMOTRON_UNIT" || true)"
+  [ -n "$NEM_IMAGE" ] && docker image inspect "$NEM_IMAGE" >/dev/null 2>&1 \
+    || die "the Nemotron lane's image (${NEM_IMAGE:-none named in its unit}) is missing: ./prepare-lane.sh nemotron builds it (no sudo; its first Load from the cockpit runs it), then switch again"
+  NEM_HF="$(grep -m1 -oE -- '-v [^ :]+:/root/\.cache/huggingface' "$NEMOTRON_UNIT" | sed -e 's/^-v //' -e 's|:/root/\.cache/huggingface$||' || true)"
+  NEM_HF="${NEM_HF:-$HF_CACHE}"
+  NEM_TOKEN_ARGS=()
+  # by name: docker takes the value from its own environment, so the token is in no argv
+  if [ -n "${HF_TOKEN:-}" ]; then export HF_TOKEN; NEM_TOKEN_ARGS=(-e HF_TOKEN); fi
+  NEM_PROGRESS_ARGS=()
+  if [ -f "$REPO_DIR/hf-progress.py" ]; then
+    NEM_PROGRESS_ARGS=(-v "$REPO_DIR/hf-progress.py:/opt/qwen38/hf-progress.py:ro")
+  fi
+  # In the lane's own image, as the text lanes fetch theirs in their serving image; --init so
+  # that a cockpit job stopped past its timeout stops this too. ckpt-fetch.py is the one fetch
+  # of every lane's checkpoint (it says why). The room asked for is the pair's, given to the
+  # first fetch, which the second then needs no more than its own share of.
+  NEM_ASK="$NEM_NEED_GB"
+  for NEM_CKPT in "$NEM_MODEL $NEM_REV" "$NEM_DRAFT $NEM_DREV"; do
+    NEM_R="${NEM_CKPT%% *}"; NEM_V="${NEM_CKPT##* }"
+    printf '\n\033[1;36m── Verifying %s @ %s in the cache (resumable)\033[0m\n' "$NEM_R" "${NEM_V:0:12}"
+    docker run --rm --init --network host --user "$(id -u):$(id -g)" --entrypoint python3 \
+      -e HF_HOME=/hf -e HF_HUB_DOWNLOAD_TIMEOUT=30 -e HF_HUB_DISABLE_XET=1 \
+      -e HF_HUB_DISABLE_PROGRESS_BARS="$DL_NO_BARS" \
+      "${NEM_TOKEN_ARGS[@]}" "${NEM_PROGRESS_ARGS[@]}" \
+      -v "$REPO_DIR/ckpt-fetch.py:/opt/qwen38/ckpt-fetch.py:ro" \
+      -v "$NEM_HF":/hf "$NEM_IMAGE" /opt/qwen38/ckpt-fetch.py "$NEM_R" "$NEM_V" --offline-first \
+      --need-gb "$NEM_ASK" --free-gb "$(dl_free_gb "$NEM_HF")" \
+      || die "the Nemotron checkpoint $NEM_R could not be verified or fetched (re-run to resume; set HF_TOKEN if it stalls)"
+    NEM_ASK=1
+  done
+  # --fetch ends once both are in the cache: the lane loads the drafter with the model
+  fetched "$NEM_MODEL @ ${NEM_REV:0:12}, with its drafter,"
+  # The unit names the checkpoint's revision twice (after the checkpoint, and in the path of the
+  # reasoning parser in that snapshot), the drafter and its revision, and the memory share: a switch
+  # after the pins moved rewrites each of them. It rewrote the first and the share only, and the
+  # engine would have started the new weights with the old snapshot's parser and a drafter this
+  # switch had not checked (found in review, 2026-10-16).
+  NEM_CUR="$(grep -m1 -oE -- "[^ ]+ --revision [0-9a-f]{40}" "$NEMOTRON_UNIT" || true)"
+  NEM_CUR_GMU="$(grep -m1 -oE -- "--gpu-memory-utilization [0-9.]+" "$NEMOTRON_UNIT" || true)"
+  NEM_CUR_D="$(grep -m1 -oE -- "--speculative-config.model [^ ]+" "$NEMOTRON_UNIT" || true)"
+  NEM_CUR_DREV="$(grep -m1 -oE -- "--speculative-config.revision [0-9a-f]{40}" "$NEMOTRON_UNIT" || true)"
+  NEM_CUR_REPO="${NEM_CUR%% *}"; NEM_CUR_SNAP="models--${NEM_CUR_REPO//\//--}/snapshots/${NEM_CUR##* }/"
+  [ -n "$NEM_CUR" ] && [ -n "$NEM_CUR_GMU" ] && [ -n "$NEM_CUR_D" ] && [ -n "$NEM_CUR_DREV" ] \
+    && grep -qF -- "$NEM_CUR_SNAP" "$NEMOTRON_UNIT" \
+    || die "the Nemotron unit names no checkpoint, drafter or memory share where this expects it (hand-edited unit?): re-run ./install-nemotron.sh --no-smoke"
+  NEM_WANT="$NEM_MODEL --revision $NEM_REV"; NEM_WANT_GMU="--gpu-memory-utilization $NEM_GMU"
+  NEM_WANT_D="--speculative-config.model $NEM_DRAFT"; NEM_WANT_DREV="--speculative-config.revision $NEM_DREV"
+  NEM_WANT_SNAP="models--${NEM_MODEL//\//--}/snapshots/$NEM_REV/"
+  NEM_REWRITTEN=""
+  if [ "$NEM_CUR|$NEM_CUR_GMU|$NEM_CUR_D|$NEM_CUR_DREV" != "$NEM_WANT|$NEM_WANT_GMU|$NEM_WANT_D|$NEM_WANT_DREV" ]; then
+    NEM_TEXT="$(cat "$NEMOTRON_UNIT")"
+    NEM_TEXT="${NEM_TEXT//"$NEM_CUR"/"$NEM_WANT"}"
+    NEM_TEXT="${NEM_TEXT//"$NEM_CUR_SNAP"/"$NEM_WANT_SNAP"}"
+    NEM_TEXT="${NEM_TEXT//"$NEM_CUR_D "/"$NEM_WANT_D "}"
+    NEM_TEXT="${NEM_TEXT//"$NEM_CUR_DREV"/"$NEM_WANT_DREV"}"
+    printf '%s\n' "${NEM_TEXT//"$NEM_CUR_GMU"/"$NEM_WANT_GMU"}" > "$NEM_STAGE"
+    if ! grep -qF -- "$NEM_WANT " "$NEM_STAGE" || ! grep -qF -- "$NEM_WANT_GMU " "$NEM_STAGE" \
+       || ! grep -qF -- "$NEM_WANT_D " "$NEM_STAGE" || ! grep -qF -- "$NEM_WANT_DREV " "$NEM_STAGE" \
+       || ! grep -qF -- "$NEM_WANT_SNAP" "$NEM_STAGE"; then
+      rm -f "$NEM_STAGE"; die "the Nemotron unit's rewrite to $NEM_MODEL failed (hand-edited unit?): re-run ./install-nemotron.sh --no-smoke"
+    fi
+    diff "$NEM_STAGE" "$NEMOTRON_UNIT" || true   # show exactly what changes
+    sudo install -m 644 "$NEM_STAGE" "$NEMOTRON_UNIT"
+    rm -f "$NEM_STAGE"
+    NEM_REWRITTEN=1
+  fi
+  # Which lane this box served at boot, written down before it is disabled: removing the
+  # Nemotron lane later gives the boot back to it (install-nemotron.sh --uninstall).
+  for TEXT_UNIT_NAME in qwen38-sglang.service qwen38-flash.service; do
+    if systemctl is-enabled --quiet "$TEXT_UNIT_NAME" 2>/dev/null; then
+      text_lane_note "$TEXT_UNIT_NAME"; break   # both enabled: the 27B, as install.sh follows it
+    fi
+  done
+  # The loop variable ends in UNIT_NAME on purpose: CI checks every
+  # `sudo systemctl <verb> "$..UNIT_NAME"` against the cockpit's sudoers allowlist.
+  for TEXT_UNIT_NAME in qwen38-sglang.service qwen38-flash.service qwen38-image.service qwen38-video.service qwen38-kolibri.service; do
+    if systemctl is-enabled --quiet "$TEXT_UNIT_NAME" 2>/dev/null; then
+      echo "disabling $TEXT_UNIT_NAME at boot (unit file kept for switching back)"
+      sudo systemctl disable "$TEXT_UNIT_NAME"
+    fi
+  done
+  disable_rollback_lane
+  sudo systemctl enable "$NEMOTRON_UNIT_NAME" >/dev/null 2>&1 || sudo systemctl enable "$NEMOTRON_UNIT_NAME"
+  sudo systemctl daemon-reload
+  RUNNING=""
+  for u in qwen38-sglang.service qwen38-flash.service qwen38-image.service qwen38-video.service qwen38-kolibri.service qwen38-llamacpp.service; do
+    systemctl is-active --quiet "$u" 2>/dev/null && RUNNING="$u"
+  done
+  printf '\n\033[1;32mSwitch queued: %s (%s)\033[0m\n' "$NEM_MODEL" "$NEMOTRON_UNIT_NAME"
+  if [ -n "$RUNNING" ]; then
+    echo "Effective after:  sudo systemctl stop $RUNNING && sudo systemctl start $NEMOTRON_UNIT_NAME   (or next reboot)"
+  elif systemctl is-active --quiet "$NEMOTRON_UNIT_NAME" 2>/dev/null; then
+    if [ -n "$NEM_REWRITTEN" ]; then
+      echo "Effective after:  sudo systemctl restart $NEMOTRON_UNIT_NAME   (it serves the previous unit until then)"
+    else
+      echo "Its unit already named this checkpoint. Started before it did, the lane serves what it loaded: sudo systemctl restart $NEMOTRON_UNIT_NAME"
+    fi
+  else
+    echo "Effective after:  sudo systemctl start $NEMOTRON_UNIT_NAME   (or next reboot; ready in about 8 min)"
+  fi
+  # opencode follows the lane, as on a text switch: the nemotron provider becomes the default of
+  # the generated config and of the one opencode reads, and the server that reads them restarts
+  # when they changed. A box installed with --no-opencode is left alone.
+  if [ -f "$CONFIG_DIR/opencode.off" ]; then
+    echo "opencode integration is off on this box (./install.sh --no-opencode): default model left alone"
+  else
+    NEM_OC_SUM="$({ cat "$CONFIG_DIR/opencode.json" "$HOME/.config/opencode/opencode.json" 2>/dev/null || true; } | sha256sum)"
+    NEM_PAIR="$("$REPO_DIR/oc-limits.sh" "$CHOICE")" || NEM_PAIR=""
+    NEM_NAME="$(python3 "$REPO_DIR/oc-point-default.py" --label "$CHOICE" 262144 || true)"
+    NEM_PORT="$({ grep -m1 -oE 'PROXY_PORT=[0-9]+|keepalive-proxy.py [0-9]+' /etc/systemd/system/qwen38-keepalive.service 2>/dev/null || true; } | grep -oE '[0-9]+$' || true)"
+    NEM_SRC="$(mktemp)"
+    if [ -n "$NEM_PAIR" ] && python3 "$REPO_DIR/oc-nemotron.py" "http://127.0.0.1:${NEM_PORT:-30001}/v1" "$CONFIG_DIR/api-key" \
+         "${NEM_PAIR%% *}" "$(echo "$NEM_PAIR" | cut -d' ' -f2)" "${NEM_NAME:-Nemotron 3.5 Bolt (local, 262K)}" > "$NEM_SRC"; then
+      # The compaction block is global: sized from this lane's window as every text switch sizes
+      # it from its own. pi's keepRecentTokens follows (pi-gen).
+      NEM_KEEP="$("$REPO_DIR/oc-limits.sh" --preserve "${NEM_PAIR%% *}")" || NEM_KEEP=""
+      for OC_JSON in "$CONFIG_DIR/opencode.json" "$HOME/.config/opencode/opencode.json"; do
+        [ -f "$OC_JSON" ] || continue
+        python3 "$REPO_DIR/oc-merge-limits.py" "$OC_JSON" --add-providers "$NEM_SRC" >/dev/null || true
+        python3 "$REPO_DIR/oc-point-default.py" "$OC_JSON" nemotron "$CHOICE" 262144 \
+          || echo "NOTE: could not update $OC_JSON (hand-edited?); set its \"model\" field yourself"
+        [ -n "$NEM_KEEP" ] && { python3 "$REPO_DIR/oc-merge-limits.py" "$OC_JSON" --compaction "$NEM_KEEP" \
+          || echo "NOTE: could not update the compaction block in $OC_JSON; check it by hand ($NEM_KEEP)"; }
+      done
+    fi
+    rm -f "$NEM_SRC"
+    if [ -d "$CONFIG_DIR/pi" ] || [ -d "$CONFIG_DIR/omp" ]; then
+      python3 "$REPO_DIR/pi-gen.py" --config "$CONFIG_DIR/opencode.json" --out "$CONFIG_DIR" \
+        || echo "NOTE: could not regenerate the pi/omp artifacts; run ./pi-gen.py by hand"
+    fi
+    if [ "$NEM_OC_SUM" != "$({ cat "$CONFIG_DIR/opencode.json" "$HOME/.config/opencode/opencode.json" 2>/dev/null || true; } | sha256sum)" ] \
+       && systemctl list-unit-files opencode-web.service >/dev/null 2>&1 && systemctl is-active --quiet opencode-web.service; then
+      sudo systemctl restart opencode-web.service \
+        && echo "opencode-web.service restarted so it reads the new default" \
+        || echo "NOTE: could not restart opencode-web.service; restart it by hand"
+    fi
+  fi
+  echo "Clients reach it through the proxy on :30001 with the box's key, as model nemotron-3.5-bolt."
   echo "Switch back:      ./switch-model.sh stock   (or any other target)"
   exit 0
 fi
@@ -371,7 +534,7 @@ if [ "$CHOICE" = "image" ] || [ "$CHOICE" = "image-turbo" ]; then
   # The loop variable ends in UNIT_NAME on purpose: CI checks every
   # `sudo systemctl <verb> "$..UNIT_NAME"` against the cockpit's sudoers allowlist,
   # and a variable called $u would have walked straight past it.
-  for TEXT_UNIT_NAME in qwen38-sglang.service qwen38-flash.service qwen38-video.service qwen38-kolibri.service; do
+  for TEXT_UNIT_NAME in qwen38-sglang.service qwen38-flash.service qwen38-video.service qwen38-kolibri.service qwen38-nemotron.service; do
     if systemctl is-enabled --quiet "$TEXT_UNIT_NAME" 2>/dev/null; then
       echo "disabling $TEXT_UNIT_NAME at boot (unit file kept for switching back)"
       sudo systemctl disable "$TEXT_UNIT_NAME"
@@ -381,7 +544,7 @@ if [ "$CHOICE" = "image" ] || [ "$CHOICE" = "image-turbo" ]; then
   sudo systemctl enable "$IMAGE_UNIT_NAME" >/dev/null 2>&1 || sudo systemctl enable "$IMAGE_UNIT_NAME"
   sudo systemctl daemon-reload
   RUNNING=""
-  for u in qwen38-sglang.service qwen38-flash.service qwen38-video.service qwen38-kolibri.service qwen38-llamacpp.service; do
+  for u in qwen38-sglang.service qwen38-flash.service qwen38-video.service qwen38-kolibri.service qwen38-nemotron.service qwen38-llamacpp.service; do
     systemctl is-active --quiet "$u" 2>/dev/null && RUNNING="$u"
   done
   printf '\n\033[1;32mSwitch queued: %s (%s)\033[0m\n' "$IMG_MODEL" "$IMAGE_UNIT_NAME"
@@ -506,7 +669,7 @@ if [ "$CHOICE" = "video" ]; then
   # The loop variable ends in UNIT_NAME on purpose: CI checks every
   # `sudo systemctl <verb> "$..UNIT_NAME"` against the cockpit's sudoers allowlist,
   # and a variable called $u would have walked straight past it.
-  for OTHER_UNIT_NAME in qwen38-sglang.service qwen38-flash.service qwen38-image.service qwen38-kolibri.service; do
+  for OTHER_UNIT_NAME in qwen38-sglang.service qwen38-flash.service qwen38-image.service qwen38-kolibri.service qwen38-nemotron.service; do
     if systemctl is-enabled --quiet "$OTHER_UNIT_NAME" 2>/dev/null; then
       echo "disabling $OTHER_UNIT_NAME at boot (unit file kept for switching back)"
       sudo systemctl disable "$OTHER_UNIT_NAME"
@@ -516,7 +679,7 @@ if [ "$CHOICE" = "video" ]; then
   sudo systemctl enable "$VIDEO_UNIT_NAME" >/dev/null 2>&1 || sudo systemctl enable "$VIDEO_UNIT_NAME"
   sudo systemctl daemon-reload
   RUNNING=""
-  for u in qwen38-sglang.service qwen38-flash.service qwen38-image.service qwen38-kolibri.service qwen38-llamacpp.service; do
+  for u in qwen38-sglang.service qwen38-flash.service qwen38-image.service qwen38-kolibri.service qwen38-nemotron.service qwen38-llamacpp.service; do
     systemctl is-active --quiet "$u" 2>/dev/null && RUNNING="$u"
   done
   printf '\n\033[1;32mSwitch queued: %s (%s)\033[0m\n' "$VID_MODEL" "$VIDEO_UNIT_NAME"
@@ -838,6 +1001,11 @@ if [ -f "$KOLIBRI_UNIT" ] && systemctl is-enabled --quiet "$KOLIBRI_UNIT_NAME" 2
   echo "disabling $KOLIBRI_UNIT_NAME at boot (unit file kept for switching back)"
   sudo systemctl disable "$KOLIBRI_UNIT_NAME"
 fi
+# The Nemotron lane is the sixth: the same reason.
+if [ -f "$NEMOTRON_UNIT" ] && systemctl is-enabled --quiet "$NEMOTRON_UNIT_NAME" 2>/dev/null; then
+  echo "disabling $NEMOTRON_UNIT_NAME at boot (unit file kept for switching back)"
+  sudo systemctl disable "$NEMOTRON_UNIT_NAME"
+fi
 disable_rollback_lane
 sudo systemctl enable "$TARGET_UNIT_NAME" >/dev/null 2>&1 || sudo systemctl enable "$TARGET_UNIT_NAME"
 text_lane_note "$TARGET_UNIT_NAME"
@@ -969,6 +1137,7 @@ systemctl is-active --quiet "$OTHER_UNIT_NAME" 2>/dev/null && RUNNING="$OTHER_UN
 systemctl is-active --quiet "$IMAGE_UNIT_NAME" 2>/dev/null && RUNNING="$IMAGE_UNIT_NAME"
 systemctl is-active --quiet "$VIDEO_UNIT_NAME" 2>/dev/null && RUNNING="$VIDEO_UNIT_NAME"
 systemctl is-active --quiet "$KOLIBRI_UNIT_NAME" 2>/dev/null && RUNNING="$KOLIBRI_UNIT_NAME"
+systemctl is-active --quiet "$NEMOTRON_UNIT_NAME" 2>/dev/null && RUNNING="$NEMOTRON_UNIT_NAME"
 systemctl is-active --quiet qwen38-llamacpp.service 2>/dev/null && RUNNING="qwen38-llamacpp.service"
 printf '\n\033[1;32mSwitch queued: %s (%s)\033[0m\n' "$TARGET_REPO" "$TARGET_UNIT_NAME"
 if [ -n "$RUNNING" ]; then

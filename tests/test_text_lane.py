@@ -24,15 +24,16 @@ LANES = REPO / "lanes.sh"
 SWITCH = (REPO / "switch-model.sh").read_text()
 INSTALL = (REPO / "install.sh").read_text()
 UNIT = {"27b": "qwen38-sglang.service", "flash": "qwen38-flash.service", "image": "qwen38-image.service",
-        "video": "qwen38-video.service", "kolibri": "qwen38-kolibri.service"}
-SIDES = ("image", "video", "kolibri")
+        "video": "qwen38-video.service", "kolibri": "qwen38-kolibri.service", "nemotron": "qwen38-nemotron.service"}
+SIDES = ("image", "video", "kolibri", "nemotron")
 
 
 def side_note(lane):
     """switch-model.sh's lines that note the text lane when it switches to this side lane."""
     head = {"image": 'if [ "$CHOICE" = "image" ] || [ "$CHOICE" = "image-turbo" ]; then',
             "video": 'if [ "$CHOICE" = "video" ]; then',
-            "kolibri": 'if [ "$CHOICE" = "kolibri" ] || [ "$CHOICE" = "kolibri-nvfp4" ]; then'}[lane]
+            "kolibri": 'if [ "$CHOICE" = "kolibri" ] || [ "$CHOICE" = "kolibri-nvfp4" ]; then',
+            "nemotron": 'if [ "$CHOICE" = "nemotron" ]; then'}[lane]
     at = SWITCH.index(head)
     m = re.compile(r"\n  for TEXT_UNIT_NAME in [^\n]*; do\n    if systemctl is-enabled --quiet \"\$TEXT_UNIT_NAME\" "
                    r"2>/dev/null; then\n      text_lane_note \"\$TEXT_UNIT_NAME\"(; break[^\n]*)?\n    fi\n  done\n").search(SWITCH, at)
@@ -50,7 +51,7 @@ class Box:
     """A config directory, a units directory and a systemctl that answers which unit is
     enabled at boot from a file."""
 
-    def __init__(self, units=("27b", "flash", "image", "video", "kolibri")):
+    def __init__(self, units=("27b", "flash", "image", "video", "kolibri", "nemotron")):
         self.d = pathlib.Path(tempfile.mkdtemp(prefix="text-lane-"))
         self.cfg, self.units, self.bin = self.d / "cfg", self.d / "units", self.d / "bin"
         for p in (self.cfg, self.units, self.bin):
@@ -82,7 +83,7 @@ class Box:
 class TheLibrary(unittest.TestCase):
     def test_only_an_sglang_text_unit_is_noted(self):
         b = Box()
-        for unit in ("qwen38-image.service", "qwen38-kolibri.service", "qwen38-video.service", "x"):
+        for unit in ("qwen38-image.service", "qwen38-kolibri.service", "qwen38-nemotron.service", "qwen38-video.service", "x"):
             b.run(f'text_lane_note "{unit}"')
             self.assertFalse((b.cfg / "text-lane").exists(), unit)
         b.run('text_lane_note qwen38-flash.service')
@@ -253,7 +254,7 @@ class TheLibrary(unittest.TestCase):
 
 
 class EverySequenceOfSwitches(unittest.TestCase):
-    """Every sequence of lanes up to six long (1,364) that starts on a text lane (the box's first
+    """Every sequence of lanes up to six long (3,905) that starts on a text lane (the box's first
     install does), switched through switch-model.sh's own notes: install.sh resolves the last
     text lane served, and the uninstall of the side lane at boot gives the boot back to it."""
 
@@ -280,7 +281,7 @@ class EverySequenceOfSwitches(unittest.TestCase):
     def test_every_sequence(self):
         n, bad = 0, []
         for length in range(2, 7):
-            for tail in itertools.product(("27b", "flash", "image", "video", "kolibri"), repeat=length - 1):
+            for tail in itertools.product(("27b", "flash", "image", "video", "kolibri", "nemotron"), repeat=length - 1):
                 seq = (("flash", "27b")[length % 2],) + tail
                 if any(a == b for a, b in zip(seq, seq[1:])):
                     continue

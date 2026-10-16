@@ -41,8 +41,14 @@ CALLS = {
     "switch-model.sh, the Kolibri lane":
         ("switch-model.sh", '"$KOL_IMAGE" /opt/qwen38/ckpt-fetch.py "$KOL_MODEL" "$KOL_REV" --offline-first \\\n'
                             '    --need-gb "$KOL_NEED_GB" --free-gb "$(dl_free_gb "$KOL_HF")"'),
+    "install-nemotron.sh, the model and its drafter":
+        ("install-nemotron.sh", '"$LOCAL_IMAGE" /opt/qwen38/ckpt-fetch.py "$1" "$2" --offline-first'),
+    "switch-model.sh, the Nemotron lane":
+        ("switch-model.sh", '"$NEM_IMAGE" /opt/qwen38/ckpt-fetch.py "$NEM_R" "$NEM_V" --offline-first \\\n'
+                            '      --need-gb "$NEM_ASK" --free-gb "$(dl_free_gb "$NEM_HF")"'),
 }
-SCRIPTS = ("install.sh", "switch-model.sh", "install-image.sh", "install-video.sh", "install-kolibri.sh")
+SCRIPTS = ("install.sh", "switch-model.sh", "install-image.sh", "install-video.sh", "install-kolibri.sh",
+           "install-nemotron.sh")
 
 
 class EveryLaneFetchesThroughIt(unittest.TestCase):
@@ -51,7 +57,7 @@ class EveryLaneFetchesThroughIt(unittest.TestCase):
             with self.subTest(what):
                 self.assertEqual(text(script).count(call), 1, f"{script} no longer runs it this way")
         self.assertEqual(text("switch-model.sh").count("ckpt-fetch.py\" \"$") + text("switch-model.sh").count(
-            "/opt/qwen38/ckpt-fetch.py \"$"), 4, "switch-model.sh fetches for four lanes, each through it")
+            "/opt/qwen38/ckpt-fetch.py \"$"), 5, "switch-model.sh fetches for five lanes, each through it")
 
     def test_no_script_keeps_a_fetch_of_its_own(self):
         for script in SCRIPTS:
@@ -79,6 +85,8 @@ class EveryLaneFetchesThroughIt(unittest.TestCase):
                 ("switch-model.sh", '[ -f "$REPO_DIR/ckpt-fetch.py" ] || die',
                  '-v "$REPO_DIR/ckpt-fetch.py:/opt/qwen38/ckpt-fetch.py:ro"'),
                 ("install-kolibri.sh", '[ -f "$HERE/ckpt-fetch.py" ]',
+                 '-v "$HERE/ckpt-fetch.py:/opt/qwen38/ckpt-fetch.py:ro"'),
+                ("install-nemotron.sh", '[ -f "$HERE/ckpt-fetch.py" ]',
                  '-v "$HERE/ckpt-fetch.py:/opt/qwen38/ckpt-fetch.py:ro"')):
             t = text(script)
             with self.subTest(script):
