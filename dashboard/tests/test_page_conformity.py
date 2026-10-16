@@ -80,6 +80,33 @@ class TheBannerIsOrangeWhileTheBoxDiffers(unittest.TestCase):
                       "before its first step.", upd[0])
 
 
+class TheServicesBehindTheirClone(unittest.TestCase):
+    """installed.json names what the last run that ended well installed: the services can run
+    behind their own clone, and the strip says why and the command that brings them up."""
+
+    def banner(self, extra):
+        r = page(self, js([]), extra=extra)
+        return [b for b in r["banners"] if "install" in b["text"].lower() and "is out" not in b["text"]]
+
+    def test_a_git_pull_with_no_install(self):
+        b = self.banner("{installed: 'v1.36.0', clone: 'v1.36.1', behind_clone: true, behind_clone_why: 'commit'}")
+        self.assertEqual(len(b), 1, b)
+        self.assertEqual(b[0]["cls"], "banner orange")
+        self.assertIn("The clone moved on since the last install: the services run v1.36.0, the clone is v1.36.1.", b[0]["text"])
+        self.assertIn("A git pull changes the files, not what runs.", b[0]["text"])
+
+    def test_a_run_stopped_at_no_start(self):
+        b = self.banner("{behind_clone: true, behind_clone_why: 'no-start'}")
+        self.assertIn("The last install stopped at --no-start.", b[0]["text"])
+
+    def test_a_box_no_run_recorded(self):
+        b = self.banner("{installed: 'before v1.36.0', behind_clone: true, behind_clone_why: 'no-record'}")
+        self.assertIn("No install of v1.36.0 or later recorded what this box runs.", b[0]["text"])
+
+    def test_services_that_follow_their_clone_get_none(self):
+        self.assertEqual(self.banner("{behind_clone: false}"), [])
+
+
 class SettingsListsEachDifference(unittest.TestCase):
     def test_each_one_with_why_it_stays_or_how_to_keep_it_what_moves_first(self):
         r = page(self, js([SITE, YOURS, MOVES]))

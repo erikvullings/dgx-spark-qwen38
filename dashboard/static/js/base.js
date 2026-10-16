@@ -958,6 +958,19 @@ function renderBanners(state, errors){
     add('warn', 'The memory floor fired.', `Memory fell under ${F.memFloor.gib} GiB with requests running: every generation was aborted ${fmtDur(Date.now() / 1000 - F.memFloor.last_abort)} ago to keep the box out of a livelock.`);
   const upd = F.update || {};
   if (upd.behind) add('info', `Version ${upd.latest} is out; this box runs ${upd.installed}.`, `Update with: ${updateCmd(F.config)}. It keeps your choices, and moves a default an older release left to today's: it lists both before its first step.`);
+  // The services behind their own clone (v1.36.0): installed.json names the release and the
+  // commit the last run that ended well installed. A git pull with no ./install.sh moves the
+  // clone and not the services, and a run stopped at --no-start updated neither the side lanes,
+  // nor the proxy, nor the cockpit; a box no run of v1.36.0 or later recorded is said once.
+  if (upd.behind_clone){
+    const why = upd.behind_clone_why;
+    if (why === 'commit') add('orange', `The clone moved on since the last install: the services run ${upd.installed}, the clone is ${upd.clone || 'newer'}.`,
+      `A git pull changes the files, not what runs. Run the installer so the services follow it: ${updateCmd(F.config)}.`);
+    else if (why === 'no-start') add('orange', 'The last install stopped at --no-start.',
+      `The side lanes, the proxy and the cockpit were not updated with it. Run it again without --no-start: ${updateCmd(F.config)}.`);
+    else add('orange', `No install of v1.36.0 or later recorded what this box runs.`,
+      `The services run a release before it, or one an install that did not end well left. Run the installer once: ${updateCmd(F.config)}.`);
+  }
   // This box against what its clone recommends (v1.36.0, 2026-10-17): one orange banner while
   // anything differs, so that nobody runs behind in silence; Settings lists each difference.
   const cf = (upd.conformity || {}).items || [];
