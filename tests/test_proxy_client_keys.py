@@ -22,6 +22,7 @@ verbatim), and no test could see it against an engine that lets everything
 through. The admission scenarios at the bottom exist so that hole cannot
 reopen unnoticed.
 """
+import http.client
 import http.server
 import importlib.util
 import io
@@ -95,7 +96,16 @@ class Engine(http.server.BaseHTTPRequestHandler):
     def do_GET(self):
         if not self._admit():
             return
-        if self.path.split("?")[0] in ("/server_info", "/get_server_info"):
+        if self.path == "/server_info/":
+            # What the engine's router does with a trailing slash (Starlette's redirect_slashes):
+            # a 307 to the route it serves, named with the engine's own address.
+            self.send_response(307)
+            self.send_header("Location", "http://%s:%d/server_info" % self.server.server_address[:2])
+            self.send_header("Content-Length", "0")
+            self.end_headers()
+            return
+        # an engine that serves the spelling with a slash itself, without a redirect
+        if self.path.split("?")[0] in ("/server_info", "/get_server_info", "/get_server_info/"):
             # What the real engine answers (checked on the reference box, 2026-09-24):
             # its own serving key in clear, at the top and in every internal state; and
             # its whole command line, key included, in launch_command (2026-10-03).
@@ -421,6 +431,35 @@ class ClientKeys(unittest.TestCase):
                     self.assertEqual(doc["launch_command"],
                                      "--api-key <masked> --model-path m --admin-api-key "
                                      "<masked> --ssl-keyfile-password <masked>")
+
+    def test_server_info_is_masked_however_the_route_is_spelled(self):
+        """The masking keyed on the exact spelling and the proxy followed the engine's
+        redirects: /server_info/ came back 307 to /server_info, the proxy followed it with the
+        engine's key, and relayed the answer unmasked (2026-10-16). A redirect is now relayed,
+        pointing back at the proxy, and a slash the engine serves is masked. Behind the wall a
+        listed key does not reach these spellings at all (a 403 since the same day); the
+        answer of either mode carries no key."""
+        Engine.require_key = "engine-K"
+        walled = self.live(self.keys_file('{"tok-alice":"alice"}'), upstream_key="engine-K")
+        open_ = self.live()
+        for port, tok in ((walled, "tok-alice"), (open_, "engine-K")):
+            for path in ("/server_info/", "/get_server_info/"):
+                with self.subTest(port=port, path=path):
+                    conn = http.client.HTTPConnection("127.0.0.1", port, timeout=10)
+                    conn.request("GET", path, headers={"Authorization": "Bearer " + tok})
+                    r = conn.getresponse()
+                    body = r.read()
+                    conn.close()
+                    self.assertNotIn(b"engine-K", body)
+                    self.assertNotIn(b"admin-K", body)
+                    if port == walled:
+                        self.assertEqual(r.status, 403, body)
+                    elif path == "/server_info/":
+                        self.assertEqual(r.status, 307, body)
+                        self.assertEqual(r.getheader("Location"), "/server_info")
+                    else:
+                        self.assertEqual(r.status, 200, body)
+                        self.assertEqual(json.loads(body)["max_total_num_tokens"], 1000)
 
     def test_a_key_is_masked_in_every_form_a_command_line_gives_it(self):
         """launch_command (v6.32) is one shape; the masking does not depend on it."""

@@ -2950,7 +2950,17 @@ class _UpstreamHTTP(urllib.request.HTTPHandler):
         return self.do_open(connection, req)
 
 
-_UPSTREAM_OPENER = urllib.request.build_opener(_UpstreamHTTP)
+class _NoUpstreamRedirect(urllib.request.HTTPRedirectHandler):
+    """A redirect from the engine is relayed to the caller, never followed (2026-10-16). urllib's
+    own handler followed one on a GET, with every header of the request, the engine's key
+    included, and the answer went out under the path the caller had asked for, the one that
+    decides whether /server_info is masked: /server_info/ came back 307 to /server_info, was
+    followed, and its answer reached the caller unmasked (found in review, 2026-10-16)."""
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        return None
+
+
+_UPSTREAM_OPENER = urllib.request.build_opener(_UpstreamHTTP, _NoUpstreamRedirect)
 
 # Abort contract (v6.14). SGLang only aborts a request it can still FIND: abort_request()
 # returns early when the rid is no longer in TokenizerManager.rid_to_state, and a client
@@ -3286,7 +3296,16 @@ class H(BaseHTTPRequestHandler):
         if herr.code in (502, 503, 504):
             self._unavailable(f"it answered HTTP {herr.code}, as it does while starting or shutting down")
             self._done(f"503 engine unreachable (upstream {herr.code})"); return
-        try: self._answer(herr.code, dict(herr.headers), raw)
+        headers = dict(herr.headers)
+        if 300 <= herr.code < 400:
+            # A redirect the engine answered, relayed and not followed (_NoUpstreamRedirect), points
+            # back at this proxy (2026-10-16): the engine names its own address, 127.0.0.1:30000,
+            # which a caller on another machine cannot reach and one on the box would reach past
+            # the proxy. Its path is kept, so a caller that follows it lands where it used to.
+            for k in [k for k in headers if k.lower() == "location"]:
+                u = urllib.parse.urlsplit(headers[k])
+                headers[k] = urllib.parse.urlunsplit(("", "", u.path or "/", u.query, ""))
+        try: self._answer(herr.code, headers, raw)
         except Exception: pass
         self._done(f"{herr.code} upstream")
 
@@ -4364,7 +4383,8 @@ class H(BaseHTTPRequestHandler):
         finally:
             try: resp.close()
             except Exception: pass
-        if resp.status == 200 and self.path.split("?")[0] in SERVER_INFO_ROUTES:
+        # 2026-10-16: whatever trailing slash the caller wrote, which the engine may serve too
+        if resp.status == 200 and self.path.split("?")[0].rstrip("/") in SERVER_INFO_ROUTES:
             data = strip_key_fields(data)
         self._plain(resp.status, dict(resp.headers), data)
         self._done("ok get")
