@@ -85,7 +85,7 @@ function renderPool(){
   $('mp-free').style.width = (100 * p.free / p.total).toFixed(1) + '%';
 }
 
-// ── the rack: four bays ───────────────────────────────────────────────────────
+// ── the rack: a bay per lane ──────────────────────────────────────────────────
 const BAYS = new Map();
 function bay(unit){
   let b = BAYS.get(unit); if (b) return b;

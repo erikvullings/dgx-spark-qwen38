@@ -447,7 +447,7 @@ TEXT_UNITS = tuple(u for u in ENGINE_UNITS if u not in (IMAGE_UNIT, VIDEO_UNIT, 
 def blocked_reasons(action: str, params: dict, states: dict) -> list[str]:
     """Why an action must NOT run now. Empty list = allowed.
 
-    states: {unit_name: state_string} for the two engine units.
+    states: {unit_name: state_string} for the engine units (ENGINE_UNITS).
     The cardinal rule on 128 GB unified memory: never two engines at once.
     """
     reasons = []

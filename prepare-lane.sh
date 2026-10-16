@@ -19,8 +19,8 @@
 # Without one, the target the launcher or unit serves. The preparation fetched that one only,
 # the default on a new box, and the Load's switch then fetched the target loaded (found in
 # review, 2026-10-15). The lane and the target are arguments of their own: the cockpit's
-# actions never build one argument out of a parameter (tests/test_cockpit_http.py holds them
-# to that).
+# actions never build one argument out of a parameter (dashboard/tests/test_cockpit_http.py
+# holds them to that).
 set -euo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 usage(){ echo "usage: ./prepare-lane.sh <image|video|kolibri|nemotron|nemotron-super> | <flash|27b> [<target>]" >&2; exit 2; }

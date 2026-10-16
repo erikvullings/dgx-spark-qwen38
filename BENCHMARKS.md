@@ -344,7 +344,8 @@ on their box (38.6-40.6 tok/s) and the **worst** agent loop, 47.8 ms/tok against
 43.4 with no speculation at all and 33.3 with an n-gram drafter, because vLLM's
 scheduler drops one cacheable block per request when a drafter is configured, so
 every turn re-prefills what it just cached (jschmied,
-`notes/which-drafter-for-agent-work.md` and `notes/mtp-vs-prefix-cache.md`,
+[`notes/which-drafter-for-agent-work.md`](https://github.com/jschmied/qwen38-flash-next-gb10/blob/main/notes/which-drafter-for-agent-work.md)
+and [`notes/mtp-vs-prefix-cache.md`](https://github.com/jschmied/qwen38-flash-next-gb10/blob/main/notes/mtp-vs-prefix-cache.md),
 2026-08-31, work pinned the same way). This lane does not pay that: 27.0 ms/tok
 with MTP on, flat TTFT, and the same numbers on a 24K prefix.
 

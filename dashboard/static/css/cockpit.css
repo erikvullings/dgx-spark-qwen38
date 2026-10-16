@@ -480,8 +480,8 @@ details.why > div{margin-top:var(--s-3); color:var(--fg-2); font-size:var(--t-14
 .pool-scale{display:flex; justify-content:space-between; margin-top:6px; font-size:var(--t-12); color:var(--fg-3); font-variant-numeric:tabular-nums}
 
 /* ── THE RACK ──────────────────────────────────────────────────────────────────
-   Four bays, one seated. A lane that is not loaded is not missing: it is shelved. */
-/* five bays: the three text lanes on the first row, the image and the video lanes under them */
+   A bay per lane, one seated. A lane that is not loaded is not missing: it is shelved. */
+/* three columns (two, then one, on narrower screens): the text lanes first, then the image and the video lanes */
 .rack{display:grid; grid-template-columns:repeat(3, minmax(0,1fr)); gap:var(--s-3); margin-top:var(--s-5)}
 .bay{position:relative; display:flex; flex-direction:column; gap:var(--s-3); padding:var(--s-4); border-radius:var(--r-panel);
   border:1px solid rgba(255,255,255,.12); background:linear-gradient(180deg, rgba(255,255,255,.075), rgba(255,255,255,.04));

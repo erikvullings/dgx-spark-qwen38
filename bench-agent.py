@@ -12,9 +12,10 @@ ranking *invert* between the two shapes: MTP had the best decode on their box
 (38.6-40.6 tok/s) and the worst agent loop (47.8 ms/tok), worse than no
 speculation at all (43.4), because vLLM's scheduler drops one cacheable block
 per request when a speculative drafter is configured, so every turn re-prefills
-what it just cached (jschmied, notes/which-drafter-for-agent-work.md and
-notes/mtp-vs-prefix-cache.md, 2026-08-31). Selecting a config on tok/s can pick
-exactly the wrong one, so this repo measures the other shape too.
+what it just cached (jschmied, 2026-08-31, in the notes/ of
+github.com/jschmied/qwen38-flash-next-gb10: which-drafter-for-agent-work.md
+and mtp-vs-prefix-cache.md). Selecting a config on tok/s can pick exactly
+the wrong one, so this repo measures the other shape too.
 
   ./bench-agent.py                        # 8 turns on an 8k prefix, through the proxy
   ./bench-agent.py --turns 12 --prefix-tokens 30000
