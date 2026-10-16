@@ -56,6 +56,10 @@ VIDEO_PIN="$PIN"; VIDEO_WHEEL="$WHEEL"
 # plugin's wheel, which nothing checked either (found in review, 2026-10-14).
 kline="$(grep -E '^KOLIBRI_(BASE_IMAGE|PLUGIN_VERSION|FP8_REPO|FP8_REV|NVFP4_REPO|NVFP4_REV)=' "$REPO_DIR/install-kolibri.sh")"
 eval "$kline"
+# The Nemotron lane's: the model and its drafter, the vLLM nightly its build starts from and the
+# b12x wheel.
+nline="$(grep -E '^NEMOTRON_(BASE_IMAGE|B12X_VERSION|BOLT_REPO|BOLT_REV|BOLT_DRAFT_REPO|BOLT_DRAFT_REV)=' "$REPO_DIR/install-nemotron.sh")"
+eval "$nline"
 
 # Hugging Face answers an anonymous request with 401 both for a gated repo and for one that
 # does not exist (or is private): only its x-error-code tells a gated repo apart, so the
@@ -229,6 +233,10 @@ echo "Kolibri lane"
 check_model  kolibri-fp8    "$KOLIBRI_FP8_REPO"   "$KOLIBRI_FP8_REV"
 check_model  kolibri-nvfp4  "$KOLIBRI_NVFP4_REPO" "$KOLIBRI_NVFP4_REV"
 check_wheel  kolibri-plugin aleph-alpha-inference "$KOLIBRI_PLUGIN_VERSION"
+echo "Nemotron lane"
+check_model  nemotron-bolt  "$NEMOTRON_BOLT_REPO" "$NEMOTRON_BOLT_REV"
+check_model  nemotron-draft "$NEMOTRON_BOLT_DRAFT_REPO" "$NEMOTRON_BOLT_DRAFT_REV"
+check_wheel  nemotron-b12x  b12x "$NEMOTRON_B12X_VERSION"
 
 echo "Images"
 img="$(grep -E '^(IMAGE|FLASH_IMAGE)=' "$REPO_DIR/install.sh")"
@@ -236,6 +244,7 @@ eval "$img"
 check_image 27b-base       "$IMAGE"
 check_image flash-base     "$FLASH_IMAGE"
 check_image kolibri-base   "$KOLIBRI_BASE_IMAGE"
+check_image nemotron-base  "$NEMOTRON_BASE_IMAGE"
 
 echo
 if [ "$FAIL" -eq 0 ]; then

@@ -148,7 +148,7 @@ if [ "$ACTION" = uninstall ]; then
     # by that switch: removing it left no engine at all (same trap as the image lane).
     # The lane before video comes back.
     TEXT_ENABLED=0
-    for u in qwen38-sglang.service qwen38-flash.service qwen38-image.service qwen38-kolibri.service; do
+    for u in qwen38-sglang.service qwen38-flash.service qwen38-image.service qwen38-kolibri.service qwen38-nemotron.service; do
       systemctl is-enabled --quiet "$u" 2>/dev/null && TEXT_ENABLED=1
     done
     if [ "$WAS_BOOT" -eq 1 ] && [ "$TEXT_ENABLED" -eq 0 ]; then
@@ -459,7 +459,7 @@ if [ "$SMOKE" -eq 0 ]; then step "Done (smoke test skipped)"; exit 0; fi
 
 step "6/6 Proving it serves (one short video, then the box goes back to the lane it was serving)"
 WAS_OTHER=""
-for u in qwen38-sglang.service qwen38-flash.service qwen38-image.service qwen38-kolibri.service qwen38-llamacpp.service; do
+for u in qwen38-sglang.service qwen38-flash.service qwen38-image.service qwen38-kolibri.service qwen38-nemotron.service qwen38-llamacpp.service; do
   systemctl is-active --quiet "$u" 2>/dev/null && WAS_OTHER="$u"
 done
 # If this lane was already serving, the test leaves it serving: stopping it on the way

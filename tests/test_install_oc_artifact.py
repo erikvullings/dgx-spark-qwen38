@@ -20,7 +20,7 @@ INSTALL = REPO / "install.sh"
 
 def block() -> str:
     text = INSTALL.read_text()
-    start = text.index("OC_27B=0; OC_FLASH=0; OC_KOLIBRI=0\n")
+    start = text.index("OC_27B=0; OC_FLASH=0; OC_KOLIBRI=0; OC_NEMOTRON=0\n")
     end = text.index("\nPYEOF\n", start) + len("\nPYEOF\n")
     return text[start:end]
 
@@ -31,11 +31,15 @@ PINS = "\n".join(line for line in INSTALL.read_text().splitlines()
 
 
 def generate(lane, mode, unit_ctx=None, flash_unit=False, model="RadixArk/Qwen3.8-27B-NVFP4",
-             pair=None, names=False, flash_running=None, kolibri_unit=False, kolibri_boot=False, doc=False):
+             pair=None, names=False, flash_running=None, kolibri_unit=False, kolibri_boot=False, doc=False,
+             nemotron_unit=False, nemotron_boot=False):
     t = pathlib.Path(tempfile.mkdtemp(prefix="oc-art-"))
     kolibri = t / "qwen38-kolibri.service"
     if kolibri_unit:
         kolibri.write_text("ExecStart=... Aleph-Alpha/Kolibri-1 --revision 258cae8f ...\n")
+    nemotron = t / "qwen38-nemotron.service"
+    if nemotron_unit:
+        nemotron.write_text("ExecStart=... nvidia/NVIDIA-Nemotron-3.5-Bolt-74B-A9B-24GB --revision c6cc2e8f ...\n")
     if flash_running:
         (t / "launch-flash.sh").write_text(
             "docker run img python3 -m sglang.launch_server --model-path RadixArk/Qwen3.8-Flash-Next-NVFP4 "
@@ -50,6 +54,7 @@ def generate(lane, mode, unit_ctx=None, flash_unit=False, model="RadixArk/Qwen3.
     script = ("set -euo pipefail\ndie(){ echo \"DIE: $*\"; exit 1; }\n" + PINS + "\n"
               f'LANE={lane}; CONTEXT_MODE={mode}; SGL_UNIT_PATH="{sgl}"; FLASH_UNIT_PATH="{flash}"\n'
               f'KOLIBRI_UNIT_PATH="{kolibri}"; KOLIBRI_BOOT={1 if kolibri_boot else 0}\n'
+              f'NEMOTRON_UNIT_PATH="{nemotron}"; NEMOTRON_BOOT={1 if nemotron_boot else 0}\n'
               f'MODEL_CHOICE={"flash" if lane == "flash" else "stock"}\n'
               f'REPO_DIR="{REPO}"; CONFIG_DIR="{t}"; OC_PORT=30001; OC_CTX={ctx}; OC_OUT={out}\n'
               'OC_LABEL=local; OPENCODE_PIN=1\n' + block())
@@ -157,6 +162,44 @@ class ABoxBootingKolibri(unittest.TestCase):
     def test_without_its_unit_there_is_no_kolibri_provider(self):
         d = generate("27b", "1m", unit_ctx=1010000, pair=("551000", "160000"), doc=True)
         self.assertNotIn("kolibri", d["provider"])
+
+class ABoxBootingNemotron(unittest.TestCase):
+    """The Nemotron lane, the same way: serving at boot it is opencode's default, its compaction
+    sized from its window; installed beside another lane it is offered; with no unit, absent."""
+
+    def test_the_default_the_compaction_and_the_provider_are_nemotrons(self):
+        d = generate("27b", "1m", unit_ctx=1010000, flash_unit=True, pair=("551000", "160000"),
+                     nemotron_unit=True, nemotron_boot=True, doc=True)
+        self.assertEqual(d["model"], "nemotron/nemotron-3.5-bolt")
+        self.assertEqual(d["compaction"]["preserve_recent_tokens"], 46000)
+        m = d["provider"]["nemotron"]["models"]["nemotron-3.5-bolt"]
+        self.assertEqual(m["limit"], {"context": 205000, "input": 205000, "output": 32000})
+        self.assertEqual(m["name"], "Nemotron 3.5 Bolt (local, 262K)")
+        # it reads images, and its levels are its template's own words
+        self.assertTrue(m["attachment"])
+        self.assertEqual(m["modalities"]["input"], ["text", "image"])
+        self.assertEqual(m["variants"]["none"], {"chat_template_kwargs": {"enable_thinking": False}})
+        self.assertEqual(m["variants"]["medium"], {"chat_template_kwargs": {"enable_thinking": True, "medium_effort": True}})
+        self.assertEqual(m["variants"]["high"], {"chat_template_kwargs": {"enable_thinking": True}})
+        self.assertEqual(d["provider"]["nemotron"]["options"]["baseURL"], "http://127.0.0.1:30001/v1")
+
+    def test_its_pair_compacts_late_and_still_fits_its_window(self):
+        ctx, out, *_ = subprocess.run([str(REPO / "oc-limits.sh"), "nemotron"], capture_output=True,
+                                      text=True, check=True).stdout.split()
+        ctx, out = int(ctx), int(out)
+        self.assertEqual((ctx, out), (205000, 32000))
+        self.assertLessEqual(ctx - 20000 + 43863 + out, 262144, "threshold + worst step + answer fit the window")
+
+    def test_installed_but_not_at_boot_it_is_offered_and_the_27b_keeps_its_own(self):
+        d = generate("27b", "1m", unit_ctx=1010000, pair=("551000", "160000"), nemotron_unit=True, doc=True)
+        self.assertEqual(d["model"], "qwen38/qwen3.8-27b")
+        self.assertIn("nemotron", d["provider"])
+        self.assertEqual(d["compaction"]["preserve_recent_tokens"], 132000)
+
+    def test_without_its_unit_there_is_no_nemotron_provider(self):
+        d = generate("27b", "1m", unit_ctx=1010000, pair=("551000", "160000"), kolibri_unit=True, doc=True)
+        self.assertNotIn("nemotron", d["provider"])
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)

@@ -464,6 +464,8 @@ WITH_27B=0
 NO_27B=0
 WITH_KOLIBRI=0
 NO_KOLIBRI=0
+WITH_NEMOTRON=0
+NO_NEMOTRON=0
 ALL_WEIGHTS=0
 for arg in "$@"; do
   case "$arg" in
@@ -483,6 +485,8 @@ for arg in "$@"; do
     --no-27b) NO_27B=1 ;;
     --with-kolibri) WITH_KOLIBRI=1 ;;
     --no-kolibri) NO_KOLIBRI=1 ;;
+    --with-nemotron) WITH_NEMOTRON=1 ;;
+    --no-nemotron) NO_NEMOTRON=1 ;;
     --all-weights) ALL_WEIGHTS=1 ;;
     --with-claude-warmup)
       echo "NOTE: --with-claude-warmup was removed in v1.3 (the repo's client story moved to opencode)."
@@ -493,6 +497,7 @@ Usage: ./install.sh [--no-start] [--no-service] [--no-opencode | --with-opencode
                    [--no-cockpit | --with-cockpit] [--no-image | --with-image]
                    [--no-video | --with-video] [--no-flash | --with-flash]
                    [--no-27b | --with-27b] [--no-kolibri | --with-kolibri]
+                   [--no-nemotron | --with-nemotron]
                    [--all-weights]
 
 Run it as yourself. Never with sudo in front: it calls sudo itself for the
@@ -506,8 +511,9 @@ demand: a run puts in its units, and the first Load of each from the cockpit
 prepares it as the user, with no sudo, and fetches its weights. That is the
 other text lane (the flash beside the 27B, its image, checkpoint and PLE table,
 206 GB; or the 27B beside a serving flash, its image, draft and checkpoint,
-54), the image lane (40), the video lane (160) and the Kolibri lane (Aleph
-Alpha's Kolibri-1, on vLLM, 102). The lane that serves proves it serves before
+54), the image lane (40), the video lane (160), the Kolibri lane (Aleph
+Alpha's Kolibri-1, on vLLM, 102) and the Nemotron lane (NVIDIA's Nemotron 3.5
+Bolt, on vLLM, 51). The lane that serves proves it serves before
 the run ends; on a new box the 27B takes 54 GB of disk, about 38 GB of
 downloads (about 6 to 7 minutes at 100 MB/s). A lane installed whole (--all-weights, --with-<lane>)
 that does not fit on the disk is left out and named at the end, with the
@@ -542,9 +548,12 @@ without a terminal.
   --no-kolibri          leave the Kolibri-1 lane out (vLLM, 102 GB), remembered
                         the same way (./install-kolibri.sh --uninstall removes it)
   --with-kolibri        bring it back after a --no-kolibri
+  --no-nemotron         leave the Nemotron 3.5 Bolt lane out (vLLM, 51 GB),
+                        remembered the same way (./install-nemotron.sh --uninstall)
+  --with-nemotron       bring it back after a --no-nemotron
   --all-weights         install every lane whole now (the flash beside the 27B,
-                        the image, video and Kolibri lanes), runtime and
-                        weights, about 560 GB of disk, and prove each new one
+                        the image, video, Kolibri and Nemotron lanes), runtime
+                        and weights, about 610 GB of disk, and prove each new one
                         (without it, each is prepared at its first Load from
                         the cockpit; --with-<lane> does the same for that one
                         lane)
@@ -629,6 +638,7 @@ KEEP_MODEL_VERBATIM=0
 SGL_UNIT_PATH="/etc/systemd/system/qwen38-sglang.service"
 FLASH_UNIT_PATH="/etc/systemd/system/qwen38-flash.service"
 KOLIBRI_UNIT_PATH="/etc/systemd/system/qwen38-kolibri.service"
+NEMOTRON_UNIT_PATH="/etc/systemd/system/qwen38-nemotron.service"
 for _p in "$SGL_UNIT_PATH" "$FLASH_UNIT_PATH"; do
   if [ -f "$_p" ] && [ ! -r "$_p" ]; then
     echo "NOTE: an installed unit ($_p) exists but is not readable (pre-v1.2.3 installs used mode 600),"
@@ -731,6 +741,18 @@ if [ -z "$SECONDARY" ] && systemctl is-enabled --quiet qwen38-kolibri.service 2>
     echo "without making one of them the boot lane again. Switch from the cockpit when you want another."
   fi
 fi
+# The Nemotron lane is one too (vLLM, its own unit and installer), under the same promise.
+NEMOTRON_BOOT=0
+if [ -z "$SECONDARY" ] && systemctl is-enabled --quiet qwen38-nemotron.service 2>/dev/null \
+   && [ "$SGL_ENABLED" -eq 0 ] && [ "$FLASH_ENABLED" -eq 0 ]; then
+  if [ -n "$_ENV_MODEL_CHOICE" ]; then
+    echo "MODEL_CHOICE=$_ENV_MODEL_CHOICE given on a box booting the Nemotron lane: making that text lane the boot lane again."
+  else
+    NEMOTRON_BOOT=1
+    echo "The Nemotron lane is this box's boot lane: this run brings the other lanes up to date"
+    echo "without making one of them the boot lane again. Switch from the cockpit when you want another."
+  fi
+fi
 # Which text lane to bring up to date on that path. Both text units can be on disk with
 # neither enabled, since a switch to a side lane disables both, so enablement cannot say which
 # one was in use; switch-model.sh writes it down instead (lanes.sh: one record since v1.30, the
@@ -744,7 +766,7 @@ if [ "$FLASH_READABLE" -eq 1 ] && [ "$FLASH_ENABLED" -eq 1 ] && [ "$SGL_ENABLED"
 fi
 if [ "$FLASH_READABLE" -eq 1 ] && [ "$FLASH_ENABLED" -eq 1 ] && [ "$SGL_ENABLED" -eq 0 ]; then
   INSTALLED_CHOICE=flash
-elif [ $((IMAGE_BOOT + VIDEO_BOOT + KOLIBRI_BOOT)) -gt 0 ] && [ "$TEXT_LANE_LAST" = "qwen38-flash.service" ] \
+elif [ $((IMAGE_BOOT + VIDEO_BOOT + KOLIBRI_BOOT + NEMOTRON_BOOT)) -gt 0 ] && [ "$TEXT_LANE_LAST" = "qwen38-flash.service" ] \
      && [ "$FLASH_READABLE" -eq 1 ]; then
   INSTALLED_CHOICE=flash          # the text lane this box used before it switched to a side lane
 elif [ "$SGL_READABLE" -eq 1 ]; then
@@ -1029,6 +1051,9 @@ fi
 if [ "$NO_KOLIBRI" -eq 1 ] && [ "$WITH_KOLIBRI" -eq 1 ]; then
   printf -- '--no-kolibri and --with-kolibri contradict each other (drop one flag)\n' >&2; exit 1
 fi
+if [ "$NO_NEMOTRON" -eq 1 ] && [ "$WITH_NEMOTRON" -eq 1 ]; then
+  printf -- '--no-nemotron and --with-nemotron contradict each other (drop one flag)\n' >&2; exit 1
+fi
 
 # --no-start and --no-service both return before the image step, so the flag would be
 # accepted and silently do nothing. Say so here rather than at the end of a long install.
@@ -1045,6 +1070,11 @@ fi
 if [ "$WITH_KOLIBRI" -eq 1 ] && { [ "$NO_START" -eq 1 ] || [ "$NO_SERVICE" -eq 1 ]; }; then
   printf -- '--with-kolibri needs the full install: it installs a systemd unit and proves it serves.\n' >&2
   printf -- 'Run ./install.sh without --no-start/--no-service, or ./install-kolibri.sh on its own.\n' >&2
+  exit 1
+fi
+if [ "$WITH_NEMOTRON" -eq 1 ] && { [ "$NO_START" -eq 1 ] || [ "$NO_SERVICE" -eq 1 ]; }; then
+  printf -- '--with-nemotron needs the full install: it installs a systemd unit and proves it serves.\n' >&2
+  printf -- 'Run ./install.sh without --no-start/--no-service, or ./install-nemotron.sh on its own.\n' >&2
   exit 1
 fi
 # the same for the whole box: --no-service did none of it, --no-start the other text lane alone
@@ -1091,22 +1121,23 @@ lane_wanted(){  # $1 lane (image, video, flash, 27b), $2 --no-$1 given, $3 --wit
     echo "Leaving the $1 lane out (your earlier --no-$1). Pass --with-$1 to bring it back."
   fi
 }
-WANT_IMAGE=0; WANT_VIDEO=0; WANT_FLASH=0; WANT_27B=0; WANT_KOLIBRI=0
+WANT_IMAGE=0; WANT_VIDEO=0; WANT_FLASH=0; WANT_27B=0; WANT_KOLIBRI=0; WANT_NEMOTRON=0
 if [ -z "$SECONDARY" ]; then
   lane_wanted image "$NO_IMAGE" "$WITH_IMAGE"; WANT_IMAGE="$WANT"
   lane_wanted video "$NO_VIDEO" "$WITH_VIDEO"; WANT_VIDEO="$WANT"
   lane_wanted flash "$NO_FLASH" "$WITH_FLASH"; WANT_FLASH="$WANT"
   lane_wanted 27b "$NO_27B" "$WITH_27B"; WANT_27B="$WANT"
   lane_wanted kolibri "$NO_KOLIBRI" "$WITH_KOLIBRI"; WANT_KOLIBRI="$WANT"
+  lane_wanted nemotron "$NO_NEMOTRON" "$WITH_NEMOTRON"; WANT_NEMOTRON="$WANT"
 fi
 
-# The image, video and Kolibri lanes are installed on demand: a run puts in their units
+# The image, video, Kolibri and Nemotron lanes are installed on demand: a run puts in their units
 # (--units-only, what needs root), and the cockpit's first Load of each builds its runtime
 # as the user (--prepare) and fetches its weights (its switch). A lane already prepared
 # (its runtime on the box, as on every box installed before this) is updated whole, as
 # before; --all-weights, or a lane asked for by name (--with-<lane>), is installed whole now
 # and proved when it is new. A lane counts as on the box once its runtime is begun: its venv
-# for the image and video lanes, the image its unit names for Kolibri (tagged once built).
+# for the image and video lanes, the image its unit names for Kolibri and Nemotron (tagged once built).
 # The venv alone, not the note of its wheel: a lane installed whole before that note existed
 # (v1.24.0 for the image lane, v1.25.0 for the video lane) has none and was given its units
 # only, its runtime left as it was (found in review, 2026-10-15); a first Load that stopped
@@ -1122,10 +1153,16 @@ side_kolibri_image(){
   img="$({ grep -m1 -oE 'qwen38-kolibri:[^ ]+' "$KOLIBRI_UNIT_PATH" 2>/dev/null || true; })"
   [ -n "$img" ] && docker image inspect "$img" >/dev/null 2>&1
 }
-side_begun(){  # $1 lane (image, video, kolibri)
+side_nemotron_image(){
+  local img
+  img="$({ grep -m1 -oE 'qwen38-nemotron:[^ ]+' "$NEMOTRON_UNIT_PATH" 2>/dev/null || true; })"
+  [ -n "$img" ] && docker image inspect "$img" >/dev/null 2>&1
+}
+side_begun(){  # $1 lane (image, video, kolibri, nemotron)
   case "$1" in
     image|video) [ -x "$(side_lane_dir "$1")/venv/bin/python" ] ;;
     kolibri) side_kolibri_image ;;
+    nemotron) side_nemotron_image ;;
     *) return 1 ;;
   esac
 }
@@ -1310,6 +1347,8 @@ if [ -z "$SECONDARY" ] && ss -tlnH 2>/dev/null | awk '{print $4}' | grep -q ":$P
     echo "Note: qwen38-flash is already running on :$PORT, installing over it ($([ "$LANE" = 27b ] && echo 'lane switch at the final step' || echo 'converging config'))."
   elif docker inspect qwen38-kolibri --format '{{join .Args " "}}' 2>/dev/null | grep -qE -- "--port ${PORT}(\s|$)"; then
     echo "Note: the Kolibri lane is serving on :$PORT; this run updates the lanes beside it."
+  elif docker inspect qwen38-nemotron --format '{{join .Args " "}}' 2>/dev/null | grep -qE -- "--port ${PORT}(\s|$)"; then
+    echo "Note: the Nemotron lane is serving on :$PORT; this run updates the lanes beside it."
   else
     die "Port $PORT is already in use by another program (see: ss -tlnp | grep :$PORT). Free it, or install with PORT=<other> ./install.sh"
   fi
@@ -1791,7 +1830,7 @@ OC_PORT="$PROXY_PORT"
 # box (nobody should be offered a model that nothing serves); the model being
 # installed right now always appears. The default model is the one being
 # installed. json.dump writes the file: no hand-escaping.
-OC_27B=0; OC_FLASH=0; OC_KOLIBRI=0
+OC_27B=0; OC_FLASH=0; OC_KOLIBRI=0; OC_NEMOTRON=0
 { [ "$LANE" = "27b" ] || [ -f "$SGL_UNIT_PATH" ]; } && OC_27B=1
 { [ "$LANE" = "flash" ] || [ -f "$FLASH_UNIT_PATH" ]; } && OC_FLASH=1
 # The Kolibri lane is installed at the end of a run (install-kolibri.sh): its provider comes
@@ -1807,6 +1846,15 @@ if [ "$OC_KOLIBRI" -eq 1 ]; then
     || die "oc-limits.sh refused $OC_KOLIBRI_TARGET (repo bug: please open an issue)"
   OC_KOLIBRI_CTX="${OC_KOLIBRI_PAIR%% *}"; OC_KOLIBRI_OUT="$(echo "$OC_KOLIBRI_PAIR" | cut -d' ' -f2)"
   OC_KOLIBRI_NAME="$(python3 "$REPO_DIR/oc-point-default.py" --label "$OC_KOLIBRI_TARGET" 262144 || true)"
+fi
+# The Nemotron lane, the same way: one checkpoint today, its provider with its unit.
+[ -f "$NEMOTRON_UNIT_PATH" ] && OC_NEMOTRON=1
+OC_NEMOTRON_CTX=""; OC_NEMOTRON_OUT=""; OC_NEMOTRON_NAME=""
+if [ "$OC_NEMOTRON" -eq 1 ]; then
+  OC_NEMOTRON_PAIR="$("$REPO_DIR/oc-limits.sh" nemotron)" \
+    || die "oc-limits.sh refused nemotron (repo bug: please open an issue)"
+  OC_NEMOTRON_CTX="${OC_NEMOTRON_PAIR%% *}"; OC_NEMOTRON_OUT="$(echo "$OC_NEMOTRON_PAIR" | cut -d' ' -f2)"
+  OC_NEMOTRON_NAME="$(python3 "$REPO_DIR/oc-point-default.py" --label nemotron 262144 || true)"
 fi
 # How much of a conversation survives a compaction verbatim, from the same table.
 OC_KEEP="$("$REPO_DIR/oc-limits.sh" --preserve "$OC_CTX")" \
@@ -1840,6 +1888,10 @@ fi
 if [ "$KOLIBRI_BOOT" -eq 1 ] && [ "$OC_KOLIBRI" -eq 1 ] && [ -n "$OC_KOLIBRI_CTX" ]; then
   OC_KEEP="$("$REPO_DIR/oc-limits.sh" --preserve "$OC_KOLIBRI_CTX")" \
     || die "oc-limits.sh --preserve failed for $OC_KOLIBRI_CTX (repo bug: please open an issue)"
+fi
+if [ "$NEMOTRON_BOOT" -eq 1 ] && [ "$OC_NEMOTRON" -eq 1 ] && [ -n "$OC_NEMOTRON_CTX" ]; then
+  OC_KEEP="$("$REPO_DIR/oc-limits.sh" --preserve "$OC_NEMOTRON_CTX")" \
+    || die "oc-limits.sh --preserve failed for $OC_NEMOTRON_CTX (repo bug: please open an issue)"
 fi
 # The other engine's limits, for when both providers are present: the 27B block
 # keeps its context-mode limits, flash always serves its native window. A flash install
@@ -1901,6 +1953,8 @@ OC_27B_NAME="$OC_27B_NAME" OC_FLASH_NAME="$OC_FLASH_NAME" \
 OC_FLASH_CTX="$OC_FLASH_CTX" OC_FLASH_OUT="$OC_FLASH_OUT" \
 OC_KOLIBRI="$OC_KOLIBRI" OC_KOLIBRI_CTX="$OC_KOLIBRI_CTX" OC_KOLIBRI_OUT="$OC_KOLIBRI_OUT" \
 OC_KOLIBRI_NAME="$OC_KOLIBRI_NAME" OC_KOLIBRI_BOOT="$KOLIBRI_BOOT" OC_REPO_DIR="$REPO_DIR" \
+OC_NEMOTRON="$OC_NEMOTRON" OC_NEMOTRON_CTX="$OC_NEMOTRON_CTX" OC_NEMOTRON_OUT="$OC_NEMOTRON_OUT" \
+OC_NEMOTRON_NAME="$OC_NEMOTRON_NAME" OC_NEMOTRON_BOOT="$NEMOTRON_BOOT" \
 OC_KEEP="$OC_KEEP" OC_PIN="$OPENCODE_PIN" \
 OC_CONFIG_DIR="$CONFIG_DIR" python3 - <<'PYEOF' || die "could not write the opencode provider config"
 import json
@@ -1977,10 +2031,21 @@ if os.environ.get("OC_KOLIBRI") == "1":
     providers["kolibri"] = ock.provider(base_url, f"{cfg_dir}/api-key",
                                         int(os.environ["OC_KOLIBRI_CTX"]), int(os.environ["OC_KOLIBRI_OUT"]),
                                         os.environ.get("OC_KOLIBRI_NAME") or "Kolibri-1 FP8 official (local, 262K)")
+if os.environ.get("OC_NEMOTRON") == "1":
+    # one definition, shared with switch-model.sh (oc-nemotron.py says why)
+    import importlib.util
+    spec = importlib.util.spec_from_file_location("oc_nemotron", os.path.join(os.environ["OC_REPO_DIR"], "oc-nemotron.py"))
+    ocn = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(ocn)
+    providers["nemotron"] = ocn.provider(base_url, f"{cfg_dir}/api-key",
+                                         int(os.environ["OC_NEMOTRON_CTX"]), int(os.environ["OC_NEMOTRON_OUT"]),
+                                         os.environ.get("OC_NEMOTRON_NAME") or "Nemotron 3.5 Bolt (local, 262K)")
 
 default = "flashnext/qwen3.8-flash-next" if lane == "flash" else "qwen38/qwen3.8-27b"
 if os.environ.get("OC_KOLIBRI_BOOT") == "1" and "kolibri" in providers:
     default = "kolibri/kolibri-1"       # the lane this box serves stays opencode's default
+if os.environ.get("OC_NEMOTRON_BOOT") == "1" and "nemotron" in providers:
+    default = "nemotron/nemotron-3.5-bolt"
 # Compaction is global in opencode.json, not per-model, so it is sized from the
 # INSTALLED target (oc-limits.sh --preserve) and rewritten by every install and
 # switch. preserve_recent_tokens exists because opencode's own default clamps it
@@ -2024,7 +2089,7 @@ if [ ! -e "$OC_USER_CFG" ]; then
   mkdir -p "$HOME/.config/opencode"
   install -m 644 "$CONFIG_DIR/opencode.json" "$OC_USER_CFG"
   echo "  no opencode config yet: installed this repo's at $OC_USER_CFG"
-elif ! grep -qsE '"(qwen38|flashnext|kolibri)"' "$OC_USER_CFG"; then
+elif ! grep -qsE '"(qwen38|flashnext|kolibri|nemotron)"' "$OC_USER_CFG"; then
   # the user's own config, with none of this repo's providers in it: theirs to merge
   echo "  your $OC_USER_CFG has no provider for this box: merge the \"qwen38\" (or \"flashnext\")"
   echo "  block from $CONFIG_DIR/opencode.json into it (docs/opencode.md)"
@@ -2084,6 +2149,10 @@ OC_POINT_LANE="$LANE"; OC_POINT_CHOICE="$MODEL_CHOICE"; OC_POINT_WINDOW="$OC_WIN
 if [ "$KOLIBRI_BOOT" -eq 1 ] && [ "$OC_KOLIBRI" -eq 1 ]; then
   # the Kolibri lane is this box's lane: opencode's default stays on it
   OC_POINT_LANE=kolibri; OC_POINT_CHOICE="$OC_KOLIBRI_TARGET"; OC_POINT_WINDOW=262144
+fi
+if [ "$NEMOTRON_BOOT" -eq 1 ] && [ "$OC_NEMOTRON" -eq 1 ]; then
+  # the Nemotron lane is this box's lane: opencode's default stays on it
+  OC_POINT_LANE=nemotron; OC_POINT_CHOICE=nemotron; OC_POINT_WINDOW=262144
 fi
 python3 "$REPO_DIR/oc-point-default.py" "$CONFIG_DIR/opencode.json" "$OC_POINT_LANE" "$OC_POINT_CHOICE" "$OC_POINT_WINDOW" \
   || die "could not point the generated opencode config at the installed lane"
@@ -2354,6 +2423,11 @@ if [ -z "$SECONDARY" ] && [ "$KOLIBRI_BOOT" -eq 0 ] && systemctl is-enabled --qu
   echo "disabling the Kolibri lane at boot (unit kept, switch back anytime from the cockpit)"
   sudo systemctl disable qwen38-kolibri.service
 fi
+# The Nemotron lane is the sixth, under the same rule.
+if [ -z "$SECONDARY" ] && [ "$NEMOTRON_BOOT" -eq 0 ] && systemctl is-enabled --quiet qwen38-nemotron.service 2>/dev/null; then
+  echo "disabling the Nemotron lane at boot (unit kept, switch back anytime from the cockpit)"
+  sudo systemctl disable qwen38-nemotron.service
+fi
 KEEPALIVE_UNIT="qwen38-keepalive.service"
 KA_CHANGED=0      # whether this run changed what the proxy runs (see its restart below)
 # The proxy, its code and its unit are the serving run's (see the secondary run above).
@@ -2437,7 +2511,7 @@ if [ -n "$SECONDARY" ]; then
   fi
   exit 0
 fi
-if [ "$IMAGE_BOOT" -eq 0 ] && [ "$VIDEO_BOOT" -eq 0 ] && [ "$KOLIBRI_BOOT" -eq 0 ]; then
+if [ "$IMAGE_BOOT" -eq 0 ] && [ "$VIDEO_BOOT" -eq 0 ] && [ "$KOLIBRI_BOOT" -eq 0 ] && [ "$NEMOTRON_BOOT" -eq 0 ]; then
   sudo systemctl enable "$UNIT_NAME"
   text_lane_note "$UNIT_NAME"
 else
@@ -2471,9 +2545,14 @@ else
     "$REPO_DIR/install-kolibri.sh" "$(side_mode kolibri "$WITH_KOLIBRI")" \
       || echo "NOTE: the Kolibri lane did not install or update; retry with ./install-kolibri.sh --no-smoke"
   fi
+  if [ "$WANT_NEMOTRON" -eq 1 ]; then
+    "$REPO_DIR/install-nemotron.sh" "$(side_mode nemotron "$WITH_NEMOTRON")" \
+      || echo "NOTE: the Nemotron lane did not install or update; retry with ./install-nemotron.sh --no-smoke"
+  fi
   SERVING_LANE="image"
   [ "$VIDEO_BOOT" -eq 1 ] && SERVING_LANE="video"
   [ "$KOLIBRI_BOOT" -eq 1 ] && SERVING_LANE="Kolibri"
+  [ "$NEMOTRON_BOOT" -eq 1 ] && SERVING_LANE="Nemotron"
   step "Done: the text lane is up to date; the $SERVING_LANE lane stays this box's serving lane"
   echo "  text lane : installed as $UNIT_NAME, not enabled at boot"
   # The first target the hint names is the standard one: the project advises the standard
@@ -2747,11 +2826,12 @@ except Exception as e:
     # New here, and proved when this run builds it whole: a lane with no unit yet, or one whose
     # runtime is not on the box (installed on demand, its units only: --all-weights on such a
     # box built every lane and proved none, found in review, 2026-10-15).
-    IMAGE_FRESH=0; VIDEO_FRESH=0; KOLIBRI_FRESH=0
+    IMAGE_FRESH=0; VIDEO_FRESH=0; KOLIBRI_FRESH=0; NEMOTRON_FRESH=0
     { [ -f /etc/systemd/system/qwen38-image.service ] && side_begun image; } || IMAGE_FRESH=1
     { [ -f /etc/systemd/system/qwen38-video.service ] && side_begun video; } || VIDEO_FRESH=1
     { [ -f "$KOLIBRI_UNIT_PATH" ] && side_begun kolibri; } || KOLIBRI_FRESH=1
-    IMAGE_STATE=off; VIDEO_STATE=off; KOLIBRI_STATE=off
+    { [ -f "$NEMOTRON_UNIT_PATH" ] && side_begun nemotron; } || NEMOTRON_FRESH=1
+    IMAGE_STATE=off; VIDEO_STATE=off; KOLIBRI_STATE=off; NEMOTRON_STATE=off
     if [ "$WANT_IMAGE" -eq 1 ]; then
       step "Qwen-Image 2.1 lane (text-to-image, editing, native RGBA)"
       IMAGE_MODE="$(side_mode image "$WITH_IMAGE")"
@@ -2776,17 +2856,26 @@ except Exception as e:
         echo "NOTE: the Kolibri lane did not install (the lines above say why); the rest goes on."
       fi
     fi
+    if [ "$WANT_NEMOTRON" -eq 1 ]; then
+      step "Nemotron 3.5 Bolt lane (NVIDIA's 2-bit 74B reasoning model with vision, on vLLM)"
+      NEMOTRON_MODE="$(side_mode nemotron "$WITH_NEMOTRON")"
+      if "$REPO_DIR/install-nemotron.sh" "$NEMOTRON_MODE"; then NEMOTRON_STATE=installed; [ "$NEMOTRON_MODE" = --units-only ] && NEMOTRON_STATE=units; else
+        NEMOTRON_STATE=failed
+        echo "NOTE: the Nemotron lane did not install (the lines above say why); the rest goes on."
+      fi
+    fi
     # What to prove: what this run installed for the first time, or what was asked for
     # by name (--with-<lane>, which also proves a lane already there).
     SECOND_WITH=0
     { [ "$SECOND_LANE" = flash ] && [ "$WITH_FLASH" -eq 1 ]; } && SECOND_WITH=1
     { [ "$SECOND_LANE" = 27b ] && [ "$WITH_27B" -eq 1 ]; } && SECOND_WITH=1
-    PROVE_SECOND=0; PROVE_IMAGE=0; PROVE_VIDEO=0; PROVE_KOLIBRI=0
+    PROVE_SECOND=0; PROVE_IMAGE=0; PROVE_VIDEO=0; PROVE_KOLIBRI=0; PROVE_NEMOTRON=0
     { [ "$SECOND_STATE" = installed ] && { [ "$SECOND_NEW" -eq 1 ] || [ "$SECOND_WITH" -eq 1 ]; }; } && PROVE_SECOND=1
     { [ "$IMAGE_STATE" = installed ] && { [ "$IMAGE_FRESH" -eq 1 ] || [ "$WITH_IMAGE" -eq 1 ]; }; } && PROVE_IMAGE=1
     { [ "$VIDEO_STATE" = installed ] && { [ "$VIDEO_FRESH" -eq 1 ] || [ "$WITH_VIDEO" -eq 1 ]; }; } && PROVE_VIDEO=1
     { [ "$KOLIBRI_STATE" = installed ] && { [ "$KOLIBRI_FRESH" -eq 1 ] || [ "$WITH_KOLIBRI" -eq 1 ]; }; } && PROVE_KOLIBRI=1
-    if [ $((PROVE_SECOND + PROVE_IMAGE + PROVE_VIDEO + PROVE_KOLIBRI)) -gt 0 ]; then
+    { [ "$NEMOTRON_STATE" = installed ] && { [ "$NEMOTRON_FRESH" -eq 1 ] || [ "$WITH_NEMOTRON" -eq 1 ]; }; } && PROVE_NEMOTRON=1
+    if [ $((PROVE_SECOND + PROVE_IMAGE + PROVE_VIDEO + PROVE_KOLIBRI + PROVE_NEMOTRON)) -gt 0 ]; then
       step "Proving the new lanes serve: the ${LANE/27b/27B} lane stops meanwhile, then comes back"
       sudo systemctl stop "$UNIT_NAME"
       if [ "$PROVE_SECOND" -eq 1 ]; then
@@ -2803,6 +2892,9 @@ except Exception as e:
       fi
       if [ "$PROVE_KOLIBRI" -eq 1 ]; then
         if "$REPO_DIR/install-kolibri.sh"; then KOLIBRI_STATE=proved; else KOLIBRI_STATE=unproved; fi
+      fi
+      if [ "$PROVE_NEMOTRON" -eq 1 ]; then
+        if "$REPO_DIR/install-nemotron.sh"; then NEMOTRON_STATE=proved; else NEMOTRON_STATE=unproved; fi
       fi
       step "The ${LANE/27b/27B} lane again"
       prove_text_lane "$UNIT_NAME" "$SMOKE_MODEL" \
@@ -2903,6 +2995,7 @@ except Exception as e:
     lane_line "Images     " "$IMAGE_STATE" image image "40 GB" /etc/systemd/system/qwen38-image.service
     lane_line "Videos     " "$VIDEO_STATE" video video "160 GB" /etc/systemd/system/qwen38-video.service
     lane_line "Kolibri-1  " "$KOLIBRI_STATE" kolibri kolibri "102 GB" "$KOLIBRI_UNIT_PATH"
+    lane_line "Nemotron   " "$NEMOTRON_STATE" nemotron nemotron "51 GB" "$NEMOTRON_UNIT_PATH"
     [ "$LANE" = "27b" ] && echo "  Benchmark  : ./bench.sh"
     exit 0
   fi

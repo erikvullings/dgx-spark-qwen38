@@ -120,7 +120,7 @@ class TheCheckPins(PinsBase):
         rc, out = self.run_pins(None, "hf_secretvalue123")
         self.assertEqual(rc, 0, out)
         hf = [c for c in self.calls() if c["url"].startswith("https://huggingface.co/")]
-        self.assertEqual(len(hf), 15, hf)          # nine checkpoints, the diffusion lanes' three, the video Turbo adapter and Kolibri's two
+        self.assertEqual(len(hf), 17, hf)          # nine checkpoints, the diffusion lanes' three, the video Turbo adapter, Kolibri's two and Nemotron's two (the model and its drafter)
         for c in hf:
             self.assertIn("Authorization: Bearer hf_secretvalue123", c["stdin"], c)
             self.assertFalse(any("hf_secretvalue123" in a for a in c["argv"]), c["argv"])
@@ -199,6 +199,25 @@ class ThePinsOutsideThePinBlock(PinsBase):
         self.assertIn("https://pypi.org/pypi/aleph-alpha-inference/1.0.0/json", urls)
         self.assertTrue(any("/v2/vllm/vllm-openai/manifests/sha256:18372a72249386" in u for u in urls))
 
+    def test_the_nemotron_lane_is_checked_too(self):
+        # its model, its drafter, the vLLM nightly its build starts from and the b12x wheel
+        rc, out = self.run_pins()
+        self.assertEqual(rc, 0, out)
+        for label in ("nemotron-bolt", "nemotron-draft", "nemotron-b12x", "nemotron-base"):
+            self.assertIn("ok", self.line(out, label), out)
+        urls = [c["url"] for c in self.calls()]
+        self.assertTrue(any("nvidia/NVIDIA-Nemotron-3.5-Bolt-74B-A9B-24GB/raw/c6cc2e8ffa35" in u for u in urls), "at its pinned revision")
+        self.assertTrue(any("nvidia/NVIDIA-Nemotron-3.5-Bolt-74B-A9B-24GB-LiLiCorr/raw/4c6a5613b6d8" in u for u in urls))
+        self.assertIn("https://pypi.org/pypi/b12x/1.5.1/json", urls)
+        self.assertTrue(any("/v2/vllm/vllm-openai/manifests/sha256:1ee85ca80e0f" in u for u in urls))
+
+    def test_a_removed_nemotron_revision_fails(self):
+        # NVIDIA rewrote both repos' history when it made them public: the revisions measured
+        # first were gone the same day, which this check is there to see
+        rc, out = self.run_pins({"nvidia/NVIDIA-Nemotron-3.5-Bolt-74B-A9B-24GB/raw/": [404, "RevisionNotFound"]})
+        self.assertEqual(rc, 1, out)
+        self.assertIn("FAIL", self.line(out, "nemotron-bolt"))
+
     def test_a_removed_kolibri_revision_fails(self):
         rc, out = self.run_pins({"Quantinine/Kolibri-1-NVFP4A16-FP8/raw/": [404, "RevisionNotFound"]})
         self.assertEqual(rc, 1, out)
@@ -251,7 +270,7 @@ class TheEndpointsThatDoNotAnswer(PinsBase):
         for label in self.GITHUB:
             self.assertIn("HTTP 504 from the GitHub API, so not checked", self.line(out, label), out)
             self.assertNotIn("no such", self.line(out, label), out)
-        self.assertIn("3 of 24 pins could not be asked about", out)
+        self.assertIn("3 of 28 pins could not be asked about", out)
         self.assertIn("run it again before re-pinning anything", out)
         self.assertNotIn("A removed upstream revision", out)
 

@@ -98,6 +98,23 @@ class UninstallKnowsEveryResidue(unittest.TestCase):
                 missing.append(f"{k}={v}")
         self.assertEqual(missing, [])
 
+    def test_every_lane_installers_pins_are_inventoried(self):
+        # The lane installers pin their own base images and checkpoints, which install.sh does not
+        # name: the Nemotron lane's vLLM base was missing, about 24 GB that --list neither showed
+        # nor offered to reclaim, a digest pull leaving no tag (found in review, 2026-10-16).
+        missing = []
+        for path in sorted(REPO.glob("install-*.sh")):
+            for k, v in _vars(path.name, r"[A-Z0-9_]*_REPO|[A-Z0-9_]*IMAGE").items():
+                if v.startswith("$") or ("/" not in v and ":" not in v):
+                    continue
+                if k.endswith("_REPO"):
+                    ok = v in self.hf_repos
+                else:
+                    ok = v.partition("@")[0].split(":")[0] in self.local_images or v in self.base_images
+                if not ok:
+                    missing.append(f"{path.name}: {k}={v}")
+        self.assertEqual(missing, [])
+
     def test_every_unit_any_installer_writes_is_listed_and_removed(self):
         written = set()
         # The lane installers too: the speech lane's unit is written by install-speech.sh
