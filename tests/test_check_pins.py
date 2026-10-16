@@ -22,18 +22,46 @@ import unittest
 REPO = pathlib.Path(__file__).resolve().parents[1]
 SCRIPT = REPO / "check-pins.sh"
 OC_SHA = re.search(r'^OPENCODE_SHA256="\$\{OPENCODE_SHA256:-([0-9a-f]{64})\}"', (REPO / "install.sh").read_text(), re.M).group(1)
+SPEECH = (REPO / "install-speech.sh").read_text()
+
+
+def pin(text, name):
+    return re.search(rf'^\s*{name}="([^"]*)"', text, re.M).group(1)
+
+
+LLAMA_PIN = re.search(r'^LLAMA_CPP_PIN="\$\{SPEECH_LLAMA_CPP_PIN:-([0-9a-f]{40})\}"', SPEECH, re.M).group(1)
+# each recognizer size install-speech.sh offers: its GGUF repo, revision, model and projector
+ASR = re.findall(r'ASR_REPO="([^"]+)"; ASR_REV="([0-9a-f]{40})"\n\s+ASR_FILE="([^"]+)";[^\n]*\n\s+MMPROJ_FILE="([^"]+)"', SPEECH)
+KOKORO_URL = pin(SPEECH, "KOKORO_URL")
+KOKORO_REPO = KOKORO_URL.split("https://github.com/", 1)[1].split("/releases/", 1)[0]
+KOKORO_FILES = (pin(SPEECH, "KOKORO_MODEL_FILE"), pin(SPEECH, "KOKORO_VOICES_FILE"))
+# What the services answer for pins the fake cannot make up, written next to it as
+# upstream.json: huggingface.co's /raw/ of an LFS file answers its pointer, which names the
+# sha256 the install checks (134 bytes for a recognizer GGUF, read on 2026-10-16); Kokoro's
+# release holds its two files, with no digest (GitHub keeps none for assets uploaded before it
+# started to, as these were, in 2025).
+UPSTREAM = {
+    "lfs": dict(re.findall(r'(?:ASR|MMPROJ)_FILE="([^"]+)"; (?:ASR|MMPROJ)_SHA="([0-9a-f]{64})"', SPEECH)),
+    "assets": {KOKORO_REPO: [{"name": f, "digest": None} for f in KOKORO_FILES]},
+}
 
 # Answers the way huggingface.co, Docker Hub, GitHub and PyPI do. The scenario (JSON in
 # FAKE_PINS) maps a URL substring to [http code, x-error-code, x-ratelimit-remaining] (the
 # last one optional; "000" is curl's code for no answer), "no-registry-token" empties the
 # token endpoint's answer, and "bodies" maps a URL substring to the body the request gets (by
-# default: the PyPI release asked for, not yanked; the opencode release with the digest in
-# FAKE_OC_SHA). Like curl, it writes the body unless -o sends it elsewhere, then what -w asks
+# default: the PyPI release asked for, not yanked; a release's assets from upstream.json, else
+# the opencode release with the digest in FAKE_OC_SHA; an LFS pointer for a file upstream.json
+# names). Like curl, it writes the body unless -o sends it elsewhere, then what -w asks
 # for. Every call is logged with its argv and whatever came in on stdin for -K -.
 FAKE_CURL = r'''#!/usr/bin/env python3
 import json, os, sys
 args = sys.argv[1:]
 scen = json.loads(os.environ.get("FAKE_PINS", "{}"))
+try:
+    with open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "upstream.json")) as f:
+        up = json.load(f)
+except OSError:
+    up = {}
 url = next((a for a in args if a.startswith("http")), "")
 fmt = args[args.index("-w") + 1] if "-w" in args else None
 stdin = ""
@@ -55,8 +83,11 @@ if body is None and url.startswith("https://pypi.org/pypi/"):
     version = url.rstrip("/").split("/")[-2]
     body = json.dumps({"info": {"version": version}, "urls": [{"yanked": False}]})
 elif body is None and "/releases/tags/" in url:
-    body = json.dumps({"assets": [{"name": "opencode-linux-arm64.tar.gz",
+    repo = url.split("/repos/", 1)[1].split("/releases/", 1)[0]
+    body = json.dumps({"assets": up.get("assets", {}).get(repo) or [{"name": "opencode-linux-arm64.tar.gz",
                                    "digest": "sha256:" + os.environ.get("FAKE_OC_SHA", "")}]})
+elif body is None and url.startswith("https://huggingface.co/") and url.rsplit("/", 1)[-1] in up.get("lfs", {}):
+    body = "version https://git-lfs.github.com/spec/v1\noid sha256:%s\nsize 804749248\n" % up["lfs"][url.rsplit("/", 1)[-1]]
 if "-o" not in args:
     sys.stdout.write(body or "")
 if fmt is not None:
@@ -73,6 +104,7 @@ class PinsBase(unittest.TestCase):
         self.bin.mkdir()
         (self.bin / "curl").write_text(FAKE_CURL)
         (self.bin / "curl").chmod(0o755)
+        (self.bin / "upstream.json").write_text(json.dumps(UPSTREAM))
         self.log = self.t / "curl.log"
 
     def run_pins(self, scenario=None, token=None, *args):
@@ -120,7 +152,7 @@ class TheCheckPins(PinsBase):
         rc, out = self.run_pins(None, "hf_secretvalue123")
         self.assertEqual(rc, 0, out)
         hf = [c for c in self.calls() if c["url"].startswith("https://huggingface.co/")]
-        self.assertEqual(len(hf), 19, hf)          # nine checkpoints, the diffusion lanes' three, the video Turbo adapter, Kolibri's two and each Nemotron lane's two (the model and its drafter)
+        self.assertEqual(len(hf), 23, hf)          # nine checkpoints, the diffusion lanes' three, the video Turbo adapter, Kolibri's two, each Nemotron lane's two (the model and its drafter) and the speech lane's four GGUF (two recognizers, each a model and its projector)
         for c in hf:
             self.assertIn("Authorization: Bearer hf_secretvalue123", c["stdin"], c)
             self.assertFalse(any("hf_secretvalue123" in a for a in c["argv"]), c["argv"])
@@ -135,7 +167,7 @@ class TheCheckPins(PinsBase):
         r = subprocess.run(["bash", str(SCRIPT)], env=env, capture_output=True, text=True, timeout=60)
         self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
         gh = [c for c in self.calls() if c["url"].startswith("https://api.github.com/")]
-        self.assertEqual(len(gh), 3, gh)          # the two source commits and the opencode release
+        self.assertEqual(len(gh), 6, gh)          # the two source commits, the opencode release, llama.cpp's commit and Kokoro's release, once per file
         for c in gh:
             self.assertIn(f"Authorization: Bearer {env_tok}", c["stdin"], c)
             self.assertFalse(any(env_tok in a for a in c["argv"]), c["argv"])
@@ -267,6 +299,51 @@ class ThePinsOutsideThePinBlock(PinsBase):
         self.assertEqual(rc, 1, out)
         self.assertIn("the release has no such asset", self.line(out, "opencode"), out)
 
+    SPEECH_LABELS = ("speech-llama-cpp", "speech-asr-0.6b", "speech-mmproj-0.6b", "speech-asr-1.7b",
+                     "speech-mmproj-1.7b", "speech-kokoro", "speech-voices")
+
+    def test_the_speech_lane_is_checked_too(self):
+        # llama.cpp's commit, each recognizer's two GGUF and Kokoro's two files were checked by
+        # nothing: one removed upstream went unseen until a fresh install failed (found in the
+        # audit of 2026-10-16)
+        rc, out = self.run_pins()
+        self.assertEqual(rc, 0, out)
+        for label in self.SPEECH_LABELS:
+            self.assertIn("ok", self.line(out, label), out)
+        urls = [c["url"] for c in self.calls()]
+        self.assertIn(f"https://api.github.com/repos/ggml-org/llama.cpp/commits/{LLAMA_PIN}", urls)
+        # every size of the script's case, each file at its revision: a size added is a size checked
+        self.assertEqual(len(ASR), SPEECH.count('ASR_REPO="'), ASR)
+        self.assertGreaterEqual(len(ASR), 2, ASR)
+        for repo, rev, model, mmproj in ASR:
+            for f in (model, mmproj):
+                self.assertIn(f"https://huggingface.co/{repo}/raw/{rev}/{f}", urls)
+        tag = KOKORO_URL.rsplit("/", 1)[1]
+        self.assertEqual(urls.count(f"https://api.github.com/repos/{KOKORO_REPO}/releases/tags/{tag}"), 2, urls)
+
+    def test_a_speech_pin_gone_or_changed_upstream_fails(self):
+        other = "version https://git-lfs.github.com/spec/v1\noid sha256:" + "0" * 64 + "\nsize 1\n"
+        model, voices = KOKORO_FILES
+        for scen, label, said in (
+                ({"ggml-org/Qwen3-ASR-1.7B-GGUF/raw/": [404, "RevisionNotFound"]}, "speech-asr-1.7b", "HTTP 404"),
+                ({"bodies": {"/mmproj-Qwen3-ASR-0.6B-Q8_0.gguf": other}}, "speech-mmproj-0.6b", "installs refuse it"),
+                ({"bodies": {"/Qwen3-ASR-0.6B-Q8_0.gguf": "{}"}}, "speech-asr-0.6b", "no LFS pointer"),
+                ({"repos/ggml-org/llama.cpp/commits/": [422, ""]}, "speech-llama-cpp", "no such commit"),
+                ({"bodies": {"kokoro-onnx/releases/tags/": json.dumps({"assets": [{"name": model, "digest": None}]})}},
+                 "speech-voices", "the release has no such asset"),
+                # a file uploaded again gets a digest, which then has to be the pinned sum
+                ({"bodies": {"kokoro-onnx/releases/tags/": json.dumps({"assets": [{"name": model, "digest": "sha256:" + "0" * 64},
+                                                                                  {"name": voices, "digest": None}]})}},
+                 "speech-kokoro", "installs refuse it"),
+                # Kokoro's leave to have no digest is its own: opencode's release still needs one
+                ({"bodies": {"anomalyco/opencode/releases/tags/": json.dumps({"assets": [{"name": "opencode-linux-arm64.tar.gz", "digest": None}]})}},
+                 "opencode", "GitHub publishes no digest")):
+            with self.subTest(label=label, said=said):
+                rc, out = self.run_pins(scen)
+                self.assertEqual(rc, 1, out)
+                self.assertIn("FAIL", self.line(out, label), out)
+                self.assertIn(said, self.line(out, label), out)
+
 
 class TheEndpointsThatDoNotAnswer(PinsBase):
     """Issue #33: the scheduled run of 2026-10-01 13:08 got 504s from the GitHub API for the
@@ -277,7 +354,7 @@ class TheEndpointsThatDoNotAnswer(PinsBase):
     def line(self, out, label):
         return next(ln for ln in out.splitlines() if f" {label} " in ln)
 
-    GITHUB = ("sglang-source", "sglang-source-video", "opencode")
+    GITHUB = ("sglang-source", "sglang-source-video", "opencode", "speech-llama-cpp", "speech-kokoro", "speech-voices")
 
     def test_a_github_api_that_answers_504_is_not_a_dead_pin(self):
         rc, out = self.run_pins({"api.github.com": [504, ""], "bodies": {"api.github.com": "<html>504 Gateway Time-out</html>"}})
@@ -285,7 +362,7 @@ class TheEndpointsThatDoNotAnswer(PinsBase):
         for label in self.GITHUB:
             self.assertIn("HTTP 504 from the GitHub API, so not checked", self.line(out, label), out)
             self.assertNotIn("no such", self.line(out, label), out)
-        self.assertIn("3 of 30 pins could not be asked about", out)
+        self.assertIn("6 of 37 pins could not be asked about", out)
         self.assertIn("run it again before re-pinning anything", out)
         self.assertNotIn("A removed upstream revision", out)
 

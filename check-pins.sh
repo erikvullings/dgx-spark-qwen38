@@ -63,15 +63,25 @@ eval "$nline"
 # The Nemotron Super lane's: the model and its drafter (its image is the Nemotron lane's, checked above).
 sline="$(grep -E '^NEMOTRON_SUPER_(REPO|REV|DRAFT_REPO|DRAFT_REV)=' "$REPO_DIR/install-nemotron-super.sh")"
 eval "$sline"
+# The speech lane's: llama.cpp's commit, each recognizer's two GGUF at its revision with the
+# sha256 the install checks, and Kokoro's two files, which nothing checked either (found in the
+# audit of 2026-10-16). Each recognizer size is a branch of install-speech.sh's case on
+# SPEECH_ASR, read below one at a time; Kokoro's files are assets of a GitHub release.
+spline="$(grep -E '^(LLAMA_CPP_PIN|KOKORO_URL|KOKORO_MODEL_FILE|KOKORO_VOICES_FILE)=' "$REPO_DIR/install-speech.sh")"
+eval "$spline"
+ASR_SIZES="$(sed -n 's/^  \([0-9][0-9.]*b\))$/\1/p' "$REPO_DIR/install-speech.sh")"
+KOKORO_GH="${KOKORO_URL#https://github.com/}"
+KOKORO_TAG="${KOKORO_GH##*/releases/download/}"; KOKORO_GH="${KOKORO_GH%%/releases/download/*}"
 
 # Hugging Face answers an anonymous request with 401 both for a gated repo and for one that
 # does not exist (or is private): only its x-error-code tells a gated repo apart, so the
 # answer's code and that header are read together. HF_TOKEN, when set, is sent the way the
 # installer's download sends it, and goes in on stdin rather than on the command line.
-hf_answer() {  # $1 url: prints "<http code> <x-error-code>"
-  local cfg=""
+hf_answer() {  # $1 url, [$2 "body" to keep the body, then the status on a line of its own]: prints "<http code> <x-error-code>"
+  local cfg="" out=(-o /dev/null) nl=""
   [ -n "${HF_TOKEN:-}" ] && cfg="header = \"Authorization: Bearer $HF_TOKEN\""
-  printf '%s\n' "$cfg" | curl -s -o /dev/null -m 25 -K - -w '%{http_code} %header{x-error-code}' "$1"
+  [ "${2:-}" = body ] && { out=(); nl='\n'; }
+  printf '%s\n' "$cfg" | curl -s ${out[@]+"${out[@]}"} -m 25 -K - -w "$nl%{http_code} %header{x-error-code}" "$1"
 }
 
 # GitHub answers an anonymous caller 60 requests an hour per address, and a runner's address is
@@ -85,13 +95,23 @@ gh_api() {  # $1 url, $2 curl -w format, [$3 "nobody" to drop the body]: body, t
   printf '%s\n' "$cfg" | curl -s ${out[@]+"${out[@]}"} -m 25 -K - -w "$2" "$1"
 }
 
-check_model() {  # $1 label, $2 repo, $3 revision, [$4 a file at its root, default config.json]
+check_model() {  # $1 label, $2 repo, $3 revision, [$4 a file at its root, default config.json, [$5 its sha256]]
   case "$1" in *"$FILTER"*) ;; *) return 0 ;; esac
   CHECKED=$((CHECKED + 1))
-  local code err
-  read -r code err <<<"$(hf_answer "https://huggingface.co/$2/raw/$3/${4:-config.json}")"
+  local answer code err sum
+  # With a sha256 the body is kept: /raw/ answers an LFS file with its pointer (134 bytes for a
+  # recognizer GGUF), which names the sum of the bytes a download of that revision gets.
+  answer="$(hf_answer "https://huggingface.co/$2/raw/$3/${4:-config.json}" ${5:+body})"
+  read -r code err <<<"${answer##*$'\n'}"
+  sum="$(sed -n 's/^oid sha256:\([0-9a-f]*\)$/\1/p' <<<"$answer")"
   case "$code:$err" in
-    200:*) printf '  \033[0;32mok\033[0m    %-14s %s @ %s\n' "$1" "$2" "${3:0:12}" ;;
+    200:*) if [ -z "${5:-}" ] || [ "$sum" = "$5" ]; then
+             printf '  \033[0;32mok\033[0m    %-14s %s @ %s\n' "$1" "$2" "${3:0:12}"
+           elif [ -z "$sum" ]; then
+             printf '  \033[0;31mFAIL\033[0m  %-14s %s @ %s %s (no LFS pointer for it from Hugging Face, so its sha256 was not checked)\n' "$1" "$2" "${3:0:12}" "$4"; unasked
+           else
+             printf '  \033[0;31mFAIL\033[0m  %-14s %s @ %s %s (its sha256 there is %s: installs refuse it)\n' "$1" "$2" "${3:0:12}" "$4" "$sum"; failed
+           fi ;;
     40[13]:GatedRepo)
       # the repo exists, and a fresh install without a token that accepted its terms cannot
       # download it: nothing in this repo expects a gated checkpoint
@@ -179,7 +199,8 @@ elif not [u for u in d.get("urls") or [] if not u.get("yanked")]:
   fi
 }
 
-check_asset() {  # $1 label, $2 owner/repo, $3 release tag, $4 asset, $5 its sha256: GitHub's digest must match
+check_asset() {  # $1 label, $2 owner/repo, $3 release tag, $4 asset, $5 its sha256: GitHub's digest must match,
+                 # [$6 "undigested": an asset GitHub keeps no digest for (uploaded before it kept them), which must exist]
   case "$1" in *"$FILTER"*) ;; *) return 0 ;; esac
   CHECKED=$((CHECKED + 1))
   local answer status code left digest
@@ -203,7 +224,11 @@ print(next((a.get("digest") or "none" for a in d.get("assets") or [] if a.get("n
   case "$code:$digest" in
     "200:sha256:$5") printf '  \033[0;32mok\033[0m    %-14s %s %s %s\n' "$1" "$2" "$3" "$4" ;;
     200:absent) printf '  \033[0;31mFAIL\033[0m  %-14s %s %s %s (the release has no such asset)\n' "$1" "$2" "$3" "$4"; failed ;;
-    200:none) printf '  \033[0;31mFAIL\033[0m  %-14s %s %s %s (GitHub publishes no digest for it: not checked)\n' "$1" "$2" "$3" "$4"; failed ;;
+    200:none) if [ "${6:-}" = undigested ]; then
+                printf '  \033[0;32mok\033[0m    %-14s %s %s %s (no digest on GitHub: the install checks its sha256)\n' "$1" "$2" "$3" "$4"
+              else
+                printf '  \033[0;31mFAIL\033[0m  %-14s %s %s %s (GitHub publishes no digest for it: not checked)\n' "$1" "$2" "$3" "$4"; failed
+              fi ;;
     "200:not json") printf '  \033[0;31mFAIL\033[0m  %-14s %s %s %s (the GitHub API answered something that is not JSON, so not checked)\n' "$1" "$2" "$3" "$4"; unasked ;;
     200:*) printf '  \033[0;31mFAIL\033[0m  %-14s %s %s %s (its digest is now %s: installs refuse it)\n' "$1" "$2" "$3" "$4" "$digest"; failed ;;
     *) printf '  \033[0;31mFAIL\033[0m  %-14s %s %s %s (HTTP %s from the GitHub API: no such release)\n' "$1" "$2" "$3" "$4" "$code"; failed ;;
@@ -243,6 +268,17 @@ check_wheel  nemotron-b12x  b12x "$NEMOTRON_B12X_VERSION"
 echo "Nemotron Super lane"
 check_model  nemotron-super "$NEMOTRON_SUPER_REPO" "$NEMOTRON_SUPER_REV"
 check_model  super-draft    "$NEMOTRON_SUPER_DRAFT_REPO" "$NEMOTRON_SUPER_DRAFT_REV"
+echo "Speech lane"
+check_commit speech-llama-cpp ggml-org/llama.cpp "$LLAMA_CPP_PIN"
+for size in $ASR_SIZES; do
+  # unset first: a branch that no longer reads would otherwise check the previous size again
+  unset ASR_REPO ASR_REV ASR_FILE ASR_SHA MMPROJ_FILE MMPROJ_SHA
+  eval "$(sed -n "/^  $size)\$/,/;;\$/p" "$REPO_DIR/install-speech.sh" | grep -E '^ +(ASR_REPO|ASR_FILE|MMPROJ_FILE)=')"
+  check_model "speech-asr-$size"    "$ASR_REPO" "$ASR_REV" "$ASR_FILE"    "$ASR_SHA"
+  check_model "speech-mmproj-$size" "$ASR_REPO" "$ASR_REV" "$MMPROJ_FILE" "$MMPROJ_SHA"
+done
+check_asset  speech-kokoro  "$KOKORO_GH" "$KOKORO_TAG" "$KOKORO_MODEL_FILE"  "$KOKORO_MODEL_SHA"  undigested
+check_asset  speech-voices  "$KOKORO_GH" "$KOKORO_TAG" "$KOKORO_VOICES_FILE" "$KOKORO_VOICES_SHA" undigested
 
 echo "Images"
 img="$(grep -E '^(IMAGE|FLASH_IMAGE)=' "$REPO_DIR/install.sh")"
