@@ -115,7 +115,7 @@ Kolibri lane (`docs/kolibri-lane.md`).
 | KV cache at 0.70 | 6,523,301 and 6,536,475 tokens over two boots, 24 requests at the full window (4,712,014 and 18 before the prefix cache's fine settings) |
 | an agent's next turn, 40,000 tokens | 31,808 from the prefix cache, 8,231 recomputed, 5.0 s before the first token (17,984, 22,055 and 13.4 s before) |
 | boot from the USB SSD | 7 min 26 s to 7 min 36 s (weights 124 to 132 s, CUDA graphs for 16 requests 128 s) |
-| MemAvailable, lowest seen | 25.3 GiB, a 252,000-token prompt's prefill (the measurement scripts on the box beside it); 26 GiB at rest |
+| MemAvailable, lowest seen | 25.3 GiB, a 252,000-token prompt's prefill, measured before the prefix cache's fine settings (the measurement scripts on the box beside it); 26 GiB at rest with them |
 | GPU, hottest | 88 °C, up to 95 W, long prefills back to back |
 
 **Speed, one request**, real work and the reasoning off, median of 3 (the drafter's mean acceptance
