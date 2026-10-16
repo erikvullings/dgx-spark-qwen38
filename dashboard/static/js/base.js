@@ -28,8 +28,6 @@ const fmtDur = s => {
 // minutes for a plan, not a stopwatch: "about 13 min"
 const fmtMin = s => s == null ? '?' : s < 90 ? Math.round(s) + ' s' : s < 3600 ? Math.round(s / 60) + ' min'
   : Math.floor(s / 3600) + ' h ' + String(Math.round((s % 3600) / 60)).padStart(2, '0');
-const fmtClock = s => { const r = Math.max(0, Math.round(s || 0)); const h = Math.floor(r / 3600), m = Math.floor((r % 3600) / 60);
-  return (h ? h + ':' + String(m).padStart(2, '0') : String(m)) + ':' + String(r % 60).padStart(2, '0'); };
 // a time of day is ambiguous once the page reloads events written on another day
 const clockTime = ts => {
   const d = new Date(ts * 1000), now = new Date();

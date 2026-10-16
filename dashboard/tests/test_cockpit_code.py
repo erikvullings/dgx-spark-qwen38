@@ -112,7 +112,7 @@ class Fingerprint(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp) / "dashboard"
             shutil.copytree(DASH, root, ignore=shutil.ignore_patterns(
-                "__pycache__", ".ruff_cache", "tests", "mockups"))
+                "__pycache__", ".ruff_cache", "tests"))
             (root / "tests").mkdir(exist_ok=True)
             ck = load_cockpit(root)
             self.assertEqual(ck.code_is_stale(), [])
@@ -129,7 +129,7 @@ class Fingerprint(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp) / "dashboard"
             shutil.copytree(DASH, root, ignore=shutil.ignore_patterns(
-                "__pycache__", ".ruff_cache", "tests", "mockups"))
+                "__pycache__", ".ruff_cache", "tests"))
             ck = load_cockpit(root)
             (root / "registry.py").unlink()
             self.assertIn("registry.py", ck.code_is_stale())

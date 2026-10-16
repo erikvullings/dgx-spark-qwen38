@@ -75,7 +75,7 @@ jobs:
           # The browser checks in dashboard/tests/*.mjs ran nowhere (found in review,
           # 2026-09-24). This one and the three below own what they drive: a dry-run
           # cockpit on loopback with a key of its own, a PATH whose box commands answer
-          # nothing and no network, and a browser that resolves no name. The other three
+          # nothing and no network, and a browser that resolves no name. The other two
           # drive the live cockpit of a box and stay manual; they are parsed here. Parsing
           # is not running: the update banner check called functions the redesign of
           # 2026-09-30 renamed and failed 7 of 9 since, parsed green, and the monkey check
