@@ -215,11 +215,11 @@ the cockpit drift panel says so, per lane, until it is.
 
 ## Considered (and why not yet)
 
-- **Multi-engine routing (vLLM lanes)**: third-party vLLM numbers on this
-  hardware are honest and public (issue #2, BENCHMARKS.md), and they tie or
-  lose to the SGLang config here on the workloads this repo serves; adding
-  an engine multiplies every gate and every pin, and the burden of proof is
-  a measured win on the battery, not a second flavor of parity.
+- **vLLM for the Qwen lanes**: vLLM serves three lanes since v1.29 (Kolibri,
+  then Bolt and Super VL), the models SGLang did not serve on this box; for
+  the two Qwen lanes, third-party vLLM numbers on this hardware tie or lose
+  to the SGLang config here (issue #2, BENCHMARKS.md), and moving a lane
+  that serves well needs a measured win, not a second flavor of parity.
 - **A GUI for anything the cockpit does not already do**: the cockpit is
   what an operator needs (state, switch, logs, bundles); new surfaces have
   to earn their maintenance cost the way features do.
