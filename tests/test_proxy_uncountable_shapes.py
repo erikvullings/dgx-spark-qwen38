@@ -10,12 +10,20 @@ prompt), and what still cannot be counted is judged by the bound where a wedge i
 
 The fake engine counts as a tokenizer does where it matters here: a digit is one token, a word
 is one token.
+
+2026-10-17: judged by its bytes, one byte a token, a base64 image in /v1/responses' input or in
+/generate's image_data was a token per byte, and a photo a client sent was refused as too long
+(found in review, 2026-10-17). The media of these shapes are priced as the guard prices them
+everywhere else (_media_tokens: an image by its header, a video by its ceiling), and only the
+rest of the body is judged by its size.
 """
+import base64
 import http.server
 import importlib.util
 import json
 import os
 import re
+import struct
 import sys
 import threading
 import time
@@ -38,6 +46,12 @@ LIMIT = 9200                    # the usable share of a 10,000-token pool
 
 def tokens(text):
     return len(re.findall(r"\d|[^\d\s]+", text))
+
+
+def png(n_bytes, w=512, h=512):
+    """A data URI of about n_bytes whose PNG header says w x h (16 x 16 cells, 258 tokens)."""
+    head = b"\x89PNG\r\n\x1a\n" + struct.pack(">I", 13) + b"IHDR" + struct.pack(">II", w, h) + b"\x08\x02\0\0\0"
+    return "data:image/png;base64," + base64.b64encode(head + bytes(n_bytes * 3 // 4)).decode()
 
 
 class Engine(http.server.BaseHTTPRequestHandler):
@@ -157,6 +171,39 @@ class UncountableShapes(unittest.TestCase):
             {"type": "input_text", "text": "7" * 15000}]}]}
         status, body = self.post("/v1/responses", doc)
         self.assertEqual(status, 200, body)
+
+
+    def test_an_image_in_a_responses_input_is_priced_as_an_image(self):
+        doc = {"model": "m", "input": [{"role": "user", "content": [
+            {"type": "input_text", "text": "What is in this picture?"},
+            {"type": "input_image", "image_url": png(30000)}]}]}
+        status, body = self.post("/v1/responses", doc)
+        self.assertEqual(status, 200, body)
+        self.assertEqual(Engine.generated, ["/v1/responses"])
+
+    def test_native_images_are_priced_as_images(self):
+        for images in (png(30000), [png(15000), png(15000)], [[png(15000)], [png(15000)]],
+                       png(30000).split(",", 1)[1]):            # a bare base64 string too
+            with self.subTest(kind=type(images).__name__):
+                Engine.generated.clear()
+                status, body = self.post("/generate", {"text": "What is in this picture?", "image_data": images,
+                                                       "sampling_params": {"max_new_tokens": 1}})
+                self.assertEqual(status, 200, body)
+                self.assertEqual(Engine.generated, ["/generate"])
+
+    def test_the_text_beside_an_image_is_still_judged_by_the_bound(self):
+        doc = {"model": "m", "input": [{"role": "user", "content": [
+            {"type": "input_text", "text": "7" * 15000},
+            {"type": "input_image", "image_url": png(30000)}]}]}
+        self.refused_as_too_long(*self.post("/v1/responses", doc))
+        self.assertEqual(Engine.generated, [])
+
+    def test_a_native_video_still_costs_its_ceiling(self):
+        """Priced, not waved through: one video can be more than this whole lane."""
+        status, body = self.post("/generate", {"text": "Describe it.", "video_data": "data:video/mp4;base64,"
+                                               + "A" * 12000, "sampling_params": {"max_new_tokens": 1}})
+        self.refused_as_too_long(status, body)
+        self.assertEqual(Engine.generated, [])
 
 
 if __name__ == "__main__":

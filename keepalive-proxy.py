@@ -1485,6 +1485,65 @@ def _strip_media(messages, media):
     return out
 
 
+# The media of the shapes the engine's count cannot take (2026-10-17): /v1/responses' input
+# items and /generate's image_data, video_data and audio_data. Judged by their bytes where a wedge
+# is possible, one byte a token, a base64 photo was a token per byte and refused as too long
+# (found in review, 2026-10-17). Each is priced as _media_tokens prices a block of its kind, and
+# only the rest of the body is judged by its size.
+NATIVE_MEDIA_FIELDS = {"image_data": "image_url", "video_data": "video_url", "audio_data": "input_audio"}
+RESPONSES_MEDIA_PARTS = {"input_image": ("image_url", "image_url"), "input_file": ("document", "file_data"),
+                         "input_audio": ("input_audio", "input_audio")}
+
+
+def uncountable_media(body, path):
+    """(tokens, bytes): what the media of a /v1/responses or /generate body cost, by
+    _media_tokens, and how many bytes of the body their payloads are. (0, 0) for any other."""
+    route = path.split("?")[0]
+    if route not in ("/v1/responses", "/generate"):
+        return 0, 0
+    try:
+        j = json.loads(body)
+    except Exception:
+        return 0, 0
+    if not isinstance(j, dict):
+        return 0, 0
+    found = []                          # (kind, payload)
+    if route == "/generate":
+        for field, kind in NATIVE_MEDIA_FIELDS.items():
+            stack = [j.get(field)]
+            while stack:
+                v = stack.pop()
+                if isinstance(v, list):
+                    stack.extend(v)
+                elif isinstance(v, dict):
+                    found.append((kind, v.get("url") or v.get("data")))
+                elif v is not None:
+                    found.append((kind, v))
+    else:
+        items = j.get("input")
+        for item in items if isinstance(items, list) else ():
+            parts = item.get("content") if isinstance(item, dict) else None
+            for part in parts if isinstance(parts, list) else [item]:
+                kind, field = RESPONSES_MEDIA_PARTS.get(part.get("type") if isinstance(part, dict) else None,
+                                                        (None, None))
+                if kind:
+                    v = part.get(field)
+                    found.append((kind, (v.get("url") or v.get("data")) if isinstance(v, dict) else v))
+    tokens = size = 0
+    for kind, payload in found:
+        if not isinstance(payload, str):
+            tokens += _media_tokens({"type": kind})
+            continue
+        size += len(payload)
+        if kind == "image_url":
+            # SGLang takes a bare base64 string as an image too: its header is read the same way
+            url = payload if payload.startswith("data:") or "://" in payload else "data:;base64," + payload
+            tokens += _media_tokens({"type": kind, "image_url": {"url": url}})
+        else:
+            tokens += _media_tokens({"type": kind})
+    return tokens, size
+
+
 def _api_key():
     with open(os.path.expanduser("~/.config/qwen38/api-key"), encoding="utf-8") as f:
         return f.read().strip()
@@ -4389,7 +4448,10 @@ class H(BaseHTTPRequestHandler):
                     # Where a wedge is possible the bound decides instead (2026-10-16): the
                     # average let a body of digits, one token each, past the limit uncounted
                     # (found in review, 2026-10-16), into the zone the engine never admits.
-                    guess = len(body) / (CHARS_PER_TOKEN_MIN if wedge_possible(pool) else NOCOUNT_CHARS_PER_TOKEN)
+                    # Its media by what they cost, not by their bytes (2026-10-17, uncountable_media).
+                    media, media_bytes = uncountable_media(body, self.path)
+                    guess = (len(body) - media_bytes) / (CHARS_PER_TOKEN_MIN if wedge_possible(pool)
+                                                         else NOCOUNT_CHARS_PER_TOKEN) + media
                     reason = (f"about ~{int(guess)} tokens by size (a shape the engine's tokenizer "
                               f"cannot count, so the size decides)") if guess > limit else None
                 elif count > limit:
