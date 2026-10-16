@@ -2329,6 +2329,41 @@ fi
 fi
 # end of step 7
 
+# What this run installed, written down in $CONFIG_DIR/installed.json by conformity.py (since
+# v1.36.0, 2026-10-17): the release and its commit, how the run ended, and the choices made on
+# this command line. It is what tells a value an older release installed by default from one
+# the operator chose, at the next update and in the cockpit, which until then took the clone's
+# CHANGELOG for the release the services ran. MODEL_REV, the images and the ceilings are for
+# one run and never recorded. The run for the other text lane (QWEN38_SECONDARY) writes
+# nothing: PORT, HF_CACHE and the binds reach it from this run, explicit-looking but not
+# choices of its own. Never fatal: without a record the next update classes the box by its age.
+record_install() {  # $1 how the run ended: full, side-boot, no-start or no-service
+  if [ -n "$SECONDARY" ]; then return 0; fi
+  local chose=()
+  # --no-service writes no unit: run.sh reads the environment at every start instead
+  if [ "$1" != no-service ]; then
+    if [ -n "$_ENV_MODEL_CHOICE" ]; then chose+=(--chose "target.$LANE=$MODEL_CHOICE"); fi
+    if [ -n "$_ENV_DRAFT2_REPO$_ENV_DRAFT2_QUANT$_ENV_DRAFT2_TOKENS" ]; then
+      chose+=(--chose "DRAFT2=$DRAFT2_REPO ($DRAFT2_QUANT, D=$DRAFT2_TOKENS)")
+    fi
+    # the run for the 27B lane beside a flash one does not get CONTEXT_MODE (it is unset for it)
+    if [ -n "$_ENV_CONTEXT_MODE" ] && [ "$LANE" = 27b ]; then chose+=(--chose "CONTEXT_MODE=$CONTEXT_MODE"); fi
+    if [ -n "$_ENV_ENGINE_BIND" ]; then chose+=(--chose "ENGINE_BIND=$ENGINE_BIND"); fi
+    if [ -n "$_ENV_PROXY_BIND" ]; then chose+=(--chose "PROXY_BIND=$PROXY_BIND"); fi
+    if [ -n "$_ENV_PORT" ]; then chose+=(--chose "PORT=$PORT"); fi
+    if [ -n "$_ENV_PROXY_PORT" ]; then chose+=(--chose "PROXY_PORT=$PROXY_PORT"); fi
+    if [ -n "$_ENV_HF_CACHE" ]; then chose+=(--chose "HF_CACHE=$HF_CACHE"); fi
+    if [ -n "$_ENV_PLE_DIR" ]; then chose+=(--chose "PLE_DIR=$PLE_DIR"); fi
+    if [ -n "$FLASH_TIER_ENV" ]; then chose+=(--chose "FLASH_TIER=$FLASH_TIER"); fi
+    if [ -n "$_ENV_SPEC_TOKEN_MAP_SIZE" ]; then chose+=(--chose "SPEC_TOKEN_MAP_SIZE=$SPEC_TOKEN_MAP_SIZE"); fi
+    if [ -n "$_ENV_FLASH_REPLAYSSM_SPEC" ]; then chose+=(--chose "FLASH_REPLAYSSM_SPEC=$FLASH_REPLAYSSM_SPEC"); fi
+  fi
+  python3 "$REPO_DIR/conformity.py" record --config-dir "$CONFIG_DIR" --repo-dir "$REPO_DIR" \
+      --units /etc/systemd/system/ --lane "$LANE" --path "$1" ${chose[@]+"${chose[@]}"} \
+    || echo "NOTE: could not record this install in $CONFIG_DIR/installed.json (see above); the next update classes this box by its age."
+  return 0
+}
+
 if [ "$NO_SERVICE" -eq 1 ]; then
   apply_context_configs
   printf '\n\033[1;32m✅ Prepared (no systemd, nothing needed sudo).\033[0m\n'
@@ -2342,6 +2377,7 @@ if [ "$NO_SERVICE" -eq 1 ]; then
   echo "  and its oc launcher, and a provider in your opencode config that reads $CONFIG_DIR/api-key."
   echo "  Remove that provider with the key, or opencode refuses to start."
   echo "  No cockpit either: it is a systemd unit, and --no-service installs none."
+  record_install no-service
   exit 0
 fi
 
@@ -2661,6 +2697,7 @@ else
     *)
       echo "  back to it: Load on that lane in the cockpit's Lanes view, or ./switch-model.sh $MODEL_CHOICE" ;;
   esac
+  record_install side-boot
   exit 0
 fi
 
@@ -2672,6 +2709,7 @@ if [ "$NO_START" -eq 1 ]; then
   fi
   echo "also start the keepalive proxy with: sudo systemctl start $KEEPALIVE_UNIT"
   [ "$COCKPIT" -eq 1 ] && echo "the cockpit is not installed on the --no-start path: ./dashboard/install-dashboard.sh once the engine runs"
+  record_install no-start
   exit 0
 fi
 
@@ -3104,6 +3142,7 @@ except Exception as e:
     lane_line "Nemotron   " "$NEMOTRON_STATE" nemotron nemotron "51 GB" "$NEMOTRON_UNIT_PATH"
     lane_line "Super VL   " "$NEMOTRON_SUPER_STATE" nemotron-super nemotron-super "102 GB" "$NEMOTRON_SUPER_UNIT_PATH"
     [ "$LANE" = "27b" ] && echo "  Benchmark  : ./bench.sh"
+    record_install full
     exit 0
   fi
   ST="$(systemctl is-active "$UNIT_NAME" || true)"

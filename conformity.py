@@ -15,8 +15,13 @@ cannot drift from it, and the four old defaults with the instant their release m
 Standard library only: install.sh runs it with the system python3, and the cockpit loads it
 the way it loads engine-inputs.py.
 """
+import argparse
+import fcntl
 import json
+import os
 import re
+import subprocess
+import sys
 from collections import namedtuple
 from datetime import datetime, timezone
 from pathlib import Path
@@ -355,3 +360,100 @@ def release_lag(record, clone_commit):
     if record.get("path") == "no-start":
         return "no-start"
     return None
+
+
+# ── What a run writes ────────────────────────────────────────────────────────────────────────
+def clone_release(repo_dir=REPO):
+    """The release a clone is, as its CHANGELOG.md's first heading names it (None when it names none)."""
+    try:
+        with open(Path(repo_dir) / "CHANGELOG.md", encoding="utf-8") as f:
+            for line in f:
+                m = re.match(r"^## (v\d+\.\d+(?:\.\d+)?)\b", line)
+                if m:
+                    return m.group(1)
+    except OSError:
+        pass
+    return None
+
+
+def repo_state(repo_dir=REPO):
+    """{release, commit, branch, modified} of a clone; what git cannot say is None."""
+    def git(*args):
+        try:
+            r = subprocess.run(["git", "-C", str(repo_dir), *args], capture_output=True, text=True, timeout=20)
+        except (OSError, subprocess.SubprocessError):
+            return None
+        return r.stdout.strip() if r.returncode == 0 else None
+    head = git("rev-parse", "--verify", "-q", "HEAD")
+    status = git("status", "--porcelain", "--untracked-files=no")
+    return {"release": clone_release(repo_dir),
+            "commit": head if head and re.fullmatch(r"[0-9a-f]{40}", head) else None,
+            "branch": git("symbolic-ref", "--short", "-q", "HEAD") or None,
+            "modified": bool(status) if status is not None else None}
+
+
+def write_record(config_dir, record):
+    """Whole or not at all: a reader (the cockpit, the next run) sees the old file or the new
+    one, never half of one. 0644 whatever the umask: it holds no secret, and the cockpit reads it."""
+    tmp = Path(config_dir) / f".{FILE}.{os.getpid()}.tmp"
+    try:
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump(record, f, indent=1)
+            f.write("\n")
+            f.flush()
+            os.fsync(f.fileno())
+        os.chmod(tmp, 0o644)
+        os.replace(tmp, Path(config_dir) / FILE)
+    finally:
+        if tmp.exists():
+            tmp.unlink()
+
+
+def record(config_dir, path, lane, chose=None, repo_dir=REPO, units_dir=UNITS, home=None, now=None):
+    """Write installed.json for a run that ended well (install.sh's record_install), under a
+    lock: an update in a terminal and a Load from the cockpit may both write it. Returns it."""
+    config_dir = Path(config_dir)
+    config_dir.mkdir(parents=True, exist_ok=True)
+    with open(config_dir / f"{FILE}.lock", "a", encoding="utf-8") as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        old, note = load_record(config_dir)
+        if note:
+            print(note, file=sys.stderr)
+        since, since_from = box_since(config_dir, old)
+        seen = observe(units_dir, config_dir, lane=lane, repo_dir=repo_dir)
+        now = now or datetime.now(timezone.utc).isoformat(timespec="seconds")
+        new = {"schema": SCHEMA, **repo_state(repo_dir), "repo_dir": str(repo_dir), "finished": now,
+               "path": path, "lane": lane, "box_since": since, "box_since_from": since_from,
+               "choices": next_choices(old, seen, recommended(repo_dir, home), chose or {}, since, now)}
+        write_record(config_dir, new)
+    return new
+
+
+def main(argv=None):
+    ap = argparse.ArgumentParser(prog="conformity.py", description=__doc__.split("\n")[0])
+    sub = ap.add_subparsers(dest="cmd", required=True)
+    r = sub.add_parser("record", help="write installed.json for a run of install.sh that ended well")
+    r.add_argument("--config-dir", required=True)
+    r.add_argument("--repo-dir", default=str(REPO))
+    r.add_argument("--units", default=UNITS)
+    r.add_argument("--lane", required=True, choices=("27b", "flash"))
+    r.add_argument("--path", required=True, choices=("full", "side-boot", "no-start", "no-service"))
+    r.add_argument("--chose", action="append", default=[], metavar="KNOB=VALUE",
+                   help="a value the operator set explicitly on this run")
+    a = ap.parse_args(argv)
+    chose = {}
+    for kv in a.chose:
+        knob, sep, value = kv.partition("=")
+        if not sep or knob not in KNOBS:
+            ap.error(f"--chose {kv}: not one of {', '.join(KNOBS)}")
+        chose[knob] = value
+    new = record(a.config_dir, a.path, a.lane, chose, repo_dir=a.repo_dir, units_dir=a.units)
+    mine = ", ".join(f"{k}={e['value']}" for k, e in new["choices"].items())
+    print(f"  Recorded   : {Path(a.config_dir) / FILE} ({new['release'] or 'no release named'}"
+          f"{' at ' + new['commit'][:7] if new['commit'] else ''}; "
+          + (f"your choices: {mine})" if mine else "nothing of yours differs from the recommended state)"))
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
