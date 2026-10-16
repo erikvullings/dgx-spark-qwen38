@@ -648,6 +648,18 @@ def _upstream_auth(handler):
 # /v1/... only, while _upstream_auth attaches the engine's key to everything relayed.
 OPEN_ROUTES = frozenset({"/health"})
 SERVER_INFO_ROUTES = frozenset({"/server_info", "/get_server_info"})
+# What a listed client key reaches behind the wall (2026-10-16): generating, counting and
+# reading, nothing else. The wall signs every request it relays with the engine's own key, so
+# a listed key reached every route the engine serves, as its operator: reloading or updating
+# the weights, the profiler, pause_generation, slow_down, set_internal_state, flush_cache,
+# abort_request (found in review, 2026-10-16). A client of this port is not the engine's
+# operator, and the operator's own calls (the cockpit's) go to the engine directly, on
+# 127.0.0.1:30000, not through here. An allow list, not a deny list: the engine's route table
+# grows with every image (73 routes in the v0.5.21 the 27B lane serves).
+CLIENT_ROUTE_PREFIXES = ("/v1/", "/health", "/ready", "/metrics")
+CLIENT_ROUTES = SERVER_INFO_ROUTES | frozenset({
+    "/generate", "/invocations", "/vertex_generate", "/api/chat", "/api/generate",
+    "/tokenize", "/detokenize", "/get_model_info", "/model_info"})
 # Without the identity wall, the engine's key is this port's one gate (README), and since
 # v6.34 the proxy applies it before reading a body. The rule is the engine's own, from
 # SGLang's srt/utils/auth.py (decide_request_auth, _check_bearer_token; the same in both
@@ -4305,14 +4317,25 @@ class H(BaseHTTPRequestHandler):
             self._peer = f"{self._peer} key={shown}"
 
     def _wall_refused(self):
-        """True when the identity wall answered this request with a 401. Every route but
-        OPEN_ROUTES needs a listed key when the wall is on, whatever the method."""
+        """True when the identity wall answered this request with a 401, or with a 403 for a
+        listed key on a route outside CLIENT_ROUTES. Every route but OPEN_ROUTES needs a listed
+        key when the wall is on, whatever the method."""
         route = self.path.split("?")[0]
         if not CLIENT_KEYS or route in OPEN_ROUTES:
             return False
         self._label_peer()
         if self._client_label is not None:
-            return False
+            if route in CLIENT_ROUTES or route.startswith(CLIENT_ROUTE_PREFIXES):
+                return False
+            log(f"{self._peer} REFUSED {route}: a client key does not reach the engine's operator routes")
+            self._plain(403, {"Content-Type": "application/json"},
+                        json.dumps({"error": {"type": "permission_error",
+                                              "message": f"keepalive-proxy: {route} is not a route a "
+                                                         f"client key reaches behind this wall (it "
+                                                         f"generates, counts and reads; the engine's "
+                                                         f"operator routes are not relayed)"}}).encode())
+            self._done("403 operator route")
+            return True
         log(f"{self._peer} REFUSED unknown client key on {route}")
         err = ({"type": "error", "error": {"type": "authentication_error",
                        "message": "keepalive-proxy: missing or unknown client key"}}

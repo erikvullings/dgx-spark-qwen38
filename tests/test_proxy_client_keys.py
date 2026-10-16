@@ -358,12 +358,46 @@ class ClientKeys(unittest.TestCase):
                     self.assertIn("client key", body.decode())
                     self.assertIsNone(Engine.last_auth, "the engine was never reached")
 
-    def test_a_listed_key_still_reaches_every_route(self):
+    # The engine's operator routes, which the wall signed with the engine's key for any listed
+    # client until 2026-10-16: weights reloaded, updated or checked, the profiler, pause,
+    # slow_down, internal state, the update groups, the remote weight transfer.
+    OPERATOR_ROUTES = (("POST", "/flush_cache"), ("POST", "/abort_request"),
+                       ("POST", "/update_weights_from_disk"), ("POST", "/update_weights_from_tensor"),
+                       ("POST", "/init_weights_update_group"), ("POST", "/begin_weight_update"),
+                       ("POST", "/send_weights_to_remote_instance"), ("POST", "/weights_checker"),
+                       ("POST", "/start_profile"), ("POST", "/slow_down"),
+                       ("POST", "/set_internal_state"), ("POST", "/pause_generation"),
+                       ("POST", "/release_memory_occupation"), ("GET", "/get_weights_by_name"),
+                       ("PUT", "/configure_logging"), ("POST", "/load_lora_adapter"))
+
+    def test_a_listed_key_still_reaches_every_client_route(self):
         Engine.require_key = "engine-K"
         port = self.live(self.keys_file('{"tok-alice":"alice"}'), upstream_key="engine-K")
         for method, path in self.ROUTES:
+            if (method, path) in self.OPERATOR_ROUTES:
+                continue
             with self.subTest(method=method, path=path):
                 status, _ = call(port, method, path, "tok-alice")
+                self.assertEqual(status, 200)
+                self.assertEqual(Engine.last_auth, "Bearer engine-K")
+
+    def test_a_listed_key_never_reaches_an_operator_route(self):
+        """A listed key is a client: behind the wall the engine sees the engine's key, so a
+        relayed operator route would have been the operator's own call (2026-10-16)."""
+        Engine.require_key = "engine-K"
+        port = self.live(self.keys_file('{"tok-alice":"alice"}'), upstream_key="engine-K")
+        for method, path in self.OPERATOR_ROUTES:
+            with self.subTest(method=method, path=path):
+                Engine.last_auth = None
+                status, body = call(port, method, path, "tok-alice")
+                self.assertEqual(status, 403, body)
+                self.assertIn(path, json.loads(body)["error"]["message"])
+                self.assertIsNone(Engine.last_auth, "the engine was never reached")
+        # and the routes a client uses are untouched: generation in both dialects, counting
+        for path in ("/v1/chat/completions", "/v1/messages", "/v1/messages/count_tokens",
+                     "/generate", "/tokenize"):
+            with self.subTest(path=path):
+                status, _ = call(port, "POST", path, "tok-alice")
                 self.assertEqual(status, 200)
                 self.assertEqual(Engine.last_auth, "Bearer engine-K")
 

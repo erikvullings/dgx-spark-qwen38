@@ -154,7 +154,10 @@ discussion, not a disclosure.
 - **One API key, one trust realm, by default.** Every client that holds the key
   is the same principal: same quota, same ceiling, same lane. The proxy can
   name clients instead (`QWEN38_CLIENT_KEYS_FILE`, proxy v6.16: one bearer per
-  client, a 401 for an unlisted one on every route but `/health`, the label on
+  client, a 401 for an unlisted one on every route but `/health`, a 403 for a
+  listed one on the engine's operator routes since 2026-10-16, the wall signing
+  what it relays with the engine's own key: a client key generates, counts and
+  reads, the label on
   every journal line of its requests), and naming is all it does: there are no
   per-client quotas or ceilings, and the engine behind it still has one key.
 - **`AGENT_AUTO=1` is deliberate escalation.** It sets opencode to allow

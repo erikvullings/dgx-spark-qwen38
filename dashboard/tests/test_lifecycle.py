@@ -635,6 +635,7 @@ class FeedOutcomes(unittest.TestCase):
         "413 body over cap": "fail",
         "401 unknown client key": "fail",   # the identity wall's refusal (v6.16)
         "401 without the serving key": "fail",   # the door's refusal, before the body (v6.34)
+        "403 operator route": "fail",   # a listed client key on an engine operator route (2026-10-16)
         "503 monster held during warmup": "fail",
         "503 engine unreachable": "fail",
         "503 engine unreachable (upstream 502)": "fail",
