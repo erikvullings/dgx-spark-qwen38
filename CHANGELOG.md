@@ -21,8 +21,9 @@ built and no weight fetched until its first Load. Every other lane's unit names 
 `Conflicts=` and `After=` lines, which systemd applies at its daemon-reload: each such unit keeps
 its date and its engine keeps running (v1.34.0's rule). Bolt's unit also changes its serving command
 (the prefix cache, below): the update installs it, and a Bolt that serves keeps running its old
-command until it restarts, which the installer says (Load it again from the cockpit, or
-`sudo systemctl restart qwen38-nemotron.service`). The proxy restarts once (its unit holds
+command until it restarts, which the installer says, and now the cockpit too (below): "Restart
+Nemotron Bolt to apply the update" on its card, or `sudo systemctl restart qwen38-nemotron.service`.
+The proxy restarts once (its unit holds
 requests for this lane too while it boots), and so does the cockpit. The two Nemotron lanes run one
 image: a Nemotron lane counts as begun on a box once its own first Load began (that image and its
 own checkpoint), so loading one leaves the other its units only, and a build of the image goes only
@@ -101,6 +102,13 @@ drafter's acceptance in the load. Library lists its checkpoint and its drafter w
 
 **Also in this version.**
 
+- The cockpit says when an update left the engine that serves on what it started with. An update
+  rewrites a lane's unit, a script it runs or its image and leaves the engine serving, so what it
+  brought applies at the lane's next start, and only a NOTE line of the installer's output said so
+  (Bolt's prefix cache settings above would have waited for a restart nobody was told about). Every
+  30 seconds the cockpit asks `engine-inputs.py`, the rule the installers go by; the banner strip
+  says what changed, and the lane's card offers "Restart <lane> to apply the update", a Load of one
+  step.
 - Library counted a Nemotron target whole with its checkpoint alone: Bolt read "on disk" with its
   drafter missing, which its Load then fetched. A Nemotron target is whole now with its drafter
   whole too (the Download fetches both), and a lane's Start, which loads both from the cache, is
@@ -147,7 +155,9 @@ half done); the vLLM installers' tests read no unit of the machine running them 
 proxy's port and its units for the image's prune); every shell script compares disks through
 links; and each test is declared once (a class inheriting another's tests ran them twice). And each
 Nemotron unit matches prefixes at 64 tokens with the Mamba checkpoint where a prefix is shared (the
-test fails on Bolt's unit before this version).
+test fails on Bolt's unit before this version); and the cockpit names an engine an update left
+behind, its banner, its card's Restart and its one-step Load, and nothing else (a stopped unit, an
+engine up to date, a lane with no container to compare owe nothing).
 
 ## v1.34.0 (2026-10-16): Nemotron 3.5 Bolt, NVIDIA's 74B that reads images and video, as a sixth lane
 

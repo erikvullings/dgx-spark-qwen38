@@ -1521,14 +1521,74 @@ def _semver(tag):
     return tuple(int(p or 0) for p in m.groups()) if m else None
 
 
+# ---- "an update changed what the serving engine runs" -------------------------------
+# An update rewrites a lane's unit (its serving command), a script the unit runs or the image
+# it names, and leaves the engine that serves running, as the installers mean to: a box keeps
+# answering through an update. What the update brought then applies at that lane's next start,
+# and only a NOTE line of the installer's output said so (found 2026-10-16: the prefix cache
+# settings v1.35.0 gives Bolt's unit waited for a restart nobody was told about).
+# engine-inputs.py, the rule the installers go by, says whether the engine that serves started
+# after every input it reads was written; the banner strip and the lane's Load say what is owed.
+UNIT_DIR = Path(os.environ.get("COCKPIT_UNIT_DIR", "/etc/systemd/system"))
+_ENGINE_INPUTS: dict = {}
+
+
+def _engine_inputs():
+    if "mod" not in _ENGINE_INPUTS:
+        spec = importlib.util.spec_from_file_location("engine_inputs_for_cockpit", REPO_DIR / "engine-inputs.py")
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+        _ENGINE_INPUTS["mod"] = mod
+    return _ENGINE_INPUTS["mod"]
+
+
+def _owed_reason(unit: str, why: str) -> str | None:
+    """What a "no:" of engine-inputs.py says, in words for the page, or None when it says
+    nothing an update did (a unit that is not active, a lane with no container to compare)."""
+    m = re.match(r"^no: (.+) changed after \S+ started$", why)
+    if m:
+        f = Path(m.group(1))
+        if f.name == unit or f.parent.name.endswith(".service.d"):
+            return "Its unit changed (what it runs and how)"
+        return f"{f.name} changed (a file it reads when it starts)"
+    if why.startswith("no: container ") and "runs another image" in why:
+        return "Its image changed"
+    return None
+
+
+def stale_engines() -> dict:
+    """{unit: reason} for each engine that serves while an update changed what it starts with.
+    Empty when nothing is owed, or when engine-inputs.py cannot be read: a box without it says
+    nothing rather than fail."""
+    try:
+        ei = _engine_inputs()
+    except Exception:  # noqa: BLE001
+        return {}
+    out, hf = {}, str(Path.home() / ".cache/huggingface")
+    for unit in UNITS:
+        path = UNIT_DIR / unit
+        if unit == "qwen38-keepalive.service" or not path.is_file():
+            continue
+        try:
+            reason = _owed_reason(unit, ei.running(str(path), str(CONFIG_DIR), hf, []))
+        except Exception:  # noqa: BLE001
+            continue
+        if reason:
+            out[unit] = reason
+    return out
+
+
 @guard
 def collect_update():
-    """{installed, latest, behind, stale_code}. Every field is optional: a box with no
-    network, or one that opted out, reports what it knows and claims nothing else."""
+    """{installed, latest, behind, stale_code, stale_engines}. Every field is optional: a box
+    with no network, or one that opted out, reports what it knows and claims nothing else."""
     out = {"installed": installed_release()}
     stale = code_is_stale()
     if stale:
         out["stale_code"] = stale
+    owed = stale_engines()
+    if owed:
+        out["stale_engines"] = owed
     if not UPDATE_CHECK:
         out["checked"] = False
         return out

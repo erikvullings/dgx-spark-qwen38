@@ -663,14 +663,20 @@ function laneJourneySteps(target){
   // The image engine says what it serves (cockpit.py, once per life of its unit): a switch
   // that only points the unit at the checkpoint it already serves owes no restart, which
   // would end a generation for nothing.
-  const restart = unit === IMAGE_UNIT && served ? owed : steps.length || owed;
-  if (serving && serving[0] === unit && restart)
-    steps.push({name: 'unit', params: {verb: 'restart', unit}, title: `Restart ${LANE_NAME[unit]} on the new checkpoint`,
+  const switched = unit === IMAGE_UNIT && served ? owed : steps.length || owed;
+  // An update that changed what this engine starts with, while it served, owes a restart
+  // too: what it brought applies at the next start (cockpit.py, stale_engines).
+  const updated = !!updateOwed(unit);
+  if (serving && serving[0] === unit && (switched || updated))
+    steps.push({name: 'unit', params: {verb: 'restart', unit},
+      title: switched ? `Restart ${LANE_NAME[unit]} on the new checkpoint` : `Restart ${LANE_NAME[unit]} on what the update installed`,
       desc: `It answers again in ${readyIn(unit)}.` + (unit === IMAGE_UNIT || unit === VIDEO_UNIT ? ' A generation in flight is lost.' : '')});
   else if (!serving || serving[0] !== unit)
     steps.push({name: 'unit', params: {verb: 'start', unit}, title: `Start ${LANE_NAME[unit]}`, desc: `It loads and answers in ${readyIn(unit)}.`});
   return steps;
 }
+// What an update owes the engine of this unit, in words, or null (cockpit.py, stale_engines).
+function updateOwed(unit){ return (unit && ((F.update || {}).stale_engines || {})[unit]) || null; }
 function askJourney(target, opts = {}){
   if (offline) return toast('The cockpit is unreachable right now: nothing can be started.', 'err');
   if (loadRunning()) return toast(LOAD_RUNNING, 'warn');
@@ -918,6 +924,12 @@ function renderBanners(state, errors){
       add('info', `${TARGET_NAME[served]} is serving, and the lane's next start loads ${TARGET_NAME[next]}.`,
           `The switch to ${TARGET_NAME[next]} is written but its restart has not run, so clients still get ${TARGET_NAME[served]}. Load ${TARGET_NAME[next]} in Lanes restarts it (${readyIn(sv[0])}).`);
   }
+  // An update rewrote what the serving engine starts with (its unit, a file it reads at its
+  // start, its image) and left it serving, as an update does: only the installer's output
+  // said a restart was owed (found 2026-10-16: Bolt's prefix cache settings, v1.35.0).
+  const upd0 = sv && updateOwed(sv[0]);
+  if (upd0) add('warn', `${laneLabel(sv[0])} runs what it started with, not what the update installed.`,
+    `${upd0}. It applies at its next start: Restart ${LANE_NAME[sv[0]]} to apply the update, on its card in Lanes (it answers again in ${readyIn(sv[0])}).`);
   if (F.memFloor && F.memFloor.aborts && F.memFloor.last_abort && Date.now() / 1000 - F.memFloor.last_abort < 600)
     add('warn', 'The memory floor fired.', `Memory fell under ${F.memFloor.gib} GiB with requests running: every generation was aborted ${fmtDur(Date.now() / 1000 - F.memFloor.last_abort)} ago to keep the box out of a livelock.`);
   const upd = F.update || {};

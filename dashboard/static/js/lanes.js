@@ -108,8 +108,11 @@ function renderLanes(){
     const on = !!e && (!UNIT_DOWN.has(st) || !!e.restarting);
     const sameTarget = !laneTarget(unit) || laneTarget(unit) === target;
     // the verbs that make sense now
-    c.load.hidden = !has || (seated && sameTarget);
-    setText(c.load, seated || LANE_TARGETS[unit].length > 1 ? `Load ${TARGET_NAME[target]}` : `Load ${LANE_NAME[unit]}`);
+    // the lane that serves what it is set to has nothing to load, unless an update is owed to it
+    const owedUpdate = seated && sameTarget && !!updateOwed(unit);
+    c.load.hidden = !has || (seated && sameTarget && !owedUpdate);
+    setText(c.load, owedUpdate ? `Restart ${LANE_NAME[unit]} to apply the update`
+      : seated || LANE_TARGETS[unit].length > 1 ? `Load ${TARGET_NAME[target]}` : `Load ${LANE_NAME[unit]}`);
     // installed on demand and not prepared yet, or prepared and not switched to yet (its
     // checkpoint, its chat template): only its Load, which prepares and switches it, can start it
     const unbuilt = has && SIDE_LANE[unit] && (F.lanesReady || {})[SIDE_LANE[unit]] === false;

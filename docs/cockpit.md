@@ -231,6 +231,16 @@ under a live process leaves it serving new HTML against the Python it imported a
 so its controls and its checks disagree. The banner names the files that changed and the
 one command that fixes it.
 
+And the staleness of the engine that serves. An update rewrites a lane's unit (what it runs
+and how), a script the unit runs or the image it names, and leaves that engine serving, so a
+box keeps answering through an update: what the update brought applies at the lane's next
+start. The cockpit asks `engine-inputs.py`, the rule the installers go by, whether the engine
+started after every input it reads was written (every 30 seconds), and when it did not, the
+strip says so and what changed, and the lane's card offers "Restart <lane> to apply the
+update", a Load of one step. The `[Unit]` lines that name the other lanes, which an added lane
+rewrites in every unit, are not an input: the installers keep the unit's date when only they
+change, and no restart is asked for them.
+
 `COCKPIT_UPDATE_CHECK=0` turns the outbound check off. SECURITY.md names it as the one
 request this stack makes that the operator did not type.
 

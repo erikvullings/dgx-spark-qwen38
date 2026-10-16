@@ -1287,6 +1287,53 @@ class ASwitchNotRestartedYetIsSaidAndFinished(unittest.TestCase):
         self.assertNotIn("next start loads", r["banners"])
 
 
+
+class AnUpdateOwedToTheServingEngineIsSaidAndFinished(unittest.TestCase):
+    """An update rewrote what the serving engine starts with and left it serving: what it
+    brought applies at the next start, and only the installer's output said so (found
+    2026-10-16: the prefix cache settings v1.35.0 gives Bolt's unit). The banner strip says it,
+    the lane's card offers the restart, and its Load is that one restart."""
+
+    def page(self, owed):
+        return run(self, r"""
+        const units = JSON.parse(JSON.stringify(UNITS));
+        units.units['qwen38-sglang.service'] = {active: 'inactive', enabled: 'disabled'};
+        units.units['qwen38-nemotron.service'] = {active: 'active', enabled: 'enabled'};
+        const now = Date.now() / 1000, owed = %s;
+        apply({config: {data: CONFIG, ts: now}, units: {data: units, ts: now},
+               update: {data: Object.assign({installed: 'v1.35.0'}, owed ? {stale_engines: {'qwen38-nemotron.service': 'Its unit changed (what it runs and how)'}} : {}), ts: now},
+               lifecycle: {data: life({'qwen38-nemotron.service': eng('ready', {target: 'nemotron'}),
+                                       'qwen38-sglang.service': eng('stopped', {target: 'stock'})}), ts: now}});
+        showView('lanes');
+        const c = LCARDS.get('qwen38-nemotron.service');
+        const out = {banners: txt('banners'), loadHidden: c.load.hidden, loadText: c.load.textContent,
+                     name: LANE_NAME['qwen38-nemotron.service']};
+        askJourney('nemotron');
+        report(Object.assign(out, {open: !$('scrim').hidden, toast: toastText(),
+                                   steps: [...$('sh-journey').children].map(li => li.textContent)}));
+        """ % ("true" if owed else "false"))
+
+    def test_the_banner_says_what_the_update_left_behind(self):
+        r = self.page(True)
+        self.assertIn("runs what it started with, not what the update installed.", r["banners"])
+        self.assertIn("Its unit changed (what it runs and how). It applies at its next start", r["banners"])
+
+    def test_the_card_offers_the_restart_and_its_load_is_that_restart(self):
+        r = self.page(True)
+        self.assertFalse(r["loadHidden"], r)
+        self.assertEqual(r["loadText"], f"Restart {r['name']} to apply the update")
+        self.assertTrue(r["open"], r)
+        self.assertEqual(len(r["steps"]), 1, r["steps"])
+        self.assertIn(f"Restart {r['name']} on what the update installed", r["steps"][0])
+        self.assertIn("systemctl restart qwen38-nemotron.service", r["steps"][0])
+
+    def test_an_engine_up_to_date_owes_nothing(self):
+        r = self.page(False)
+        self.assertNotIn("what the update installed", r["banners"])
+        self.assertTrue(r["loadHidden"], r)
+        self.assertFalse(r["open"], r)
+        self.assertIn("already serving", r["toast"])
+
 class TheLoadWindowFollowsAStepToItsEnd(unittest.TestCase):
     """The window gave each step 20 min and then said "did not finish in time": a switch has
     7,200 s on the server, for a download, and the switch to flash-uncensored (135 GB) took
