@@ -40,9 +40,14 @@ KOKORO_FILES = (pin(SPEECH, "KOKORO_MODEL_FILE"), pin(SPEECH, "KOKORO_VOICES_FIL
 # sha256 the install checks (134 bytes for a recognizer GGUF, read on 2026-10-16); Kokoro's
 # release holds its two files, with no digest (GitHub keeps none for assets uploaded before it
 # started to, as these were, in 2025).
+KOLIBRI = (REPO / "install-kolibri.sh").read_text()
+NEMOTRON = (REPO / "install-nemotron.sh").read_text()
+# and PyPI publishes the very wheel files the Kolibri and Nemotron builds download, by URL and sha256
 UPSTREAM = {
     "lfs": dict(re.findall(r'(?:ASR|MMPROJ)_FILE="([^"]+)"; (?:ASR|MMPROJ)_SHA="([0-9a-f]{64})"', SPEECH)),
     "assets": {KOKORO_REPO: [{"name": f, "digest": None} for f in KOKORO_FILES]},
+    "wheels": {"aleph-alpha-inference": {"url": pin(KOLIBRI, "KOLIBRI_PLUGIN_URL"), "sha256": pin(KOLIBRI, "KOLIBRI_PLUGIN_SHA256")},
+               "b12x": {"url": pin(NEMOTRON, "NEMOTRON_B12X_URL"), "sha256": pin(NEMOTRON, "NEMOTRON_B12X_SHA256")}},
 }
 
 # Answers the way huggingface.co, Docker Hub, GitHub and PyPI do. The scenario (JSON in
@@ -80,8 +85,10 @@ for part, answer in scen.items():
         left = answer[2] if len(answer) > 2 else left
 body = next((b for part, b in (scen.get("bodies") or {}).items() if part in url), None)
 if body is None and url.startswith("https://pypi.org/pypi/"):
-    version = url.rstrip("/").split("/")[-2]
-    body = json.dumps({"info": {"version": version}, "urls": [{"yanked": False}]})
+    package, version = url.rstrip("/").split("/")[-3:-1]
+    pinned = up.get("wheels", {}).get(package)
+    file = {"yanked": False, **({"url": pinned["url"], "digests": {"sha256": pinned["sha256"]}} if pinned else {})}
+    body = json.dumps({"info": {"version": version}, "urls": [file]})
 elif body is None and "/releases/tags/" in url:
     repo = url.split("/repos/", 1)[1].split("/releases/", 1)[0]
     body = json.dumps({"assets": up.get("assets", {}).get(repo) or [{"name": "opencode-linux-arm64.tar.gz",
@@ -328,6 +335,28 @@ class ThePinsOutsideThePinBlock(PinsBase):
         rc, out = self.run_pins({"bodies": {"pypi.org": json.dumps({"info": {"version": "0.5.21"},
                                                                      "urls": [{"yanked": True}]})}})
         self.assertIn("every file yanked", self.line(out, "sglang-wheel"), out)
+
+    def test_a_pinned_wheel_file_gone_or_different_on_pypi_fails(self):
+        """The Kolibri and Nemotron builds download one file by URL and check its sha256, and the
+        watch asked PyPI for the version alone (found in the audit of 2026-10-16): the pinned file
+        deleted while another one of the release stayed went unseen."""
+        b12x, plugin = UPSTREAM["wheels"]["b12x"], UPSTREAM["wheels"]["aleph-alpha-inference"]
+        sdist_only = json.dumps({"info": {"version": "1.5.1"}, "urls": [
+            {"yanked": False, "url": b12x["url"].rsplit("/", 1)[0] + "/b12x-1.5.1.tar.gz", "digests": {"sha256": "d" * 64}}]})
+        other_sum = json.dumps({"info": {"version": "1.0.0"}, "urls": [
+            {"yanked": False, "url": plugin["url"], "digests": {"sha256": "0" * 64}}]})
+        for scen, label, said in (({"bodies": {"pypi.org/pypi/b12x/": sdist_only}}, "nemotron-b12x", "the pinned file is not one PyPI publishes"),
+                                  ({"bodies": {"pypi.org/pypi/aleph-alpha-inference/": other_sum}}, "kolibri-plugin",
+                                   f"the pinned file has sha256 {'0' * 64} on PyPI: installs refuse it")):
+            with self.subTest(label=label):
+                rc, out = self.run_pins(scen)
+                self.assertEqual(rc, 1, out)
+                self.assertIn("FAIL", self.line(out, label), out)
+                self.assertIn(said, self.line(out, label), out)
+        # and the answer that carries the pinned file and sum passes: what the default fixture answers
+        rc, out = self.run_pins(None, None, "nemotron-b12x")
+        self.assertEqual(rc, 0, out)
+        self.assertIn(b12x["url"], json.dumps(UPSTREAM))
 
     def test_an_opencode_asset_whose_bytes_changed_fails(self):
         body = json.dumps({"assets": [{"name": "opencode-linux-arm64.tar.gz", "digest": "sha256:" + "0" * 64}]})

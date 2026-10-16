@@ -53,12 +53,14 @@ vline="$(grep -E '^(VIDEO_MODEL_PIN|VIDEO_MODEL_PIN_REV|VIDEO_TURBO_REPO|VIDEO_T
 eval "$vline"
 VIDEO_PIN="$PIN"; VIDEO_WHEEL="$WHEEL"
 # The Kolibri lane's: its two checkpoints, the vLLM image its build starts from and the
-# plugin's wheel, which nothing checked either (found in review, 2026-10-14).
-kline="$(grep -E '^KOLIBRI_(BASE_IMAGE|PLUGIN_VERSION|FP8_REPO|FP8_REV|NVFP4_REPO|NVFP4_REV)=' "$REPO_DIR/install-kolibri.sh")"
+# plugin's wheel, which nothing checked either (found in review, 2026-10-14). The wheel is the
+# very file its build downloads, by URL, and its sha256 (the release alone until the audit of
+# 2026-10-16).
+kline="$(grep -E '^KOLIBRI_(BASE_IMAGE|PLUGIN_VERSION|PLUGIN_URL|PLUGIN_SHA256|FP8_REPO|FP8_REV|NVFP4_REPO|NVFP4_REV)=' "$REPO_DIR/install-kolibri.sh")"
 eval "$kline"
 # The Nemotron lane's: the model and its drafter, the vLLM nightly its build starts from and the
-# b12x wheel.
-nline="$(grep -E '^NEMOTRON_(BASE_IMAGE|B12X_VERSION|BOLT_REPO|BOLT_REV|BOLT_DRAFT_REPO|BOLT_DRAFT_REV)=' "$REPO_DIR/install-nemotron.sh")"
+# b12x wheel, by URL and sha256 as well.
+nline="$(grep -E '^NEMOTRON_(BASE_IMAGE|B12X_VERSION|B12X_URL|B12X_SHA256|BOLT_REPO|BOLT_REV|BOLT_DRAFT_REPO|BOLT_DRAFT_REV)=' "$REPO_DIR/install-nemotron.sh")"
 eval "$nline"
 # The Nemotron Super lane's: the model and its drafter (its image is the Nemotron lane's, checked above).
 sline="$(grep -E '^NEMOTRON_SUPER_(REPO|REV|DRAFT_REPO|DRAFT_REV)=' "$REPO_DIR/install-nemotron-super.sh")"
@@ -226,7 +228,8 @@ check_commit() {  # $1 label, $2 owner/repo on GitHub, $3 commit: install-image.
   esac
 }
 
-check_wheel() {  # $1 label, $2 package, $3 version: released on PyPI, with a file not yanked
+check_wheel() {  # $1 label, $2 package, $3 version: released on PyPI, with a file not yanked,
+                 # [$4 the URL of the file an install downloads, $5 its sha256: still one of that release's files, that sum]
   case "$1" in *"$FILTER"*) ;; *) return 0 ;; esac
   CHECKED=$((CHECKED + 1))
   local why
@@ -236,11 +239,19 @@ try:
     d = json.load(sys.stdin)
 except ValueError:
     print("no answer from PyPI, so not checked"); sys.exit()
+files = d.get("urls") or []
 if (d.get("info") or {}).get("version") != sys.argv[1]:
     print("not on PyPI")
-elif not [u for u in d.get("urls") or [] if not u.get("yanked")]:
+elif not [u for u in files if not u.get("yanked")]:
     print("every file yanked")
-' "$3")"
+elif len(sys.argv) > 2:
+    f = next((u for u in files if u.get("url") == sys.argv[2]), None)
+    sha = ((f or {}).get("digests") or {}).get("sha256")
+    if f is None:
+        print("the pinned file is not one PyPI publishes for it")
+    elif sha != sys.argv[3]:
+        print("the pinned file has sha256 %s on PyPI: installs refuse it" % sha)
+' "$3" ${4:+"$4" "$5"})"
   if [ -z "$why" ]; then
     printf '  \033[0;32mok\033[0m    %-14s %s==%s\n' "$1" "$2" "$3"
   else
@@ -310,11 +321,11 @@ check_asset  opencode       anomalyco/opencode "v$OPENCODE_VERSION" opencode-lin
 echo "Kolibri lane"
 check_model  kolibri-fp8    "$KOLIBRI_FP8_REPO"   "$KOLIBRI_FP8_REV"
 check_model  kolibri-nvfp4  "$KOLIBRI_NVFP4_REPO" "$KOLIBRI_NVFP4_REV"
-check_wheel  kolibri-plugin aleph-alpha-inference "$KOLIBRI_PLUGIN_VERSION"
+check_wheel  kolibri-plugin aleph-alpha-inference "$KOLIBRI_PLUGIN_VERSION" "$KOLIBRI_PLUGIN_URL" "$KOLIBRI_PLUGIN_SHA256"
 echo "Nemotron lane"
 check_model  nemotron-bolt  "$NEMOTRON_BOLT_REPO" "$NEMOTRON_BOLT_REV"
 check_model  nemotron-draft "$NEMOTRON_BOLT_DRAFT_REPO" "$NEMOTRON_BOLT_DRAFT_REV"
-check_wheel  nemotron-b12x  b12x "$NEMOTRON_B12X_VERSION"
+check_wheel  nemotron-b12x  b12x "$NEMOTRON_B12X_VERSION" "$NEMOTRON_B12X_URL" "$NEMOTRON_B12X_SHA256"
 echo "Nemotron Super lane"
 check_model  nemotron-super "$NEMOTRON_SUPER_REPO" "$NEMOTRON_SUPER_REV"
 check_model  super-draft    "$NEMOTRON_SUPER_DRAFT_REPO" "$NEMOTRON_SUPER_DRAFT_REV"
