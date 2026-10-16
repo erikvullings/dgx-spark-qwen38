@@ -132,8 +132,9 @@ WEIGHTS_GB=135; RUNTIME_GB=11   # the fl2va partition plus the shared components
 # told "10 GB to download", 2026-10-01). 135 holds it with the Turbo adapter's 0.73 GiB (134.9
 # in all). The check below measures what is cached of the checkpoint alone, in whole GiB down:
 # a box with the checkpoint cached is told it has nothing to download, and the 0.8 GiB left
-# over is the adapter's room (136 told such a box 1, 2026-10-10). The venv and checkout (7)
-# and the pip build tree (the other 4) make RUNTIME_GB.
+# over is the adapter's room (136 told such a box 1, 2026-10-10). The venv, the checkout and the
+# wheel (8.6 to 8.8 GiB on the reference box, measured 2026-10-17) and the pip build tree make
+# RUNTIME_GB.
 
 if [ "$ACTION" = uninstall ]; then
   step "Removing the video lane"

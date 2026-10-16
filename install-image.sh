@@ -10,8 +10,8 @@
 #
 # install.sh runs this on every plain install since v1.20: a box gets every lane. The
 # checkpoint is 34 GB and the runtime another 12 with its build (WEIGHTS_GB and RUNTIME_GB
-# below count them in GiB, 31 and 11: 9 measured, 7 for the venv and checkout, the rest its
-# build); when the disk does not have the room, this refuses before
+# below count them in GiB, 31 and 11: the venv, the checkout and the wheel take 8.6 to 8.8 GiB
+# on the reference box, measured 2026-10-17, the rest is for the build); when the disk does not have the room, this refuses before
 # downloading anything, install.sh says so and goes on, and ./install.sh --no-image
 # leaves the lane out for good (a marker file remembers it).
 #
@@ -118,7 +118,7 @@ esac
 case "$IMAGE_BIND" in
   *[!0-9.]*|""|*..*) [ "$IMAGE_BIND" = localhost ] || die "IMAGE_BIND takes an IPv4 address, got: $IMAGE_BIND" ;;
 esac
-WEIGHTS_GB=31; RUNTIME_GB=11   # the checkpoint; the venv and checkout (7) and the pip build tree
+WEIGHTS_GB=31; RUNTIME_GB=11   # the checkpoint; the venv, checkout and wheel (8.6 to 8.8) and the pip build tree
 
 if [ "$ACTION" = uninstall ]; then
   step "Removing the image lane"
