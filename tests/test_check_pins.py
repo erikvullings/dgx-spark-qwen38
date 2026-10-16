@@ -88,6 +88,14 @@ elif body is None and "/releases/tags/" in url:
                                    "digest": "sha256:" + os.environ.get("FAKE_OC_SHA", "")}]})
 elif body is None and url.startswith("https://huggingface.co/") and url.rsplit("/", 1)[-1] in up.get("lfs", {}):
     body = "version https://git-lfs.github.com/spec/v1\noid sha256:%s\nsize 804749248\n" % up["lfs"][url.rsplit("/", 1)[-1]]
+elif body is None and "/manifests/" in url:
+    # an index, as Docker Hub answers for lmsysorg/sglang:v0.5.21: amd64, its attestation, arm64
+    body = json.dumps({"mediaType": "application/vnd.oci.image.index.v1+json", "manifests": [
+        {"digest": "sha256:" + "a" * 64, "platform": {"architecture": "amd64", "os": "linux"}},
+        {"digest": "sha256:" + "b" * 64, "platform": {"architecture": "unknown", "os": "unknown"}},
+        {"digest": "sha256:" + "c" * 64, "platform": {"architecture": "arm64", "os": "linux"}}]})
+elif body is None and "/blobs/" in url:
+    body = json.dumps({"architecture": "arm64", "os": "linux"})
 if "-o" not in args:
     sys.stdout.write(body or "")
 if fmt is not None:
@@ -198,6 +206,45 @@ class TheCheckPins(PinsBase):
         rc, out = self.run_pins({"registry-1.docker.io/v2/lmsysorg/sglang/manifests/sha256:b125": [404, ""]})
         self.assertEqual(rc, 1, out)
         self.assertIn("HTTP 404", out)
+
+    def image_line(self, out, label):
+        return next(ln for ln in out.splitlines() if f" {label} " in ln)
+
+    def test_an_image_without_linux_arm64_fails(self):
+        """The box is aarch64: a digest of no linux/arm64 image pulls, then runs nothing, and the
+        watch asked for an HTTP 200 alone (found in the audit of 2026-10-16)."""
+        index = json.dumps({"mediaType": "application/vnd.oci.image.index.v1+json", "manifests": [
+            {"digest": "sha256:" + "a" * 64, "platform": {"architecture": "amd64", "os": "linux"}},
+            {"digest": "sha256:" + "b" * 64, "platform": {"architecture": "unknown", "os": "unknown"}}]})
+        rc, out = self.run_pins({"bodies": {"/manifests/sha256:b125": index}})
+        self.assertEqual(rc, 1, out)
+        line = self.image_line(out, "27b-base")
+        self.assertIn("FAIL", line)
+        self.assertIn("no linux/arm64 image: an index of linux/amd64", line)
+        self.assertIn("ok", self.image_line(out, "flash-base"), out)
+
+    def test_a_single_platform_image_is_read_from_its_config(self):
+        # three of the four pins are one image, not an index: its platform is in its config blob
+        manifest = json.dumps({"mediaType": "application/vnd.docker.distribution.manifest.v2+json",
+                               "config": {"digest": "sha256:" + "c" * 64}, "layers": []})
+        blob = "/v2/lmsysorg/sglang/blobs/sha256:" + "c" * 64
+        for scen, rc_want, said in (
+                ({"bodies": {blob: json.dumps({"architecture": "arm64", "os": "linux"})}}, 0, "ok"),
+                ({"bodies": {blob: json.dumps({"architecture": "amd64", "os": "linux"})}}, 1, "no linux/arm64 image: linux/amd64"),
+                ({blob: [503, ""]}, 1, "HTTP 503 from the registry for its config, so not checked"),
+                ({"bodies": {blob: "<html>error</html>"}}, 1, "not JSON, so not checked")):
+            with self.subTest(said=said):
+                scen.setdefault("bodies", {})["/manifests/sha256:3e79541d"] = manifest
+                rc, out = self.run_pins(scen, None, "flash-base")
+                self.assertEqual(rc, rc_want, out)
+                self.assertIn(said, self.image_line(out, "flash-base"), out)
+                self.assertIn("https://registry-1.docker.io" + blob, [c["url"] for c in self.calls()])
+
+    def test_a_registry_answer_that_is_not_json_is_not_asked(self):
+        rc, out = self.run_pins({"bodies": {"/manifests/sha256:b125": "<html>upstream connect error</html>"}}, None, "27b-base")
+        self.assertEqual(rc, 1, out)
+        self.assertIn("not JSON, so not checked", self.image_line(out, "27b-base"), out)
+        self.assertIn("could not be asked about", out)
 
 
 class ThePinsOutsideThePinBlock(PinsBase):

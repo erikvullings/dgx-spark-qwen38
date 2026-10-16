@@ -130,10 +130,33 @@ check_model() {  # $1 label, $2 repo, $3 revision, [$4 a file at its root, defau
   esac
 }
 
-check_image() {  # $1 label, $2 image reference (name@sha256:... or name:tag)
+# What a manifest, an index or an image config says of its platform: "linux/arm64" when it is
+# that (an index naming it, the config of it), "config <digest>" for the manifest of one image,
+# whose platform is in that blob, "not json", or else what it names instead.
+platform_of() {
+  python3 -c '
+import json, sys
+try:
+    d = json.load(sys.stdin)
+except ValueError:
+    d = None
+if not isinstance(d, dict):
+    print("not json")
+elif "manifests" in d:
+    named = sorted({"%s/%s" % ((m.get("platform") or {}).get("os"), (m.get("platform") or {}).get("architecture"))
+                    for m in d["manifests"] if isinstance(m, dict)} - {"unknown/unknown"})
+    print("linux/arm64" if "linux/arm64" in named else "an index of " + (", ".join(named) or "nothing"))
+elif "config" in d:
+    print("config", (d.get("config") or {}).get("digest") or "none")
+else:
+    print("%s/%s" % (d.get("os"), d.get("architecture")))
+'
+}
+
+check_image() {  # $1 label, $2 image reference (name@sha256:... or name:tag): it exists, and runs on linux/arm64
   case "$1" in *"$FILTER"*) ;; *) return 0 ;; esac
   CHECKED=$((CHECKED + 1))
-  local repo ref token code
+  local repo ref token answer code what
   repo="${2%%@*}"; repo="${repo%%:*}"
   case "$2" in *@*) ref="${2#*@}" ;; *) ref="${2##*:}" ;; esac
   token="$(curl -s -m 25 "https://auth.docker.io/token?service=registry.docker.io&scope=repository:${repo}:pull" \
@@ -144,19 +167,46 @@ check_image() {  # $1 label, $2 image reference (name@sha256:... or name:tag)
     unasked
     return 0
   fi
-  code="$(curl -s -o /dev/null -m 25 -w '%{http_code}' -H "Authorization: Bearer $token" \
+  answer="$(curl -s -m 25 -w '\n%{http_code}' -H "Authorization: Bearer $token" \
     -H 'Accept: application/vnd.oci.image.index.v1+json' \
     -H 'Accept: application/vnd.docker.distribution.manifest.list.v2+json' \
     -H 'Accept: application/vnd.oci.image.manifest.v1+json' \
     -H 'Accept: application/vnd.docker.distribution.manifest.v2+json' \
     "https://registry-1.docker.io/v2/${repo}/manifests/${ref}")"
-  case "$code" in
-    200) printf '  \033[0;32mok\033[0m    %-14s %s\n' "$1" "$2" ;;
-    *) if no_answer "$code"; then
-         printf '  \033[0;31mFAIL\033[0m  %-14s %s (%s from the registry, so not checked)\n' "$1" "$2" "$(said "$code")"; unasked
-       else
-         printf '  \033[0;31mFAIL\033[0m  %-14s %s (HTTP %s)\n' "$1" "$2" "$code"; failed
-       fi ;;
+  code="${answer##*$'\n'}"
+  if [ "$code" != 200 ]; then
+    if no_answer "$code"; then
+      printf '  \033[0;31mFAIL\033[0m  %-14s %s (%s from the registry, so not checked)\n' "$1" "$2" "$(said "$code")"; unasked
+    else
+      printf '  \033[0;31mFAIL\033[0m  %-14s %s (HTTP %s)\n' "$1" "$2" "$code"; failed
+    fi
+    return 0
+  fi
+  # The box is aarch64: a digest of no linux/arm64 image (an amd64 child pinned by mistake, an
+  # index without arm64) pulls, then runs nothing, and an HTTP 200 alone said "ok" (found in the
+  # audit of 2026-10-16). An index names its platforms; one image's config holds its own, a
+  # small blob away (33 to 45 KB for the three single images pinned on 2026-10-16), which the
+  # registry redirects to its CDN; curl does not send the token past that redirect.
+  what="$(printf '%s' "${answer%$'\n'*}" | platform_of)"
+  case "$what" in
+    "config "*)
+      answer="$(curl -s -L -m 25 -w '\n%{http_code}' -H "Authorization: Bearer $token" \
+        "https://registry-1.docker.io/v2/${repo}/blobs/${what#config }")"
+      code="${answer##*$'\n'}"
+      if [ "$code" != 200 ]; then
+        if no_answer "$code"; then
+          printf '  \033[0;31mFAIL\033[0m  %-14s %s (%s from the registry for its config, so not checked)\n' "$1" "$2" "$(said "$code")"; unasked
+        else
+          printf '  \033[0;31mFAIL\033[0m  %-14s %s (HTTP %s for its config)\n' "$1" "$2" "$code"; failed
+        fi
+        return 0
+      fi
+      what="$(printf '%s' "${answer%$'\n'*}" | platform_of)" ;;
+  esac
+  case "$what" in
+    linux/arm64) printf '  \033[0;32mok\033[0m    %-14s %s (linux/arm64)\n' "$1" "$2" ;;
+    "not json") printf '  \033[0;31mFAIL\033[0m  %-14s %s (the registry answered something that is not JSON, so not checked)\n' "$1" "$2"; unasked ;;
+    *) printf '  \033[0;31mFAIL\033[0m  %-14s %s (no linux/arm64 image: %s, and the box is aarch64)\n' "$1" "$2" "$what"; failed ;;
   esac
 }
 
