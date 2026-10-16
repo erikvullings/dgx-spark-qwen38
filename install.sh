@@ -644,6 +644,25 @@ done
 # kept, unless the corresponding env var was passed explicitly on this
 # invocation. Everything else (image digest, checkpoint revisions, launch
 # flags) always follows the repo: that is what an upgrade is.
+#
+# A value an older release installed by default is not a choice, and until v1.36.0 it was
+# kept as one, for good: the engine on every interface (before v1.17.0), the native window
+# (before v1.12.1), the flash context tier (before v1.19.0), the BF16 draft at depth 8 (before
+# v1.9.0). A unit cannot say which is which; conformity.py can (2026-10-17). Such a value stays
+# when installed.json records it as the operator's choice, or, on a box no run of v1.36.0 or
+# later recorded, when the box is younger than the release that moved the default (the mtime
+# of its API key, written once at the first install) or its age cannot be told. Otherwise it
+# moves to today's default, said with the variable that keeps it. Anything conformity.py
+# cannot answer keeps the value, as every update did before.
+MOVED_TAG=""
+old_default_moves() {  # $1 the setting, $2 the value the unit serves; succeeds when it moves
+  local v
+  v="$(python3 "$REPO_DIR/conformity.py" verdict --config-dir "$CONFIG_DIR" "$1" "$2" || true)"
+  case "$v" in
+    "converge "*) MOVED_TAG="${v#converge }"; return 0 ;;
+  esac
+  return 1
+}
 KEEP_MODEL_VERBATIM=0
 SGL_UNIT_PATH="/etc/systemd/system/qwen38-sglang.service"
 FLASH_UNIT_PATH="/etc/systemd/system/qwen38-flash.service"
@@ -839,8 +858,13 @@ if [ "$INSTALLED_CHOICE" = "flash" ]; then
           throughput)  mrr=24 ;;
         esac
         if grep -q -- "--max-running-requests $mrr" "$FLASH_LAUNCH" 2>/dev/null; then
-          FLASH_TIER="$t"
-          echo "Keeping the installed flash tier: $t. Set FLASH_TIER on the command line to change it."
+          if [ "$t" != "$FLASH_TIER" ] && old_default_moves FLASH_TIER "$t"; then
+            echo "Moving the flash tier from $t to $FLASH_TIER, the default since $MOVED_TAG: $t is what installs before it"
+            echo "      got, not a choice this box recorded. To keep it: FLASH_TIER=$t ./install.sh"
+          else
+            FLASH_TIER="$t"
+            echo "Keeping the installed flash tier: $t. Set FLASH_TIER on the command line to change it."
+          fi
         fi
       done
       resolve_flash_tier_args
@@ -917,18 +941,27 @@ elif [ "$INSTALLED_CHOICE" = "27b" ]; then
   CUR_DRAFT_TOKENS="$(grep -oE -- '--speculative-num-draft-tokens [0-9]+' "$UNIT_PATH" | head -1 | tr -dc '0-9' || true)"
   if [ -z "$_ENV_DRAFT2_REPO" ] && [ -n "$CUR_DRAFT" ] && [ "$CUR_DRAFT" != "$DRAFT2_REPO" ]; then
     DEF_DRAFT2="DRAFT2_REPO=$DRAFT2_REPO DRAFT2_REV=$DRAFT2_REV DRAFT2_QUANT=$DRAFT2_QUANT DRAFT2_TOKENS=$DRAFT2_TOKENS"
-    DRAFT2_REPO="$CUR_DRAFT"
-    [ -z "$_ENV_DRAFT2_REV" ] && [ -n "$CUR_DRAFT_REV" ] && DRAFT2_REV="$CUR_DRAFT_REV"
-    [ -z "$_ENV_DRAFT2_QUANT" ] && [ -n "$CUR_DRAFT_QUANT" ] && DRAFT2_QUANT="$CUR_DRAFT_QUANT"
-    [ -z "$_ENV_DRAFT2_TOKENS" ] && [ -n "$CUR_DRAFT_TOKENS" ] && DRAFT2_TOKENS="$CUR_DRAFT_TOKENS"
-    echo "Keeping the installed drafter: $DRAFT2_REPO (D=$DRAFT2_TOKENS, $DRAFT2_QUANT). Pass DRAFT2_REPO= to change."
-    if [ "$CUR_DRAFT" = "z-lab/Qwen3.8-27B-DFlash2" ]; then
-      # The default of v1.2.3 to v1.8.6, and the documented rollback since: the unit
-      # cannot say which, so it is kept, and a box that was only ever updated never
-      # got v1.9's draft (found in review, 2026-09-24). Said here, with the way over.
-      echo "NOTE: that is the BF16 draft installs used before v1.9. The default since v1.9 drafts from a"
-      echo "      calibrated NVFP4 head, measured +30% there on the reference box (lossless). To move to it:"
-      echo "      $DEF_DRAFT2 ./install.sh"
+    # The BF16 draft at depth 8 was the default of v1.2.3 to v1.8.6 and is the documented
+    # rollback since; a box that only ever updated kept it and never got v1.9's draft (found
+    # in review, 2026-09-24). Whichever it is on this box decides (old_default_moves), unless
+    # one of the drafter pins is passed: that run is about the drafter, and it says how.
+    if [ -z "$_ENV_DRAFT2_REV$_ENV_DRAFT2_QUANT$_ENV_DRAFT2_TOKENS" ] \
+       && old_default_moves DRAFT2 "$CUR_DRAFT ($CUR_DRAFT_QUANT, D=$CUR_DRAFT_TOKENS)"; then
+      echo "Moving the 27B drafter from $CUR_DRAFT (D=$CUR_DRAFT_TOKENS, $CUR_DRAFT_QUANT) to $DRAFT2_REPO (D=$DRAFT2_TOKENS,"
+      echo "      $DRAFT2_QUANT), the default since $MOVED_TAG and measured +30% on the reference box (lossless): the BF16"
+      echo "      draft is what installs before it got, not a choice this box recorded. To keep it:"
+      echo "      DRAFT2_REPO=$CUR_DRAFT DRAFT2_REV=$CUR_DRAFT_REV DRAFT2_QUANT=$CUR_DRAFT_QUANT DRAFT2_TOKENS=$CUR_DRAFT_TOKENS ./install.sh"
+    else
+      DRAFT2_REPO="$CUR_DRAFT"
+      [ -z "$_ENV_DRAFT2_REV" ] && [ -n "$CUR_DRAFT_REV" ] && DRAFT2_REV="$CUR_DRAFT_REV"
+      [ -z "$_ENV_DRAFT2_QUANT" ] && [ -n "$CUR_DRAFT_QUANT" ] && DRAFT2_QUANT="$CUR_DRAFT_QUANT"
+      [ -z "$_ENV_DRAFT2_TOKENS" ] && [ -n "$CUR_DRAFT_TOKENS" ] && DRAFT2_TOKENS="$CUR_DRAFT_TOKENS"
+      echo "Keeping the installed drafter: $DRAFT2_REPO (D=$DRAFT2_TOKENS, $DRAFT2_QUANT). Pass DRAFT2_REPO= to change."
+      if [ "$CUR_DRAFT" = "z-lab/Qwen3.8-27B-DFlash2" ]; then
+        echo "NOTE: that is the BF16 draft installs used before v1.9. The default since v1.9 drafts from a"
+        echo "      calibrated NVFP4 head, measured +30% there on the reference box (lossless). To move to it:"
+        echo "      $DEF_DRAFT2 ./install.sh"
+      fi
     fi
   elif [ -z "$_ENV_DRAFT2_TOKENS" ] && [ -n "$CUR_DRAFT_TOKENS" ] && [ "$CUR_DRAFT_TOKENS" != "$DRAFT2_TOKENS" ]; then
     DRAFT2_TOKENS="$CUR_DRAFT_TOKENS"
@@ -946,7 +979,9 @@ if [ -n "$INSTALLED_CHOICE" ]; then
   fi
   # The same promise the context mode gets, for the same reason: a box hardened to
   # localhost must not be reopened by a plain update. An installed choice wins over a
-  # default, both ways.
+  # default, both ways. The other promise, that a box running the engine on the network
+  # keeps it across updates (v1.17.0), holds since v1.36.0 for a choice only: the 0.0.0.0
+  # every install got before v1.17.0 moves to 127.0.0.1 (old_default_moves above).
   if [ -z "${_ENV_ENGINE_BIND:-}" ]; then
     # Read where the engine's --host really is: the 27B unit, or the flash launcher (its
     # unit only points at the script). This read $UNIT_PATH, which only the 27B branch
@@ -955,8 +990,17 @@ if [ -n "$INSTALLED_CHOICE" ]; then
     if [ "$INSTALLED_CHOICE" = "flash" ]; then BIND_FROM="$FLASH_LAUNCH"; else BIND_FROM="$UNIT_PATH"; fi
     CUR_BIND="$(grep -oE -- '--host [0-9.]+' "$BIND_FROM" 2>/dev/null | head -1 | cut -d' ' -f2 || true)"
     if [ -n "$CUR_BIND" ] && [ "$CUR_BIND" != "$ENGINE_BIND" ]; then
-      ENGINE_BIND="$CUR_BIND"
-      echo "Keeping the installed engine bind: $ENGINE_BIND. Pass ENGINE_BIND= to change."
+      if old_default_moves ENGINE_BIND "$CUR_BIND"; then
+        echo "Moving the engine bind from $CUR_BIND to $ENGINE_BIND, the default since $MOVED_TAG: $CUR_BIND is what"
+        echo "      installs before it got, not a choice this box recorded. A client on another machine uses the"
+        echo "      proxy, which serves every route of the engine. To keep it: ENGINE_BIND=$CUR_BIND ./install.sh"
+        # the side lanes this run updates read their own unit's bind before the text lane's
+        # (vllm-lane.sh), and theirs came from it: they move with it
+        export ENGINE_BIND
+      else
+        ENGINE_BIND="$CUR_BIND"
+        echo "Keeping the installed engine bind: $ENGINE_BIND. Pass ENGINE_BIND= to change."
+      fi
     fi
   fi
   # The unit name, not $KEEPALIVE_UNIT: that variable is set 700 lines below this block.
@@ -976,9 +1020,16 @@ if [ -n "$INSTALLED_CHOICE" ]; then
       # The other direction, and since v1.12.1 it has to exist: with 1m as the
       # default, a plain re-run on a box installed native would patch YaRN into
       # its cached configs and move its memory fraction, which is not what an
-      # update means. An installed choice wins over a default, both ways.
-      CONTEXT_MODE=native
-      echo "Keeping the installed context mode: native. Pass CONTEXT_MODE=1m to change."
+      # update means. An installed choice wins over a default, both ways; native
+      # as the default every install got before v1.12.1 is not one (since v1.36.0).
+      if [ "$NO_SERVICE" -eq 0 ] && old_default_moves CONTEXT_MODE native; then
+        echo "Moving the 27B lane from the native 262144 window to the 1m one, the default since $MOVED_TAG: native"
+        echo "      is what installs before it got, not a choice this box recorded. Its next boot takes about"
+        echo "      9 minutes. To keep it: CONTEXT_MODE=native ./install.sh"
+      else
+        CONTEXT_MODE=native
+        echo "Keeping the installed context mode: native. Pass CONTEXT_MODE=1m to change."
+      fi
     fi
   fi
 fi

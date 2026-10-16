@@ -16,6 +16,9 @@ the box: each one records its call and fails, except `systemctl is-enabled`, whi
 from the units the test says are enabled.
 """
 import atexit
+import datetime
+import json
+import os
 import pathlib
 import shutil
 import stat
@@ -81,6 +84,9 @@ def walled(script="install.sh", at=None, after=False, units=None):
     (d / "lanes.sh").write_text(lanes)
     # and the fetch they run (since v1.31), which they check is there before mounting it
     (d / "ckpt-fetch.py").write_text((REPO / "ckpt-fetch.py").read_text())
+    # and conformity.py (since v1.36.0), which the convergence asks whether an installed value
+    # is a default of an older release or a choice
+    (d / "conformity.py").write_text((REPO / "conformity.py").read_text())
     return str(copy)
 
 
@@ -123,6 +129,26 @@ def fenced_env(home=None, enabled=(), first=None, **extra):
 def reached(record):
     """What the run asked the fenced commands for, one line per call."""
     return pathlib.Path(record).read_text().splitlines()
+
+
+def box_home(key_at=None, record=None):
+    """A HOME whose ~/.config/qwen38 holds an API key last written at `key_at` (an ISO instant;
+    none when None), the age conformity.py gives a box with no installed.json, and that file
+    when `record` ({setting: value} of recorded choices) is given."""
+    home = _tmp("home-")
+    cfg = home / ".config/qwen38"
+    cfg.mkdir(parents=True)
+    if key_at:
+        (cfg / "api-key").write_text("not-a-key\n")
+        t = datetime.datetime.fromisoformat(key_at).timestamp()
+        os.utime(cfg / "api-key", (t, t))
+    if record is not None:
+        (cfg / "installed.json").write_text(json.dumps({
+            "schema": 1, "release": "v1.36.0", "commit": "0" * 40, "path": "full",
+            "box_since": "2026-09-05T09:00:00+00:00", "box_since_from": "api-key",
+            "choices": {k: {"value": v, "since": "2026-10-20T08:00:00+00:00", "how": "env"}
+                        for k, v in record.items()}}))
+    return str(home)
 
 
 def cwd():

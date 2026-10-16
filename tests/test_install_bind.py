@@ -21,6 +21,11 @@ an installed choice wins over the default IN BOTH DIRECTIONS: a box that had cho
 keep its engine on the network must not lose it to an update nobody read about, which is
 the same promise that protects a box hardened before v1.17.
 
+But 0.0.0.0 was also what every install got before v1.17.0, and a unit cannot say which it
+is: kept as a choice, the old default stayed open for good. Since v1.36.0 (decided
+2026-10-16) it moves to 127.0.0.1 unless installed.json records it as a choice, or the box
+is younger than v1.17.0 (the mtime of its API key) or of an age nobody can tell.
+
 Every run stops at a later refusal on purpose, past the bind resolution and long before
 the preflight downloads anything.
 """
@@ -110,6 +115,9 @@ def binds(out):
 
 KEPT_ENGINE = "Keeping the installed engine bind:"
 KEPT_PROXY = "Keeping the installed proxy bind:"
+MOVED_ENGINE = "Moving the engine bind from 0.0.0.0 to 127.0.0.1, the default since v1.17.0"
+# a box installed two days before v1.17.0 moved the default, and one three days after
+BEFORE_V117, AFTER_V117 = "2026-09-20T10:00:00+02:00", "2026-09-25T10:00:00+02:00"
 
 
 class TheDefaults(unittest.TestCase):
@@ -163,12 +171,56 @@ class AnInstalledChoiceWins(unittest.TestCase):
                      ENGINE_BIND="0.0.0.0", **STOCK)
         self.assertNotIn(KEPT_ENGINE, out)
 
-    def test_a_box_that_kept_the_engine_open_is_not_closed_by_an_update(self):
-        """The default moved in v1.17, and convergence is what keeps that from reaching
-        a box that had already chosen otherwise: an operator with a remote client on
-        :30000 must not lose it to an update they did not read about."""
+    def test_an_open_engine_on_a_box_of_unknown_age_stays_open(self):
+        """No installed.json and no API key to date the box: what cannot be classed is not
+        moved, so a box that had chosen 0.0.0.0 keeps it, as every update did before v1.36.0."""
         _, out = run(STOP, script=box_with_units(engine_host="0.0.0.0"), **STOCK)
         self.assertIn(KEPT_ENGINE + " 0.0.0.0", out)
+        self.assertNotIn("Moving the engine bind", out)
+
+    def test_an_open_engine_from_before_v1_17_is_closed_and_said(self):
+        """0.0.0.0 on a box installed before v1.17.0, with nothing recording it as a choice:
+        the default it was installed with. It moves, and the line says how to keep it."""
+        home = wall.box_home(key_at=BEFORE_V117)
+        _, out = run(STOP, script=probed(box_with_units(engine_host="0.0.0.0")), home=home, **STOCK)
+        self.assertNotIn(KEPT_ENGINE, out)
+        self.assertIn(MOVED_ENGINE, out)
+        self.assertIn("To keep it: ENGINE_BIND=0.0.0.0 ./install.sh", out)
+        self.assertEqual(binds(out)["engine"], "127.0.0.1")
+
+    def test_an_open_engine_recorded_as_a_choice_stays_open(self):
+        """installed.json records it (ENGINE_BIND=0.0.0.0 passed once since v1.36.0): the age
+        of the box no longer matters."""
+        home = wall.box_home(key_at=BEFORE_V117, record={"ENGINE_BIND": "0.0.0.0"})
+        _, out = run(STOP, script=probed(box_with_units(engine_host="0.0.0.0")), home=home, **STOCK)
+        self.assertIn(KEPT_ENGINE + " 0.0.0.0", out)
+        self.assertEqual(binds(out)["engine"], "0.0.0.0")
+
+    def test_an_open_engine_on_a_box_younger_than_v1_17_stays_open(self):
+        """Installed after the default moved, 0.0.0.0 was typed by somebody: kept (and recorded
+        as that choice when the run ends, tests/test_conformity_classify.py)."""
+        home = wall.box_home(key_at=AFTER_V117)
+        _, out = run(STOP, script=probed(box_with_units(engine_host="0.0.0.0")), home=home, **STOCK)
+        self.assertIn(KEPT_ENGINE + " 0.0.0.0", out)
+        self.assertEqual(binds(out)["engine"], "0.0.0.0")
+
+    def test_once_installed_json_exists_an_unrecorded_open_engine_moves(self):
+        """Every run records a choice since v1.36.0: 0.0.0.0 that no entry names is the old
+        default, however young the box."""
+        home = wall.box_home(key_at=AFTER_V117, record={})
+        _, out = run(STOP, script=probed(box_with_units(engine_host="0.0.0.0")), home=home, **STOCK)
+        self.assertIn(MOVED_ENGINE, out)
+        self.assertEqual(binds(out)["engine"], "127.0.0.1")
+
+    def test_a_conformity_that_cannot_answer_keeps_the_bind_and_the_run_goes_on(self):
+        """Never a failure mode: what conformity.py cannot answer is kept, as before v1.36.0."""
+        script = pathlib.Path(probed(box_with_units(engine_host="0.0.0.0")))
+        (script.parent / "conformity.py").write_text("raise SystemExit('broken on purpose')\n")
+        code, out = run(STOP, script=str(script), home=wall.box_home(key_at=BEFORE_V117), **STOCK)
+        self.assertIn(KEPT_ENGINE + " 0.0.0.0", out)
+        self.assertEqual(binds(out)["engine"], "0.0.0.0")
+        self.assertIn("contradict each other", out, "the run did not reach the refusal it stops at")
+        self.assertEqual(code, 1)
 
     def test_a_box_already_closed_says_nothing_because_nothing_changed(self):
         _, out = run(STOP, script=box_with_units(engine_host="127.0.0.1"), **STOCK)

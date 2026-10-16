@@ -17,7 +17,10 @@ tests hold:
   this change only the 1m direction was converged (nothing could downgrade a
   1m box), so with 1m as the default a plain re-run on a native box would have
   patched YaRN into its cached configs and moved its memory fraction. That is
-  not what an update means.
+  not what an update means. Native as the default every install got before
+  v1.12.1 is not a choice, though: since v1.36.0 it moves to 1m unless
+  installed.json records it, or the box is younger than v1.12.1 or of an age
+  nobody can tell (decided 2026-10-16).
 
 Every run stops at a later refusal on purpose, past the whole context-mode
 resolution and long before the preflight downloads anything.
@@ -80,6 +83,9 @@ def run(args=(), script=None, home=None, **env_extra):
 DEFAULT_LINE = "Context mode: 1m (1,010,000 tokens)."
 KEPT_NATIVE = "Keeping the installed context mode: native."
 KEPT_1M = "Keeping the installed context mode: 1m."
+MOVED_NATIVE = "Moving the 27B lane from the native 262144 window to the 1m one, the default since v1.12.1"
+# a box installed the day before v1.12.1 moved the default, and one the day after
+BEFORE_V1121, AFTER_V1121 = "2026-09-13T12:00:00+02:00", "2026-09-15T12:00:00+02:00"
 
 
 class TheDefault(unittest.TestCase):
@@ -103,10 +109,29 @@ class TheDefault(unittest.TestCase):
         # The direction that did not exist before v1.12.1, on a box whose 27B unit
         # serves the native window. It used to run only where the suite's own box had
         # a 27B unit enabled: skipped in CI, and the reference box is on 1m, so the
-        # native direction ran nowhere.
+        # native direction ran nowhere. Here the box has no installed.json and no API
+        # key: its age cannot be told, so native is kept.
         _, out = run(STOP, script=box_27b(262144), **STOCK)
         self.assertIn(KEPT_NATIVE, out)
         self.assertNotIn(DEFAULT_LINE, out)
+
+    def test_native_on_a_box_older_than_v1_12_1_moves_to_1m_and_says_so(self):
+        _, out = run(STOP, script=box_27b(262144), home=wall.box_home(key_at=BEFORE_V1121), **STOCK)
+        self.assertIn(MOVED_NATIVE, out)
+        self.assertIn("To keep it: CONTEXT_MODE=native ./install.sh", out)
+        self.assertIn(DEFAULT_LINE, out)
+        self.assertNotIn(KEPT_NATIVE, out)
+
+    def test_native_recorded_as_a_choice_is_kept_on_any_box(self):
+        home = wall.box_home(key_at=BEFORE_V1121, record={"CONTEXT_MODE": "native"})
+        _, out = run(STOP, script=box_27b(262144), home=home, **STOCK)
+        self.assertIn(KEPT_NATIVE, out)
+        self.assertNotIn(MOVED_NATIVE, out)
+
+    def test_native_on_a_box_younger_than_v1_12_1_is_kept(self):
+        _, out = run(STOP, script=box_27b(262144), home=wall.box_home(key_at=AFTER_V1121), **STOCK)
+        self.assertIn(KEPT_NATIVE, out)
+        self.assertNotIn(MOVED_NATIVE, out)
 
     def test_an_installed_1m_unit_is_kept_too(self):
         _, out = run(STOP, script=box_27b(1010000), **STOCK)
@@ -139,9 +164,9 @@ class TheResolvedMode(unittest.TestCase):
     given 1m by default (YaRN patched into its checkpoint), or a native box converged to
     1m passed them (found in review, 2026-09-24)."""
 
-    def mode(self, args, script=None, **env):
+    def mode(self, args, script=None, home=None, **env):
         from test_install_bind import binds, probed
-        _, out = run(args, script=probed(script or fresh_box_install()), **env)
+        _, out = run(args, script=probed(script or fresh_box_install()), home=home, **env)
         return binds(out)
 
     def test_each_case_goes_on_with_the_mode_it_says(self):
@@ -153,6 +178,11 @@ class TheResolvedMode(unittest.TestCase):
         for name, args, script, env, want in cases:
             with self.subTest(case=name):
                 self.assertEqual(self.mode(args, script, **env)["ctx"], want)
+        # an old default goes on with the new window, and --no-service, which cannot serve
+        # it, stays native and is not told it moved
+        old = wall.box_home(key_at=BEFORE_V1121)
+        self.assertEqual(self.mode([*STOP], box_27b(262144), home=old, **STOCK)["ctx"], "1m")
+        self.assertEqual(self.mode([*STOP, "--no-service"], box_27b(262144), home=old, **STOCK)["ctx"], "native")
 
 
 class TheExplicitRefusalsSurvive(unittest.TestCase):

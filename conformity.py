@@ -320,6 +320,19 @@ def deviations(units_dir=UNITS, config_dir=None, lane="27b", home=None, repo_dir
     return out
 
 
+def verdict(config_dir, knob, value):
+    """What an update does with a value the unit serves, for install.sh's convergence: an old
+    default this box never chose moves to today's default, anything else stays. The value is
+    given as install.sh read it, so nothing here depends on reading the units the same way."""
+    if old_default(knob, value) is None:
+        return Verdict("choice", "never-default", None)
+    record, note = load_record(config_dir)
+    if note:
+        print(note, file=sys.stderr)
+    since, _ = box_since(config_dir, record)
+    return classify(knob, value, None, record, since)
+
+
 def next_choices(record, seen, rec, chose, since, now):
     """The choices a run records: {knob: {value, since, how}}.
     chose: {knob: value} the operator passed explicitly on this run (how=env). Passing the
@@ -440,7 +453,22 @@ def main(argv=None):
     r.add_argument("--path", required=True, choices=("full", "side-boot", "no-start", "no-service"))
     r.add_argument("--chose", action="append", default=[], metavar="KNOB=VALUE",
                    help="a value the operator set explicitly on this run")
+    v = sub.add_parser("verdict", help="converge or keep: what an update does with a value an older release made the default")
+    v.add_argument("--config-dir", required=True)
+    v.add_argument("knob", choices=KNOBS)
+    v.add_argument("value")
     a = ap.parse_args(argv)
+    if a.cmd == "verdict":
+        # Never a failure: install.sh keeps the value on anything but "converge", which is what
+        # every update did before v1.36.0.
+        try:
+            got = verdict(a.config_dir, a.knob, a.value)
+        except Exception as e:  # noqa: BLE001
+            print(f"NOTE: could not tell whether {a.knob}={a.value} was chosen ({e}); it stays.", file=sys.stderr)
+            print("keep error")
+            return 0
+        print(f"converge {got.old.tag}" if got.cls == "old-default" else f"keep {got.why}")
+        return 0
     chose = {}
     for kv in a.chose:
         knob, sep, value = kv.partition("=")
