@@ -238,7 +238,11 @@ start. The cockpit asks `engine-inputs.py`, the rule the installers go by, wheth
 started after every input it reads was written (every 30 seconds, each `systemctl` or `docker`
 call bounded at 5 s; for the vLLM lanes, also the auth middleware their installer counts too),
 and when it did not, the strip says so and what changed, and the lane's card offers "Restart
-<lane> to apply the update", a Load of one step. The `[Unit]` lines that name the other lanes, which an added lane
+<lane> to apply the update", a Load of one step: the restart alone, which leaves the lane enabled
+at boot as it is. Nothing is said while a switch waits for its restart (the strip says what the
+next start loads, and that Load applies both) or while the engine boots. The image and video
+lanes' runtime, which their installer rebuilds, is not in this check yet: their installer says
+when its restart is owed. The `[Unit]` lines that name the other lanes, which an added lane
 rewrites in every unit, are not an input: the installers keep the unit's date when only they
 change, and no restart is asked for them.
 

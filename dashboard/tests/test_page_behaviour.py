@@ -1327,6 +1327,107 @@ class AnUpdateOwedToTheServingEngineIsSaidAndFinished(unittest.TestCase):
         self.assertIn(f"Restart {r['name']} on what the update installed", r["steps"][0])
         self.assertIn("systemctl restart qwen38-nemotron.service", r["steps"][0])
 
+    def test_a_switch_not_restarted_yet_is_not_an_update(self):
+        # flash serves flash, its launcher was switched to flash-uncensored and not restarted:
+        # the file the switch rewrote reads as changed after the start, and the restart offered
+        # as "apply the update" switched it back (found in review, 2026-10-17)
+        r = run(self, r"""
+        const units = JSON.parse(JSON.stringify(UNITS));
+        units.units['qwen38-sglang.service'] = {active: 'inactive', enabled: 'disabled'};
+        units.units['qwen38-flash.service'] = {active: 'active', enabled: 'enabled'};
+        const now = Date.now() / 1000;
+        apply({config: {data: CONFIG, ts: now}, units: {data: units, ts: now},
+               update: {data: {installed: 'v1.35.0', stale_engines: {'qwen38-flash.service': 'launch-flash.sh changed (a file it reads when it starts)'}}, ts: now},
+               engine_info: {data: {served_target: 'flash', prompt_ceiling_tokens: 0,
+                                    info: {model_path: '%s', served_model_name: 'x',
+                                           max_total_num_tokens: 800000, context_length: 262144}}, ts: now - 5},
+               lifecycle: {data: life({'qwen38-flash.service': eng('ready', {target: 'flash-uncensored', model: '%s', elapsed: 600}),
+                                       'qwen38-sglang.service': eng('stopped', {target: 'stock'})}), ts: now}});
+        showView('lanes');
+        const c = LCARDS.get('qwen38-flash.service');
+        report({banners: txt('banners'), loadText: c.load.textContent});
+        """ % (FLASH_REPO, FLASH_UNC_REPO))
+        self.assertIn("next start loads flash 176B uncensored", r["banners"])
+        self.assertNotIn("not what the update installed", r["banners"])
+        self.assertNotIn("to apply the update", r["loadText"])
+
+    def test_an_engine_that_boots_owes_nothing_yet(self):
+        # the tier's answer from before the restart still names the engine that now boots:
+        # offering the restart again would throw that boot away (found in review, 2026-10-17)
+        r = run(self, r"""
+        const units = JSON.parse(JSON.stringify(UNITS));
+        units.units['qwen38-sglang.service'] = {active: 'inactive', enabled: 'disabled'};
+        units.units['qwen38-nemotron.service'] = {active: 'activating', enabled: 'enabled'};
+        const now = Date.now() / 1000;
+        apply({config: {data: CONFIG, ts: now}, units: {data: units, ts: now},
+               update: {data: {installed: 'v1.35.0', stale_engines: {'qwen38-nemotron.service': 'Its unit changed (what it runs and how)'}}, ts: now},
+               lifecycle: {data: life({'qwen38-nemotron.service': eng('loading-weights', {target: 'nemotron'}),
+                                       'qwen38-sglang.service': eng('stopped', {target: 'stock'})}), ts: now}});
+        showView('lanes');
+        const c = LCARDS.get('qwen38-nemotron.service');
+        report({banners: txt('banners'), loadText: c.load.textContent, loadHidden: c.load.hidden});
+        """)
+        self.assertNotIn("not what the update installed", r["banners"])
+        self.assertFalse(not r["loadHidden"] and "to apply the update" in r["loadText"], r)
+
+    def test_the_update_restart_leaves_the_boot_lane_alone(self):
+        # Bolt was started as installed while the 27B stays the lane enabled at boot: the Load
+        # that applies the update is the restart alone, and it does not point the boot at Bolt
+        # (found in review, 2026-10-17)
+        r = run(self, r"""
+        const units = JSON.parse(JSON.stringify(UNITS));
+        units.units['qwen38-sglang.service'] = {active: 'inactive', enabled: 'enabled'};
+        units.units['qwen38-nemotron.service'] = {active: 'active', enabled: 'disabled'};
+        const now = Date.now() / 1000;
+        apply({config: {data: CONFIG, ts: now}, units: {data: units, ts: now},
+               update: {data: {installed: 'v1.35.0', stale_engines: {'qwen38-nemotron.service': 'Its unit changed (what it runs and how)'}}, ts: now},
+               lifecycle: {data: life({'qwen38-nemotron.service': eng('ready', {target: 'nemotron'}),
+                                       'qwen38-sglang.service': eng('stopped', {target: 'stock'})}), ts: now}});
+        showView('lanes');
+        askJourney('nemotron');
+        report({open: !$('scrim').hidden, steps: [...$('sh-journey').children].map(li => li.textContent)});
+        """)
+        self.assertTrue(r["open"], r)
+        self.assertEqual(len(r["steps"]), 1, r["steps"])
+        self.assertIn("on what the update installed", r["steps"][0])
+        self.assertNotIn("Point the boot", " ".join(r["steps"]))
+
+    def flash_page(self, state, nxt, next_repo, ask, owed=True):
+        return run(self, r"""
+        const units = JSON.parse(JSON.stringify(UNITS));
+        units.units['qwen38-sglang.service'] = {active: 'inactive', enabled: 'disabled'};
+        units.units['qwen38-flash.service'] = {active: 'active', enabled: 'enabled'};
+        const now = Date.now() / 1000, a = %s;
+        apply({config: {data: CONFIG, ts: now}, units: {data: units, ts: now},
+               update: {data: Object.assign({installed: 'v1.35.0'}, a.owed ? {stale_engines: {'qwen38-flash.service': 'Its unit changed (what it runs and how)'}} : {}), ts: now},
+               engine_info: {data: {served_target: 'flash', prompt_ceiling_tokens: 0,
+                                    info: {model_path: a.flash_repo, served_model_name: 'x',
+                                           max_total_num_tokens: 800000, context_length: 262144}}, ts: now - 5},
+               lifecycle: {data: life({'qwen38-flash.service': eng(a.state, {target: a.next, model: a.next_repo, elapsed: 600}),
+                                       'qwen38-sglang.service': eng('stopped', {target: 'stock'})}), ts: now}});
+        showView('lanes');
+        const banners = txt('banners');
+        askJourney(a.ask);
+        report({banners, open: !$('scrim').hidden, steps: [...$('sh-journey').children].map(li => li.textContent)});
+        """ % json.dumps({"state": state, "next": nxt, "next_repo": next_repo, "ask": ask, "owed": owed,
+                          "flash_repo": FLASH_REPO}))
+
+    def test_another_target_picked_with_an_update_owed_still_switches_then_restarts(self):
+        # the update's restart is the Load of the target that serves; another target picked on the
+        # card keeps its own journey, the switch and then the restart (found in review, 2026-10-17)
+        r = self.flash_page("ready", "flash", FLASH_REPO, "flash-uncensored")
+        self.assertTrue(r["open"], r)
+        self.assertEqual(len(r["steps"]), 2, r["steps"])
+        self.assertIn("Point the boot at", r["steps"][0])
+        self.assertIn("Restart flash 176B", r["steps"][1])
+
+    def test_a_degraded_engine_with_a_switch_waiting_is_said(self):
+        # the update banner keeps quiet while a switch waits; the switch's banner had to say it in
+        # degraded too, or nothing did (found in review, 2026-10-17)
+        r = self.flash_page("degraded", "flash-uncensored", FLASH_UNC_REPO, "flash-uncensored")
+        self.assertIn("next start loads flash 176B uncensored", r["banners"])
+        self.assertNotIn("not what the update installed", r["banners"])
+
     def test_an_engine_up_to_date_owes_nothing(self):
         r = self.page(False)
         self.assertNotIn("what the update installed", r["banners"])

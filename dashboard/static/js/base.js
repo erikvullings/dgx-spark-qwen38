@@ -644,6 +644,14 @@ function laneJourneySteps(target){
   if (lane && (F.lanesReady || {})[lane] === false)
     steps.push({name: 'prepare', params: {target}, title: `Build the runtime of ${LANE_NAME[unit]}`,
       desc: `Its first Load: ${LANE_RUNTIME[lane]}, with no sudo.` + (lane === 'flash' || lane === '27b' ? '' : ' The next step fetches its checkpoint.')});
+  // The Load of the lane that serves this very target, with an update owed to it, is the
+  // restart that applies the update and nothing else: the steps below would point the boot at
+  // it (a lane started as installed is not the boot lane) or switch it back, which no update
+  // asked for (found in review, 2026-10-17). The lane's card asks the same of it (lanes.js).
+  const sv0 = servingEngine();
+  if (sv0 && sv0[0] === unit && laneTarget(unit) === target && updateOwed(unit))
+    return steps.concat([{name: 'unit', params: {verb: 'restart', unit}, title: `Restart ${LANE_NAME[unit]} on what the update installed`,
+             desc: `It answers again in ${readyIn(unit)}.` + (unit === IMAGE_UNIT || unit === VIDEO_UNIT ? ' A generation in flight is lost.' : '')}]);
   const serving = servingEngine();
   // none enabled: the switch step makes this one the boot lane, as it does from any other
   const enabled = bootUnit();
@@ -676,7 +684,20 @@ function laneJourneySteps(target){
   return steps;
 }
 // What an update owes the engine of this unit, in words, or null (cockpit.py, stale_engines).
-function updateOwed(unit){ return (unit && ((F.update || {}).stale_engines || {})[unit]) || null; }
+// Only for an engine that serves: one that boots starts on what is installed, and the tier's
+// answer from before its restart offered that restart again, which would throw the boot away.
+// And not while a switch waits for its restart: the switch rewrote the same files, the "next
+// start loads" banner says so, and its Load applies both; the restart offered here undid the
+// switch (both found in review, 2026-10-17).
+function updateOwed(unit){
+  const why = unit && ((F.update || {}).stale_engines || {})[unit];
+  if (!why) return null;
+  const e = engines()[unit] || {};
+  if (e.state !== 'ready' && e.state !== 'degraded') return null;
+  const served = servedTarget(unit);
+  if (served && e.target && served !== e.target) return null;
+  return why;
+}
 function askJourney(target, opts = {}){
   if (offline) return toast('The cockpit is unreachable right now: nothing can be started.', 'err');
   if (loadRunning()) return toast(LOAD_RUNNING, 'warn');
@@ -918,7 +939,8 @@ function renderBanners(state, errors){
   // A switch that is not restarted yet: the unit loads one checkpoint at its next start while
   // the engine serves another, and nothing else on the page said so.
   const sv = servingEngine();
-  if (sv && (sv[0] === U27 || sv[0] === UFLASH || sv[0] === KOLIBRI_UNIT || isNemotron(sv[0]) || sv[0] === IMAGE_UNIT) && sv[1].state === 'ready'){
+  // degraded too: it still serves what it loaded, and the update banner below keeps quiet then
+  if (sv && (sv[0] === U27 || sv[0] === UFLASH || sv[0] === KOLIBRI_UNIT || isNemotron(sv[0]) || sv[0] === IMAGE_UNIT) && (sv[1].state === 'ready' || sv[1].state === 'degraded')){
     const served = servedTarget(sv[0]), next = sv[1].target;
     if (served && next && served !== next)
       add('info', `${TARGET_NAME[served]} is serving, and the lane's next start loads ${TARGET_NAME[next]}.`,

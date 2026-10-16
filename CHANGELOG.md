@@ -109,7 +109,12 @@ drafter's acceptance in the load. Library lists its checkpoint and its drafter w
   30 seconds the cockpit asks `engine-inputs.py`, the rule the installers go by (for the vLLM lanes,
   with the auth middleware their installer counts too), each call bounded at 5 s so that a docker
   that stops answering cannot freeze the page; the banner strip says what changed, and the lane's
-  card offers "Restart <lane> to apply the update", a Load of one step.
+  card offers "Restart <lane> to apply the update", a Load of one step. It says nothing while a
+  switch waits for its restart (the "next start loads" banner covers that one, and its Load
+  applies both) or while the engine boots, and the image and video lanes' runtime, which their
+  installer rebuilds, is not in it yet: their installer says when its restart is owed. A switch
+  to what a 27B unit or the flash launch script already loads no longer rewrites it, which read as
+  an update owed, as Kolibri, Nemotron and the image lane already did not.
 - Library counted a Nemotron target whole with its checkpoint alone: Bolt read "on disk" with its
   drafter missing, which its Load then fetched. A Nemotron target is whole now with its drafter
   whole too (the Download fetches both), and a lane's Start, which loads both from the cache, is

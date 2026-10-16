@@ -163,13 +163,19 @@ CODE_FILES = ("cockpit.py", "recipes.py", "lifecycle.py", "registry.py",
     "static/js/" + p.name for p in sorted((HERE / "static" / "js").glob("*.js")))
 
 
+# The repo's modules this process loads once are its code too: engine-inputs.py (stale_engines),
+# oc-fit-limits.py and oc-merge-limits.py (the opencode limits). A change to one of them alone
+# left the cockpit running the old code, and nothing said so (found in review, 2026-10-17).
+REPO_CODE_FILES = ("engine-inputs.py", "oc-fit-limits.py", "oc-merge-limits.py")
+
+
 def code_fingerprint() -> dict:
     """{name: "mtime:size"} for the files this process's behaviour comes from."""
     out = {}
     here = Path(__file__).resolve().parent
-    for name in CODE_FILES:
+    for name in CODE_FILES + REPO_CODE_FILES:
         try:
-            st = (here / name).stat()
+            st = ((REPO_DIR if name in REPO_CODE_FILES else here) / name).stat()
             out[name] = f"{int(st.st_mtime)}:{st.st_size}"
         except OSError:
             out[name] = "missing"
@@ -1593,6 +1599,24 @@ def stale_engines() -> dict:
     return out
 
 
+def refresh_owed():
+    """stale_engines() into the update tier's last answer now, the rest of that answer as it
+    was. After a restart or a switch the tier's answer was up to 30 s old: the engine just
+    restarted still read as owed one, and its card offered the restart again over the boot it
+    had started (found in review, 2026-10-17)."""
+    owed = stale_engines()
+    with STATE_LOCK:
+        cur = (STATE.get("update") or {}).get("data")
+        if not isinstance(cur, dict):
+            return
+        cur = dict(cur)
+        if owed:
+            cur["stale_engines"] = owed
+        else:
+            cur.pop("stale_engines", None)
+        STATE["update"] = {"data": cur, "ts": time.time()}
+
+
 @guard
 def collect_update():
     """{installed, latest, behind, stale_code, stale_engines}. Every field is optional: a box
@@ -2828,6 +2852,8 @@ def run_job(job: Job):
                 snap = fn()
                 with STATE_LOCK:
                     STATE[name] = {"data": snap, "ts": time.time()}
+        if job.action in ("unit", "switch"):
+            refresh_owed()
         with EVENT:
             EVENT.notify_all()
 

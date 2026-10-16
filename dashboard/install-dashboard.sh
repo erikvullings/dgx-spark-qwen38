@@ -111,7 +111,10 @@ sudo systemctl enable --now "$UNIT"
 # CHANGELOG.md is read at start too: the release the page names is its first heading,
 # and an update that changed only the page's static files and that file left the
 # cockpit naming the release before (v1.19.0 on a box updated to v1.20.0, 2026-10-01).
-if [ "$DASH_CHANGED" -eq 1 ] || stale_since "$UNIT" "$HERE"/*.py "$REPO_DIR/oc-fit-limits.py" "$REPO_DIR/CHANGELOG.md"; then
+# engine-inputs.py and oc-merge-limits.py too: the cockpit loads them once (what an update owes
+# the serving engine, the opencode limits), and a change to one alone left the old code in
+# memory (found in review, 2026-10-17).
+if [ "$DASH_CHANGED" -eq 1 ] || stale_since "$UNIT" "$HERE"/*.py "$REPO_DIR/oc-fit-limits.py" "$REPO_DIR/oc-merge-limits.py" "$REPO_DIR/engine-inputs.py" "$REPO_DIR/CHANGELOG.md"; then
   sudo systemctl try-restart "$UNIT"
 fi
 for _ in $(seq 1 15); do

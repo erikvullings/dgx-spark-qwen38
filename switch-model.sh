@@ -973,8 +973,15 @@ if [ "$TARGET_LANE" = "27b" ]; then
   if grep -q -- '--revision ' "$TARGET_UNIT"; then
     grep -q -- "--revision $TARGET_REV" "$STAGE_UNIT" || die "unit revision rewrite failed"
   fi
-  diff "$STAGE_UNIT" "$TARGET_UNIT" || true   # show exactly what changes
-  sudo install -m 644 "$STAGE_UNIT" "$TARGET_UNIT"
+  # A unit that already says all this keeps its date: rewritten, it read as an update the
+  # serving engine had not taken, and the cockpit offered a restart for nothing (found in
+  # review, 2026-10-17). Kolibri, Nemotron and the image lane compare the same way.
+  if cmp -s "$STAGE_UNIT" "$TARGET_UNIT"; then
+    echo "unit unchanged: it already loads $CHOICE"
+  else
+    diff "$STAGE_UNIT" "$TARGET_UNIT" || true   # show exactly what changes
+    sudo install -m 644 "$STAGE_UNIT" "$TARGET_UNIT"
+  fi
 else
   # Flash keeps its serving flags in a plain launch script; the unit just
   # points at it. Refresh --revision there.
@@ -999,8 +1006,13 @@ else
 
   grep -q -- "--revision $TARGET_REV" "$TMP_UNIT" || die "launch script revision rewrite failed"
   bash -n "$TMP_UNIT" || die "rewritten launch script does not parse"
-  diff "$TMP_UNIT" "$FLASH_LAUNCH" || true   # show exactly what changes
-  install -m 755 "$TMP_UNIT" "$FLASH_LAUNCH"
+  # the same for the launch script the flash unit runs (see the unit's case above)
+  if cmp -s "$TMP_UNIT" "$FLASH_LAUNCH"; then
+    echo "launch script unchanged: it already loads $CHOICE"
+  else
+    diff "$TMP_UNIT" "$FLASH_LAUNCH" || true   # show exactly what changes
+    install -m 755 "$TMP_UNIT" "$FLASH_LAUNCH"
+  fi
   # A switch changes the checkpoint, never the serving image: only install.sh builds
   # that. So a box that pulled a repo whose image pin moved would keep serving the old
   # one, silently, and the image is where the kernel fixes live (v1.6: the merged

@@ -169,6 +169,41 @@ class AnUpdateOwedToAServingEngine(unittest.TestCase):
                 units.add(re.search(r"^UNIT=(\S+)", text, re.M).group(1))
         self.assertEqual(units, set(self.cp.VLLM_UNITS))
 
+    def test_a_restart_or_a_switch_reads_what_is_owed_again(self):
+        # the tier's answer from before the restart said owed for up to 30 s, and the card offered
+        # the restart again over the boot it had started (found in review, 2026-10-17)
+        for action in ("unit", "switch"):
+            with self.subTest(action=action):
+                with self.cp.STATE_LOCK:
+                    self.cp.STATE["update"] = {"data": {"installed": "v1.35.0",
+                                                        "stale_engines": {"qwen38-nemotron.service": "Its unit changed (what it runs and how)"}},
+                                               "ts": 0.0}
+                self.fake({"qwen38-nemotron.service": "yes"})
+                self.assertTrue(self.cp.JOB_LOCK.acquire(blocking=False))   # run_job releases it
+                job = self.cp.Job(action, None, 20, fn=lambda j: (True, [], None))
+                self.cp.JOBS[job.id] = job
+                self.cp.JOB_CURRENT["id"] = job.id
+                self.cp.run_job(job)
+                data = self.cp.STATE["update"]["data"]
+                self.assertNotIn("stale_engines", data)
+                self.assertEqual(data.get("installed"), "v1.35.0")
+
+    def test_the_repo_modules_it_loads_are_part_of_the_code_the_cockpit_watches(self):
+        fp = self.cp.code_fingerprint()
+        dash = (DASH / "install-dashboard.sh").read_text()
+        for name in ("engine-inputs.py", "oc-fit-limits.py", "oc-merge-limits.py"):
+            with self.subTest(name=name):
+                self.assertIn(name, fp)
+                self.assertNotEqual(fp[name], "missing")
+                self.assertRegex(dash, r'stale_since "\$UNIT"[^\n]*"\$REPO_DIR/' + re.escape(name) + '"')
+
+    def test_with_no_update_answer_yet_a_finished_job_says_nothing(self):
+        with self.cp.STATE_LOCK:
+            self.cp.STATE.pop("update", None)
+        self.fake({"qwen38-nemotron.service": "yes"})
+        self.cp.refresh_owed()
+        self.assertNotIn("update", self.cp.STATE)
+
     def test_an_unreadable_rule_says_nothing_rather_than_fail(self):
         def boom():
             raise OSError("no engine-inputs.py")

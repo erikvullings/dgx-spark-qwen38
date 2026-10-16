@@ -7,10 +7,12 @@ is now kept when it started after every file it reads was last written, the run 
 none of them by content, and it answers. These pin engine-inputs.py (what the engine
 reads, found from its unit) and the installer's own decision lines, run as written,
 against fake systemctl, docker, python3 and curl."""
+import atexit
 import importlib.util
 import inspect
 import os
 import pathlib
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -44,6 +46,8 @@ class Box:
 
     def __init__(self, flash=False):
         self.t = pathlib.Path(tempfile.mkdtemp(prefix="engine-in-"))
+        # gone when the run ends: every run left its boxes in /tmp (found in review, 2026-10-17)
+        atexit.register(shutil.rmtree, self.t, True)
         self.cfg = self.t / "cfg"
         self.cfg.mkdir()
         self.hf = self.t / "hf"

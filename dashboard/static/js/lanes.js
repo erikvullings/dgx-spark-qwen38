@@ -109,7 +109,9 @@ function renderLanes(){
     const sameTarget = !laneTarget(unit) || laneTarget(unit) === target;
     // the verbs that make sense now
     // the lane that serves what it is set to has nothing to load, unless an update is owed to it
-    const owedUpdate = seated && sameTarget && !!updateOwed(unit);
+    // the same test as the journey's (base.js, laneJourneySteps): the card names the restart
+    // only when its Load is that restart
+    const owedUpdate = seated && laneTarget(unit) === target && !!updateOwed(unit);
     c.load.hidden = !has || (seated && sameTarget && !owedUpdate);
     setText(c.load, owedUpdate ? `Restart ${LANE_NAME[unit]} to apply the update`
       : seated || LANE_TARGETS[unit].length > 1 ? `Load ${TARGET_NAME[target]}` : `Load ${LANE_NAME[unit]}`);
