@@ -198,6 +198,7 @@ Through the proxy on `:30001`, with the box's key, as model `nemotron-3.5-bolt`:
 - Installed on demand by every plain `./install.sh` (its units; its first Load builds it and fetches
   its weights); `--with-nemotron` installs it whole now and brings it back after a `--no-nemotron`,
   which leaves it out (51 GB: 26 of checkpoint and drafter, 25 of image);
-  `./install-nemotron.sh --uninstall` removes its unit and its local image (the weights stay, and so
-  does the vLLM image it was built on, which the script names for you to remove). The key's
-  middleware stays while the Kolibri lane uses it.
+  `./install-nemotron.sh --uninstall` removes its unit, and its local image unless the Nemotron Super
+  lane runs it too (the weights stay, and so does the vLLM image it was built on, which the script
+  names for you to remove). The key's middleware stays while another vLLM lane (Kolibri, Nemotron
+  Super) uses it.
