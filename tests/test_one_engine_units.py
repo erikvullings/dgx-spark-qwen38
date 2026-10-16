@@ -26,7 +26,7 @@ LANES = {
     "qwen38-nemotron.service": ("qwen38-nemotron.service.template",),
     "qwen38-nemotron-super.service": ("qwen38-nemotron-super.service.template",),
 }
-ALL = set(LANES) | {"qwen38-llamacpp.service"}
+ALL = set(LANES)
 
 
 def unit_list(template, key):

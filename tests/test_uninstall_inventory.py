@@ -123,11 +123,6 @@ class UninstallKnowsEveryResidue(unittest.TestCase):
                   "dashboard/install-agent.sh", "switch-model.sh",
                   "install-image.sh", "install-video.sh", "install-speech.sh"):
             written |= _literals(f, r"qwen38-[a-z-]+\.service|opencode-web\.service")
-        # Mentioning is not writing: the switch's rollback guard names the llama.cpp
-        # unit only to DISABLE it before a lane boots (reviews, 2026-09-28), and by
-        # this file's own doctrine that unit is operator-made, created by no repo
-        # script, so the inventory is correct to ignore it here too.
-        written -= {"qwen38-llamacpp.service"}
         # by the variable that names /etc/systemd/system since v1.18.7 (a test runs the
         # script against a sandbox)
         self.assertIn("SYSTEMD_DIR=/etc/systemd/system\n", self.ui_text)

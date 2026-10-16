@@ -69,12 +69,12 @@ class TheUnit(unittest.TestCase):
         text = UNIT_TPL.read_text()
         after = [ln for ln in text.splitlines() if ln.startswith("After=")][0]
         for other in ("qwen38-sglang.service", "qwen38-flash.service",
-                      "qwen38-image.service", "qwen38-llamacpp.service"):
+                      "qwen38-image.service"):
             self.assertIn(other, after,
                           f"{other} is not ordered after in After=")
         conflicts = [ln for ln in text.splitlines() if ln.startswith("Conflicts=")][0]
         for other in ("qwen38-sglang.service", "qwen38-flash.service",
-                      "qwen38-image.service", "qwen38-llamacpp.service"):
+                      "qwen38-image.service"):
             self.assertIn(other, conflicts)
         # and the other three lanes name this one back, both directions
         for tpl in ("qwen38-sglang.service.template", "qwen38-sglang-1m.service.template",

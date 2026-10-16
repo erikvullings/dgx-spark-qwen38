@@ -104,21 +104,6 @@ dl_free_gb(){ { df -BG --output=avail "$(existing "${1:-$HF_CACHE}")" 2>/dev/nul
 . "$REPO_DIR/lanes.sh"
 [ "$FETCH_ONLY" -eq 1 ] || text_lane_migrate
 
-# qwen38-llamacpp.service is the fifth serving unit: no installer here enables it,
-# but every lane template lists it in Conflicts=, so a box where an operator enabled
-# it by hand would boot it beside the lane just switched to, one of the two boot
-# jobs quietly removed from the transaction (found in the branch's reviews,
-# 2026-09-28). Disabling it keeps "exactly one serving unit enabled" true; a box
-# with an older sudoers file refuses that one line, and the switch must not die for
-# it, because the Conflicts= line already loses it the boot either way.
-disable_rollback_lane(){
-  if [ -f /etc/systemd/system/qwen38-llamacpp.service ] && systemctl is-enabled --quiet qwen38-llamacpp.service 2>/dev/null; then
-    echo "disabling qwen38-llamacpp.service at boot (unit file kept)"
-    sudo systemctl disable qwen38-llamacpp.service \
-      || echo "         (not disabled: this box's sudoers file predates the line; the boot conflict resolves against it anyway)"
-  fi
-}
-
 # ── The Kolibri lane: a text lane on vLLM, switched to the way the image lane is ────
 # For the proxy and its clients Kolibri is a text lane like the 27B and the flash: the same
 # port, the same key. But nothing in the four hundred lines below is about it: they rewrite
@@ -207,11 +192,10 @@ if [ "$CHOICE" = "kolibri" ] || [ "$CHOICE" = "kolibri-nvfp4" ]; then
       sudo systemctl disable "$TEXT_UNIT_NAME"
     fi
   done
-  disable_rollback_lane
   sudo systemctl enable "$KOLIBRI_UNIT_NAME" >/dev/null 2>&1 || sudo systemctl enable "$KOLIBRI_UNIT_NAME"
   sudo systemctl daemon-reload
   RUNNING=""
-  for u in qwen38-sglang.service qwen38-flash.service qwen38-image.service qwen38-video.service qwen38-nemotron.service qwen38-nemotron-super.service qwen38-llamacpp.service; do
+  for u in qwen38-sglang.service qwen38-flash.service qwen38-image.service qwen38-video.service qwen38-nemotron.service qwen38-nemotron-super.service; do
     systemctl is-active --quiet "$u" 2>/dev/null && RUNNING="$u"
   done
   printf '\n\033[1;32mSwitch queued: %s (%s)\033[0m\n' "$KOL_MODEL" "$KOLIBRI_UNIT_NAME"
@@ -409,7 +393,6 @@ if [ "$CHOICE" = "nemotron" ] || [ "$CHOICE" = "nemotron-super" ]; then
       sudo systemctl disable "$TEXT_UNIT_NAME"
     fi
   done
-  disable_rollback_lane
   if [ "$CHOICE" = "nemotron" ]; then
     sudo systemctl enable "$NEMOTRON_UNIT_NAME" >/dev/null 2>&1 || sudo systemctl enable "$NEMOTRON_UNIT_NAME"
   else
@@ -417,7 +400,7 @@ if [ "$CHOICE" = "nemotron" ] || [ "$CHOICE" = "nemotron-super" ]; then
   fi
   sudo systemctl daemon-reload
   RUNNING=""
-  for u in qwen38-sglang.service qwen38-flash.service qwen38-image.service qwen38-video.service qwen38-kolibri.service qwen38-nemotron.service qwen38-nemotron-super.service qwen38-llamacpp.service; do
+  for u in qwen38-sglang.service qwen38-flash.service qwen38-image.service qwen38-video.service qwen38-kolibri.service qwen38-nemotron.service qwen38-nemotron-super.service; do
     [ "$u" = "$NEM_UNIT_NAME" ] && continue
     systemctl is-active --quiet "$u" 2>/dev/null && RUNNING="$u"
   done
@@ -582,11 +565,10 @@ if [ "$CHOICE" = "image" ] || [ "$CHOICE" = "image-turbo" ]; then
       sudo systemctl disable "$TEXT_UNIT_NAME"
     fi
   done
-  disable_rollback_lane
   sudo systemctl enable "$IMAGE_UNIT_NAME" >/dev/null 2>&1 || sudo systemctl enable "$IMAGE_UNIT_NAME"
   sudo systemctl daemon-reload
   RUNNING=""
-  for u in qwen38-sglang.service qwen38-flash.service qwen38-video.service qwen38-kolibri.service qwen38-nemotron.service qwen38-nemotron-super.service qwen38-llamacpp.service; do
+  for u in qwen38-sglang.service qwen38-flash.service qwen38-video.service qwen38-kolibri.service qwen38-nemotron.service qwen38-nemotron-super.service; do
     systemctl is-active --quiet "$u" 2>/dev/null && RUNNING="$u"
   done
   printf '\n\033[1;32mSwitch queued: %s (%s)\033[0m\n' "$IMG_MODEL" "$IMAGE_UNIT_NAME"
@@ -717,11 +699,10 @@ if [ "$CHOICE" = "video" ]; then
       sudo systemctl disable "$OTHER_UNIT_NAME"
     fi
   done
-  disable_rollback_lane
   sudo systemctl enable "$VIDEO_UNIT_NAME" >/dev/null 2>&1 || sudo systemctl enable "$VIDEO_UNIT_NAME"
   sudo systemctl daemon-reload
   RUNNING=""
-  for u in qwen38-sglang.service qwen38-flash.service qwen38-image.service qwen38-kolibri.service qwen38-nemotron.service qwen38-nemotron-super.service qwen38-llamacpp.service; do
+  for u in qwen38-sglang.service qwen38-flash.service qwen38-image.service qwen38-kolibri.service qwen38-nemotron.service qwen38-nemotron-super.service; do
     systemctl is-active --quiet "$u" 2>/dev/null && RUNNING="$u"
   done
   printf '\n\033[1;32mSwitch queued: %s (%s)\033[0m\n' "$VID_MODEL" "$VIDEO_UNIT_NAME"
@@ -1063,7 +1044,6 @@ if [ -f "$NEMOTRON_SUPER_UNIT" ] && systemctl is-enabled --quiet "$NEMOTRON_SUPE
   echo "disabling $NEMOTRON_SUPER_UNIT_NAME at boot (unit file kept for switching back)"
   sudo systemctl disable "$NEMOTRON_SUPER_UNIT_NAME"
 fi
-disable_rollback_lane
 sudo systemctl enable "$TARGET_UNIT_NAME" >/dev/null 2>&1 || sudo systemctl enable "$TARGET_UNIT_NAME"
 text_lane_note "$TARGET_UNIT_NAME"
 sudo systemctl daemon-reload
@@ -1196,7 +1176,6 @@ systemctl is-active --quiet "$VIDEO_UNIT_NAME" 2>/dev/null && RUNNING="$VIDEO_UN
 systemctl is-active --quiet "$KOLIBRI_UNIT_NAME" 2>/dev/null && RUNNING="$KOLIBRI_UNIT_NAME"
 systemctl is-active --quiet "$NEMOTRON_UNIT_NAME" 2>/dev/null && RUNNING="$NEMOTRON_UNIT_NAME"
 systemctl is-active --quiet "$NEMOTRON_SUPER_UNIT_NAME" 2>/dev/null && RUNNING="$NEMOTRON_SUPER_UNIT_NAME"
-systemctl is-active --quiet qwen38-llamacpp.service 2>/dev/null && RUNNING="qwen38-llamacpp.service"
 printf '\n\033[1;32mSwitch queued: %s (%s)\033[0m\n' "$TARGET_REPO" "$TARGET_UNIT_NAME"
 if [ -n "$RUNNING" ]; then
   echo "Effective after:  sudo systemctl stop $RUNNING && sudo systemctl start $TARGET_UNIT_NAME   (or next reboot)"

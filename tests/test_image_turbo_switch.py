@@ -176,7 +176,7 @@ def run(d, unit, grid, choice):
               f'CHOICE={choice}; REPO_DIR="{REPO}"; CONFIG_DIR="{d}/cfg"; HF_CACHE="{d}/hf"; DL_NO_BARS=1\n'
               f'IMAGE_UNIT="{unit}"; IMAGE_UNIT_NAME=qwen38-image.service\n'
               f'IMG_STAGE="$CONFIG_DIR/qwen38-image.service.switch-stage"\n'
-              'mkdir -p "$CONFIG_DIR"\ndisable_rollback_lane(){ :; }\n'
+              'mkdir -p "$CONFIG_DIR"\n'
               + DLFREE + BLOCK)
     parts = grid if isinstance(grid, str) else "config,pipeline,stage" if grid else ""
     env = {"PATH": f"{d}/bin:/usr/bin:/bin", "HOME": str(d), "FAKE_LOG": str(d / "log"),

@@ -442,12 +442,12 @@ if [ "$SMOKE" -eq 0 ]; then step "Done (smoke test skipped)"; exit 0; fi
 
 step "6/6 Proving it serves (one image, then the box goes back to the lane it was serving)"
 # The restore must mirror this unit's Conflicts= set: starting the image lane stops every
-# engine lane, so whatever was serving (text, flash, the video lane, or the legacy
-# llamacpp unit) has to be started back. Checking only the two text lanes left a box that
+# engine lane, so whatever was serving (text, flash, the video lane or a vLLM lane) has
+# to be started back. Checking only the two text lanes left a box that
 # was serving on video with no engine at all after the smoke test (found in review,
 # 2026-09-26).
 WAS_LLM=""
-for u in qwen38-sglang.service qwen38-flash.service qwen38-video.service qwen38-kolibri.service qwen38-nemotron.service qwen38-nemotron-super.service qwen38-llamacpp.service; do
+for u in qwen38-sglang.service qwen38-flash.service qwen38-video.service qwen38-kolibri.service qwen38-nemotron.service qwen38-nemotron-super.service; do
   systemctl is-active --quiet "$u" 2>/dev/null && WAS_LLM="$u"
 done
 # If this lane was already serving, the test leaves it serving: stopping it on the way out
