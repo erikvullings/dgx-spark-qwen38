@@ -81,7 +81,7 @@ own Super VL recipe sets, which Bolt's unit now carries (`--block-size 64 --pref
 before the first token, then 5.0 s (22,055 tokens recomputed a turn, then 8,231); opencode, four turns
 with a tool each, 28 s a turn, then 11 to 12 s (47 % of its prompts from the cache, then 83 %); Claude
 Code, 23 s a turn, then 4 to 9 s (none of its 18,600-token requests from the cache, then 72 to 73 %).
-The same greedy answers, 12 of 12, the same speed, and a cache of 6.5 million tokens instead of 4.8 (24
+The same greedy answers, 12 of 12, the same speed, and a cache of 6.5 million tokens instead of 4.7 (24
 requests at the full window instead of 18). The drafter's window still keeps Bolt's hits on
 4,544-token blocks: a copy of the drafter without it started a turn in 0.2 s and decoded about five
 times slower at 40,000 tokens, so the lane keeps NVIDIA's drafter. Super VL, measured the same way:

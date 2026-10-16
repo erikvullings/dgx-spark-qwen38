@@ -222,9 +222,6 @@ except (OSError, ValueError, KeyError, TypeError, AttributeError):
 sys.exit(0 if shards and all((snap / s).exists() for s in shards) else 1)
 PY
 }
-# Whether the DFlash2 draft a 27B unit names is in the cache it mounts, at its revision (a ref
-# such as main read through refs/): its config and a weights file (a snapshot links a file only
-# once it is whole).
 # The Hugging Face cache the first of these units or launchers mounts (-v <cache>:/root/.cache/
 # huggingface), nothing when none does; and the nearest folder of a path that exists, where df and
 # stat can look. One reading each for every script: they were copied into a dozen places, a fix to
@@ -237,6 +234,9 @@ existing(){  # $1 a path
   local p="$1"; while [ ! -e "$p" ]; do p="$(dirname "$p")"; done; printf '%s\n' "$p"
 }
 
+# Whether the DFlash2 draft a 27B unit names is in the cache it mounts, at its revision (a ref
+# such as main read through refs/): its config and a weights file (a snapshot links a file only
+# once it is whole).
 draft_in_cache(){  # $1 the 27B unit
   local repo rev hf snap f
   repo="$({ grep -oE -- '--speculative-draft-model-path [^ ]+' "$1" 2>/dev/null || true; } | head -1 | cut -d' ' -f2)"
