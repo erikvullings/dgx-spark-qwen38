@@ -43,8 +43,9 @@ class TheCacheItServesFrom(unittest.TestCase):
         env = {"HOME": str(d)}
         if env_cache:
             env["HF_CACHE"] = env_cache
+        # lanes.sh, which the installer sources: the unit's cache is read through it (unit_hf_cache)
         script = (f'set -euo pipefail\nINSTALLED="{d}/image.service"; CONFIG_DIR="{d}"; TEXT_UNITS="{d}/text.service"\n'
-                  + self.CACHE + 'echo "CACHE=$HF_CACHE"\n')
+                  + f'LANES_UNIT_DIR="{d}"; . "{REPO}/lanes.sh"\n' + self.CACHE + 'echo "CACHE=$HF_CACHE"\n')
         rc, out = bash(script, env)
         return next(ln[6:] for ln in out.splitlines() if ln.startswith("CACHE="))
 
@@ -62,7 +63,8 @@ class TheCacheItServesFrom(unittest.TestCase):
 
 
 class TheSpaceWhereItLands(unittest.TestCase):
-    SPACE = block('existing(){ local p="$1"', 'echo "OK: $(uname -m), key present, checkpoint')
+    # from lanes.sh's existing, which the block uses (the installer sources lanes.sh), to the line it says
+    SPACE = block("# existing: lanes.sh's", 'echo "OK: $(uname -m), key present, checkpoint')
 
     def run_space(self, have_gib, free_w, free_r=None, mode="full"):
         d = pathlib.Path(tempfile.mkdtemp(prefix="img-space-"))
@@ -82,7 +84,7 @@ class TheSpaceWhereItLands(unittest.TestCase):
         script = ('set -euo pipefail\ndie(){ echo "DIE: $*"; exit 1; }\n'
                   f'HF_CACHE="{d}/hf"; LANE_DIR="{d}/lane"; MODEL=Qwen/Qwen-Image-2.1; WEIGHTS_GB=31; RUNTIME_GB=11; MODE={mode}\n'
                   'step(){ echo "STEP $*"; }\ninstall_service(){ echo SERVICE; }\n'
-                  + self.SPACE)
+                  + f'. "{REPO}/lanes.sh"\n' + self.SPACE)
         return bash(script, {"HOME": str(d)}, [stub])
 
     def test_a_download_that_just_started_needs_the_whole_checkpoint(self):

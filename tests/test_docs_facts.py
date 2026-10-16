@@ -141,10 +141,10 @@ class TheDiskNeedsAreThePreflights(unittest.TestCase):
         # --no-nemotron line, in the README and in the CHANGELOG (found in review, 2026-10-16)
         sh = (REPO / "install.sh").read_text()
         overview = sh[sh.index("A plain run installs the box"):sh.index("  --no-start ")]
-        said = {name.lower(): gb for name, gb in
-                re.findall(r"the (image|video|Kolibri|Nemotron) lane \([^)]*?(\d+)\)", overview)}
-        flags = dict(re.findall(r"--no-(image|video|kolibri|nemotron)\s+leave the .*?\((?:vLLM, )?(\d+) GB\)", sh))
-        self.assertEqual(set(said), {"image", "video", "kolibri", "nemotron"}, overview)
+        said = {name.lower().replace(" ", "-"): gb for name, gb in
+                re.findall(r"the (image|video|Kolibri|Nemotron Super|Nemotron) lane \([^)]*?(\d+)\)", overview)}
+        flags = dict(re.findall(r"--no-(image|video|kolibri|nemotron-super|nemotron)\s+leave the .*?\((?:vLLM, )?(\d+) GB\)", sh))
+        self.assertEqual(set(said), {"image", "video", "kolibri", "nemotron", "nemotron-super"}, overview)
         self.assertEqual(said, flags)
 
 

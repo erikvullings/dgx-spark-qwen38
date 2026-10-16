@@ -54,7 +54,7 @@ for a in "$@"; do case "$a" in
   # first loads the lane. The checkpoint comes with that Load's switch, as for any Load.
   --units-only) [ "$MODE" = full ] || die "--units-only and --prepare are the two halves of an install: one at a time"; MODE=units ;;
   --prepare) [ "$MODE" = full ] || die "--units-only and --prepare are the two halves of an install: one at a time"; MODE=prepare ;;
-  -h|--help) sed -n '2,30p' "$0"; exit 0 ;;
+  -h|--help) awk 'NR > 1 && !/^#/ { exit } NR > 1' "$0"; exit 0 ;;
   *) die "unknown option: $a" ;;
 esac; done
 
@@ -100,8 +100,7 @@ installed_env(){ { grep -m1 -E "^Environment=$1=" "$INSTALLED" 2>/dev/null || tr
 TEXT_UNITS="${TEXT_UNITS:-/etc/systemd/system/qwen38-sglang.service $CONFIG_DIR/launch-flash.sh}"
 text_cache(){
   # shellcheck disable=SC2086  # a list of paths
-  { grep -hoE -- '-v [^ :]+:/root/\.cache/huggingface' $TEXT_UNITS 2>/dev/null || true; } \
-    | head -1 | sed -e 's/^-v //' -e 's|:/root/\.cache/huggingface$||'
+  unit_hf_cache $TEXT_UNITS
 }
 HF_CACHE="${HF_CACHE:-$(installed_env HF_HOME)}"; HF_CACHE="${HF_CACHE:-$(text_cache)}"
 HF_CACHE="${HF_CACHE:-$HOME/.cache/huggingface}"
@@ -148,7 +147,7 @@ if [ "$ACTION" = uninstall ]; then
     # by that switch: removing it left no engine at all (same trap as the image lane).
     # The lane before video comes back.
     TEXT_ENABLED=0
-    for u in qwen38-sglang.service qwen38-flash.service qwen38-image.service qwen38-kolibri.service qwen38-nemotron.service; do
+    for u in qwen38-sglang.service qwen38-flash.service qwen38-image.service qwen38-kolibri.service qwen38-nemotron.service qwen38-nemotron-super.service; do
       systemctl is-enabled --quiet "$u" 2>/dev/null && TEXT_ENABLED=1
     done
     if [ "$WAS_BOOT" -eq 1 ] && [ "$TEXT_ENABLED" -eq 0 ]; then
@@ -254,7 +253,7 @@ if [ "$MODE" = units ]; then
 fi
 # Measured where each part lands, by bytes in the blobs: the folder alone says nothing,
 # since huggingface_hub creates it before the first byte.
-existing(){ local p="$1"; while [ ! -e "$p" ]; do p="$(dirname "$p")"; done; printf '%s\n' "$p"; }
+# existing: lanes.sh's (the nearest folder of a path that exists)
 free_gb(){ { df -BG --output=avail "$(existing "$1")" 2>/dev/null || true; } | tail -1 | tr -dc '0-9'; }
 HAVE_B="$({ du -s --apparent-size -B1 "$HF_CACHE/hub/models--${MODEL//\//--}/blobs" 2>/dev/null || true; } | cut -f1)"
 # what is left, in whole GB (a complete checkpoint is 0 left, not 1)
@@ -459,7 +458,7 @@ if [ "$SMOKE" -eq 0 ]; then step "Done (smoke test skipped)"; exit 0; fi
 
 step "6/6 Proving it serves (one short video, then the box goes back to the lane it was serving)"
 WAS_OTHER=""
-for u in qwen38-sglang.service qwen38-flash.service qwen38-image.service qwen38-kolibri.service qwen38-nemotron.service qwen38-llamacpp.service; do
+for u in qwen38-sglang.service qwen38-flash.service qwen38-image.service qwen38-kolibri.service qwen38-nemotron.service qwen38-nemotron-super.service qwen38-llamacpp.service; do
   systemctl is-active --quiet "$u" 2>/dev/null && WAS_OTHER="$u"
 done
 # If this lane was already serving, the test leaves it serving: stopping it on the way

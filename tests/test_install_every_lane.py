@@ -288,9 +288,10 @@ def vllm_lane_disabled(case, lane, secondary, lane_boot):
     (d / "systemctl").write_text(f'#!/bin/bash\n[ "$1" = is-enabled ] && [ "${{@: -1}}" = qwen38-{lane}.service ]\n')
     for f in ("sudo", "systemctl"):
         (d / f).chmod(0o755)
-    boots = {"kolibri": 0, "nemotron": 0, lane: lane_boot}
+    boots = {"kolibri": 0, "nemotron": 0, "nemotron-super": 0, lane: lane_boot}
     r = subprocess.run(["bash", "-c", f'set -euo pipefail\nSECONDARY="{secondary}"; KOLIBRI_BOOT={boots["kolibri"]}; '
-                        f'NEMOTRON_BOOT={boots["nemotron"]}\n' + block], capture_output=True, text=True, timeout=30,
+                        f'NEMOTRON_BOOT={boots["nemotron"]}; NEMOTRON_SUPER_BOOT={boots["nemotron-super"]}\n' + block],
+                       capture_output=True, text=True, timeout=30,
                        env={"PATH": f"{d}:/usr/bin:/bin"})
     case.assertEqual(r.returncode, 0, r.stderr)
     return log.read_text().splitlines() if log.exists() else []
@@ -330,6 +331,42 @@ class ABoxBootingNemotron(unittest.TestCase):
         self.assertEqual(vllm_lane_disabled(self, "nemotron", "", 0), ["sudo systemctl disable qwen38-nemotron.service"])
         self.assertEqual(vllm_lane_disabled(self, "nemotron", "", 1), [], "the run that keeps Nemotron at boot")
         self.assertEqual(vllm_lane_disabled(self, "nemotron", "flash", 0), [], "the run for the other text lane")
+
+
+class ABoxBootingNemotronSuper(unittest.TestCase):
+    """The Nemotron Super lane keeps the same promise, on its own unit."""
+
+    def resolve(self, text_lane, env=None):
+        home = tmp("lane-nemotron-super-home-")
+        cfg = home / ".config" / "qwen38"
+        cfg.mkdir(parents=True)
+        (cfg / "text-lane").write_text(text_lane + "\n")      # the record a switch to it wrote
+        (cfg / "launch-flash.sh").write_text(ABoxBootingKolibri.LAUNCHER)
+        units = {"qwen38-sglang.service": SGL_UNIT, "qwen38-flash.service": ABoxBootingKolibri.FLASH_UNIT,
+                 "qwen38-nemotron-super.service": "[Service]\n"}
+        rc, out, _ = converge(units, enabled=("qwen38-nemotron-super.service",), env={**SHARED, **(env or {})}, home=home)
+        self.assertEqual(rc, 97, out)
+        return out
+
+    def test_it_stays_the_boot_lane_and_the_flash_before_it_is_brought_up_to_date(self):
+        out = self.resolve("qwen38-flash.service")
+        self.assertIn("The Nemotron Super lane is this box's boot lane", out)
+        self.assertNotIn("The Nemotron lane is this box's boot lane", out)
+        self.assertIn("INSTALLED=flash", out)
+
+    def test_a_27b_before_it_stays_the_27b(self):
+        self.assertIn("INSTALLED=27b", self.resolve("qwen38-sglang.service"))
+
+    def test_an_explicit_target_takes_the_boot_back(self):
+        out = self.resolve("qwen38-flash.service", env={"MODEL_CHOICE": "flash"})
+        self.assertIn("MODEL_CHOICE=flash given on a box booting the Nemotron Super lane", out)
+        self.assertNotIn("The Nemotron Super lane is this box's boot lane", out)
+
+    def test_the_run_that_takes_the_boot_back_disables_it(self):
+        self.assertEqual(vllm_lane_disabled(self, "nemotron-super", "", 0),
+                         ["sudo systemctl disable qwen38-nemotron-super.service"])
+        self.assertEqual(vllm_lane_disabled(self, "nemotron-super", "", 1), [], "the run that keeps it at boot")
+        self.assertEqual(vllm_lane_disabled(self, "nemotron-super", "flash", 0), [], "the run for the other text lane")
 
 
 class ItLeavesWhatIsSharedToItsParent(unittest.TestCase):
@@ -649,14 +686,24 @@ class TheOtherLanesAndTheirProofs(unittest.TestCase):
     def end(self, units=(), want_image=1, want_video=1, with_image=0, with_video=0, with_flash=0,
             second_state="installed", second_fresh=1, image_rc=0, video_rc=0, prove_fail="",
             want_kolibri=1, with_kolibri=0, kolibri_rc=0, prepared=(), all_weights=0, begun=(), second_new=None,
-            want_nemotron=1, with_nemotron=0, nemotron_rc=0):
+            want_nemotron=1, with_nemotron=0, nemotron_rc=0, want_super=1, with_super=0, super_rc=0,
+            nemotron_image=None):
         t = tmp("lane-end-")
         unit_dir = t / "units"
         unit_dir.mkdir()
+        hf = t / "hf"
         for u in units:
             vllm = u.removeprefix("qwen38-").removesuffix(".service")
-            (unit_dir / u).write_text(f"[Unit]\nExecStart=/usr/bin/docker run qwen38-{vllm}:test\n"
-                                      if vllm in ("kolibri", "nemotron") else "[Unit]\n")
+            if vllm in ("nemotron", "nemotron-super"):
+                # the two Nemotron lanes run one image, Bolt's, from the cache their unit mounts
+                (unit_dir / u).write_text(f"[Unit]\nExecStart=/usr/bin/docker run -v {hf}:/root/.cache/huggingface "
+                                          f"qwen38-nemotron:test org/{vllm} --revision {'a' * 40} \\\n")
+            else:
+                (unit_dir / u).write_text(f"[Unit]\nExecStart=/usr/bin/docker run qwen38-{vllm}:test\n"
+                                          if vllm == "kolibri" else "[Unit]\n")
+        # a Nemotron lane's own first Load fetched its checkpoint into that cache
+        for lane in set(prepared) & {"nemotron", "nemotron-super"}:
+            (hf / "hub" / f"models--org--{lane}").mkdir(parents=True)
         # a prepared lane: its runtime is on the box (the venv and its wheel's note; a vLLM lane's image)
         for lane in prepared:
             if lane in ("image", "video"):
@@ -677,7 +724,8 @@ class TheOtherLanesAndTheirProofs(unittest.TestCase):
         log = t / "calls"
         log.write_text("")
         for name, rc in (("install-image.sh", image_rc), ("install-video.sh", video_rc),
-                         ("install-kolibri.sh", kolibri_rc), ("install-nemotron.sh", nemotron_rc)):
+                         ("install-kolibri.sh", kolibri_rc), ("install-nemotron.sh", nemotron_rc),
+                         ("install-nemotron-super.sh", super_rc)):
             stub(repo / name, f'echo "{name} $*" >> "{log}"\n'
                               f'case "$*" in *--no-smoke*) exit {rc} ;; esac\nexit 0')
         (repo / "oc-fit-limits.py").write_text(f"open({str(log)!r}, 'a').write('oc-fit-limits\\n')\n")
@@ -686,22 +734,30 @@ class TheOtherLanesAndTheirProofs(unittest.TestCase):
         stub(bin_ / "sudo", f'echo "sudo $*" >> "{log}"')
         stub(bin_ / "curl", "exit 0")
         # docker image inspect: a vLLM lane's image is there when that lane is prepared
-        stub(bin_ / "docker", 'case "$*" in ' + "".join(f"*qwen38-{v}:*) exit {0 if v in prepared else 1} ;; "
+        # the Nemotron lanes' one image is there when either lane is prepared
+        have = {"kolibri": "kolibri" in prepared,
+                "nemotron": bool({"nemotron", "nemotron-super"} & set(prepared)) if nemotron_image is None else nemotron_image}
+        stub(bin_ / "docker", 'case "$*" in ' + "".join(f"*qwen38-{v}:*) exit {0 if have[v] else 1} ;; "
                                                         for v in ("kolibri", "nemotron")) + "esac\nexit 1")
         block = self.BLOCK.replace("/etc/systemd/system/", f"{unit_dir}/")
+        # lanes.sh first, as install.sh sources it (side_nemotron_begun reads a unit's cache through it),
+        # then this test's own stale_since
         script = ("set -euo pipefail\nstep(){ echo \"STEP $*\"; }\ndie(){ echo \"DIE $*\"; exit 1; }\n"
+                  + f'LANES_UNIT_DIR="{unit_dir}"; CONFIG_DIR="{t}"; . "{REPO}/lanes.sh"\n'
                   "stale_since(){ return 1; }\n" + f'HOME="{t}/home"; ALL_WEIGHTS={all_weights}\n'
                   + self.MODES.replace("/etc/systemd/system/", f"{unit_dir}/") +
                   f'prove_text_lane(){{ echo "prove $*" >> "{log}"; case "$1" in {prove_fail or "__none__"}) return 1 ;; esac; }}\n'
                   f'REPO_DIR="{repo}"; CONFIG_DIR="{t}"; LANE=27b; UNIT_NAME=qwen38-sglang.service; SMOKE_MODEL=qwen3.8-27b\n'
                   f'KOLIBRI_UNIT_PATH="{unit_dir}/qwen38-kolibri.service"; NEMOTRON_UNIT_PATH="{unit_dir}/qwen38-nemotron.service"\n'
+                  f'NEMOTRON_SUPER_UNIT_PATH="{unit_dir}/qwen38-nemotron-super.service"\n'
                   'KEEPALIVE_UNIT=qwen38-keepalive.service; PORT=30000; PROXY_PORT=30001; CONTEXT_MODE=1m; OPENCODE=1; KA_CHANGED=0\n'
                   f"WANT_IMAGE={want_image}; WANT_VIDEO={want_video}; WITH_IMAGE={with_image}; WITH_VIDEO={with_video}\n"
                   f"WITH_FLASH={with_flash}; WITH_27B=0; WANT_KOLIBRI={want_kolibri}; WITH_KOLIBRI={with_kolibri}\n"
                   f"WANT_NEMOTRON={want_nemotron}; WITH_NEMOTRON={with_nemotron}\n"
+                  f"WANT_NEMOTRON_SUPER={want_super}; WITH_NEMOTRON_SUPER={with_super}\n"
                   f"SECOND_LANE=flash; SECOND_UNIT=qwen38-flash.service; SECOND_STATE={second_state}; SECOND_FRESH={second_fresh}; SECOND_NEW={second_fresh if second_new is None else second_new}\n"
                   + block + '\necho "STATES second=$SECOND_STATE image=$IMAGE_STATE video=$VIDEO_STATE kolibri=$KOLIBRI_STATE'
-                  ' nemotron=$NEMOTRON_STATE"\n')
+                  ' nemotron=$NEMOTRON_STATE super=$NEMOTRON_SUPER_STATE"\n')
         r = subprocess.run(["bash", "-c", script], capture_output=True, text=True, timeout=30,
                            env={"PATH": f"{bin_}:/usr/bin:/bin"})
         return r.returncode, r.stdout + r.stderr, log.read_text().splitlines()
@@ -712,76 +768,109 @@ class TheOtherLanesAndTheirProofs(unittest.TestCase):
         self.assertEqual(rc, 0, out)
         self.assertEqual(calls, [
             "install-image.sh --units-only", "install-video.sh --units-only", "install-kolibri.sh --units-only",
-            "install-nemotron.sh --units-only",
+            "install-nemotron.sh --units-only", "install-nemotron-super.sh --units-only",
             "sudo systemctl stop qwen38-sglang.service",
             "prove qwen38-flash.service qwen3.8-flash-next stop",
             "prove qwen38-sglang.service qwen3.8-27b",
             "sudo systemctl restart qwen38-keepalive.service", "oc-fit-limits"])
-        self.assertIn("STATES second=proved image=units video=units kolibri=units nemotron=units", out)
+        self.assertIn("STATES second=proved image=units video=units kolibri=units nemotron=units super=units", out)
 
     def test_all_weights_prepares_then_proves_each_lane_and_its_own_last(self):
         rc, out, calls = self.end(all_weights=1)
         self.assertEqual(rc, 0, out)
         self.assertEqual(calls, [
             "install-image.sh --no-smoke", "install-video.sh --no-smoke", "install-kolibri.sh --no-smoke",
-            "install-nemotron.sh --no-smoke",
+            "install-nemotron.sh --no-smoke", "install-nemotron-super.sh --no-smoke",
             "sudo systemctl stop qwen38-sglang.service",
             "prove qwen38-flash.service qwen3.8-flash-next stop",
-            "install-image.sh ", "install-video.sh ", "install-kolibri.sh ", "install-nemotron.sh ",
+            "install-image.sh ", "install-video.sh ", "install-kolibri.sh ", "install-nemotron.sh ", "install-nemotron-super.sh ",
             "prove qwen38-sglang.service qwen3.8-27b",
             "sudo systemctl restart qwen38-keepalive.service", "oc-fit-limits"])
-        self.assertIn("STATES second=proved image=proved video=proved kolibri=proved nemotron=proved", out)
+        self.assertIn("STATES second=proved image=proved video=proved kolibri=proved nemotron=proved super=proved", out)
 
     def test_a_lane_not_prepared_yet_stays_units_only_on_an_update(self):
-        rc, out, calls = self.end(units=("qwen38-image.service", "qwen38-video.service", "qwen38-kolibri.service", "qwen38-nemotron.service"),
+        rc, out, calls = self.end(units=("qwen38-image.service", "qwen38-video.service", "qwen38-kolibri.service", "qwen38-nemotron.service", "qwen38-nemotron-super.service"),
                                   second_fresh=0)
         self.assertEqual(rc, 0, out)
         self.assertEqual(calls, ["install-image.sh --units-only", "install-video.sh --units-only",
-                                 "install-kolibri.sh --units-only", "install-nemotron.sh --units-only"])
-        self.assertIn("STATES second=installed image=units video=units kolibri=units nemotron=units", out)
+                                 "install-kolibri.sh --units-only", "install-nemotron.sh --units-only", "install-nemotron-super.sh --units-only"])
+        self.assertIn("STATES second=installed image=units video=units kolibri=units nemotron=units super=units", out)
 
     def test_a_routine_update_proves_nothing_and_keeps_the_lane_serving(self):
-        rc, out, calls = self.end(units=("qwen38-image.service", "qwen38-video.service", "qwen38-kolibri.service", "qwen38-nemotron.service"),
-                                  second_fresh=0, prepared=("image", "video", "kolibri", "nemotron"))
+        rc, out, calls = self.end(units=("qwen38-image.service", "qwen38-video.service", "qwen38-kolibri.service", "qwen38-nemotron.service", "qwen38-nemotron-super.service"),
+                                  second_fresh=0, prepared=("image", "video", "kolibri", "nemotron", "nemotron-super"))
         self.assertEqual(rc, 0, out)
         self.assertEqual(calls, ["install-image.sh --no-smoke", "install-video.sh --no-smoke",
-                                 "install-kolibri.sh --no-smoke", "install-nemotron.sh --no-smoke"])
-        self.assertIn("STATES second=installed image=installed video=installed kolibri=installed nemotron=installed", out)
+                                 "install-kolibri.sh --no-smoke", "install-nemotron.sh --no-smoke", "install-nemotron-super.sh --no-smoke"])
+        self.assertIn("STATES second=installed image=installed video=installed kolibri=installed nemotron=installed super=installed", out)
+
+    def test_a_nemotron_lane_is_begun_by_its_own_load_not_by_the_image_the_two_share(self):
+        # Bolt's first Load built the image the two Nemotron lanes run: Super VL, never loaded,
+        # stays its units only, and the reverse (found in review, 2026-10-16: the image alone
+        # called it begun, and the update installed it whole, 77 GB fetched nobody asked for)
+        units = ("qwen38-image.service", "qwen38-video.service", "qwen38-kolibri.service",
+                 "qwen38-nemotron.service", "qwen38-nemotron-super.service")
+        for loaded, other in (("nemotron", "nemotron-super"), ("nemotron-super", "nemotron")):
+            with self.subTest(loaded=loaded):
+                rc, out, calls = self.end(units=units, second_fresh=0, prepared=(loaded,))
+                self.assertEqual(rc, 0, out)
+                self.assertIn(f"install-{loaded}.sh --no-smoke", calls)
+                self.assertIn(f"install-{other}.sh --units-only", calls)
+                self.assertNotIn(f"install-{other}.sh --no-smoke", calls)
+        # the image there with neither checkpoint: neither lane is begun
+        rc, out, calls = self.end(units=units, second_fresh=0, nemotron_image=True)
+        self.assertEqual(rc, 0, out)
+        self.assertIn("install-nemotron.sh --units-only", calls)
+        self.assertIn("install-nemotron-super.sh --units-only", calls)
+
+    def test_all_weights_proves_the_nemotron_lane_the_other_one_never_loaded(self):
+        # --all-weights on a box where only Bolt was loaded: Super VL is new there, installed
+        # whole and proved (the shared image called it begun, and it was installed unproved)
+        units = ("qwen38-image.service", "qwen38-video.service", "qwen38-kolibri.service",
+                 "qwen38-nemotron.service", "qwen38-nemotron-super.service")
+        rc, out, calls = self.end(units=units, second_fresh=0, all_weights=1,
+                                  prepared=("image", "video", "kolibri", "nemotron"))
+        self.assertEqual(rc, 0, out)
+        self.assertIn("install-nemotron-super.sh --no-smoke", calls)
+        self.assertIn("install-nemotron-super.sh ", calls)          # its proof
+        self.assertNotIn("install-nemotron.sh ", calls)              # Bolt was there: no proof
+        self.assertIn("super=proved", out)
 
     def test_a_lane_from_before_the_wheels_note_is_updated_whole(self):
         # its venv and no note: installed whole before v1.24.0 (image) or v1.25.0 (video), when
         # the note did not exist; an update takes it whole, as every version did, and proves
         # nothing (found in review, 2026-10-15: it was given its units only, its runtime left)
-        rc, out, calls = self.end(units=("qwen38-image.service", "qwen38-video.service", "qwen38-kolibri.service", "qwen38-nemotron.service"),
-                                  second_fresh=0, begun=("image", "video"), prepared=("kolibri", "nemotron"))
+        rc, out, calls = self.end(units=("qwen38-image.service", "qwen38-video.service", "qwen38-kolibri.service", "qwen38-nemotron.service", "qwen38-nemotron-super.service"),
+                                  second_fresh=0, begun=("image", "video"), prepared=("kolibri", "nemotron", "nemotron-super"))
         self.assertEqual(rc, 0, out)
         self.assertEqual(calls, ["install-image.sh --no-smoke", "install-video.sh --no-smoke",
-                                 "install-kolibri.sh --no-smoke", "install-nemotron.sh --no-smoke"])
-        self.assertIn("STATES second=installed image=installed video=installed kolibri=installed nemotron=installed", out)
+                                 "install-kolibri.sh --no-smoke", "install-nemotron.sh --no-smoke", "install-nemotron-super.sh --no-smoke"])
+        self.assertIn("STATES second=installed image=installed video=installed kolibri=installed nemotron=installed super=installed", out)
 
     def test_all_weights_proves_the_lanes_a_box_had_the_units_of_only(self):
         # a box installed on demand (every unit there, no runtime): --all-weights builds each lane
         # whole and, new to it, proves each (found in review, 2026-10-15: it proved none)
-        units = ("qwen38-image.service", "qwen38-video.service", "qwen38-kolibri.service", "qwen38-nemotron.service")
+        units = ("qwen38-image.service", "qwen38-video.service", "qwen38-kolibri.service", "qwen38-nemotron.service", "qwen38-nemotron-super.service")
         rc, out, calls = self.end(units=units, second_fresh=0, second_new=1, all_weights=1)
         self.assertEqual(rc, 0, out)
         self.assertEqual(calls, [
             "install-image.sh --no-smoke", "install-video.sh --no-smoke", "install-kolibri.sh --no-smoke",
-            "install-nemotron.sh --no-smoke",
+            "install-nemotron.sh --no-smoke", "install-nemotron-super.sh --no-smoke",
             "sudo systemctl stop qwen38-sglang.service",
             "prove qwen38-flash.service qwen3.8-flash-next stop",
-            "install-image.sh ", "install-video.sh ", "install-kolibri.sh ", "install-nemotron.sh ",
+            "install-image.sh ", "install-video.sh ", "install-kolibri.sh ", "install-nemotron.sh ", "install-nemotron-super.sh ",
             "prove qwen38-sglang.service qwen3.8-27b",
             "sudo systemctl restart qwen38-keepalive.service", "oc-fit-limits"])
-        self.assertIn("STATES second=proved image=proved video=proved kolibri=proved nemotron=proved", out)
+        self.assertIn("STATES second=proved image=proved video=proved kolibri=proved nemotron=proved super=proved", out)
 
     def test_a_lane_left_out_is_not_touched(self):
         rc, out, calls = self.end(units=("qwen38-video.service",), want_image=0, want_kolibri=0, second_fresh=0,
-                                  prepared=("video",), want_nemotron=0)
+                                  prepared=("video",), want_nemotron=0, want_super=0)
         self.assertEqual(calls, ["install-video.sh --no-smoke"])
         self.assertIn("image=off", out)
         self.assertIn("kolibri=off", out)
         self.assertIn("nemotron=off", out)
+        self.assertIn("super=off", out)
 
     def test_a_lane_that_does_not_install_is_not_proved_and_the_rest_goes_on(self):
         rc, out, calls = self.end(image_rc=1, all_weights=1)
@@ -799,41 +888,59 @@ class TheOtherLanesAndTheirProofs(unittest.TestCase):
         self.assertEqual(rc, 0, out)
         self.assertNotIn("install-nemotron.sh ", calls)
         self.assertIn("install-kolibri.sh ", calls)
+        self.assertIn("install-nemotron-super.sh ", calls)
         self.assertIn("nemotron=failed", out)
+        rc, out, calls = self.end(super_rc=1, all_weights=1)
+        self.assertEqual(rc, 0, out)
+        self.assertNotIn("install-nemotron-super.sh ", calls)
+        self.assertIn("install-nemotron.sh ", calls)
+        self.assertIn("super=failed", out)
 
     def test_naming_a_lane_proves_it_on_an_update(self):
-        units = ("qwen38-image.service", "qwen38-video.service", "qwen38-kolibri.service", "qwen38-nemotron.service")
-        prepared = ("image", "video", "kolibri", "nemotron")
+        units = ("qwen38-image.service", "qwen38-video.service", "qwen38-kolibri.service", "qwen38-nemotron.service", "qwen38-nemotron-super.service")
+        prepared = ("image", "video", "kolibri", "nemotron", "nemotron-super")
         rc, out, calls = self.end(units=units, second_fresh=0, with_video=1, prepared=prepared)
-        self.assertEqual(calls[4:], ["sudo systemctl stop qwen38-sglang.service", "install-video.sh ",
+        self.assertEqual(calls[5:], ["sudo systemctl stop qwen38-sglang.service", "install-video.sh ",
                                      "prove qwen38-sglang.service qwen3.8-27b",
                                      "sudo systemctl restart qwen38-keepalive.service", "oc-fit-limits"])
         self.assertIn("video=proved", out)
         rc, out, calls = self.end(units=units, second_fresh=0, with_flash=1, prepared=prepared)
         self.assertIn("prove qwen38-flash.service qwen3.8-flash-next stop", calls)
         rc, out, calls = self.end(units=units, second_fresh=0, with_kolibri=1, prepared=prepared)
-        self.assertEqual(calls[4:], ["sudo systemctl stop qwen38-sglang.service", "install-kolibri.sh ",
+        self.assertEqual(calls[5:], ["sudo systemctl stop qwen38-sglang.service", "install-kolibri.sh ",
                                      "prove qwen38-sglang.service qwen3.8-27b",
                                      "sudo systemctl restart qwen38-keepalive.service", "oc-fit-limits"])
         self.assertIn("kolibri=proved", out)
         rc, out, calls = self.end(units=units, second_fresh=0, with_nemotron=1, prepared=prepared)
-        self.assertEqual(calls[4:], ["sudo systemctl stop qwen38-sglang.service", "install-nemotron.sh ",
+        self.assertEqual(calls[5:], ["sudo systemctl stop qwen38-sglang.service", "install-nemotron.sh ",
                                      "prove qwen38-sglang.service qwen3.8-27b",
                                      "sudo systemctl restart qwen38-keepalive.service", "oc-fit-limits"])
-        self.assertIn("nemotron=proved", out)
+        self.assertIn("nemotron=proved super=installed", out)
+        rc, out, calls = self.end(units=units, second_fresh=0, with_super=1, prepared=prepared)
+        self.assertEqual(calls[5:], ["sudo systemctl stop qwen38-sglang.service", "install-nemotron-super.sh ",
+                                     "prove qwen38-sglang.service qwen3.8-27b",
+                                     "sudo systemctl restart qwen38-keepalive.service", "oc-fit-limits"])
+        self.assertIn("nemotron=installed super=proved", out)
 
     def test_naming_a_lane_not_prepared_yet_installs_it_whole_and_proves_it(self):
-        units = ("qwen38-image.service", "qwen38-video.service", "qwen38-kolibri.service", "qwen38-nemotron.service")
+        units = ("qwen38-image.service", "qwen38-video.service", "qwen38-kolibri.service", "qwen38-nemotron.service", "qwen38-nemotron-super.service")
         rc, out, calls = self.end(units=units, second_fresh=0, with_image=1)
-        self.assertEqual(calls[:4], ["install-image.sh --no-smoke", "install-video.sh --units-only",
-                                     "install-kolibri.sh --units-only", "install-nemotron.sh --units-only"])
+        self.assertEqual(calls[:5], ["install-image.sh --no-smoke", "install-video.sh --units-only",
+                                     "install-kolibri.sh --units-only", "install-nemotron.sh --units-only", "install-nemotron-super.sh --units-only"])
         self.assertIn("install-image.sh ", calls)
-        self.assertIn("image=proved video=units kolibri=units nemotron=units", out)
+        self.assertIn("image=proved video=units kolibri=units nemotron=units super=units", out)
         rc, out, calls = self.end(units=units, second_fresh=0, with_nemotron=1)
-        self.assertEqual(calls[:4], ["install-image.sh --units-only", "install-video.sh --units-only",
-                                     "install-kolibri.sh --units-only", "install-nemotron.sh --no-smoke"])
+        self.assertEqual(calls[:5], ["install-image.sh --units-only", "install-video.sh --units-only",
+                                     "install-kolibri.sh --units-only", "install-nemotron.sh --no-smoke",
+                                     "install-nemotron-super.sh --units-only"])
         self.assertIn("install-nemotron.sh ", calls)
-        self.assertIn("image=units video=units kolibri=units nemotron=proved", out)
+        self.assertIn("image=units video=units kolibri=units nemotron=proved super=units", out)
+        rc, out, calls = self.end(units=units, second_fresh=0, with_super=1)
+        self.assertEqual(calls[:5], ["install-image.sh --units-only", "install-video.sh --units-only",
+                                     "install-kolibri.sh --units-only", "install-nemotron.sh --units-only",
+                                     "install-nemotron-super.sh --no-smoke"])
+        self.assertIn("install-nemotron-super.sh ", calls)
+        self.assertIn("image=units video=units kolibri=units nemotron=units super=proved", out)
 
     def test_a_proof_that_fails_is_said_and_the_served_lane_still_comes_back(self):
         rc, out, calls = self.end(prove_fail="qwen38-flash.service")

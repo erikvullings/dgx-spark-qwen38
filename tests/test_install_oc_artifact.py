@@ -20,7 +20,7 @@ INSTALL = REPO / "install.sh"
 
 def block() -> str:
     text = INSTALL.read_text()
-    start = text.index("OC_27B=0; OC_FLASH=0; OC_KOLIBRI=0; OC_NEMOTRON=0\n")
+    start = text.index("OC_27B=0; OC_FLASH=0; OC_KOLIBRI=0; OC_NEMOTRON=0; OC_NEMOTRON_SUPER=0\n")
     end = text.index("\nPYEOF\n", start) + len("\nPYEOF\n")
     return text[start:end]
 
@@ -32,7 +32,7 @@ PINS = "\n".join(line for line in INSTALL.read_text().splitlines()
 
 def generate(lane, mode, unit_ctx=None, flash_unit=False, model="RadixArk/Qwen3.8-27B-NVFP4",
              pair=None, names=False, flash_running=None, kolibri_unit=False, kolibri_boot=False, doc=False,
-             nemotron_unit=False, nemotron_boot=False):
+             nemotron_unit=False, nemotron_boot=False, super_unit=False, super_boot=False):
     t = pathlib.Path(tempfile.mkdtemp(prefix="oc-art-"))
     kolibri = t / "qwen38-kolibri.service"
     if kolibri_unit:
@@ -40,6 +40,9 @@ def generate(lane, mode, unit_ctx=None, flash_unit=False, model="RadixArk/Qwen3.
     nemotron = t / "qwen38-nemotron.service"
     if nemotron_unit:
         nemotron.write_text("ExecStart=... nvidia/NVIDIA-Nemotron-3.5-Bolt-74B-A9B-24GB --revision c6cc2e8f ...\n")
+    nsuper = t / "qwen38-nemotron-super.service"
+    if super_unit:
+        nsuper.write_text("ExecStart=... nvidia/NVIDIA-Nemotron-3.5-Super-VL-120B-A12B-NVFP4 --revision 8a115b9d ...\n")
     if flash_running:
         (t / "launch-flash.sh").write_text(
             "docker run img python3 -m sglang.launch_server --model-path RadixArk/Qwen3.8-Flash-Next-NVFP4 "
@@ -55,6 +58,7 @@ def generate(lane, mode, unit_ctx=None, flash_unit=False, model="RadixArk/Qwen3.
               f'LANE={lane}; CONTEXT_MODE={mode}; SGL_UNIT_PATH="{sgl}"; FLASH_UNIT_PATH="{flash}"\n'
               f'KOLIBRI_UNIT_PATH="{kolibri}"; KOLIBRI_BOOT={1 if kolibri_boot else 0}\n'
               f'NEMOTRON_UNIT_PATH="{nemotron}"; NEMOTRON_BOOT={1 if nemotron_boot else 0}\n'
+              f'NEMOTRON_SUPER_UNIT_PATH="{nsuper}"; NEMOTRON_SUPER_BOOT={1 if super_boot else 0}\n'
               f'MODEL_CHOICE={"flash" if lane == "flash" else "stock"}\n'
               f'REPO_DIR="{REPO}"; CONFIG_DIR="{t}"; OC_PORT=30001; OC_CTX={ctx}; OC_OUT={out}\n'
               'OC_LABEL=local; OPENCODE_PIN=1\n' + block())
@@ -199,6 +203,49 @@ class ABoxBootingNemotron(unittest.TestCase):
     def test_without_its_unit_there_is_no_nemotron_provider(self):
         d = generate("27b", "1m", unit_ctx=1010000, pair=("551000", "160000"), kolibri_unit=True, doc=True)
         self.assertNotIn("nemotron", d["provider"])
+
+
+class ABoxBootingNemotronSuper(unittest.TestCase):
+    """The Nemotron Super lane, its own provider (its own model and window): serving at boot it is
+    opencode's default, its compaction sized from its window; installed beside another lane it is
+    offered, Bolt's provider beside it; with no unit, absent."""
+
+    def test_the_default_the_compaction_and_the_provider_are_super_vls(self):
+        d = generate("27b", "1m", unit_ctx=1010000, flash_unit=True, pair=("551000", "160000"),
+                     nemotron_unit=True, super_unit=True, super_boot=True, doc=True)
+        self.assertEqual(d["model"], "nemotron-super/nemotron-3.5-super-vl")
+        keep = int(subprocess.run([str(REPO / "oc-limits.sh"), "--preserve", "990000"], capture_output=True,
+                                  text=True, check=True).stdout)
+        self.assertEqual(d["compaction"]["preserve_recent_tokens"], keep)
+        m = d["provider"]["nemotron-super"]["models"]["nemotron-3.5-super-vl"]
+        self.assertEqual(m["limit"], {"context": 990000, "input": 990000, "output": 32000})
+        self.assertEqual(m["name"], "Nemotron 3.5 Super VL (local, 1M)")
+        self.assertTrue(m["attachment"])
+        self.assertEqual(m["modalities"]["input"], ["text", "image"])
+        self.assertEqual(m["variants"]["none"], {"chat_template_kwargs": {"enable_thinking": False}})
+        self.assertEqual(m["variants"]["low"], {"chat_template_kwargs": {"enable_thinking": True, "medium_effort": True}})
+        self.assertEqual(m["variants"]["high"], {"chat_template_kwargs": {"enable_thinking": True}})
+        self.assertEqual(d["provider"]["nemotron-super"]["name"], "Nemotron 3.5 Super VL (DGX Spark)")
+        # Bolt's provider beside it, its own model and window
+        self.assertIn("nemotron-3.5-bolt", d["provider"]["nemotron"]["models"])
+
+    def test_its_pair_compacts_late_and_still_fits_its_window(self):
+        ctx, out, *_ = subprocess.run([str(REPO / "oc-limits.sh"), "nemotron-super"], capture_output=True,
+                                      text=True, check=True).stdout.split()
+        ctx, out = int(ctx), int(out)
+        self.assertEqual((ctx, out), (990000, 32000))
+        self.assertLessEqual(ctx - 20000 + 43863 + out, 1048576, "threshold + worst step + answer fit the window")
+
+    def test_installed_but_not_at_boot_it_is_offered_and_the_27b_keeps_its_own(self):
+        d = generate("27b", "1m", unit_ctx=1010000, pair=("551000", "160000"), super_unit=True, doc=True)
+        self.assertEqual(d["model"], "qwen38/qwen3.8-27b")
+        self.assertIn("nemotron-super", d["provider"])
+        self.assertNotIn("nemotron", d["provider"])
+        self.assertEqual(d["compaction"]["preserve_recent_tokens"], 132000)
+
+    def test_without_its_unit_there_is_no_super_provider(self):
+        d = generate("27b", "1m", unit_ctx=1010000, pair=("551000", "160000"), nemotron_unit=True, doc=True)
+        self.assertNotIn("nemotron-super", d["provider"])
 
 
 if __name__ == "__main__":
