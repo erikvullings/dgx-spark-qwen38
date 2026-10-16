@@ -336,7 +336,7 @@ before relaying them at once: measured 2026-08-23, median inter-event gap 0 ms
 / max 1307 ms through the proxy vs a steady 118 ms direct. read1() returns as
 soon as bytes are available, so the stream stays token by token.
 """
-import base64, collections, concurrent.futures, hashlib, hmac, http.client, json, math, os, queue, re, select, socket, ssl, string, subprocess, sys, threading, time, urllib.parse, urllib.request, urllib.error, uuid
+import base64, collections, concurrent.futures, hashlib, hmac, http.client, ipaddress, json, math, os, queue, re, select, socket, ssl, string, subprocess, sys, threading, time, urllib.parse, urllib.request, urllib.error, uuid
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 
@@ -3036,9 +3036,81 @@ def sse_error(msg):
                        "error": {"type": "api_error", "message": f"keepalive-proxy: {msg}"}})
     return b"event: error\ndata: " + data.encode() + b"\n\n"
 
+# The network's share of this port (2026-10-16). Every connection holds a thread and a
+# descriptor, up to CLIENT_IO_S before its request line is even read, so any peer that reached
+# the port, with no key, could open connections until the descriptors ran out (1,024 for a
+# service by default) and no other was accepted, the cockpit's and the local agents' included
+# (found in review, 2026-10-16). A connection from another machine now counts against a
+# ceiling per address and one for the network as a whole, and past either it is closed before
+# any thread starts for it, as the cockpit's relay does (dashboard/agent_relay.py). Loopback is
+# not counted: the clients on the box (opencode, Claude Code, the cockpit, the benches) keep
+# the port whatever the network does. 0 turns a ceiling off.
+MAX_CONN_PER_ADDRESS = int(os.environ.get("PROXY_MAX_CONN_PER_ADDRESS", "64") or 0)
+MAX_REMOTE_CONN = int(os.environ.get("PROXY_MAX_REMOTE_CONN", "256") or 0)
+
+
+def _counted_peer(addr):
+    """True for a peer whose connections count against the network's ceilings: any but loopback."""
+    try:
+        return not ipaddress.ip_address(addr).is_loopback
+    except ValueError:
+        return True
+
+
 class Server(ThreadingHTTPServer):
     daemon_threads = True
     request_queue_size = 128
+
+    def __init__(self, *args, **kwargs):
+        self._conn_lock = threading.Lock()
+        self._conn_open = {}            # address -> connections open from it, network peers only
+        self._conn_counted = set()      # the connections counted there, released once they end
+        self._conn_refusal_logged = 0.0
+        super().__init__(*args, **kwargs)
+
+    def _conn_release(self, addr):
+        with self._conn_lock:
+            n = self._conn_open.get(addr, 0) - 1
+            if n > 0:
+                self._conn_open[addr] = n
+            else:
+                self._conn_open.pop(addr, None)
+
+    def process_request(self, request, client_address):
+        addr = str(client_address[0]) if client_address else ""
+        counted = _counted_peer(addr)
+        if counted:
+            with self._conn_lock:
+                full = ((MAX_REMOTE_CONN > 0 and sum(self._conn_open.values()) >= MAX_REMOTE_CONN)
+                        or (MAX_CONN_PER_ADDRESS > 0 and self._conn_open.get(addr, 0) >= MAX_CONN_PER_ADDRESS))
+                if not full:
+                    self._conn_open[addr] = self._conn_open.get(addr, 0) + 1
+                    self._conn_counted.add(request)
+            if full:
+                if time.time() - self._conn_refusal_logged >= 60:    # one line a minute, not one a connection
+                    self._conn_refusal_logged = time.time()
+                    log(f"{addr} REFUSED a connection: past {MAX_CONN_PER_ADDRESS} open from one address "
+                        f"or {MAX_REMOTE_CONN} from the network (PROXY_MAX_CONN_PER_ADDRESS, PROXY_MAX_REMOTE_CONN)")
+                self.shutdown_request(request)
+                return
+        try:
+            super().process_request(request, client_address)
+        except BaseException:
+            self._conn_end(request, addr)
+            raise
+
+    def _conn_end(self, request, addr):
+        with self._conn_lock:
+            counted = request in self._conn_counted
+            self._conn_counted.discard(request)
+        if counted:
+            self._conn_release(addr)
+
+    def process_request_thread(self, request, client_address):
+        try:
+            super().process_request_thread(request, client_address)
+        finally:
+            self._conn_end(request, str(client_address[0]) if client_address else "")
 
     def handle_error(self, request, client_address):
         # A TLS client that vanishes mid-handshake (S6), and a client that cuts the wire
