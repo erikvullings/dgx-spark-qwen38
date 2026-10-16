@@ -201,13 +201,18 @@ vlane_preflight(){  # $1... the files of the repository this needs beside it
 # which skipped Docker's check. Reads WEIGHTS_GB, IMAGE_GB, LOCAL_IMAGE and MODE; sets WEIGHTS_NEED,
 # IMAGE_NEED and DOCKER_ROOT, and refuses when a disk is short, before anything is downloaded.
 vlane_room(){  # $1 the base image, $2... the checkpoints' repos
-  local base="$1" r b have=0 what free_w free_d hf_dev docker_dev
+  local base="$1" r b have=0 what free_w free_d hf_dev docker_dev dl_gb
   shift
   for r in "$@"; do
     b="$({ du -s --apparent-size -B1 -L "$HF_CACHE/hub/models--${r//\//--}/blobs" 2>/dev/null || true; } | cut -f1)"
     have=$(( have + ${b:-0} ))
   done
-  WEIGHTS_NEED=$(( (WEIGHTS_GB * 1000000000 - have) / 1000000000 )); [ "$WEIGHTS_NEED" -ge 0 ] || WEIGHTS_NEED=0
+  # In GiB, rounded up, as df -BG counts the free space and IMAGE_GB the image: the download is
+  # given in GB of 10^9 bytes, and its GB held against GiB asked a Kolibri-1 install for five
+  # GiB too many (found in review, 2026-10-16).
+  WEIGHTS_NEED=$(( (WEIGHTS_GB * 1000000000 - have + 1073741823) / 1073741824 )); [ "$WEIGHTS_NEED" -ge 0 ] || WEIGHTS_NEED=0
+  # and what is left to download, in GB as the lane's docs give it, for the line that says so
+  dl_gb=$(( (WEIGHTS_GB * 1000000000 - have + 999999999) / 1000000000 )); [ "$dl_gb" -ge 0 ] || dl_gb=0
   # --prepare: the checkpoints are the Load's switch's to fetch, and to measure
   [ "$MODE" = prepare ] && WEIGHTS_NEED=0
   DOCKER_ROOT="$(docker info --format '{{.DockerRootDir}}' 2>/dev/null || echo /var/lib/docker)"
@@ -227,7 +232,7 @@ vlane_room(){  # $1 the base image, $2... the checkpoints' repos
     [ "${free_d:-0}" -ge "$IMAGE_NEED" ] \
       || die "${free_d:-?} GB free under $DOCKER_ROOT, the image needs about $IMAGE_NEED GB. Free some space, or ./install.sh --no-$VLANE."
   fi
-  echo "OK: $(uname -m), key present, $what $([ "$MODE" = prepare ] && echo "left to the Load's switch" || { [ "$WEIGHTS_NEED" -eq 0 ] && echo 'already cached'; } || echo "$WEIGHTS_NEED GB to download") into $HF_CACHE, engine on $ENGINE_BIND:$PORT"
+  echo "OK: $(uname -m), key present, $what $([ "$MODE" = prepare ] && echo "left to the Load's switch" || { [ "$WEIGHTS_NEED" -eq 0 ] && echo 'already cached'; } || echo "$dl_gb GB to download") into $HF_CACHE, engine on $ENGINE_BIND:$PORT"
 }
 
 # ── The checkpoints ──────────────────────────────────────────────────────────────────────────
