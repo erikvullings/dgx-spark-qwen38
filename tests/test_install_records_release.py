@@ -39,8 +39,12 @@ def git_head():
 
 
 def record_install_func():
-    start = TEXT.index("record_install() {")
-    return TEXT[start:TEXT.index("\n}\n", start) + 3]
+    """record_install and collect_choices, which gives it the choices of the command line."""
+    funcs = []
+    for name in ("collect_choices() {", "record_install() {"):
+        start = TEXT.index(name)
+        funcs.append(TEXT[start:TEXT.index("\n}\n", start) + 3])
+    return "".join(funcs)
 
 
 def run_record_install(how, units, cfg, repo=REPO, secondary="", lane="27b", **resolved):
@@ -73,11 +77,11 @@ def written(cfg):
 
 class EveryRunThatEndsWellRecordsIt(unittest.TestCase):
     def test_each_successful_end_of_a_run_records_how_it_ended(self):
-        """Five lines end a run with exit 0 past the flags (--help ends on its own line): four
-        end the run that serves, each right after record_install with its path, and one ends
-        the run for the other text lane, which records nothing."""
+        """Six lines end a run with exit 0 past the flags (--help ends on its own line): four
+        end the run that serves, each right after record_install with its path, one ends the
+        run for the other text lane, and one --plan, before step 1: neither records anything."""
         ends = [i for i, ln in enumerate(LINES) if ln.strip() == "exit 0"]
-        self.assertEqual(len(ends), 5, "a new way for install.sh to end: decide what it records")
+        self.assertEqual(len(ends), 6, "a new way for install.sh to end: decide what it records")
         before = [LINES[i - 1].strip() for i in ends]
         self.assertEqual(sorted(b for b in before if b.startswith("record_install ")),
                          ["record_install full", "record_install no-service", "record_install no-start",
@@ -85,7 +89,11 @@ class EveryRunThatEndsWellRecordsIt(unittest.TestCase):
         secondary = TEXT.index('if [ -n "$SECONDARY" ]; then\n  # Installed, not enabled and not started')
         own_exit = TEXT.index("  exit 0\n", secondary)
         self.assertNotIn("record_install", TEXT[secondary:own_exit])
-        self.assertEqual(sum(1 for b in before if not b.startswith("record_install ")), 1)
+        plan = TEXT.index('if [ "$PLAN_ONLY" -eq 1 ]; then\n  echo\n  echo "--plan: nothing was changed.')
+        plan_exit = TEXT.index("  exit 0\n", plan)
+        self.assertNotIn("record_install", TEXT[plan:plan_exit])
+        self.assertLess(plan_exit, TEXT.index('step "1/10 Preflight checks"'), "--plan ends before step 1")
+        self.assertEqual(sum(1 for b in before if not b.startswith("record_install ")), 2)
 
     def test_the_paths_are_the_right_ones(self):
         for marker, how in (('if [ "$NO_SERVICE" -eq 1 ]; then\n  apply_context_configs', "no-service"),

@@ -50,7 +50,8 @@ class EachLaneIsWantedUnlessLeftOut(unittest.TestCase):
         if marker:
             cfg.mkdir(parents=True)
             (cfg / "image.off").write_text("left out\n")
-        script = (f'set -euo pipefail\nCONFIG_DIR="{cfg}"\n{self.FUNC}\n'
+        # PLAN_ONLY=0 as install.sh sets it before its flags (--plan leaves the markers alone)
+        script = (f'set -euo pipefail\nCONFIG_DIR="{cfg}"\nPLAN_ONLY=0\n{self.FUNC}\n'
                   f'lane_wanted image {no} {with_}\necho "WANT=$WANT"\n')
         r = subprocess.run(["bash", "-c", script], capture_output=True, text=True, timeout=30,
                            env={"PATH": "/usr/bin:/bin"})

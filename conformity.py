@@ -333,6 +333,71 @@ def verdict(config_dir, knob, value):
     return classify(knob, value, None, record, since)
 
 
+# What a run says of each setting it keeps or moves, by the reason classify() gives.
+PLAN_WHY = {
+    "recorded": "recorded as your choice",
+    "never-default": "no release installed it by default",
+    "box-after": "this box was installed after {old} moved the default, so it was chosen",
+    "box-unknown": "the age of this box cannot be told, so it stays",
+    "env": "set on this command line",
+    "site": "a setting of this site, which updates never move",
+}
+
+
+def plan(config_dir, lane, chose=None, repo_dir=REPO, units_dir=UNITS, home=None):
+    """[{group, knob, value, recommended, why, old}]: each setting that differs from the
+    recommended one once this run is done, in the order of KNOBS (2026-10-17). group:
+      moves  an old default this box never chose: the run moves it to the recommended value
+      yours  kept: recorded, set on this command line, or never a default (why says which)
+      site   a setting of the site, kept
+    chose: {knob: value} set on this command line, which the run serves whatever the units say.
+    The classing is classify()'s, the one install.sh's convergence asks verdict() for."""
+    config_dir = Path(config_dir)
+    record, _ = load_record(config_dir)
+    since, _ = box_since(config_dir, record)
+    seen = observe(units_dir, config_dir, lane=lane, repo_dir=repo_dir)
+    chose = dict(chose or {})
+    rec = _recommended_beside(recommended(repo_dir, home), {**seen, **chose})
+    out = []
+    for knob in KNOBS:
+        if knob in chose:
+            if chose[knob] != rec[knob]:
+                out.append({"group": "site" if knob in SITE else "yours", "knob": knob, "value": chose[knob],
+                            "recommended": rec[knob], "why": "env", "old": None})
+            continue
+        if knob not in seen or seen[knob] == rec[knob]:
+            continue
+        v = classify(knob, seen[knob], rec[knob], record, since)
+        group = "moves" if v.cls == "old-default" else "site" if v.why == "site" else "yours"
+        out.append({"group": group, "knob": knob, "value": seen[knob], "recommended": rec[knob],
+                    "why": v.why, "old": v.old.tag if v.old else None})
+    return out
+
+
+# The settings that are no variable of their own, as the list names them.
+PLAN_NAMES = {"target.27b": "27B target", "target.flash": "flash target", "DRAFT2": "27B drafter"}
+
+
+def plan_lines(items, release):
+    """The list a run prints before its first step: one line when nothing differs."""
+    head = f"This box against what {release or 'this release'} recommends"
+    if not items:
+        return [f"{head}: the same, nothing of yours differs."]
+    lines = [f"{head}:"]
+    for group, label in (("moves", "moves now"), ("yours", "stays yours"), ("site", "site setting")):
+        for it in (i for i in items if i["group"] == group):
+            if group == "moves":
+                keep = ("the line above gives the variables that keep it" if it["knob"] == "DRAFT2"
+                        else f"to keep it: {it['knob']}={it['value']} ./install.sh")
+                text = (f"{PLAN_NAMES.get(it['knob'], it['knob'])} {it['value']}, to {it['recommended']}: the default "
+                        f"since {it['old']}, and nothing records it as chosen here ({keep})")
+            else:
+                text = (f"{PLAN_NAMES.get(it['knob'], it['knob'])} {it['value']} (recommended: {it['recommended']}), "
+                        + PLAN_WHY[it["why"]].format(old=it["old"]))
+            lines.append(f"  {label:<13}{text}")
+    return lines
+
+
 def next_choices(record, seen, rec, chose, since, now):
     """The choices a run records: {knob: {value, since, how}}.
     chose: {knob: value} the operator passed explicitly on this run (how=env). Passing the
@@ -494,6 +559,13 @@ def main(argv=None):
     c.add_argument("--how", default="switch", choices=("switch", "env", "flag"))
     c.add_argument("knob", choices=KNOBS)
     c.add_argument("value")
+    pl = sub.add_parser("plan", help="list what a run of install.sh keeps and moves, against the recommended state")
+    pl.add_argument("--config-dir", required=True)
+    pl.add_argument("--repo-dir", default=str(REPO))
+    pl.add_argument("--units", default=UNITS)
+    pl.add_argument("--lane", required=True, choices=("27b", "flash"))
+    pl.add_argument("--chose", action="append", default=[], metavar="KNOB=VALUE",
+                    help="a value the operator set explicitly on this run")
     v = sub.add_parser("verdict", help="converge or keep: what an update does with a value an older release made the default")
     v.add_argument("--config-dir", required=True)
     v.add_argument("knob", choices=KNOBS)
@@ -531,6 +603,10 @@ def main(argv=None):
         if not sep or knob not in KNOBS:
             ap.error(f"--chose {kv}: not one of {', '.join(KNOBS)}")
         chose[knob] = value
+    if a.cmd == "plan":
+        print("\n".join(plan_lines(plan(a.config_dir, a.lane, chose, repo_dir=a.repo_dir, units_dir=a.units),
+                                    clone_release(a.repo_dir))))
+        return 0
     new = record(a.config_dir, a.path, a.lane, chose, repo_dir=a.repo_dir, units_dir=a.units)
     mine = ", ".join(f"{k}={e['value']}" for k, e in new["choices"].items())
     print(f"  Recorded   : {Path(a.config_dir) / FILE} ({new['release'] or 'no release named'}"

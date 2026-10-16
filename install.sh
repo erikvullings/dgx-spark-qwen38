@@ -469,8 +469,10 @@ NO_NEMOTRON=0
 WITH_NEMOTRON_SUPER=0
 NO_NEMOTRON_SUPER=0
 ALL_WEIGHTS=0
+PLAN_ONLY=0
 for arg in "$@"; do
   case "$arg" in
+    --plan) PLAN_ONLY=1 ;;
     --no-start) NO_START=1 ;;
     --no-service) NO_SERVICE=1 ;;
     --no-opencode) NO_OPENCODE=1 ;;
@@ -503,7 +505,7 @@ Usage: ./install.sh [--no-start] [--no-service] [--no-opencode | --with-opencode
                    [--no-27b | --with-27b] [--no-kolibri | --with-kolibri]
                    [--no-nemotron | --with-nemotron]
                    [--no-nemotron-super | --with-nemotron-super]
-                   [--all-weights]
+                   [--all-weights] [--plan]
 
 Run it as yourself. Never with sudo in front: it calls sudo itself for the
 privileged steps, and under sudo every path it writes moves to /root (see the
@@ -567,6 +569,10 @@ without a terminal.
                         (without it, each is prepared at its first Load from
                         the cockpit; --with-<lane> does the same for that one
                         lane)
+  --plan                list this box against what this release recommends (what
+                        a run moves, what stays yours, the site's settings), then
+                        stop before anything changes: run the same command
+                        without --plan to apply it
 
 Re-running over an existing install keeps the operator's choices: the target
 model (any of the seven), the context mode (native/1m), the flash serving tier,
@@ -636,6 +642,8 @@ HLP
     *) printf 'Unknown flag: %s (see --help)\n' "$arg" >&2; exit 1 ;;
   esac
 done
+[ "$PLAN_ONLY" -eq 0 ] || [ "$NO_SERVICE" -eq 0 ] \
+  || die "--plan lists what a run does to the box's services; --no-service writes none."
 
 # ── Converge on the operator's installed choices ──
 # Re-running the installer (or the get.sh one-liner) must never silently reset
@@ -1174,10 +1182,12 @@ CK_OFF_MARK="$CONFIG_DIR/cockpit.off"
 COCKPIT=1
 if [ "$NO_COCKPIT" -eq 1 ]; then
   COCKPIT=0
-  mkdir -p "$CONFIG_DIR"
-  [ -f "$CK_OFF_MARK" ] || printf 'disabled with ./install.sh --no-cockpit on %s\n' "$(date -u +%Y-%m-%dT%H:%MZ)" > "$CK_OFF_MARK"
+  if [ "$PLAN_ONLY" -eq 0 ]; then
+    mkdir -p "$CONFIG_DIR"
+    [ -f "$CK_OFF_MARK" ] || printf 'disabled with ./install.sh --no-cockpit on %s\n' "$(date -u +%Y-%m-%dT%H:%MZ)" > "$CK_OFF_MARK"
+  fi
 elif [ "$WITH_COCKPIT" -eq 1 ]; then
-  rm -f "$CK_OFF_MARK"
+  [ "$PLAN_ONLY" -eq 1 ] || rm -f "$CK_OFF_MARK"
 elif [ -f "$CK_OFF_MARK" ]; then
   COCKPIT=0
   echo "Keeping the cockpit off (your earlier --no-cockpit). Pass --with-cockpit to re-enable."
@@ -1194,10 +1204,12 @@ lane_wanted(){  # $1 lane (image, video, flash, 27b), $2 --no-$1 given, $3 --wit
   WANT=1
   if [ "$2" -eq 1 ]; then
     WANT=0
-    mkdir -p "$CONFIG_DIR"
-    [ -f "$mark" ] || printf 'left out with ./install.sh --no-%s on %s\n' "$1" "$(date -u +%Y-%m-%dT%H:%MZ)" > "$mark"
+    if [ "$PLAN_ONLY" -eq 0 ]; then
+      mkdir -p "$CONFIG_DIR"
+      [ -f "$mark" ] || printf 'left out with ./install.sh --no-%s on %s\n' "$1" "$(date -u +%Y-%m-%dT%H:%MZ)" > "$mark"
+    fi
   elif [ "$3" -eq 1 ]; then
-    rm -f "$mark"
+    [ "$PLAN_ONLY" -eq 1 ] || rm -f "$mark"
   elif [ -f "$mark" ]; then
     WANT=0
     echo "Leaving the $1 lane out (your earlier --no-$1). Pass --with-$1 to bring it back."
@@ -1310,6 +1322,50 @@ step() { printf '\n\033[1;36m── %s%s\033[0m\n' "${SECONDARY:+${SECONDARY/27b
 # through it, even with the engine kept (found in review, 2026-09-24).
 # stale_since: in lanes.sh (sourced above), with the lanes' own freshness check
 # (die() is defined above, before the port validations that call it first.)
+
+# The settings this command line gives explicitly, as conformity.py's --chose arguments, in
+# CHOSE (2026-10-17): the list below shows them as set here, and record_install writes them as
+# the operator's choices. The values are the resolved ones.
+collect_choices() {
+  CHOSE=()
+  if [ -n "$_ENV_MODEL_CHOICE" ]; then CHOSE+=(--chose "target.$LANE=$MODEL_CHOICE"); fi
+  if [ -n "$_ENV_DRAFT2_REPO$_ENV_DRAFT2_QUANT$_ENV_DRAFT2_TOKENS" ]; then
+    CHOSE+=(--chose "DRAFT2=$DRAFT2_REPO ($DRAFT2_QUANT, D=$DRAFT2_TOKENS)")
+  fi
+  # the run for the 27B lane beside a flash one does not get CONTEXT_MODE (it is unset for it)
+  if [ -n "$_ENV_CONTEXT_MODE" ] && [ "$LANE" = 27b ]; then CHOSE+=(--chose "CONTEXT_MODE=$CONTEXT_MODE"); fi
+  if [ -n "$_ENV_ENGINE_BIND" ]; then CHOSE+=(--chose "ENGINE_BIND=$ENGINE_BIND"); fi
+  if [ -n "$_ENV_PROXY_BIND" ]; then CHOSE+=(--chose "PROXY_BIND=$PROXY_BIND"); fi
+  if [ -n "$_ENV_PORT" ]; then CHOSE+=(--chose "PORT=$PORT"); fi
+  if [ -n "$_ENV_PROXY_PORT" ]; then CHOSE+=(--chose "PROXY_PORT=$PROXY_PORT"); fi
+  if [ -n "$_ENV_HF_CACHE" ]; then CHOSE+=(--chose "HF_CACHE=$HF_CACHE"); fi
+  if [ -n "$_ENV_PLE_DIR" ]; then CHOSE+=(--chose "PLE_DIR=$PLE_DIR"); fi
+  if [ -n "$FLASH_TIER_ENV" ]; then CHOSE+=(--chose "FLASH_TIER=$FLASH_TIER"); fi
+  if [ -n "$_ENV_SPEC_TOKEN_MAP_SIZE" ]; then CHOSE+=(--chose "SPEC_TOKEN_MAP_SIZE=$SPEC_TOKEN_MAP_SIZE"); fi
+  if [ -n "$_ENV_FLASH_REPLAYSSM_SPEC" ]; then CHOSE+=(--chose "FLASH_REPLAYSSM_SPEC=$FLASH_REPLAYSSM_SPEC"); fi
+  return 0
+}
+# This box against what this release recommends, in one list before anything changes
+# (2026-10-17). The lines above say each setting as the run decides it; this says them
+# together: what moves now (an old default nothing records as chosen), what stays the
+# operator's (recorded, set on this command line, or never a default), and the site's own
+# settings apart. conformity.py classes them by the rules the convergence above asked it for.
+# The run for the other text lane prints none (its settings are this run's), nor a
+# --no-service run, which writes no unit. Never fatal.
+if [ -z "$SECONDARY" ] && [ "$NO_SERVICE" -eq 0 ]; then
+  collect_choices
+  echo
+  python3 "$REPO_DIR/conformity.py" plan --config-dir "$CONFIG_DIR" --repo-dir "$REPO_DIR" \
+      --units /etc/systemd/system/ --lane "$LANE" ${CHOSE[@]+"${CHOSE[@]}"} \
+    || echo "NOTE: could not list this box's settings against the recommended ones; the run goes on."
+fi
+# --plan ends here, before the first step: nothing above writes but the markers of --no-<lane>
+# and --no-cockpit (and their --with-), which it leaves as they are.
+if [ "$PLAN_ONLY" -eq 1 ]; then
+  echo
+  echo "--plan: nothing was changed. The same command without --plan applies it."
+  exit 0
+fi
 
 step "1/10 Preflight checks"
 [ "$(uname -m)" = "aarch64" ] || die "This setup targets GB10 (aarch64). Detected: $(uname -m)."
@@ -2393,21 +2449,8 @@ record_install() {  # $1 how the run ended: full, side-boot, no-start or no-serv
   local chose=()
   # --no-service writes no unit: run.sh reads the environment at every start instead
   if [ "$1" != no-service ]; then
-    if [ -n "$_ENV_MODEL_CHOICE" ]; then chose+=(--chose "target.$LANE=$MODEL_CHOICE"); fi
-    if [ -n "$_ENV_DRAFT2_REPO$_ENV_DRAFT2_QUANT$_ENV_DRAFT2_TOKENS" ]; then
-      chose+=(--chose "DRAFT2=$DRAFT2_REPO ($DRAFT2_QUANT, D=$DRAFT2_TOKENS)")
-    fi
-    # the run for the 27B lane beside a flash one does not get CONTEXT_MODE (it is unset for it)
-    if [ -n "$_ENV_CONTEXT_MODE" ] && [ "$LANE" = 27b ]; then chose+=(--chose "CONTEXT_MODE=$CONTEXT_MODE"); fi
-    if [ -n "$_ENV_ENGINE_BIND" ]; then chose+=(--chose "ENGINE_BIND=$ENGINE_BIND"); fi
-    if [ -n "$_ENV_PROXY_BIND" ]; then chose+=(--chose "PROXY_BIND=$PROXY_BIND"); fi
-    if [ -n "$_ENV_PORT" ]; then chose+=(--chose "PORT=$PORT"); fi
-    if [ -n "$_ENV_PROXY_PORT" ]; then chose+=(--chose "PROXY_PORT=$PROXY_PORT"); fi
-    if [ -n "$_ENV_HF_CACHE" ]; then chose+=(--chose "HF_CACHE=$HF_CACHE"); fi
-    if [ -n "$_ENV_PLE_DIR" ]; then chose+=(--chose "PLE_DIR=$PLE_DIR"); fi
-    if [ -n "$FLASH_TIER_ENV" ]; then chose+=(--chose "FLASH_TIER=$FLASH_TIER"); fi
-    if [ -n "$_ENV_SPEC_TOKEN_MAP_SIZE" ]; then chose+=(--chose "SPEC_TOKEN_MAP_SIZE=$SPEC_TOKEN_MAP_SIZE"); fi
-    if [ -n "$_ENV_FLASH_REPLAYSSM_SPEC" ]; then chose+=(--chose "FLASH_REPLAYSSM_SPEC=$FLASH_REPLAYSSM_SPEC"); fi
+    collect_choices
+    chose=(${CHOSE[@]+"${CHOSE[@]}"})
   fi
   python3 "$REPO_DIR/conformity.py" record --config-dir "$CONFIG_DIR" --repo-dir "$REPO_DIR" \
       --units /etc/systemd/system/ --lane "$LANE" --path "$1" ${chose[@]+"${chose[@]}"} \
