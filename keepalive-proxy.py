@@ -4106,33 +4106,8 @@ class H(BaseHTTPRequestHandler):
             # every hole in a _done() f-string there is an HTTP status. The field is
             # in the log line above and in the message the client gets.
             self._done("400 logprob width over ceiling"); return
-        # The vocabulary is asked for only when a request carries a field that needs one,
-        # never for `n` alone, which plenty of ordinary clients send: a probe on the hot
-        # path of every request would be the cost this guard exists to prevent.
-        if body and self.path.split("?")[0] in SAMPLE_GUARD_ROUTES:
-            might, needs_vocab = _sampling_prealert(body, self.path.split("?")[0])
-            if might:
-                vocab = served_vocab() if needs_vocab else 0
-                refusal = sampling_field_refusal(body, self.path, vocab)
-                if refusal:
-                    log(f"{self._peer} REFUSED a sampling field the engine dies on: {refusal[17:100]}")
-                    self._plain(400, {"Content-Type": "application/json"},
-                                json.dumps({"error": {"type": "invalid_request",
-                                                      "message": refusal}}).encode())
-                    self._done("400 sampling field out of range"); return
-                if (needs_vocab and not vocab and UNKNOWN_VOCAB_FLOOR > 0
-                        and sampling_field_refusal(body, self.path, UNKNOWN_VOCAB_FLOOR)):
-                    log(f"{self._peer} HELD a token id at or past {UNKNOWN_VOCAB_FLOOR}: the served "
-                        f"vocabulary is not known yet")
-                    self._plain(503, {"Content-Type": "application/json", "Retry-After": "10"},
-                                json.dumps({"error": {"type": "engine_unavailable", "message":
-                                                      f"keepalive-proxy: this request carries a token id at "
-                                                      f"or past {UNKNOWN_VOCAB_FLOOR}, and the vocabulary this "
-                                                      f"lane serves could not be learned just now (the engine "
-                                                      f"is busy, paused or restarting). An id past it takes "
-                                                      f"the engine down (sglang#31597), so the request waits: "
-                                                      f"retry it unchanged."}}).encode())
-                    self._done("503 vocabulary unknown"); return
+        if self._sampling_refused(body):
+            return
         body, dropped = sanitize_tool_schemas(body, self.path)
         body, moved_effort, dropped_effort = route_reasoning_effort(body, self.path)
         if moved_effort and _effort_move_logged.first(moved_effort):   # once per level, not per request
@@ -4165,8 +4140,17 @@ class H(BaseHTTPRequestHandler):
                 return
             kind, why, detail = gone
             if self._hold(why, streamed):
-                # the engine answers again: the request goes now, named for the engine that
-                # answers (held through Kolibri's boot, it went with its old name, and a 404)
+                # The engine answers again, and it may be another lane: the body is judged
+                # again for it (2026-10-16), against a vocabulary learned since the hold began.
+                # It was judged once, before, and went to the engine that came back as it was:
+                # an id the old lane held and the new one does not took it down (found in
+                # review, 2026-10-16).
+                if _VOCAB["ts"] < getattr(self, "_held_from", 0.0):
+                    _VOCAB.update(size=0, ts=0.0)
+                if self._sampling_refused(asked):
+                    return
+                # the request goes now, named for the engine that answers (held through
+                # Kolibri's boot, it went with its old name, and a 404)
                 body = self._served_name(asked)
                 continue
             if getattr(self, "_caller_left", False):
@@ -4178,6 +4162,42 @@ class H(BaseHTTPRequestHandler):
             if kind == "upstream":
                 self._done(f"503 engine unreachable (upstream {detail})"); return
             self._done("503 engine unreachable"); return
+
+    def _sampling_refused(self, body):
+        """True when the sampling guard answered this body: a 400 for a field the engine dies on,
+        or a 503 while the vocabulary that would decide is unknown. Once before the request goes,
+        and again after a hold (2026-10-16). In a stream opened by the hold, the answer is an
+        error event of that stream (_answer)."""
+        # The vocabulary is asked for only when a request carries a field that needs one,
+        # never for `n` alone, which plenty of ordinary clients send: a probe on the hot
+        # path of every request would be the cost this guard exists to prevent.
+        if not body or self.path.split("?")[0] not in SAMPLE_GUARD_ROUTES:
+            return False
+        might, needs_vocab = _sampling_prealert(body, self.path.split("?")[0])
+        if not might:
+            return False
+        vocab = served_vocab() if needs_vocab else 0
+        refusal = sampling_field_refusal(body, self.path, vocab)
+        if refusal:
+            log(f"{self._peer} REFUSED a sampling field the engine dies on: {refusal[17:100]}")
+            self._answer(400, {"Content-Type": "application/json"},
+                         json.dumps({"error": {"type": "invalid_request",
+                                               "message": refusal}}).encode())
+            self._done("400 sampling field out of range"); return True
+        if (needs_vocab and not vocab and UNKNOWN_VOCAB_FLOOR > 0
+                and sampling_field_refusal(body, self.path, UNKNOWN_VOCAB_FLOOR)):
+            log(f"{self._peer} HELD a token id at or past {UNKNOWN_VOCAB_FLOOR}: the served "
+                f"vocabulary is not known yet")
+            self._answer(503, {"Content-Type": "application/json", "Retry-After": "10"},
+                         json.dumps({"error": {"type": "engine_unavailable", "message":
+                                               f"keepalive-proxy: this request carries a token id at "
+                                               f"or past {UNKNOWN_VOCAB_FLOOR}, and the vocabulary this "
+                                               f"lane serves could not be learned just now (the engine "
+                                               f"is busy, paused or restarting). An id past it takes "
+                                               f"the engine down (sglang#31597), so the request waits: "
+                                               f"retry it unchanged."}}).encode())
+            self._done("503 vocabulary unknown"); return True
+        return False
 
     def _served_name(self, body):
         """The body as the engine that serves now takes it (route_model_name, qwen_effort_none, nemotron_effort),
