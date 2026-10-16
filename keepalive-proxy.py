@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Keepalive proxy in front of SGLang or vLLM (v6.40). No content logging, and the only
+"""Keepalive proxy in front of SGLang or vLLM (v6.41). No content logging, and the only
 rewriting is the tool-schema guard (role 4); one route, POST /v1/systemone, is answered
 here instead of relayed (role 5).
 
@@ -40,6 +40,17 @@ Six roles, nothing else:
    PROXY_HOLD_MAX_S, instead of failing at once. A streamed one hears from the proxy at
    once (200, then the keepalives of role 1); see "Holding a request" below.
 
+v6.41: what a review of the repository found open, closed (2026-10-17). The network's share of the
+port is bounded: another machine holds at most PROXY_MAX_CONN_PER_ADDRESS connections open, the
+network PROXY_MAX_REMOTE_CONN, and such a connection has CLIENT_HEADER_S in all for its request's
+headers; the bodies in flight share BODY_BUDGET_BYTES, a compressed body is refused (415). Behind
+the identity wall a client key reaches the routes that generate, count and read, not the engine's
+operator routes; a redirect from the engine is relayed, never followed. /v1/score's token ids are
+bounded and its label_token_ids refused like token_ids_logprob; a video is priced at SGLang's own
+ceiling where a prompt can wedge the engine, the media of an uncountable body as media; token ids
+past every lane's vocabulary wait while it is unknown; the counting routes have a ceiling of their
+own; a held request is judged again for the engine that comes back; and an abandoned /v1/messages
+answer is aborted on an SGLang lane that takes the request id override.
 v6.40: the Nemotron lane (NVIDIA's Bolt on vLLM) takes a reasoning effort as its chat template
 reads it, enable_thinking and medium_effort: none and minimal turn the reasoning off, low and
 medium ask its shorter one, high and above its default. vLLM handed the template a top-level
@@ -4931,7 +4942,7 @@ if __name__ == "__main__":
     holds = (f"holds requests up to {HOLD_MAX_S:.0f}s while {' or '.join(HOLD_UNITS)} comes back"
              if HOLD_UNITS and HOLD_MAX_S > 0 else "holds nothing")
     # one f-string: the cockpit's tests render this line from the source
-    log(f"v6.40 on {BIND}:{port} -> {UPSTREAM} (keepalive {KEEPALIVE_S:.0f}s, max silence {MAX_SILENCE_S:.0f}s, {holds})")
+    log(f"v6.41 on {BIND}:{port} -> {UPSTREAM} (keepalive {KEEPALIVE_S:.0f}s, max silence {MAX_SILENCE_S:.0f}s, {holds})")
     if FLASH_PROMPT_CEILING_TOKENS > 0:
         log(f"one-prompt ceiling {FLASH_PROMPT_CEILING_TOKENS} tokens while the flash lane serves"
             + (f", {PROMPT_CEILING_TOKENS} on any lane" if PROMPT_CEILING_TOKENS > 0 else ""))

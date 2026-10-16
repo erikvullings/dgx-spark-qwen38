@@ -135,6 +135,19 @@ prompt plus `max_tokens` passes its window (262,144 tokens, 1,010,000 in 1M
 mode). A 413 means a body over `MAX_BODY_BYTES` (256 MiB), refused before a
 byte of it is read.
 
+The network's share of the port is bounded (proxy v6.41). Another machine holds
+at most 64 connections open at a time (`PROXY_MAX_CONN_PER_ADDRESS`) and the
+network 256 in all (`PROXY_MAX_REMOTE_CONN`): past either, a new connection is
+closed before it is read, and the proxy's journal says why, once a minute. Such
+a connection has 30 s to send its request line and headers (`CLIENT_HEADER_S`).
+The clients on the box itself (127.0.0.1) are not counted. The request bodies in
+flight share 384 MiB (`BODY_BUDGET_BYTES`), taken as their bytes arrive: one
+that finds no room gets a 503 with `Retry-After` (the oldest one being read waits
+up to 30 s for room first), and a body of 1 MiB or less always comes in. A compressed body (`Content-Encoding: gzip` and the like) gets a 415:
+every guard reads the body as it is sent. A gateway that relays many users from
+one machine may need a higher `PROXY_MAX_CONN_PER_ADDRESS`, set in a drop-in as
+below (`0` turns a ceiling off).
+
 ## Measured on the reference box
 
 - **opencode**: the primary client; the installer writes its provider
