@@ -1522,6 +1522,15 @@ def tokenize_count(body, path):
                 req["tools"] = j["tools"]
         elif isinstance(j.get("prompt"), (str, list)):
             req["prompt"] = j["prompt"]
+        elif (path.split("?")[0] == "/generate"
+              and not any(j.get(k) for k in ("image_data", "video_data", "audio_data"))):
+            # The native shape (2026-10-16): judged by its size alone, a body of digits went
+            # through at well over twice its estimate. Ids count themselves; text is a prompt.
+            if isinstance(j.get("input_ids"), list):
+                return sum(len(x) if isinstance(x, list) else 1 for x in j["input_ids"])
+            if not isinstance(j.get("text"), (str, list)):
+                return None
+            req["prompt"] = j["text"]
         else:
             return None
         payload = json.dumps(req).encode()
@@ -4164,7 +4173,10 @@ class H(BaseHTTPRequestHandler):
                     # No count for this shape: the pre-v6.34 average decides, as it did past
                     # the old 200 kB line (on every lane whose limit is over 80k tokens, the
                     # same bodies; below that, a small pool is no longer skipped under it).
-                    guess = len(body) / NOCOUNT_CHARS_PER_TOKEN
+                    # Where a wedge is possible the bound decides instead (2026-10-16): the
+                    # average let a body of digits, one token each, past the limit uncounted
+                    # (found in review, 2026-10-16), into the zone the engine never admits.
+                    guess = len(body) / (CHARS_PER_TOKEN_MIN if wedge_possible(pool) else NOCOUNT_CHARS_PER_TOKEN)
                     reason = (f"about ~{int(guess)} tokens by size (a shape the engine's tokenizer "
                               f"cannot count, so the size decides)") if guess > limit else None
                 elif count > limit:

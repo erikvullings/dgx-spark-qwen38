@@ -1958,15 +1958,18 @@ class TheGuardNominatesByItsBound(unittest.TestCase):
         self.assertGreater(n, 18_400)
         self.assertEqual(seen, ["/tokenize", "/v1/chat/completions"])
 
-    def test_a_body_the_engine_cannot_count_is_judged_by_the_old_average(self):
-        n, _status, _raw, seen = self._post("word " * 8000, model="__400__")    # 40 kB
-        self.assertLessEqual(n / 2.5, 18_400)
-        self.assertEqual(seen, ["/tokenize", "/v1/chat/completions"], "under the average: relayed")
-        n, status, raw, seen = self._post("word " * 12000, model="__400__")     # 60 kB
-        self.assertGreater(n / 2.5, 18_400)
+    def test_a_body_the_engine_cannot_count_is_judged_by_the_bound(self):
+        """Where a wedge is possible, by the bound, not the average (2026-10-16): the average let
+        a body of digits, one token each, past the limit uncounted. The average still decides
+        where no wedge is possible (WhereNoWedgeIsPossibleTheAverageNominates)."""
+        n, status, raw, seen = self._post("word " * 8000, model="__400__")     # 40 kB
+        self.assertLessEqual(n / 2.5, 18_400)          # what the average let through
         self.assertEqual(status, 400, raw[:200])
         self.assertIn("by size", json.loads(raw)["error"]["message"])
         self.assertEqual(seen, ["/tokenize"])
+        n, _status, _raw, seen = self._post("word " * 3000, model="__400__")    # 15 kB
+        self.assertLessEqual(n, 18_400)
+        self.assertEqual(seen, ["/v1/chat/completions"], "under the bound: relayed, no count needed")
 
 
 class WindowInPoolEngine(SmallPoolEngine):
