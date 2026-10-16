@@ -18,8 +18,10 @@ Since v1.22.13 the proxy checks that lock itself, with the engine's own rule, be
 reads a request's body: a request without the key gets the engine's own 401 at once, and
 `/health`, `/ready` and `/metrics` stay open, as the engine keeps them.
 `ENGINE_BIND=0.0.0.0 ./install.sh` puts the engine back on the network for
-a box that wants it, and a box that already had it there keeps it across
-updates.
+a box that wants it, and keeps it there across updates. An engine on the network
+that only an install before v1.17.0 put there, and that nothing records as
+chosen, moves to `127.0.0.1` at the first update of v1.36.0 or later, which says
+so before its first step.
 
 **The proxy also refuses the requests that take the engine down instead of being
 refused by it.** One is a prompt past the KV pool (measured here on 2026-08-29: queued, never

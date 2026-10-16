@@ -229,7 +229,7 @@ CONTEXT_MODE=native ./install.sh                         # the 262144 window on 
 ./switch-model.sh stock | uncensored | flash             # change model later, no reinstall (then stop/start the units it prints; a lane installed on demand is built once first: ./prepare-lane.sh <lane>)
 ```
 
-Re-running the installer (upgrades included) remembers what you chose: the installed model, the context mode, the port, the HF cache, the opencode on/off choice, and the lanes you left out. Pass the variable or flag again only to change something. It restarts the engine only when something the engine reads changed since it started (its unit, image, chat template, checkpoint config, API key): an update that touches only the cockpit, the proxy or opencode keeps it serving, and `RESTART_ENGINE=1 ./install.sh` forces a restart. The same holds for the services around it since v1.18.7: the proxy, the cockpit and opencode-web restart only when what they run or read changed (the proxy also follows an engine restart), so a run that changes nothing cuts no request in flight and no turn of the Agent view. `./uninstall.sh --list` shows everything the repo put on the box before removing anything.
+Re-running the installer (upgrades included) remembers what you chose: the installed model, the context mode, the port, the HF cache, the opencode on/off choice, and the lanes you left out. Pass the variable or flag again only to change something. Since v1.36.0 a value that only an older release's default put on the box, and that nothing records as your choice (the engine on every interface before v1.17.0, the native window before v1.12.1, the flash lane's context tier before v1.19.0, the BF16 drafter before v1.9.0), moves to today's default instead. Every run lists both, what moves and what stays, before its first step, `./install.sh --plan` prints that list and changes nothing, and the cockpit says it in orange while anything differs. It restarts the engine only when something the engine reads changed since it started (its unit, image, chat template, checkpoint config, API key): an update that touches only the cockpit, the proxy or opencode keeps it serving, and `RESTART_ENGINE=1 ./install.sh` forces a restart. The same holds for the services around it since v1.18.7: the proxy, the cockpit and opencode-web restart only when what they run or read changed (the proxy also follows an engine restart), so a run that changes nothing cuts no request in flight and no turn of the Agent view. `./uninstall.sh --list` shows everything the repo put on the box before removing anything.
 
 ## What speed and quality to expect
 
@@ -523,7 +523,7 @@ is. The languages, every number and the limits: **[docs/speech-lane.md](docs/spe
 Since v1.12.1 a plain 27B install serves a **1,010,000-token window** (YaRN static scaling, the
 fraction above, the keepalive proxy required, and the opencode limits fitted to the pool your own
 boot actually got). `CONTEXT_MODE=native ./install.sh` serves the 262,144 window instead, and a
-re-run keeps whatever is already installed, both directions. What it costs, the boot lottery on
+re-run keeps the window the box chose, both directions. What it costs, the boot lottery on
 the pool, the proxy guards it makes load-bearing, the 535,361-token field session, and how to go
 back: **[docs/context-1m.md](docs/context-1m.md)**.
 

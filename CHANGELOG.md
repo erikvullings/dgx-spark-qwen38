@@ -1,5 +1,66 @@
 # Changelog
 
+## v1.36.0 (2026-10-17): nobody runs behind in silence: what an update keeps and moves, said before it starts and in the cockpit
+
+An update kept, as if the operator had chosen them, values that were nothing but the default of
+the release that first installed the box: the engine on every interface (the default until
+v1.17.0), the native 262,144-token window (until v1.12.1), the flash lane's context tier (until
+v1.19.0) and the BF16 drafter at depth 8 (until v1.9.0). A unit cannot say which is which, and
+"Keeping the installed engine bind: 0.0.0.0" read as a choice on a box where nobody had ever made
+one; the cockpit named its clone's CHANGELOG as the release the services ran, so a `git pull`
+with no install read as an update done. A box could run behind for good, and nothing on it said
+so.
+
+**What a box runs, written down.** Every run of `./install.sh` that ends well now writes
+`~/.config/qwen38/installed.json` (atomically, under a lock, readable by all, no secret in it):
+the release and the commit it installed, how the run ended, the text lane it served, when the
+box was first installed, and the choices made on its command line. A switch, the cockpit's Load
+among them, records the target it chose, and a switch back to the recommended target erases the
+entry. `conformity.py` holds the rest: what a box installed today gets, read from install.sh
+itself so it cannot drift from it, and the four old defaults with the instant their release moved
+them.
+
+**An old default moves, a choice stays.** An update moves a value that only an older release's
+default put on the box, and that nothing records as chosen, to today's default, with a line that
+says so and gives the variable that keeps it (`ENGINE_BIND=0.0.0.0 ./install.sh`, and the like). A
+value recorded as chosen, or one no release ever installed by default, stays. A box no run of
+v1.36.0 or later recorded is classed by its age, the date of its API key (written once, at its
+first install): older than the change, the value moves; younger, it was chosen, and it stays and
+is recorded; an age that cannot be told keeps it. A vLLM lane's engine follows the text lanes'
+bind, which it read after its own unit's: a Kolibri or Nemotron lane left out of the update that
+moved them to 127.0.0.1 kept 0.0.0.0 when it came back.
+
+**Said before anything changes.** Every run prints, before its first step, this box against what
+the release recommends: what moves now, what stays the operator's and why (recorded, set on this
+command line, never a default), and the site's own settings apart (port, cache, folders), or one
+line when nothing differs. `./install.sh --plan` prints that list and stops, leaving even the
+markers of `--no-<lane>` as they are.
+
+**Said in the cockpit.** The release the services run is the one installed.json records ("before
+v1.36.0" on a box no run of it recorded). While the box differs from what its clone recommends,
+the banner strip says so in orange (a token of its own): what the next update moves first, or
+that the box differs by the operator's choice alone; Settings lists each difference, why it stays
+or the variable that keeps it. Services behind their own clone (a `git pull` with no install, a
+run stopped at `--no-start`) are said in orange too, with the command that brings them up. The
+update banner no longer promises that an update keeps the context mode. `./uninstall.sh --list`
+names installed.json.
+
+**Tests.** conformity.py against units rendered from the repo's own templates (a box rendered with
+the recommended values shows no difference, each moved value is read back the way install.sh reads
+it, and each ambiguous case of the classing: older or younger than the change, by the instant and
+not the day, recorded or not, an unreadable record, a key restored from a backup); install.sh's
+four blocks that converge, its record at every end of a run that ends well, the list and
+`--plan` on walled copies of it; the switch's record; the cockpit's tier and its page, banners and
+Settings. Each fails on the old code and passes on the new.
+
+**What an update does.** On a box whose units carry an old default nothing records as chosen,
+this update moves it, and the engine that reads it restarts on its new unit: the 27B lane on the
+1M window boots in about 9 minutes, a drafter that moves downloads 1.6 GB, and an engine that
+moves off every interface answers on the box only, so a client on another machine that used
+`:30000` uses the proxy on `:30001`, which serves every route of the engine. The list before the
+first step says all of it. On a box with nothing to move, an update restarts the cockpit; the
+engines keep running.
+
 ## v1.35.1 (2026-10-17): the proxy bounds what the network can hold, and the image and video lanes see no secret of the box
 
 A security review of the repository, in three passes by separate analyses, each finding checked

@@ -13,8 +13,11 @@ CONTEXT_MODE=native ./install.sh    # the 262144 window instead
 
 The flash lane and `--no-service` cannot serve it and stay native with no
 refusal, because a default must never reject something the operator did not
-type. A re-run keeps the mode already installed, in both directions: an update
-does not patch YaRN into the configs of a box that chose native.
+type. A re-run keeps the mode a box chose, in both directions: an update does
+not patch YaRN into the configs of a box that chose native. Since v1.36.0 the
+native window that an install before v1.12.1 got by default, and that nothing
+records as chosen, moves to 1m at the next update, which says so before its
+first step with the variable that keeps it (`CONTEXT_MODE=native ./install.sh`).
 
 This is, as one converging command, the exact preset that serves the reference box
 daily since 2026-08-22:

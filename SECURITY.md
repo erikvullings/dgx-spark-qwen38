@@ -89,9 +89,11 @@ existed: the key is the boundary there, not the proxy. Nothing is lost by the de
 every route the engine serves, so a client that used `:30000` from another
 machine uses `:30001` and gets the guards with it. `ENGINE_BIND=0.0.0.0`
 restores the old behaviour, `PROXY_BIND` does the same for the proxy, and an
-installed choice is kept across updates in both directions, so neither a
-hardened box nor one that deliberately exposed its engine is changed by an
-update nobody read about.
+installed choice is kept across updates in both directions. Since v1.36.0 the
+engine bind that only an install before v1.17.0 put on every interface, and that
+nothing records as chosen, moves to `127.0.0.1` at the next update instead: the
+update says so before its first step, with `ENGINE_BIND=0.0.0.0 ./install.sh` to
+keep it, and a box that set it since keeps it.
 
 **The key is checked before a body is read** (since v1.22.13, proxy v6.34).
 Without the identity wall, the engine's key is the proxy port's one gate, and the

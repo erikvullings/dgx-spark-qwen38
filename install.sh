@@ -578,7 +578,9 @@ Re-running over an existing install keeps the operator's choices: the target
 model (any of the seven), the context mode (native/1m), the flash serving tier,
 the port, the HF cache location and the opencode on/off choice are read from
 the installed unit or launcher (or the marker file) unless the env var or flag
-is passed explicitly.
+is passed explicitly. A value only an older release's default put there, which
+nothing records as chosen, moves to today's default (since v1.36.0); the list
+printed before step 1 says which, and --plan prints it alone.
 
 Env overrides (defaults are pinned to the versions validated on the reference
 box, the 27B image on 2026-10-09):
@@ -630,7 +632,7 @@ box, the 27B image on 2026-10-09):
                                      by default (YaRN static scaling, README,
                                      "The 1M context mode"); the flash lane and
                                      --no-service are native either way, and a
-                                     re-run keeps whatever is already installed
+                                     re-run keeps what the box chose
   PROXY_PORT=30001                   keepalive proxy port (default: PORT+1)
   SERVE_IMAGE=ref                    serving image for the 27B lane
   FLASH_SERVE_IMAGE=ref              serving image for the Flash-Next lane

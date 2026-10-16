@@ -124,6 +124,12 @@ stopped meanwhile and proved again after. To keep a box as it is,
 say so on that run and later runs remember it: `./install.sh --no-flash --no-image --no-video`
 (or `--no-27b` on a flash box). A lane already installed is updated and not proved again.
 
+Since v1.36.0 a run lists, before its first step, what it keeps and what it moves against what
+the release recommends (`./install.sh --plan` prints the list alone and changes nothing), and
+writes down in `~/.config/qwen38/installed.json` the release it installed and the choices it
+recorded. A value that only an older release's default put on the box, and that nothing records
+as chosen, moves to today's default; the list gives the variable that keeps it.
+
 Your choices survive the upgrade: the API key, the patched template, your own systemd drop-ins
 under `/etc/systemd/system/qwen38-sglang.service.d/`, the opencode on/off choice (v1.5.9), and (since v1.3) the installed target
 model, port and HF cache location, which are read from the installed unit (v1.4: units; a box

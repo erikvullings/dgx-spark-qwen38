@@ -90,9 +90,11 @@ canaries 4/4, needle 120k/200k 2/2, prefix cache 99.5 to 99.9% on repeated
 prefixes, the pool never saturated, mamba peaked at 22 of 40). The per-path cap
 halves the state each speculative path holds, which is what makes 8 requests fit
 in 40 slots while a full 262K prompt still fits. `context` stays one
-`FLASH_TIER=context ./install.sh` away, and a re-run keeps the tier already
-installed, in both directions (the detection now reads a 4-request launcher
-too, which the old default never needed).
+`FLASH_TIER=context ./install.sh` away, and a re-run keeps the tier a box
+chose, in both directions (the detection now reads a 4-request launcher too,
+which the old default never needed). Since v1.36.0 the context tier that an
+install before v1.19.0 got by default, and that nothing records as chosen, moves
+to concurrency at the next update, which says so before its first step.
 
 The pool is still sized from what the host has free at the instant SGLang
 profiles, so it is a range rather than a number: boots of the identical launcher
