@@ -1146,7 +1146,8 @@ def _sampling_prealert(body, route):
                       or (route == "/v1/score"
                           and re.search(rb'"(?:query|items)"\s*:\s*\[', body) is not None))
     might = (needs_vocab or has_prompt_ids or b'"n"' in body
-             or (route in TOKEN_IDS_LOGPROB_ROUTES and b'"token_ids_logprob"' in body))
+             or (route in TOKEN_IDS_LOGPROB_ROUTES and b'"token_ids_logprob"' in body)
+             or (route == "/v1/score" and b'"label_token_ids"' in body))
     return might, (needs_vocab or has_prompt_ids)
 
 
@@ -1167,7 +1168,9 @@ def sampling_field_refusal(body, path, vocab):
         return None
     route = path.split("?")[0]
     if _token_ids_logprob_asked(j, route):
-        return ("keepalive-proxy: token_ids_logprob is refused on this lane. On a batch that "
+        asked = ("/v1/score's label_token_ids, which the engine turns into token_ids_logprob,"
+                 if route == "/v1/score" else "token_ids_logprob")
+        return (f"keepalive-proxy: {asked} is refused on this lane. On a batch that "
                 "mixes a request asking for it with one that does not, the served SGLang build "
                 "kills its scheduler (sglang#34719, open), which takes the lane down for every "
                 "client until a restart, so it is refused here instead. top_logprobs, the "
@@ -1845,7 +1848,11 @@ SAMPLE_GUARD_ROUTES = frozenset({
 # the first mixed batch kills the scheduler (sglang#34719, open); the flash build fixes one of
 # the two producers and keeps the consumer as it is. The engine itself treats an empty or
 # false value as absent (`if not self.token_ids_logprob`), and only those pass here.
-TOKEN_IDS_LOGPROB_ROUTES = frozenset({"/generate", "/vertex_generate"})
+# /v1/score too (2026-10-16): scoring asks for token_ids_logprob itself, its label_token_ids
+# being the ids it wants (tokenizer_manager_score_mixin.py reads input_token_ids_logprobs back,
+# in v0.5.21), so a score request batched with any other request is that same mixed batch; the
+# route was relayed with nothing read (found in review, 2026-10-16).
+TOKEN_IDS_LOGPROB_ROUTES = frozenset({"/generate", "/vertex_generate", "/v1/score"})
 
 
 def _token_ids_logprob_asked(j, route):
@@ -1854,6 +1861,8 @@ def _token_ids_logprob_asked(j, route):
         holder = j
     elif route == "/vertex_generate":
         holder = j.get("parameters")
+    elif route == "/v1/score":
+        holder = {"token_ids_logprob": j.get("label_token_ids")}
     else:
         return False
     return isinstance(holder, dict) and bool(holder.get("token_ids_logprob"))

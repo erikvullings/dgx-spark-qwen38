@@ -139,6 +139,21 @@ class ScoreGuard(unittest.TestCase):
                 self.assertEqual(status, 200, body)
         self.assertEqual(len(Engine.scored), 2)
 
+    def test_label_token_ids_are_refused_as_the_token_ids_logprob_they_become(self):
+        """Scoring asks the engine for token_ids_logprob itself, from label_token_ids, and a
+        batch that mixes such a request with any other kills the scheduler (sglang#34719), the
+        reason the field is refused on /generate (2026-10-16)."""
+        status, body = self.score({"query": "is the sky blue?", "items": ["yes", "no"],
+                                   "label_token_ids": [9454, 2753]})
+        self.assertEqual(status, 400, body)
+        msg = json.loads(body)["error"]["message"]
+        self.assertIn("/v1/score's label_token_ids", msg)
+        self.assertIn("sglang#34719", msg)
+        self.assertEqual(Engine.scored, [])
+        # an empty list asks for nothing, as the engine reads it
+        status, body = self.score({"query": "q", "items": ["a"], "label_token_ids": []})
+        self.assertEqual(status, 200, body)
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)
