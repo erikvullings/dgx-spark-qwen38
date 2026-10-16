@@ -270,9 +270,10 @@ check_wheel() {  # $1 label, $2 package, $3 version: released on PyPI, with a fi
 # holds that release as a 7 KB "wheel-stub" sdist alone: building it downloads the real wheel
 # from pypi.nvidia.com, so a fresh lane needs both, and nothing watched either (found in the
 # audit of 2026-10-16). The version is read from the pinned sglang's own requirements, so the
-# check follows the pin. The wheel is the one a lane's venv takes, CPython 3.12 (DGX OS 7's
-# python3, which makes it) on aarch64, found in NVIDIA's PEP 503 page as the stub finds it, and
-# asked about with a HEAD: nothing is downloaded.
+# check follows the pin. The wheel is the one a lane's venv takes, CPython 3.12 (Ubuntu 24.04's
+# python3, which makes it) on aarch64, found as wheel-stub 0.5.0 finds it: in the page its
+# index_url names for the project (pypi.nvidia.com/cuda-tile/), a link relative to that page.
+# It is asked about with a HEAD: nothing is downloaded.
 check_cuda_tile() {  # $1 label, $2 the sglang release whose cuda-tile requirement is checked
   case "$1" in *"$FILTER"*) ;; *) return 0 ;; esac
   CHECKED=$((CHECKED + 1))
