@@ -95,9 +95,10 @@ LOCAL_IMAGE="qwen38-nemotron:vllm${NEMOTRON_VLLM_LABEL#nightly-}-b12x${NEMOTRON_
 LOCAL_IMAGE="${LOCAL_IMAGE:0:52}"
 
 # One checkpoint today, Bolt with its LiLiCorr drafter. Its share of the GPU memory, 0.70, holds a
-# KV cache of 4,712,014 tokens (measured, 2026-10-15): 18 requests at the full 262,144 window,
+# KV cache of 6.5 million tokens with the prefix cache's settings in its unit (6,523,301 and
+# 6,536,475 over two boots, 2026-10-16; 4,712,014 before them): 24 requests at the full 262,144 window,
 # for the 16 the unit lets in at once, with 26 GiB of MemAvailable left to the box at rest (25.3 at
-# its least, a 252,000-token prompt's prefill). The drafter
+# its least, a 252,000-token prompt's prefill, before them). The drafter
 # costs that cache dearly (2.0 million tokens at 0.45 with it, 5.2 without) and pays it back at
 # every load measured (72.7 against 30.3 tok/s for one stream, 213 against 178 for sixteen).
 MODEL="$NEMOTRON_BOLT_REPO"; MODEL_REV="$NEMOTRON_BOLT_REV"

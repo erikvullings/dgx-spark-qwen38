@@ -42,6 +42,7 @@ vllm serve nvidia/NVIDIA-Nemotron-3.5-Bolt-74B-A9B-24GB --revision <pinned sha> 
   --max-model-len 262144 --max-num-seqs 16 --kv-cache-dtype fp8 --gpu-memory-utilization 0.70 \
   --linear-backend b12x --moe-backend b12x --attention-backend FLASHINFER --mamba-backend flashinfer \
   --mamba-ssm-cache-dtype bfloat16 --mamba-cache-dtype bfloat16 --seed 42 \
+  --block-size 64 --prefix-match-unit 64 --enable-mamba-shared-prefix-checkpoint \
   --limit-mm-per-prompt.image 16 --limit-mm-per-prompt.video 2 --video-pruning-rate 0.5 \
   --media-io-kwargs.video.fps 2 --media-io-kwargs.video.num_frames 256 \
   --allowed-media-domains media.invalid \
@@ -62,8 +63,23 @@ no JSON goes through systemd and bash. What differs from the card, and why:
   whole and finished at every load.
 - **A memory share of 0.70.** The card sets none, and vLLM's default of 0.92 would take the whole box.
   The drafter costs the cache dearly (at 0.45: 2.0 million tokens with it, 5.2 million without), so
-  0.70 holds 4,712,014 tokens, 18 requests at the full window, and leaves the box 26 GiB at rest
-  (25.3 at its least, during a 252,000-token prompt's prefill).
+  0.70 holds 6.5 million tokens with the prefix cache's settings below (6,523,301 and 6,536,475
+  over two boots; 4,712,014 before them), 24 requests at the full window, and leaves the box 26 GiB
+  at rest (25.3 at its least, during a 252,000-token prompt's prefill, measured before them).
+- **The prefix cache's fine settings**, which NVIDIA's own Super VL recipe sets and Bolt's card does
+  not: `--block-size 64 --prefix-match-unit 64 --enable-mamba-shared-prefix-checkpoint`. With the
+  card's, the drafter's sliding window made vLLM land every prefix-cache hit on a 17,984-token
+  boundary, the Mamba state kept one such step before a prompt's end, and an agent's every turn
+  recomputed most of its prompt. Measured on the lane (2026-10-16), first with the card's settings,
+  then with these: a 40,000-token conversation growing 27 tokens a turn, 22,055 tokens recomputed a
+  turn and 13.4 s before the first token, then 8,231 and 5.0 s; opencode, four turns with a tool
+  each, 47 % of its prompts from the cache and 28 s a turn, then 83 % and 11 to 12 s; Claude Code,
+  whose 18,600-token requests the card's settings never served from the cache (0 %, 23 s a turn),
+  then 72 to 73 % and 4 to 9 s. The same greedy answers (12 of 12 identical), the same speed, and
+  the larger cache above. The drafter's window still keeps hits on 4,544-token blocks (Super VL,
+  whose drafter does not, recomputes about a hundred tokens): a copy of the drafter without its
+  window started a turn in 0.2 s and decoded about five times slower at 40,000 tokens of context, so
+  the lane keeps NVIDIA's drafter as it is.
 - **16 images and 2 videos per conversation** (the card: 1 and 1). The limit counts the whole
   conversation a client sends again at each turn: with one, the second screenshot of a session was
   refused (400), and every request after it.
@@ -96,7 +112,8 @@ Kolibri lane (`docs/kolibri-lane.md`).
 |---|---|
 | download | 26 GB (the model 24.1, its drafter 1.0), and a 10.3 GB image (24.4 unpacked) |
 | weights in memory | 24.1 GiB |
-| KV cache at 0.70 | 4,712,014 tokens, 18 requests at the full window |
+| KV cache at 0.70 | 6,523,301 and 6,536,475 tokens over two boots, 24 requests at the full window (4,712,014 and 18 before the prefix cache's fine settings) |
+| an agent's next turn, 40,000 tokens | 31,808 from the prefix cache, 8,231 recomputed, 5.0 s before the first token (17,984, 22,055 and 13.4 s before) |
 | boot from the USB SSD | 7 min 26 s to 7 min 36 s (weights 124 to 132 s, CUDA graphs for 16 requests 128 s) |
 | MemAvailable, lowest seen | 25.3 GiB, a 252,000-token prompt's prefill (the measurement scripts on the box beside it); 26 GiB at rest |
 | GPU, hottest | 88 °C, up to 95 W, long prefills back to back |

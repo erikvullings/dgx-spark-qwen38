@@ -248,8 +248,8 @@ case "$CHOICE" in
     ;;
   nemotron)
     # The Nemotron lane serves Bolt's 262,144-token window, and vLLM refuses any request whose
-    # prompt + max_tokens passes it. Its KV cache holds 4.7 million tokens (18 requests at the full
-    # window, measured 2026-10-15), so the pool binds nothing and the window decides, by the same
+    # prompt + max_tokens passes it. Its KV cache holds 6.5 million tokens (24 requests at the full
+    # window, measured 2026-10-16), so the pool binds nothing and the window decides, by the same
     # rule and the same numbers as the Kolibri lane's:
     #     205,000 - 20,000 + 43,863 + 32,000 = 260,863  <=  262,144
     CTX=205000; OUT=32000; LABEL="local, 262K"

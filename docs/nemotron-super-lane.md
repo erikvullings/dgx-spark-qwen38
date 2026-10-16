@@ -114,6 +114,13 @@ time, 12 of 12. The first token came after 11 s at 32,000 tokens, 56 to 58 s at 
 to 6 min 20 s at 500,000 and 19 min 22 s to 19 min 28 s at a million; and after 2.3, 4.2 to 4.5,
 7.5 to 8.7 and 15.3 to 16.3 s when the same prompt came back (the prefix cache).
 
+**An agent's turns.** A 40,000-token conversation growing 27 tokens a turn, as an agent's does, the
+reasoning off and on: from the third turn all but 76 to 168 tokens came from the prefix cache, the
+first token after 0.45 to 0.71 s. opencode and Claude Code, four turns with a tool each, through the
+proxy: 98 to 99 % of opencode's prompts from the cache from its third turn, and 96 to 98 % of Claude
+Code's from its second (3 to 7 s a turn). The second request of the first conversation after a boot
+recomputes its prompt whole (13.5 s at 40,000 tokens); every later one resumes from the cache.
+
 **Answers.** Every one of these right, through the engine's own API: the reasoning at its full and
 its efficient depth and off, streamed or not; tool calls, 20 of 20 with the reasoning on and 20 of 20
 with it off; German, French and English; an image; a video sent in the request; 16 images in one

@@ -19,7 +19,10 @@ Anthropic dialects alike.
 **What an update does.** It puts in the Nemotron Super lane's units, and nothing heavy: no image is
 built and no weight fetched until its first Load. Every other lane's unit names the new one in its
 `Conflicts=` and `After=` lines, which systemd applies at its daemon-reload: each such unit keeps
-its date and its engine keeps running (v1.34.0's rule). The proxy restarts once (its unit holds
+its date and its engine keeps running (v1.34.0's rule). Bolt's unit also changes its serving command
+(the prefix cache, below): the update installs it, and a Bolt that serves keeps running its old
+command until it restarts, which the installer says (Load it again from the cockpit, or
+`sudo systemctl restart qwen38-nemotron.service`). The proxy restarts once (its unit holds
 requests for this lane too while it boots), and so does the cockpit. The two Nemotron lanes run one
 image: a Nemotron lane counts as begun on a box once its own first Load began (that image and its
 own checkpoint), so loading one leaves the other its units only, and a build of the image goes only
@@ -65,6 +68,25 @@ during a million-token prefill) and 9.1 at the end of a first boot, while vLLM b
 kept: the card's own image (above), and the native
 MTP head, which took the box under 8 GiB of free memory at a share of 0.75 and at 0.70 (6.4 and 4.1
 GiB), the guard stopping it each time before it served.
+
+**An agent's turns, on both Nemotron lanes.** An agent sends its whole conversation again at every
+turn, and the prefix cache is what spares the engine computing it again. Bolt's unit followed its
+model card, which sets no prefix-match unit: its drafter's sliding window made vLLM land every hit on
+a 17,984-token boundary, the Mamba state kept one such step before a prompt's end, and an agent's
+every turn recomputed most of its prompt (found by use: an opencode session in the cockpit, slow
+between its messages). Measured on the lane with the card's settings, then with the ones NVIDIA's
+own Super VL recipe sets, which Bolt's unit now carries (`--block-size 64 --prefix-match-unit 64
+--enable-mamba-shared-prefix-checkpoint`): a 40,000-token conversation growing 27 tokens a turn, 13.4 s
+before the first token, then 5.0 s (22,055 tokens recomputed a turn, then 8,231); opencode, four turns
+with a tool each, 28 s a turn, then 11 to 12 s (47 % of its prompts from the cache, then 83 %); Claude
+Code, 23 s a turn, then 4 to 9 s (none of its 18,600-token requests from the cache, then 72 to 73 %).
+The same greedy answers, 12 of 12, the same speed, and a cache of 6.5 million tokens instead of 4.8 (24
+requests at the full window instead of 18). The drafter's window still keeps Bolt's hits on
+4,544-token blocks: a copy of the drafter without it started a turn in 0.2 s and decoded about five
+times slower at 40,000 tokens, so the lane keeps NVIDIA's drafter. Super VL, measured the same way:
+from the third turn all but 76 to 168 tokens from the cache, the first token after 0.45 to 0.71 s;
+opencode 98 to 99 % from its third turn, Claude Code 96 to 98 % from its second (3 to 7 s a turn); the
+second request of the first conversation after a boot recomputes its prompt whole.
 
 **Clients.** Super VL's template reads Bolt's words (`enable_thinking`, `medium_effort`), and the
 proxy says a `reasoning_effort` in them on this lane as on Bolt's (v6.40). opencode gets a
@@ -123,7 +145,9 @@ step and proof, read where they now live, the service step first; an uninstall w
 restart fails goes on (the shared step had returned the failure, and set -e stopped the uninstall
 half done); the vLLM installers' tests read no unit of the machine running them (they read its
 proxy's port and its units for the image's prune); every shell script compares disks through
-links; and each test is declared once (a class inheriting another's tests ran them twice).
+links; and each test is declared once (a class inheriting another's tests ran them twice). And each
+Nemotron unit matches prefixes at 64 tokens with the Mamba checkpoint where a prefix is shared (the
+test fails on Bolt's unit before this version).
 
 ## v1.34.0 (2026-10-16): Nemotron 3.5 Bolt, NVIDIA's 74B that reads images and video, as a sixth lane
 

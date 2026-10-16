@@ -23,7 +23,12 @@ ExecStartPre=/bin/bash __HOME__/.config/qwen38/engine-secrets.sh
 # key and memory share, and what this box measured better (docs/nemotron-lane.md says how):
 #   16 requests at a time instead of 1, 16 images and 2 videos per conversation instead
 #   of 1 and 1 (a second screenshot in a session was refused), and media only inside the request:
-#   no local file (the card opens "/") and no URL fetched (the one domain allowed does not exist).
+#   no local file (the card opens "/") and no URL fetched (the one domain allowed does not exist);
+#   and the prefix cache's fine settings, which NVIDIA's own Super VL recipe sets (--block-size 64
+#   --prefix-match-unit 64 --enable-mamba-shared-prefix-checkpoint): with the card's, the drafter's
+#   sliding window aligned every cache hit to 17,984 tokens, and an agent's turn at 40,000 tokens
+#   recomputed 22,055 of them, 13.4 s before its first token; with these, 8,231 and 5.0 s, the same
+#   answers and speed (the drafter's window still keeps hits to 4,544-token blocks).
 # The options that take a dict are given by key (--limit-mm-per-prompt.image 16): vLLM's own
 # parser builds the same dict, and no JSON goes through systemd and bash.
 # Three caches, each in its own folder of nemotron-cache, so that a boot after the first builds
@@ -60,6 +65,7 @@ ExecStart=/bin/bash -c 'exec /usr/bin/docker run --rm --name qwen38-nemotron --g
     --gpu-memory-utilization __GMU__ \
     --linear-backend b12x --moe-backend b12x --attention-backend FLASHINFER --mamba-backend flashinfer \
     --mamba-ssm-cache-dtype bfloat16 --mamba-cache-dtype bfloat16 --seed 42 \
+    --block-size 64 --prefix-match-unit 64 --enable-mamba-shared-prefix-checkpoint \
     --limit-mm-per-prompt.image 16 --limit-mm-per-prompt.video 2 --video-pruning-rate 0.5 \
     --media-io-kwargs.video.fps 2 --media-io-kwargs.video.num_frames 256 \
     --allowed-media-domains media.invalid \

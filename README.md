@@ -461,7 +461,8 @@ sudo), then `./switch-model.sh nemotron`. Measured here:
 | one request, real work, reasoning off | 140 tok/s rewriting code, 63 summarising, 50 writing prose |
 | several at once, in all (median of 3 passes) | 74.8 / 113.4 / 163.6 / 201.2 tok/s at 1 / 4 / 8 / 16 streams |
 | without its draft model (one pass, at 0.45 of the pool) | 30.3 / 80.3 / 124.8 / 178.0 tok/s |
-| KV cache | 4.7 million tokens: 18 requests at the full window |
+| KV cache | 6.5 million tokens: 24 requests at the full window |
+| an agent's next turn, 40,000 tokens | 5.0 s before the first token, 79 % of the prompt from the prefix cache |
 | long context | a code hidden in 252,000 tokens found 3 times in 3 |
 
 On random tokens, which its draft model cannot guess, it gives 19 to 77 tok/s from 1 to 16 streams.
