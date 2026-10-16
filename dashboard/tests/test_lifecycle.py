@@ -645,6 +645,7 @@ class FeedOutcomes(unittest.TestCase):
         # refusing (sglang#40076, #31597). A client bug, like the oversize refusal.
         "400 logprob width over ceiling": "fail",
         "400 sampling field out of range": "fail",
+        "503 vocabulary unknown": "fail",   # an id past every lane's floor, vocabulary unknown (2026-10-16)
         # v6.19, POST /v1/systemone: the answer was delivered; the request was
         # refused with the field named (a client bug, not the box's); the engine
         # answered a branch with something that is not a one-token distribution.

@@ -1832,6 +1832,13 @@ def served_vocab():
 # A negative id is out of bounds for every vocabulary and is refused whether or not the
 # probe above worked; an id at or past the vocabulary is refused only once it is known.
 TOKEN_ID_FIELDS = ("stop_token_ids", "input_ids")
+# The smallest vocabulary of a lane this proxy fronts: Kolibri's 128,000 (the Qwen lanes have
+# 248,320, the Nemotron ones 131,072; config.json of each checkpoint, 2026-10-16). An id under
+# it is in every one of them. Until the served vocabulary is learned (served_vocab, which a busy,
+# paused or restarting engine leaves at 0), an id at or past it waits for a retry (503) instead
+# of being relayed on trust: the guard stood down there, and one such id takes the scheduler
+# down (found in review, 2026-10-16).
+UNKNOWN_VOCAB_FLOOR = int(os.environ.get("UNKNOWN_VOCAB_FLOOR", "128000") or 0)
 MAX_PARALLEL_SAMPLES = int(os.environ.get("MAX_PARALLEL_SAMPLES", "128") or 128)
 # Routes that hand a body to the sampler. S5: /v1/responses, /invocations and
 # /vertex_generate reach the same sampler under aliases the old list missed.
@@ -4094,14 +4101,27 @@ class H(BaseHTTPRequestHandler):
         if body and self.path.split("?")[0] in SAMPLE_GUARD_ROUTES:
             might, needs_vocab = _sampling_prealert(body, self.path.split("?")[0])
             if might:
-                refusal = sampling_field_refusal(body, self.path,
-                                                 served_vocab() if needs_vocab else 0)
+                vocab = served_vocab() if needs_vocab else 0
+                refusal = sampling_field_refusal(body, self.path, vocab)
                 if refusal:
                     log(f"{self._peer} REFUSED a sampling field the engine dies on: {refusal[17:100]}")
                     self._plain(400, {"Content-Type": "application/json"},
                                 json.dumps({"error": {"type": "invalid_request",
                                                       "message": refusal}}).encode())
                     self._done("400 sampling field out of range"); return
+                if (needs_vocab and not vocab and UNKNOWN_VOCAB_FLOOR > 0
+                        and sampling_field_refusal(body, self.path, UNKNOWN_VOCAB_FLOOR)):
+                    log(f"{self._peer} HELD a token id at or past {UNKNOWN_VOCAB_FLOOR}: the served "
+                        f"vocabulary is not known yet")
+                    self._plain(503, {"Content-Type": "application/json", "Retry-After": "10"},
+                                json.dumps({"error": {"type": "engine_unavailable", "message":
+                                                      f"keepalive-proxy: this request carries a token id at "
+                                                      f"or past {UNKNOWN_VOCAB_FLOOR}, and the vocabulary this "
+                                                      f"lane serves could not be learned just now (the engine "
+                                                      f"is busy, paused or restarting). An id past it takes "
+                                                      f"the engine down (sglang#31597), so the request waits: "
+                                                      f"retry it unchanged."}}).encode())
+                    self._done("503 vocabulary unknown"); return
         body, dropped = sanitize_tool_schemas(body, self.path)
         body, moved_effort, dropped_effort = route_reasoning_effort(body, self.path)
         if moved_effort and _effort_move_logged.first(moved_effort):   # once per level, not per request
