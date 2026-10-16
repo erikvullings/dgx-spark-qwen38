@@ -4258,6 +4258,20 @@ class H(BaseHTTPRequestHandler):
                         json.dumps({"error": {"type": "invalid_request",
                                               "message": "keepalive-proxy: Content-Length is not a number"}}).encode())
             self._done("400 bad Content-Length"); return
+        # A body in a coding (gzip, deflate, br) reads as no JSON to every guard below, so each let
+        # it pass, and an engine or a front that decodes it would take what no guard saw (found in
+        # review, 2026-10-17): no client of this port compresses its body, and one that does is
+        # told so, before the body is read.
+        coding = (self.headers.get("Content-Encoding") or "").strip().lower()
+        if with_body and n and coding not in ("", "identity"):
+            log(f"{self._peer} REFUSED a body in Content-Encoding {coding[:40]!r}: the guards read "
+                f"bodies as they come")
+            self._plain(415, {"Content-Type": "application/json", "Accept-Encoding": "identity"},
+                        json.dumps({"error": {"type": "invalid_request", "message":
+                                              "keepalive-proxy: send the request body uncompressed "
+                                              "(Content-Encoding: identity): this proxy reads every body "
+                                              "to guard the engine, and relays none it cannot read"}}).encode())
+            self._done("415 body encoding"); return
         cap = (COUNT_BODY_MAX_BYTES if self.path.split("?")[0] in COUNT_ROUTES and COUNT_BODY_MAX_BYTES > 0
                and (MAX_BODY_BYTES <= 0 or COUNT_BODY_MAX_BYTES < MAX_BODY_BYTES) else MAX_BODY_BYTES)
         if with_body and cap > 0 and n > cap:
