@@ -28,11 +28,18 @@ ExecStartPre=/bin/bash __HOME__/.config/qwen38/engine-preflight.sh qwen38-image.
 # every lane runs before it starts, and the lane writes nothing there (2026-10-16: found in
 # review, a lane bound past loopback could overwrite either). engine-preflight.sh writes
 # nothing either.
-ReadOnlyPaths=__HOME__/.config/qwen38
-# Nor can it read the serving key there (2026-10-16): it takes media sources from its callers,
-# local paths included, with this user's rights (found in review, 2026-10-16). It has no key
-# of its own to need, and engine-preflight.sh reads none.
-InaccessiblePaths=-__HOME__/.config/qwen38/api-key
+# It sees that directory as an empty read-only tmpfs with the preflight bound into it, and
+# nothing else of it (2026-10-17): the serving key is also in the engine-secrets.yaml the text
+# lanes write there at every start, and a mask laid on each file when the lane starts misses a
+# file made later and is detached by a rename over it on the host, which is how
+# engine-secrets.sh writes the key (found in review, measured with a mount namespace). The
+# preflight needs nothing else there.
+TemporaryFileSystem=__HOME__/.config/qwen38:ro
+BindReadOnlyPaths=-__HOME__/.config/qwen38/engine-preflight.sh
+# Nor the identity wall's client keys, which docs/clients.md installs in /etc/qwen38 readable by
+# this user (2026-10-17). "-": most boxes have no such directory; one made while the lane runs
+# shows to it until its next start.
+InaccessiblePaths=-/etc/qwen38
 # The cookbook's DGX Spark recipe, and nothing else: one GPU, every component resident,
 # the runtime picking its own attention (it logs "Defaulting to Torch SDPA backend on
 # SM12.x"), full-image VAE decode, eager execution, batch 1. Forcing any of those is how
