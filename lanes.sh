@@ -83,6 +83,29 @@ text_lane_back(){  # [$1 the side lane at boot]: the text unit to give the boot 
   return 0
 }
 
+# A lane's unit, put in place. The [Unit] lines that name the other lanes (Conflicts=, After= and
+# the like) order and exclude them, and systemd applies them at its daemon-reload: the engine reads
+# none of them. A lane added to the box changes them in every other unit, and its update read as a
+# change of what each engine runs: install.sh restarted the text lane that served (5 to 15 min), and
+# the other installers said theirs ran older files (found in review, 2026-10-15). Changed only
+# there, the unit keeps its date, the one lane_serves_older and engine-inputs.py go by, which leaves
+# those lines out too. Prints same, deps (only those lines changed) or new.
+UNIT_DEP_KEYS='^(Description|Documentation|Wants|Requires|Requisite|BindsTo|PartOf|Conflicts|After|Before)='
+unit_put(){  # $1 the rendered unit, $2 where it goes (root's: read and written with sudo)
+  # Each step returns on its failure: a function run in $(...) does not stop at one under set -e,
+  # and the caller, which assigns what it prints, stops on that return.
+  local old
+  if [ -f "$2" ] && sudo cmp -s "$1" "$2"; then echo same; return 0; fi
+  if [ -f "$2" ] && cmp -s <(sudo cat "$2" | grep -vE "$UNIT_DEP_KEYS" || true) <(grep -vE "$UNIT_DEP_KEYS" "$1" || true); then
+    old="$(stat -c %Y "$2")" || return 1
+    sudo install -m 644 "$1" "$2" || return 1
+    sudo touch -m -d "@$old" "$2" || return 1
+    echo deps; return 0
+  fi
+  sudo install -m 644 "$1" "$2" || return 1
+  echo new
+}
+
 lane_serves_older(){  # $1 unit, $2... its files: true when it serves and one of them is newer than its start
   local unit="$1" started f; shift
   [ "$(systemctl show -p ActiveState --value "$unit" 2>/dev/null)" = active ] || return 1

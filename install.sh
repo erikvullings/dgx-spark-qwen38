@@ -2317,8 +2317,10 @@ fi
 TMP_UNIT="$(mktemp)"; RENDERED+=("$TMP_UNIT")
 render_tpl "$UNIT_TPL" > "$TMP_UNIT"
 apply_context_configs              # the configs, then at once the unit that reads them
-# the same rule for the unit: an identical one is left as it is, mtime included
-cmp -s "$TMP_UNIT" "/etc/systemd/system/$UNIT_NAME" || sudo install -m 644 "$TMP_UNIT" "/etc/systemd/system/$UNIT_NAME"
+# the same rule for the unit: an identical one is left as it is, mtime included, and one changed
+# only in the lines naming the other lanes keeps its date (lanes.sh unit_put)
+UNIT_PUT="$(unit_put "$TMP_UNIT" "/etc/systemd/system/$UNIT_NAME")"
+[ "$UNIT_PUT" != deps ] || echo "unit updated: only the lines naming the other lanes changed, which the engine does not read"
 rm -f "$TMP_UNIT"
 # Cross-engine switch: exactly one serving unit may start at boot. The other
 # engine's unit (if present) is disabled now and stopped at step 9, right

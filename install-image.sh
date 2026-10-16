@@ -206,13 +206,15 @@ install_service(){
   if [ -n "$INSTALLED_MODEL" ] && [ "$INSTALLED_MODEL" != "$MODEL" ]; then
     rm -f "$CONFIG_DIR/image-model-before-turbo"
   fi
-  if [ -f "$INSTALLED" ] && sudo cmp -s "$RENDER" "$INSTALLED"; then
-    echo "unit unchanged"
-    sudo chmod 644 "$INSTALLED"      # a unit installed before this fix is still 0600
-  else
-    sudo install -m 644 "$RENDER" "$INSTALLED"; sudo systemctl daemon-reload
-    echo "unit installed at $INSTALLED"
-  fi
+  UNIT_PUT="$(unit_put "$RENDER" "$INSTALLED")"
+  case "$UNIT_PUT" in
+    same) echo "unit unchanged"
+          sudo chmod 644 "$INSTALLED" ;;   # a unit installed before this fix is still 0600
+    deps) sudo systemctl daemon-reload
+          echo "unit updated: only the lines naming the other lanes changed, which the lane does not read" ;;
+    *)    sudo systemctl daemon-reload
+          echo "unit installed at $INSTALLED" ;;
+  esac
   # A lane that serves goes on serving the unit, the runtime and the start scripts it started with:
   # said here when no proof follows to restart it, whether this run or an earlier update changed
   # them (an update leaves a serving lane serving, and said nothing for the image and video lanes:

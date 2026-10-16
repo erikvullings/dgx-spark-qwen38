@@ -46,7 +46,9 @@ class TheConfigsMoveWithTheUnit(unittest.TestCase):
         self.assertIn("Prepared (no systemd", block, "the first call is not the --no-service exit")
         after = TEXT[step8:].split("\n", 1)[1]
         nxt = next(ln for ln in after.splitlines() if ln.strip() and not ln.strip().startswith("#"))
-        self.assertIn('sudo install -m 644 "$TMP_UNIT"', nxt,
+        # the unit goes in through lanes.sh's unit_put since v1.34.0 (its date kept when only the
+        # lines naming the other lanes change)
+        self.assertIn('unit_put "$TMP_UNIT"', nxt,
                       "something that can fail runs between the configs and the unit")
 
 

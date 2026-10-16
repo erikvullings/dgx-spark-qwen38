@@ -249,12 +249,14 @@ install_service(){
       -e "s|__ENGINE_BIND__|$ENGINE_BIND|g" -e "s|__PORT__|$PORT|g" \
       "$HERE/$UNIT.template" > "$RENDER"
   grep -q '__[A-Z][A-Z0-9_]*__' "$RENDER" && die "the unit template still holds an unsubstituted placeholder: $(grep -o '__[A-Z][A-Z0-9_]*__' "$RENDER" | sort -u | tr '\n' ' ')"
-  if [ -f "$INSTALLED" ] && sudo cmp -s "$RENDER" "$INSTALLED"; then
-    echo "unit unchanged"
-  else
-    sudo install -m 644 "$RENDER" "$INSTALLED"; sudo systemctl daemon-reload
-    echo "unit installed at $INSTALLED"
-  fi
+  UNIT_PUT="$(unit_put "$RENDER" "$INSTALLED")"
+  case "$UNIT_PUT" in
+    same) echo "unit unchanged" ;;
+    deps) sudo systemctl daemon-reload
+          echo "unit updated: only the lines naming the other lanes changed, which the lane does not read" ;;
+    *)    sudo systemctl daemon-reload
+          echo "unit installed at $INSTALLED" ;;
+  esac
   # A lane that serves goes on serving the unit, the runtime and the start scripts it started with:
   # said here when no proof follows to restart it, whether this run or an earlier update changed
   # them (an update leaves a serving lane serving, and said nothing for the image and video lanes:

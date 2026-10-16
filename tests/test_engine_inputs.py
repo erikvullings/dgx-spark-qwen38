@@ -189,11 +189,121 @@ class TheFingerprintIsByContent(unittest.TestCase):
         box.config_json.write_text('{"rope_scaling": {"type": "yarn", "factor": 4.0}}\n')
         self.assertNotEqual(box.run("fingerprint"), fp)
 
+    def test_the_lines_naming_the_other_lanes_do_not(self):
+        """A lane added to the box changes the Conflicts= and After= of every other unit, which
+        systemd applies at its daemon-reload and the engine never reads: the update that brought
+        the Nemotron lane restarted the text lane that served for them (found in review,
+        2026-10-15). What the engine runs still counts, in the unit and in a drop-in."""
+        box = Box()
+        head = "[Unit]\nDescription=27B\nConflicts=qwen38-flash.service\nAfter=network-online.target qwen38-flash.service\n"
+        box.unit.write_text(head + box.unit.read_text())
+        dropin = pathlib.Path(str(box.unit) + ".d")
+        dropin.mkdir()
+        (dropin / "10-x.conf").write_text("[Unit]\nWants=docker.service\n[Service]\nEnvironment=A=1\n")
+        fp = box.run("fingerprint")
+        box.unit.write_text(box.unit.read_text().replace("qwen38-flash.service\n", "qwen38-flash.service qwen38-nemotron.service\n")
+                            .replace("Description=27B", "Description=the 27B lane"))
+        (dropin / "10-x.conf").write_text("[Unit]\nWants=docker.service network-online.target\nBefore=x.service\n[Service]\nEnvironment=A=1\n")
+        self.assertEqual(box.run("fingerprint"), fp)
+        (dropin / "10-x.conf").write_text("[Unit]\nWants=docker.service\n[Service]\nEnvironment=A=2\n")
+        self.assertNotEqual(box.run("fingerprint"), fp, "a drop-in's environment is read by the engine")
+        (dropin / "10-x.conf").write_text("[Unit]\nWants=docker.service\n[Service]\nEnvironment=A=1\n")
+        self.assertEqual(box.run("fingerprint"), fp)
+        box.unit.write_text(box.unit.read_text().replace("--chat-template", "--chat-template-x"))
+        self.assertNotEqual(box.run("fingerprint"), fp, "the command the unit runs is read")
+
     def test_an_image_that_moved_under_its_name_changes_it(self):
         box = Box()
         fp = box.run("fingerprint")
         box.images.write_text(box.images.read_text().replace(f"{DIGEST}=sha256:img1", f"{DIGEST}=sha256:img2"))
         self.assertNotEqual(box.run("fingerprint"), fp)
+
+
+class AUnitIsPutInPlaceDatedByWhatItsEngineReads(unittest.TestCase):
+    """lanes.sh's unit_put, as every installer puts a lane's unit in place: an identical unit is
+    left as it is, one changed only in the lines naming the other lanes keeps its date (which
+    engine-inputs.py's running verdict and lane_serves_older go by), any other change is new."""
+
+    def put(self, old, new, sudo_fails=""):
+        d = pathlib.Path(tempfile.mkdtemp(prefix="unit-put-"))
+        bin_ = d / "bin"
+        bin_.mkdir()
+        # sudo runs what it is given, as the user here, and fails on the command named
+        (bin_ / "sudo").write_text(f'#!/bin/bash\n[ -n "{sudo_fails}" ] && [ "$1" = "{sudo_fails}" ] && exit 1\nexec "$@"\n')
+        (bin_ / "sudo").chmod(0o755)
+        unit, rendered = d / "qwen38-sglang.service", d / "rendered"
+        if old is not None:
+            unit.write_text(old)
+            os.utime(unit, (1_700_000_000, 1_700_000_000))
+        rendered.write_text(new)
+        r = subprocess.run(["bash", "-c", f'set -euo pipefail\nCONFIG_DIR="{d}"; . "{REPO}/lanes.sh"\n'
+                            f'UNIT_PUT="$(unit_put "{rendered}" "{unit}")"\necho "PUT=$UNIT_PUT"'],
+                           capture_output=True, text=True, timeout=30, env={"PATH": f"{bin_}:/usr/bin:/bin"})
+        return r, unit
+
+    OLD = "[Unit]\nConflicts=qwen38-flash.service\nAfter=qwen38-flash.service\n[Service]\nExecStart=/bin/true\n"
+
+    def test_an_identical_unit_is_left_as_it_is(self):
+        r, unit = self.put(self.OLD, self.OLD)
+        self.assertIn("PUT=same", r.stdout, r.stderr)
+        self.assertEqual(int(unit.stat().st_mtime), 1_700_000_000)
+
+    def test_a_unit_changed_only_in_the_lines_naming_the_other_lanes_keeps_its_date(self):
+        new = self.OLD.replace("qwen38-flash.service\n", "qwen38-flash.service qwen38-nemotron.service\n")
+        r, unit = self.put(self.OLD, new)
+        self.assertIn("PUT=deps", r.stdout, r.stderr)
+        self.assertEqual(unit.read_text(), new)
+        self.assertEqual(int(unit.stat().st_mtime), 1_700_000_000)
+
+    def test_any_other_change_is_new_and_dated_now(self):
+        for old, new in ((self.OLD, self.OLD.replace("/bin/true", "/bin/false")), (None, self.OLD)):
+            with self.subTest(old=old is not None):
+                r, unit = self.put(old, new)
+                self.assertIn("PUT=new", r.stdout, r.stderr)
+                self.assertEqual(unit.read_text(), new)
+                self.assertGreater(unit.stat().st_mtime, time.time() - 60)
+
+    def test_a_step_that_fails_stops_the_installer(self):
+        # in $(...) a function does not stop at a failure under set -e: unit_put returns on each
+        for fails, new in (("install", self.OLD.replace("/bin/true", "/bin/false")),
+                           ("touch", self.OLD.replace("After=qwen38-flash.service", "After=x.service"))):
+            with self.subTest(fails=fails):
+                r, _ = self.put(self.OLD, new, sudo_fails=fails)
+                self.assertNotEqual(r.returncode, 0)
+                self.assertNotIn("PUT=", r.stdout)
+
+    def test_every_installer_puts_its_unit_through_it(self):
+        for script in ("install.sh", "install-image.sh", "install-video.sh", "install-kolibri.sh"):
+            with self.subTest(script=script):
+                text = (REPO / script).read_text()
+                self.assertIn('UNIT_PUT="$(unit_put "', text)
+                self.assertNotRegex(text, r'sudo install -m 644 "\$(RENDER|TMP_UNIT)"')
+
+    def test_the_engine_keeps_running_when_only_those_lines_change(self):
+        """The whole chain: the unit put back with a lane named in its Conflicts= and After=
+        after the engine started; at this run nothing it reads changed, and at the next run it
+        still started after everything it reads (its date is the old one)."""
+        box = Box()
+        old = "[Unit]\nConflicts=qwen38-flash.service\nAfter=qwen38-flash.service\n" + box.unit.read_text()
+        box.unit.write_text(old)
+        before = time.time() - 600
+        for f in [box.unit, *box.cfg.rglob("*"), *box.hf.rglob("*")]:
+            os.utime(f, (before, before))
+        box.started = int(time.time()) - 300                 # the engine started after all it reads
+        fp = box.run("fingerprint")
+        self.assertEqual(box.run("running"), "yes")
+        bin_ = box.t / "sudo-bin"
+        bin_.mkdir()
+        (bin_ / "sudo").write_text('#!/bin/bash\nexec "$@"\n')
+        (bin_ / "sudo").chmod(0o755)
+        rendered = box.t / "rendered"
+        rendered.write_text(old.replace("qwen38-flash.service\n", "qwen38-flash.service qwen38-nemotron.service\n"))
+        r = subprocess.run(["bash", "-c", f'set -euo pipefail\nCONFIG_DIR="{box.cfg}"; . "{REPO}/lanes.sh"\n'
+                            f'unit_put "{rendered}" "{box.unit}"'], capture_output=True, text=True, timeout=30,
+                           env={"PATH": f"{bin_}:/usr/bin:/bin"})
+        self.assertEqual(r.stdout.strip(), "deps", r.stderr)
+        self.assertEqual(box.run("fingerprint"), fp, "this run: nothing the engine reads changed")
+        self.assertEqual(box.run("running"), "yes", "the next run: it still started after everything it reads")
 
 
 class TheRunningVerdict(unittest.TestCase):
@@ -290,7 +400,8 @@ class TheInstallerDecides(unittest.TestCase):
         # the next run restarted it: on the reference box every second run did, until the
         # unit and the flash launcher were compared first (the template, in patch-template.py).
         text = (REPO / "install.sh").read_text()
-        self.assertIn('cmp -s "$TMP_UNIT" "/etc/systemd/system/$UNIT_NAME" || sudo install -m 644 "$TMP_UNIT"', text)
+        self.assertIn('UNIT_PUT="$(unit_put "$TMP_UNIT" "/etc/systemd/system/$UNIT_NAME")"', text)
+        self.assertNotIn('sudo install -m 644 "$TMP_UNIT"', text, "the unit goes in through unit_put alone")
         # the launcher is installed in the branch where the comparison found a difference,
         # and only there (it also says which of the two happened, since 2026-09-30)
         self.assertRegex(text, r'if cmp -s "\$TMP_LAUNCH" "\$CONFIG_DIR/launch-flash\.sh"; then\n'

@@ -196,7 +196,7 @@ class TheSwitchNoteAndAnInstall(unittest.TestCase):
     """./switch-model.sh image-turbo writes down the checkpoint of the unit's own it leaves,
     for `image` to bring back. An install that points the unit at another checkpoint makes
     that note a stale one: `image` would then bring back a checkpoint from before it."""
-    BLOCK = block("# A unit installed for another checkpoint", '  fi\n  if [ -f "$INSTALLED" ] && sudo cmp -s "$RENDER"')
+    BLOCK = block("# A unit installed for another checkpoint", '  fi\n  UNIT_PUT="$(unit_put "$RENDER" "$INSTALLED")"')
 
     def run_block(self, installed_model, model):
         d = pathlib.Path(tempfile.mkdtemp(prefix="img-note-"))

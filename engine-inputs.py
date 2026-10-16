@@ -38,6 +38,17 @@ def _read(path):
 # Scripts a unit runs that the engine never reads: the guard runs before it starts and is
 # no input to it (engine-preflight.sh), so a new guard never restarts a healthy engine.
 NOT_INPUTS = {"engine-preflight.sh"}
+# The [Unit] lines that name the other lanes order and exclude them, and systemd applies them at
+# its daemon-reload: the engine reads none of them. A lane added to the box changes them in every
+# other unit, and the update that brought it restarted the text lane that served, 5 to 15 min, for
+# nothing it runs (found in review, 2026-10-15). They are left out of the unit's content here, and
+# lanes.sh's unit_put keeps the unit's date when only they change (its UNIT_DEP_KEYS, the same keys).
+UNIT_DEP_KEYS = re.compile(r"^(Description|Documentation|Wants|Requires|Requisite|BindsTo|PartOf|Conflicts|After|Before)=")
+
+
+def _unit_text(raw):
+    """A unit's or a drop-in's bytes, without the lines that only order and exclude other units."""
+    return b"".join(ln for ln in raw.splitlines(keepends=True) if not UNIT_DEP_KEYS.match(ln.decode("utf-8", "replace")))
 
 
 def inputs(unit, config_dir, hf_cache, ckpts):
@@ -91,11 +102,13 @@ def _image_id(ref):
 
 def fingerprint(unit, config_dir, hf_cache, ckpts):
     files, images, _ = inputs(unit, config_dir, hf_cache, ckpts)
+    units = {unit} | set(glob.glob(unit + ".d/*.conf"))
     h = hashlib.sha256()
     for f in files:
         try:
             with open(f, "rb") as fh:
-                digest = hashlib.sha256(fh.read()).hexdigest()
+                raw = fh.read()
+            digest = hashlib.sha256(_unit_text(raw) if f in units else raw).hexdigest()
         except OSError:
             digest = "unreadable"
         h.update(f"{f}\0{digest}\n".encode())
