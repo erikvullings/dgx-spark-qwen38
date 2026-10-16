@@ -15,7 +15,7 @@ SPEECH_BOOT=1 ./install-speech.sh      # start it now, and with the box
 ```
 
 It needs `ffmpeg` (`sudo apt-get install -y ffmpeg`, which the video lane needs too), and
-5 GB free where it installs (6 with the 1.7B), of which it uses about 2: llama.cpp's
+6 GB free where it installs (7 with the 1.7B), of which it uses about 2: llama.cpp's
 `llama-server` built for the CPU at a pinned commit (318 MB, 2 min 20 s on the reference
 box), a venv of pinned wheels (168 MB) and 1.4 GB of models checked by sha256 (2.9 GB with
 the 1.7B). It writes `qwen38-speech.service`, then proves the

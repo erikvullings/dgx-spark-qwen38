@@ -12,7 +12,7 @@
 #
 # install.sh runs this on every plain install, like the other lanes; ./install.sh
 # --no-kolibri leaves it out for good (a marker file remembers it). It takes 79 GB of
-# weights (the official FP8 release) and a 22 GB image; when the disk does not have the
+# weights (the official FP8 release) and a 23 GB image; when the disk does not have the
 # room, this refuses before downloading anything and install.sh goes on without it.
 #
 # WHY vLLM AND NOT SGLANG. SGLang cannot load Kolibri (sgl-project/sglang#43256, open on
@@ -167,7 +167,7 @@ if [ "$MODE" = units ]; then
   echo "OK: $(uname -m), key present; the image and the checkpoint come with the lane's first Load"
   install_service
   step "Done: the Kolibri lane is installed; its first Load prepares it"
-  echo "  the cockpit: Load on Kolibri-1 in the Lanes view builds its image (about 22 GB, 10 to download),"
+  echo "  the cockpit: Load on Kolibri-1 in the Lanes view builds its image (about 23 GB, 10 to download),"
   echo "               fetches its checkpoint (about $WEIGHTS_GB GB), then starts it"
   echo "  a terminal : ./install-kolibri.sh --prepare, then ./switch-model.sh kolibri and the commands it prints"
   exit 0

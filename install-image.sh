@@ -9,8 +9,9 @@
 #   ./install-image.sh --prepare       the runtime alone, no sudo: the cockpit's first Load runs it
 #
 # install.sh runs this on every plain install since v1.20: a box gets every lane. The
-# checkpoint is 31 GB and the runtime another 9 measured (7 for the venv and checkout,
-# the rest its build); when the disk does not have the room, this refuses before
+# checkpoint is 34 GB and the runtime another 12 with its build (WEIGHTS_GB and RUNTIME_GB
+# below count them in GiB, 31 and 11: 9 measured, 7 for the venv and checkout, the rest its
+# build); when the disk does not have the room, this refuses before
 # downloading anything, install.sh says so and goes on, and ./install.sh --no-image
 # leaves the lane out for good (a marker file remembers it).
 #
@@ -169,7 +170,7 @@ if [ "$ACTION" = uninstall ]; then
     [ -d "$D" ] && [[ " ${KEPT[*]} " != *" $D "* ]] && KEPT+=("$D")
   done
   if [ "${#KEPT[@]}" -gt 0 ]; then
-    echo "the lane's checkpoints are left in $HF_CACHE (about 31 GB each); delete them yourself if you want the space:"
+    echo "the lane's checkpoints are left in $HF_CACHE (about 34 GB each); delete them yourself if you want the space:"
     for D in "${KEPT[@]}"; do echo "  rm -rf $D"; done
   fi
   exit 0
@@ -276,8 +277,8 @@ if [ "$MODE" = units ]; then
   echo "OK: $(uname -m), key present; the runtime and the checkpoint come with the lane's first Load"
   install_service
   step "Done: the image lane is installed; its first Load prepares it"
-  echo "  the cockpit: Load on Qwen-Image 2.1 in the Lanes view builds its runtime (about $RUNTIME_GB GB),"
-  echo "               fetches its checkpoint (about $WEIGHTS_GB GB), then starts it"
+  echo "  the cockpit: Load on Qwen-Image 2.1 in the Lanes view builds its runtime (about 12 GB),"
+  echo "               fetches its checkpoint (about 34 GB), then starts it"
   echo "  a terminal : ./install-image.sh --prepare, then ./switch-model.sh image and the commands it prints"
   exit 0
 fi
@@ -424,7 +425,7 @@ if [ "$MODE" = prepare ]; then
   exit 0
 fi
 
-step "4/6 Checkpoint ($MODEL at ${MODEL_REV:0:12}, ~31 GB, one-time, resumable)"
+step "4/6 Checkpoint ($MODEL at ${MODEL_REV:0:12}, ~34 GB, one-time, resumable)"
 # The same two lessons the LLM lane learned the hard way: the Hub's Xet backend stalls
 # silently on this box (0-8 MB/s against 89 on the classic CDN), and an unauthenticated
 # pull gets throttled, so HF_TOKEN is passed through when it is set.

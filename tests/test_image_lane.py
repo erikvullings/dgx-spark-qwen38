@@ -554,7 +554,7 @@ class TheOneLinerReachesIt(unittest.TestCase):
 
     def test_it_runs_after_the_engine_is_up_and_cannot_fail_the_install(self):
         """It is the only step that stops the engine that is already serving, and the
-        only one that costs 38 GB. A lane that will not install must not take down an
+        only one that costs 46 GB. A lane that will not install must not take down an
         install that is otherwise finished."""
         # The normal path's call, the one after a text engine proved itself. The other
         # call belongs to the image-is-the-boot-lane exit, which ends before step 9 on
@@ -569,9 +569,9 @@ class TheOneLinerReachesIt(unittest.TestCase):
                          "the normal path prepares then proves it, and the image-boot path updates it")
 
     def test_the_help_says_what_it_costs_before_someone_spends_it(self):
-        self.assertIn("--no-image            leave the Qwen-Image 2.1 lane out (40 GB)", self.text)
-        self.assertIn("about 38 GB of\ndownloads", self.text)   # a plain run: the lane that serves
-        self.assertIn("about 690 GB of disk", self.text)         # --all-weights: the whole box
+        self.assertIn("--no-image            leave the Qwen-Image 2.1 lane out (46 GB)", self.text)
+        self.assertIn("about 39 GB of\ndownloads", self.text)   # a plain run: the lane that serves
+        self.assertIn("about 731 GB of disk", self.text)         # --all-weights: the whole box
 
 
 class AnUpdateKeepsTheImageLaneAsTheBootLane(unittest.TestCase):

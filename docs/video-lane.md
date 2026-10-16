@@ -4,8 +4,8 @@ Text to video with joint video-and-audio, plus first/last-frame conditioning, se
 SGLang Diffusion in its own venv, on its own port, driven from the cockpit's **Video** view.
 Every plain install includes it since v1.20, now on demand: a plain run puts its units on
 the box, and its first Load from the cockpit builds its runtime and fetches its checkpoint
-(about 165 GB of headroom: 135 GiB of checkpoint and the Turbo adapter's 0.73, 11 of
-runtime, 16 for the runtime's own caches). `--all-weights`, or `--with-video`, builds it at
+(about 174 GB of headroom: 145 of checkpoint and Turbo adapter, 12 of runtime and its
+build, 17 for the runtime's own caches). `--all-weights`, or `--with-video`, builds it at
 install and proves it with one 4 s video. `--no-video` leaves it out, and later runs
 remember that; `--with-video` brings it back:
 

@@ -625,13 +625,13 @@ const IMG_INTERRUPTED_AT = {t: 0}, VID_INTERRUPTED_AT = {t: 0};
 // The server knows three moves (switch, stop, start) and refuses them out of order; the
 // page chains them, one job after the other, and says each command before it runs.
 // what a side lane's first Load builds before its switch fetches the checkpoint
-const LANE_RUNTIME = {flash: 'its SGLang image (about 15 GB to download), its checkpoint (about 135 GB) and its reduced draft vocabulary',
-  '27b': 'its SGLang image (about 15 GB to download), its DFlash2 draft (about 1.5 GB) and its checkpoint (22 to 31 GB)',
-  image: 'a venv and SGLang Diffusion, about 11 GB, about 10 minutes',
-  video: 'a venv and SGLang Diffusion, about 11 GB, about 10 minutes, and the Turbo adapter',
-  kolibri: 'its vLLM image, about 10 GB to download (22 GB on disk), pulled and built here',
-  nemotron: 'its vLLM image, about 10 GB to download (24 GB on disk), pulled and built here',
-  'nemotron-super': 'the Nemotron lanes’ vLLM image (the Bolt lane’s), about 10 GB to download (24 GB on disk), pulled and built here once for the two'};
+const LANE_RUNTIME = {flash: 'its SGLang image (about 16 GB to download), its checkpoint (about 136 GB) and its reduced draft vocabulary',
+  '27b': 'its SGLang image (about 15 GB to download), its DFlash2 draft (about 2 GB) and its checkpoint (22 to 31 GB)',
+  image: 'a venv and SGLang Diffusion, about 12 GB, about 10 minutes',
+  video: 'a venv and SGLang Diffusion, about 12 GB, about 10 minutes, and the Turbo adapter',
+  kolibri: 'its vLLM image, about 10 GB to download (23 GB on disk), pulled and built here',
+  nemotron: 'its vLLM image, about 11 GB to download (25 GB on disk), pulled and built here',
+  'nemotron-super': 'the Nemotron lanes’ vLLM image (the Bolt lane’s), about 11 GB to download (25 GB on disk), pulled and built here once for the two'};
 const SIDE_LANE = {[IMAGE_UNIT]: 'image', [VIDEO_UNIT]: 'video', [KOLIBRI_UNIT]: 'kolibri', [NEMOTRON_UNIT]: 'nemotron',
                    [NEMOTRON_SUPER_UNIT]: 'nemotron-super', [UFLASH]: 'flash', [U27]: '27b'};
 function laneJourneySteps(target){

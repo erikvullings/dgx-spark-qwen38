@@ -3,7 +3,7 @@
 Text to image, image editing and native RGBA, served by SGLang Diffusion in its own venv, on
 its own port, driven from the cockpit's **Image** view. Every plain install includes it
 since v1.20, now on demand: a plain run puts its units on the box, and its first Load from
-the cockpit builds its runtime and fetches its checkpoint (40 GB: 31 checkpoint, 9 runtime).
+the cockpit builds its runtime and fetches its checkpoint (46 GB: 34 checkpoint, 12 runtime and its build).
 `--all-weights`, or `--with-image`, builds it at install and proves it with one image.
 `--no-image` leaves it out, and later runs remember that; `--with-image` brings it back:
 

@@ -10,7 +10,7 @@ vocabulary from the target it loads (`./prepare-lane.sh flash <target>`, as the 
 then switches to it and starts it. `--all-weights` or `--with-flash` installs it whole at once and proves it with a boot and
 a real generation, as every run did before. `MODEL_CHOICE=flash` makes it the lane that serves instead, with
 the 27B beside it on demand the same way (its first Load runs `./prepare-lane.sh 27b <target>`: its image,
-its DFlash2 draft and its checkpoint); `--no-flash` leaves it out of a 27B box (206 GB), and later
+its DFlash2 draft and its checkpoint); `--no-flash` leaves it out of a 27B box (223 GB), and later
 runs remember that.
 
 > **v1.7 and earlier users: upgrade.** v1.8 replaces this repo's vendored

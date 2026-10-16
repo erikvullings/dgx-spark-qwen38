@@ -149,7 +149,7 @@ if [ "$MODE" = units ]; then
   install_service
   step "Done: the Nemotron Super lane is installed; its first Load prepares it"
   echo "  the cockpit: Load on Nemotron 3.5 Super VL in the Lanes view builds its image (the Nemotron Bolt lane's,"
-  echo "               about 24 GB, 10 to download, once for the two), fetches its checkpoints (about $WEIGHTS_GB GB), then starts it"
+  echo "               about 25 GB, 11 to download, once for the two), fetches its checkpoints (about $WEIGHTS_GB GB), then starts it"
   echo "  a terminal : ./install-nemotron-super.sh --prepare, then ./switch-model.sh nemotron-super and the commands it prints"
   exit 0
 fi

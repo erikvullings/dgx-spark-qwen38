@@ -13,6 +13,7 @@ from the page itself:
   for a flash target where it asks 230 and 35), so a box sized from the README
   was refused.
 """
+import math
 import pathlib
 import re
 import subprocess
@@ -119,22 +120,29 @@ class TheTabsTheDocsNameExist(unittest.TestCase):
         self.assertEqual(sorted(rows), sorted(nav_labels()))
 
 
+def gb(gib):
+    """A size of the preflight's in the README's unit. install.sh counts GiB, as df -BG gives
+    them; the README says GB of 10^9 bytes, as disks are sold, rounded up, and a sum of the
+    parts it names (its 93 GiB were 93 GB there, 99.9 GB of disk; found in review, 2026-10-16)."""
+    return math.ceil(int(gib) * 2 ** 30 / 10 ** 9)
+
+
 class TheDiskNeedsAreThePreflights(unittest.TestCase):
     def test_the_readme_states_what_the_installer_checks(self):
         sh = (REPO / "install.sh").read_text()
-        pairs = [tuple(map(int, m)) for m in re.findall(r"NEED_GB=(\d+); DOCKER_NEED_GB=(\d+); IMG_LABEL=", sh)]
+        pairs = [(gb(h), gb(d)) for h, d in re.findall(r"NEED_GB=(\d+); DOCKER_NEED_GB=(\d+); IMG_LABEL=", sh)]
         self.assertEqual(len(pairs), 2, "the preflight's two needs moved: fix the pattern")
         (b_hf, b_docker), (f_hf, f_docker) = pairs
         ple = re.findall(r"NEED_GB=\$\(\(NEED_GB \+ (\d+)\)\)", sh)
         self.assertEqual(len(ple), 1, "the PLE table's share moved: fix the pattern")
-        f_hf += int(ple[0])
-        labels = re.findall(r'IMG_LABEL="(\d+) GB Docker image"', sh)
+        f_hf += gb(ple[0])
+        labels = [gb(n) for n in re.findall(r'IMG_LABEL="(\d+) GB Docker image"', sh)]
         readme = (REPO / "README.md").read_text()
         req = next(line for line in readme.splitlines() if line.startswith("Requirements:"))
-        for gb in (b_hf, b_docker, f_hf, f_docker, b_hf + b_docker, f_hf + f_docker):
-            self.assertIn(f"**{gb} GB**", req, f"install.sh checks {gb} GB somewhere the README does not say")
-        for gb in labels:
-            self.assertIn(f"its {gb} GB image", req, f"install.sh names a {gb} GB image the README does not")
+        for n in (b_hf, b_docker, f_hf, f_docker, b_hf + b_docker, f_hf + f_docker):
+            self.assertIn(f"**{n} GB**", req, f"install.sh checks {n} GB somewhere the README does not say")
+        for n in labels:
+            self.assertIn(f"its {n} GB image", req, f"install.sh names a {n} GB image the README does not")
 
     def test_the_help_gives_each_lane_one_size(self):
         # install.sh's help gave the Nemotron lane 60 GB in its overview, and 51 at its

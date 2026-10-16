@@ -469,7 +469,7 @@ fi
 # session it opens). So it is handled here, whole, and exits, instead of threading
 # "unless image" through four hundred lines written for SGLang's text server.
 if [ "$CHOICE" = "image" ] || [ "$CHOICE" = "image-turbo" ]; then
-  [ -f "$IMAGE_UNIT" ] || die "the image lane is not installed on this box (no $IMAGE_UNIT). Install it once: ./install.sh --with-image (40 GB)"
+  [ -f "$IMAGE_UNIT" ] || die "the image lane is not installed on this box (no $IMAGE_UNIT). Install it once: ./install.sh --with-image (46 GB)"
   IMG_WD="$(grep -m1 -E '^WorkingDirectory=' "$IMAGE_UNIT" | cut -d= -f2- || true)"
   IMG_PY="${IMG_WD:-$HOME/.local/share/qwen38-image}/venv/bin/python"
   [ -x "$IMG_PY" ] || die "the image lane's runtime is missing ($IMG_PY): ./prepare-lane.sh image builds it (no sudo; its first Load from the cockpit runs it), then switch again"
@@ -597,7 +597,7 @@ fi
 # lane through it), and no opencode default to move (opencode is a text client).
 # Handled here, whole, and exits.
 if [ "$CHOICE" = "video" ]; then
-  [ -f "$VIDEO_UNIT" ] || die "the video lane is not installed on this box (no $VIDEO_UNIT). Install it once: ./install.sh --with-video (about 165 GB of headroom)"
+  [ -f "$VIDEO_UNIT" ] || die "the video lane is not installed on this box (no $VIDEO_UNIT). Install it once: ./install.sh --with-video (about 174 GB of headroom)"
   VID_WD="$(grep -m1 -E '^WorkingDirectory=' "$VIDEO_UNIT" | cut -d= -f2- || true)"
   VID_PY="${VID_WD:-$HOME/.local/share/qwen38-video}/venv/bin/python"
   [ -x "$VID_PY" ] || die "the video lane's runtime is missing ($VID_PY): ./prepare-lane.sh video builds it (no sudo; its first Load from the cockpit runs it), then switch again"
@@ -742,7 +742,7 @@ if [ "$TARGET_LANE" = "27b" ]; then
   INVOCATION="$SGL_UNIT"
   PIN_IMAGE="$SERVE_IMAGE"
 else
-  [ -f "$FLASH_UNIT" ] || die "the Flash-Next stack is not installed on this box (no $FLASH_UNIT). Install it once first: MODEL_CHOICE=$CHOICE ./install.sh (~135 GB download, no image build)"
+  [ -f "$FLASH_UNIT" ] || die "the Flash-Next stack is not installed on this box (no $FLASH_UNIT). Install it once first: MODEL_CHOICE=$CHOICE ./install.sh (~136 GB download, no image build)"
   TARGET_UNIT="$FLASH_UNIT"; TARGET_UNIT_NAME="qwen38-flash.service"
   OTHER_UNIT="$SGL_UNIT"; OTHER_UNIT_NAME="qwen38-sglang.service"
   INVOCATION="$CONFIG_DIR/launch-flash.sh"

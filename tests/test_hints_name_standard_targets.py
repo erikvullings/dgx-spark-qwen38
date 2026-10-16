@@ -75,7 +75,7 @@ class TheInstallersLineOnABoxThatBootsImagesOrVideo(unittest.TestCase):
                 out = run(self.LINES, choice, "MODEL_CHOICE")
                 self.assertEqual(named_targets(out), [standard, choice], out)
                 self.assertNotIn("Load on that lane", out)   # the cockpit would load it again
-                self.assertIn("a first switch downloads about", out)   # 21 to 126 GB
+                self.assertIn("a first switch downloads about", out)   # 22 to 136 GB
 
     def test_a_standard_lane_keeps_its_load_and_its_switch(self):
         for choice in ("stock", "fp8", "flash", "flash-nvda"):

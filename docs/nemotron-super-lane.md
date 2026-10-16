@@ -4,7 +4,7 @@ Nemotron 3.5 Super VL is NVIDIA's open vision-language model released on 2026-10
 (OpenMDW-1.1): a hybrid of Mamba-2, Transformer and mixture-of-experts layers (512 routed experts
 per MoE layer) with a C-RADIO vision encoder, 120B parameters with 12B active per token. Its NVFP4
 release, quantized with NVIDIA's Model Optimizer and refined by quantization-aware distillation,
-takes 75 GB. It reads text, images and video, writes text, reasons (on by default, with a shorter
+takes 76 GB. It reads text, images and video, writes text, reasons (on by default, with a shorter
 "efficient" depth on request) and calls tools, in a window of 1,048,576 tokens. This lane serves it
 on the same port and behind the same proxy and key as the other text lanes, as model
 `nemotron-3.5-super-vl`, with its LiLiCorr drafter. It is the Nemotron lane's big sibling: the

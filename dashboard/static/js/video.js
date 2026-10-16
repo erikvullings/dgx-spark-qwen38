@@ -163,7 +163,7 @@ function vidRenderLane(){
   if (!F.life){ sig = 'wait'; build = () => {}; }
   else if (!e){ sig = 'absent'; build = () => {
     const b = el('div', 'banner info'); b.append(el('span', 'lamp'));
-    const d = el('div'); d.append(el('b', null, 'The video lane is not installed. '), el('span', null, 'On the box: ./install.sh --with-video. It needs about 165 GB of disk and an hour.'));
+    const d = el('div'); d.append(el('b', null, 'The video lane is not installed. '), el('span', null, 'On the box: ./install.sh --with-video. It needs about 174 GB of disk and an hour.'));
     b.append(d); box.append(b); }; }
   else if (ready){ sig = 'ready'; build = () => {}; }
   else if (TRANSITIONAL.has(e.state)){

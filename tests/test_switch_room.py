@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """A switch checks for room before it downloads, and the cockpit gives it the time to.
 
-switch-model.sh can download a whole checkpoint (22 to 126 GB), and a cockpit button can
+switch-model.sh can download a whole checkpoint (22 to 136 GB), and a cockpit button can
 start it: it checked no free space, blamed HF_TOKEN for any failed download, and the
 cockpit's switch job timed out at 30 min, when a flash download alone takes about 23 at
 the reference box's 89 MB/s (found in review, 2026-09-24). The switch's own lines run

@@ -515,13 +515,13 @@ the opencode wiring, the cockpit and its Agent view, and every other lane on
 demand: a run puts in its units, and the first Load of each from the cockpit
 prepares it as the user, with no sudo, and fetches its weights. That is the
 other text lane (the flash beside the 27B, its image, checkpoint and PLE table,
-206 GB; or the 27B beside a serving flash, its image, draft and checkpoint,
-54), the image lane (40), the video lane (160), the Kolibri lane (Aleph
+223 GB; or the 27B beside a serving flash, its image, draft and checkpoint,
+58), the image lane (46), the video lane (174), the Kolibri lane (Aleph
 Alpha's Kolibri-1, on vLLM, 102), the Nemotron lane (NVIDIA's Nemotron 3.5
 Bolt, on vLLM, 51) and the Nemotron Super lane (NVIDIA's Nemotron 3.5 Super VL
 on vLLM, in the Nemotron lane's image: 77 beside it, else 102). The lane that
-serves proves it serves before the run ends; on a new box the 27B takes 54 GB
-of disk, about 38 GB of
+serves proves it serves before the run ends; on a new box the 27B takes 58 GB
+of disk, about 39 GB of
 downloads (about 6 to 7 minutes at 100 MB/s). A lane installed whole (--all-weights, --with-<lane>)
 that does not fit on the disk is left out and named at the end, with the
 command that adds it later. When it finishes it prints the
@@ -539,18 +539,18 @@ without a terminal.
   --no-cockpit          skip the web cockpit and its Agent view (no dashboard
                         unit, no sudoers allowlist). Remembered by later runs.
   --with-cockpit        re-enable it after a --no-cockpit
-  --no-image            leave the Qwen-Image 2.1 lane out (40 GB). Remembered
+  --no-image            leave the Qwen-Image 2.1 lane out (46 GB). Remembered
                         by later runs; a lane already installed stays in place,
                         not updated (./install-image.sh --uninstall removes it)
   --with-image          bring it back after a --no-image
-  --no-video            leave the MiniMax-H3 video lane out (160 GB),
+  --no-video            leave the MiniMax-H3 video lane out (174 GB),
                         remembered the same way (./install-video.sh --uninstall)
   --with-video          bring it back after a --no-video
   --no-flash            leave the flash 176B lane out when it is not the one
-                        serving (206 GB), remembered the same way
+                        serving (223 GB), remembered the same way
   --with-flash          bring it back after a --no-flash
   --no-27b              leave the 27B lane out when it is not the one serving
-                        (54 GB), remembered the same way
+                        (58 GB), remembered the same way
   --with-27b            bring it back after a --no-27b
   --no-kolibri          leave the Kolibri-1 lane out (vLLM, 102 GB), remembered
                         the same way (./install-kolibri.sh --uninstall removes it)
@@ -563,7 +563,7 @@ without a terminal.
   --with-nemotron-super bring it back after a --no-nemotron-super
   --all-weights         install every lane whole now (the flash beside the 27B,
                         the image, video, Kolibri and both Nemotron lanes), runtime
-                        and weights, about 690 GB of disk, and prove each new one
+                        and weights, about 731 GB of disk, and prove each new one
                         (without it, each is prepared at its first Load from
                         the cockpit; --with-<lane> does the same for that one
                         lane)
@@ -592,7 +592,7 @@ box, the 27B image on 2026-10-09):
                                      against 887,797 for NVFP4, 2026-09-18)
   MODEL_CHOICE=uncensored-fp8        the huihui abliteration in that same FP8 format
   MODEL_CHOICE=flash                 serve Qwen3.8-Flash-Next (176B hybrid MoE,
-                                     NVFP4, SGLang engine, ~135 GB download; the
+                                     NVFP4, SGLang engine, ~136 GB download; the
                                      47.7 GiB N-gram table is served from a file
                                      on NVMe, with prefix caching and vision)
   MODEL_CHOICE=flash-uncensored      the abliterated build of the same tree
@@ -628,8 +628,8 @@ box, the 27B image on 2026-10-09):
   PROXY_PORT=30001                   keepalive proxy port (default: PORT+1)
   SERVE_IMAGE=ref                    serving image for the 27B lane
   FLASH_SERVE_IMAGE=ref              serving image for the Flash-Next lane
-  HF_CACHE=/path                     HuggingFace cache location (~23 GB for a 27B
-                                     target and its draft, ~135 GB for flash)
+  HF_CACHE=/path                     HuggingFace cache location (~24 GB for a 27B
+                                     target and its draft, ~136 GB for flash)
   PORT=30000                         serving port
 HLP
       exit 0 ;;
@@ -1299,10 +1299,11 @@ mkdir -p "$HF_CACHE" 2>/dev/null || true
 # install at this line, and the "found unknown GB" below never said why (found in review,
 # 2026-09-24).
 FREE_DISK_GB=$({ df -BG --output=avail "$HF_CACHE" 2>/dev/null || true; } | tail -1 | tr -dc '0-9')
-# Fresh installs need ~45 GB for the 27B stack (checkpoints + caches) and ~180 GB for
-# Flash-Next (its NVFP4 checkpoint alone is ~136 GB), plus ~50 GB for the flash lane's
-# PLE table where PLE_DIR lands; what the cache already holds comes off (below).
-# README "Quickstart" states these numbers: keep the two together.
+# Fresh installs need ~45 GiB for the 27B stack (checkpoints + caches) and ~180 GiB for
+# Flash-Next (its NVFP4 checkpoint alone is 136 GB), plus ~50 GiB for the flash lane's
+# PLE table where PLE_DIR lands; what the cache already holds comes off (below). These
+# checks count GiB, as df -BG does; the README's "Requirements" gives the same numbers in
+# GB, rounded up (tests/test_docs_facts.py converts them): keep the two together.
 # The room a pull takes at its peak, counted for both of Docker's image stores: the classic one
 # keeps a layer's download until it is unpacked, the containerd one (the default of Docker 29
 # on a new install) keeps every download beside what it unpacked. In GiB as df -BG rounds them
@@ -1420,11 +1421,11 @@ fi
 echo "OK (aarch64, ${TOTAL_GB} GB RAM, ${FREE_DISK_GB} GB free)"
 
 if [ "$UNITS_ONLY" -eq 1 ]; then
-  if [ "$LANE" = "flash" ]; then step "2/10 The Flash-Next image: pulled at the lane's first Load (~15 GB to download, 34 GB on disk)"
+  if [ "$LANE" = "flash" ]; then step "2/10 The Flash-Next image: pulled at the lane's first Load (~16 GB to download, 35 GB on disk)"
   else step "2/10 The SGLang image: pulled at the lane's first Load (~15 GB to download)"; fi
   PULLED_IMAGE="$PULL_TARGET"
 elif [ "$LANE" = "flash" ]; then
-  step "2/10 Pulling the official SGLang Flash-Next image (~15 GB to download, 34 GB on disk, one-time, resumable)"
+  step "2/10 Pulling the official SGLang Flash-Next image (~16 GB to download, 35 GB on disk, one-time, resumable)"
   docker pull "$PULL_TARGET" || die "docker pull failed. Causes: no internet, Docker Hub rate limit (retry in a few minutes or 'docker login'), or the pinned digest was removed upstream: try FLASH_IMAGE=lmsysorg/sglang:dev-qwen38-next-local ./install.sh"
   PULLED_IMAGE="$PULL_TARGET"
 else
@@ -1471,13 +1472,13 @@ else
 fi
 
 if [ "$UNITS_ONLY" -eq 1 ]; then
-  if [ "$LANE" = "flash" ]; then step "4/10 The Flash-Next checkpoint: fetched at the lane's first Load (~135 GB)"
-  else step "4/10 The checkpoints (the target and its DFlash2 draft): fetched at the lane's first Load (~23 GB, ~33 for an FP8 target)"; fi
+  if [ "$LANE" = "flash" ]; then step "4/10 The Flash-Next checkpoint: fetched at the lane's first Load (~136 GB)"
+  else step "4/10 The checkpoints (the target and its DFlash2 draft): fetched at the lane's first Load (~24 GB, ~33 for an FP8 target)"; fi
 elif [ "$LANE" = "flash" ]; then
-  step "4/10 Downloading the Flash-Next checkpoint (~135 GB, one-time, reuses/resumes any local copy)"
+  step "4/10 Downloading the Flash-Next checkpoint (~136 GB, one-time, reuses/resumes any local copy)"
   echo "This is the big one: at 100 MB/s it takes ~25 min. Interrupting is safe, re-running resumes."
 else
-  step "4/10 Downloading checkpoints (~23 GB, ~33 for an FP8 target, one-time, reuses/resumes any local copy)"
+  step "4/10 Downloading checkpoints (~24 GB, ~33 for an FP8 target, one-time, reuses/resumes any local copy)"
 fi
 mkdir -p "$HF_CACHE" "$CONFIG_DIR/sglang-cache"
 # A kept custom model is already serving from this cache: skip its download.
@@ -2654,9 +2655,9 @@ else
     custom)
       # a kept custom model has no switch target of its own; the installer is the way back
       echo "  back to it: MODEL_CHOICE=<target> ./install.sh (this box serves a custom model)" ;;
-    uncensored)       echo "  back to it: ./switch-model.sh stock, the standard checkpoint of that lane (a first switch downloads about 21 GB), or ./switch-model.sh uncensored, the abliterated one it was installed with" ;;
+    uncensored)       echo "  back to it: ./switch-model.sh stock, the standard checkpoint of that lane (a first switch downloads about 22 GB), or ./switch-model.sh uncensored, the abliterated one it was installed with" ;;
     uncensored-fp8)   echo "  back to it: ./switch-model.sh fp8, the standard checkpoint of that lane (a first switch downloads about 31 GB), or ./switch-model.sh uncensored-fp8, the abliterated one it was installed with" ;;
-    flash-uncensored) echo "  back to it: ./switch-model.sh flash, the standard checkpoint of that lane (a first switch downloads about 126 GB), or ./switch-model.sh flash-uncensored, the abliterated one it was installed with" ;;
+    flash-uncensored) echo "  back to it: ./switch-model.sh flash, the standard checkpoint of that lane (a first switch downloads about 136 GB), or ./switch-model.sh flash-uncensored, the abliterated one it was installed with" ;;
     *)
       echo "  back to it: Load on that lane in the cockpit's Lanes view, or ./switch-model.sh $MODEL_CHOICE" ;;
   esac
@@ -3093,12 +3094,12 @@ except Exception as e:
       esac
     }
     if [ "$SECOND_LANE" = flash ]; then
-      lane_line "Flash 176B " "$SECOND_STATE" flash flash "206 GB" "$FLASH_UNIT_PATH"
+      lane_line "Flash 176B " "$SECOND_STATE" flash flash "223 GB" "$FLASH_UNIT_PATH"
     elif [ "$SECOND_LANE" = 27b ]; then
-      lane_line "Qwen3.8 27B" "$SECOND_STATE" 27b stock "54 GB" "$SGL_UNIT_PATH"
+      lane_line "Qwen3.8 27B" "$SECOND_STATE" 27b stock "58 GB" "$SGL_UNIT_PATH"
     fi
-    lane_line "Images     " "$IMAGE_STATE" image image "40 GB" /etc/systemd/system/qwen38-image.service
-    lane_line "Videos     " "$VIDEO_STATE" video video "160 GB" /etc/systemd/system/qwen38-video.service
+    lane_line "Images     " "$IMAGE_STATE" image image "46 GB" /etc/systemd/system/qwen38-image.service
+    lane_line "Videos     " "$VIDEO_STATE" video video "174 GB" /etc/systemd/system/qwen38-video.service
     lane_line "Kolibri-1  " "$KOLIBRI_STATE" kolibri kolibri "102 GB" "$KOLIBRI_UNIT_PATH"
     lane_line "Nemotron   " "$NEMOTRON_STATE" nemotron nemotron "51 GB" "$NEMOTRON_UNIT_PATH"
     lane_line "Super VL   " "$NEMOTRON_SUPER_STATE" nemotron-super nemotron-super "102 GB" "$NEMOTRON_SUPER_UNIT_PATH"

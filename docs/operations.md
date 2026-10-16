@@ -117,7 +117,7 @@ cd dgx-spark-qwen38 && git pull && ./install.sh
 
 **v1.19 -> v1.20 installs the lanes a box does not have yet**: since v1.20 a plain run installs
 every lane, so the first update of a box with one text lane brings the other one (the flash lane
-is 206 GB, the 27B 54), the image lane (40) and the video lane (about 165 of headroom). Since
+is 223 GB, the 27B 58), the image lane (46) and the video lane (about 174 of headroom). Since
 v1.33 they come on demand: that update gives each its units, and each is built at its first Load
 from the cockpit; `--all-weights` builds them all on that run and proves each, the served lane
 stopped meanwhile and proved again after. To keep a box as it is,
@@ -135,7 +135,7 @@ downloaded and installed when you ask for it (`MODEL_CHOICE=flash`), and the reg
 `opencode.json` gains an `xhigh` reasoning-effort variant. v1.4 -> v1.5 moves the flash
 lane from vLLM to SGLang (working prefix caching; the upgrade keeps your port, cache and
 model choices and regenerates the launch script on the new engine; the first boot writes
-the 48 GB PLE backing file). **v1.7 -> v1.8 moves the flash lane onto the official image
+the 52 GB PLE backing file). **v1.7 -> v1.8 moves the flash lane onto the official image
 and off this repo's overlay**: the upgrade pulls one 15 GB image, builds nothing, deletes
 the previous N-gram table file so the next boot writes a fresh one (~12 min), and serves 4
 concurrent requests instead of 1. It also raises that lane's one-prompt ceiling from 128,000

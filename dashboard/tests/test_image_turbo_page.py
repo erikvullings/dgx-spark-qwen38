@@ -86,7 +86,7 @@ class LoadingIt(unittest.TestCase):
         """)
         self.assertEqual(r["steps"][0], "prepare flash")
         self.assertIn("switch", r["steps"])
-        self.assertIn("checkpoint (about 135 GB)", r["desc"])
+        self.assertIn("checkpoint (about 136 GB)", r["desc"])
         self.assertNotIn("The next step fetches", r["desc"])
         self.assertEqual(r["cmd"], "bash prepare-lane.sh flash flash")
 
@@ -111,7 +111,7 @@ class LoadingIt(unittest.TestCase):
                 cmd: argvFor(steps[0].name, steps[0].params).join(' '), start: !LCARDS.has(U27) || true});
         """)
         self.assertEqual(r["steps"][0], "prepare 27b")
-        self.assertIn("its DFlash2 draft (about 1.5 GB) and its checkpoint", r["desc"])
+        self.assertIn("its DFlash2 draft (about 2 GB) and its checkpoint", r["desc"])
         self.assertNotIn("The next step fetches", r["desc"])
         self.assertEqual(r["cmd"], "bash prepare-lane.sh 27b stock")
 

@@ -154,7 +154,7 @@ if [ "$MODE" = units ]; then
   echo "OK: $(uname -m), key present; the image and the checkpoints come with the lane's first Load"
   install_service
   step "Done: the Nemotron lane is installed; its first Load prepares it"
-  echo "  the cockpit: Load on Nemotron 3.5 Bolt in the Lanes view builds its image (about 24 GB, 10 to download),"
+  echo "  the cockpit: Load on Nemotron 3.5 Bolt in the Lanes view builds its image (about 25 GB, 11 to download),"
   echo "               fetches its checkpoints (about $WEIGHTS_GB GB), then starts it"
   echo "  a terminal : ./install-nemotron.sh --prepare, then ./switch-model.sh nemotron and the commands it prints"
   exit 0

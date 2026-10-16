@@ -10,9 +10,10 @@
 #                                      first Load runs it (./prepare-lane.sh video)
 #
 # install.sh runs this on every plain install since v1.20: a box gets every lane. The
-# checkpoint (the fl2va partition plus the shared components and the Turbo adapter, 135
-# GiB, WEIGHTS_GB below), the runtime (another 11) and the runtime's own caches (16)
-# need about 165 GB of headroom; when the disk does not have it, this refuses before
+# checkpoint (the fl2va partition plus the shared components and the Turbo adapter, 145
+# GB, 135 GiB in WEIGHTS_GB below), the runtime with its build (another 12, RUNTIME_GB's
+# 11 GiB) and the runtime's own caches (17, 15.7 GiB measured) need about 174 GB of
+# headroom; when the disk does not have it, this refuses before
 # downloading anything, install.sh says so and goes on, and ./install.sh --no-video leaves
 # the lane out for good (a marker file remembers it).
 #
@@ -246,8 +247,8 @@ if [ "$MODE" = units ]; then
   echo "OK: $(uname -m), key present; the runtime and the checkpoint come with the lane's first Load"
   install_service
   step "Done: the video lane is installed; its first Load prepares it"
-  echo "  the cockpit: Load on MiniMax-H3 in the Lanes view builds its runtime (about $RUNTIME_GB GB),"
-  echo "               fetches its checkpoint (about $WEIGHTS_GB GB), then starts it"
+  echo "  the cockpit: Load on MiniMax-H3 in the Lanes view builds its runtime (about 12 GB),"
+  echo "               fetches its checkpoint (about 145 GB), then starts it"
   echo "  a terminal : ./install-video.sh --prepare, then ./switch-model.sh video and the commands it prints"
   exit 0
 fi
