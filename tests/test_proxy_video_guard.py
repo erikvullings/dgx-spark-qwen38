@@ -146,5 +146,22 @@ class VideoGuard(unittest.TestCase):
         self.assertEqual(len(Engine.generated), 1)
 
 
+class VideoPixelsSetting(unittest.TestCase):
+    def test_the_guard_reads_the_setting_the_engine_reads(self):
+        """SGLang's video processor (qwen_vl.py, v0.5.21) takes its VIDEO_TOTAL_PIXELS from the
+        environment variable VIDEO_MAX_PIXELS; the guard read VIDEO_TOTAL_PIXELS, a name the
+        engine never reads, so the two could not be set alike (found in review, 2026-10-17)."""
+        saved = dict(os.environ)
+        self.addCleanup(lambda: (os.environ.clear(), os.environ.update(saved)))
+        os.environ.pop("VIDEO_TOTAL_PIXELS", None)
+        os.environ["VIDEO_MAX_PIXELS"] = "2000000"
+        mod = importlib.util.module_from_spec(
+            importlib.util.spec_from_file_location("kproxy_video_px", HERE.parents[1] / "keepalive-proxy.py"))
+        sys.argv = ["keepalive-proxy.py"]
+        mod.__spec__.loader.exec_module(mod)
+        self.assertEqual(mod.VIDEO_TOTAL_PIXELS, 2_000_000)
+        self.assertEqual(mod._video_ceiling(), 2_000_000 // (mod.MEDIA_PATCH_PX ** 2) + mod.MEDIA_WRAP_TOKENS)
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

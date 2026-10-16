@@ -1373,7 +1373,10 @@ def _image_ceiling():
 # few kilobytes that the byte estimate never even nominated for a count (found in review,
 # 2026-10-16). Where a wedge is possible, a video costs this ceiling, and each one nominates its
 # body; elsewhere the engine refuses past its own window, and the flat budget stays.
-VIDEO_TOTAL_PIXELS = int(float(os.environ.get("VIDEO_TOTAL_PIXELS", str(128000 * 28 * 28 * 0.9))))
+# 2026-10-17: read from VIDEO_MAX_PIXELS, the name qwen_vl.py reads its VIDEO_TOTAL_PIXELS from
+# (v0.5.21), so that one setting means the same to the engine and to the guard; the guard read
+# VIDEO_TOTAL_PIXELS, which the engine never reads (found in review, 2026-10-17).
+VIDEO_TOTAL_PIXELS = int(float(os.environ.get("VIDEO_MAX_PIXELS", str(128000 * 28 * 28 * 0.9))))
 VIDEO_BLOCKS = ("video_url",)
 VIDEO_MARK = re.compile(rb'"type"\s*:\s*"video_url"')
 
