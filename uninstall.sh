@@ -132,6 +132,8 @@ done
 if [ -d "$CONFIG_DIR" ]; then
   echo "  config    $CONFIG_DIR ($(dir_size "$CONFIG_DIR")): api-key and the engine's copy of it, patched templates, opencode.json, pi/omp agent configs, launch scripts, compile cache"
   [ -f "$CONFIG_DIR/opencode-web.env" ] && echo "  config    $CONFIG_DIR/opencode-web.env (Agent view: credentials of the opencode web server)"
+  # since v1.36.0 (2026-10-17): it goes with the folder; kept, a new install reads the box's age in it
+  [ -f "$CONFIG_DIR/installed.json" ] && echo "  record    $CONFIG_DIR/installed.json (the release the last ./install.sh installed, and the choices it recorded)"
   [ -f "$CONFIG_DIR/claude-code.env" ] && echo "  legacy    $CONFIG_DIR/claude-code.env (pre-v1.3 client config, unmaintained)"
   [ -f "$CONFIG_DIR/opencode.off" ] && echo "  marker    $CONFIG_DIR/opencode.off (opencode integration disabled with --no-opencode)"
   [ -f "$CONFIG_DIR/cockpit.off" ] && echo "  marker    $CONFIG_DIR/cockpit.off (cockpit disabled with --no-cockpit)"
