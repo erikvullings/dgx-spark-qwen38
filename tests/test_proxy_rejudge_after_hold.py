@@ -9,6 +9,10 @@ against a vocabulary learned since the hold began.
 
 The fake engine is a 248,320-token lane, then a stretch of 503s (what SGLang answers while it
 starts), then a 128,000-token lane on the same port, as a switch to Kolibri is seen from here.
+The new lane comes up once the proxy holds the request, which it shows by asking the engine,
+down, whether it answers after the request met it down; not on a clock: on a loaded machine a
+timer could fire before the hold began, and the proxy, which only holds for an engine that does
+not answer, then answered the request 503 (2026-10-17).
 """
 import http.server
 import importlib.util
@@ -37,6 +41,8 @@ class Engine(http.server.BaseHTTPRequestHandler):
     protocol_version = "HTTP/1.1"
     state = "qwen"
     relayed = []
+    met_down = False                # a request met the engine down
+    held = threading.Event()        # and the proxy then asked whether it answers: a hold began
 
     def log_message(self, *a):
         pass
@@ -51,6 +57,8 @@ class Engine(http.server.BaseHTTPRequestHandler):
 
     def do_GET(self):
         if Engine.state == "down":
+            if Engine.met_down:
+                Engine.held.set()
             self._json(503, {"detail": "starting"})
         elif self.path == "/v1/models":
             self._json(200, {"object": "list", "data": [{"id": "m", "owned_by": "sglang"}]})
@@ -62,6 +70,7 @@ class Engine(http.server.BaseHTTPRequestHandler):
     def do_POST(self):
         body = json.loads(self.rfile.read(int(self.headers.get("Content-Length") or 0)) or b"{}")
         if Engine.state == "down":
+            Engine.met_down = True
             self._json(503, {"detail": "starting"})
             return
         if "logit_bias" in body:
@@ -119,9 +128,17 @@ class RejudgeAfterHold(unittest.TestCase):
         Engine.state, Engine.relayed[:] = "qwen", []
         self.assertEqual(self.post([5])[0], 200)                 # the guard learns 248,320 here
         self.assertEqual(self.mod.served_vocab(), 248320)
+        Engine.met_down = False
+        Engine.held.clear()
         Engine.state = "down"
-        threading.Timer(1.5, lambda: setattr(Engine, "state", "kolibri")).start()
-        status, body = self.post([200000])                      # Qwen holds it, Kolibri does not
+        out = []
+        sent = threading.Thread(target=lambda: out.append(self.post([200000])), daemon=True)
+        sent.start()                                            # Qwen holds it, Kolibri does not
+        self.assertTrue(Engine.held.wait(30), "the proxy never held the request")
+        Engine.state = "kolibri"
+        sent.join(60)
+        self.assertTrue(out, "no answer to the held request")
+        status, body = out[0]
         self.assertEqual(status, 400, body)
         self.assertIn("past the 128000 tokens", json.loads(body)["error"]["message"])
         self.assertEqual(Engine.relayed, [("qwen", [5])], "the new lane was handed an id it dies on")
