@@ -346,14 +346,22 @@ class ProxyGuard(unittest.TestCase):
         self.assertGreater(self.mod._image_ceiling(), self.mod._image_tokens(3840, 2160))
 
     def test_media_that_is_not_an_image_keeps_the_flat_budget(self):
-        """Audio, video and documents have no geometry to bound them."""
+        """Audio and documents have no geometry to bound them. A video keeps the flat budget
+        where the engine refuses past its own window; where a wedge is possible it costs the
+        ceiling of the engine's own sizing (2026-10-16, tests/test_proxy_video_guard.py)."""
+        video = {"type": "video_url", "video_url": {"url": "https://example.invalid/a.mp4"}}
+        saved = dict(self.mod._POOL)
+        self.addCleanup(lambda: (self.mod._POOL.clear(), self.mod._POOL.update(saved)))
+        self.mod._POOL.update(tokens=466112, window=262138, ts=time.time())   # the flash lane
         for block in (
             {"type": "input_audio", "input_audio": {"data": "AAAA", "format": "wav"}},
             {"type": "document", "source": {"type": "base64", "data": "AAAA"}},
-            {"type": "video_url", "video_url": {"url": "https://example.invalid/a.mp4"}},
+            video,
         ):
             with self.subTest(block=block["type"]):
                 self.assertEqual(self.mod._media_tokens(block), self.mod.TOKENS_PER_MEDIA)
+        self.mod._POOL.update(tokens=863644, window=863638, ts=time.time())   # the 27B lane, 1M
+        self.assertEqual(self.mod._media_tokens(video), self.mod._video_ceiling())
 
     def test_prompt_limit_pool_share_and_ceiling(self):
         saved = self.mod.PROMPT_CEILING_TOKENS

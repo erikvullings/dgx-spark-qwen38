@@ -1335,13 +1335,57 @@ def _image_ceiling():
     return MEDIA_MAX_PIXELS // (MEDIA_PATCH_PX * MEDIA_PATCH_PX) + MEDIA_WRAP_TOKENS
 
 
+# A video has a ceiling too, and it is far past the flat budget (2026-10-16). SGLang's video
+# processor (multimodal/processors/qwen_vl.py, the same in both pinned images) samples up to 768
+# frames and sizes them so that all of them hold at most VIDEO_TOTAL_PIXELS, 128000*28*28*0.9
+# unless the engine's environment says otherwise, two frames to a temporal patch: one video can
+# be ~88,000 tokens, which the guard charged 4,096, and a body carrying a dozen video URLs is a
+# few kilobytes that the byte estimate never even nominated for a count (found in review,
+# 2026-10-16). Where a wedge is possible, a video costs this ceiling, and each one nominates its
+# body; elsewhere the engine refuses past its own window, and the flat budget stays.
+VIDEO_TOTAL_PIXELS = int(float(os.environ.get("VIDEO_TOTAL_PIXELS", str(128000 * 28 * 28 * 0.9))))
+VIDEO_BLOCKS = ("video_url",)
+VIDEO_MARK = re.compile(rb'"type"\s*:\s*"video_url"')
+
+
+def _video_ceiling():
+    """The most tokens one video can cost under SGLang's own sizing."""
+    return VIDEO_TOTAL_PIXELS // (MEDIA_PATCH_PX * MEDIA_PATCH_PX) + MEDIA_WRAP_TOKENS
+
+
+def _video_tokens():
+    """What the guard charges a video: its ceiling where a wedge is possible, the flat budget
+    elsewhere."""
+    return _video_ceiling() if wedge_possible(_POOL.get("tokens")) else TOKENS_PER_MEDIA
+
+
+def video_parts(body):
+    """How many video parts a body carries: a byte scan, or a parse when a \\u escape could spell
+    one the scan would not see."""
+    if b"\\u" not in body:
+        return len(VIDEO_MARK.findall(body))
+    try:
+        stack, n = [json.loads(body)], 0
+    except Exception:
+        return 0
+    while stack:
+        node = stack.pop()
+        if isinstance(node, dict):
+            n += node.get("type") in VIDEO_BLOCKS
+            stack.extend(node.values())
+        elif isinstance(node, list):
+            stack.extend(node)
+    return n
+
+
 def _media_tokens(block):
     """What this media part adds to the prompt.
 
     Measured from the header when we can read it. When we cannot: the geometric
     ceiling if the block says it is an image (bounded, so guess upward), the flat
     budget otherwise (audio, video, documents: no bound to reason from)."""
-    fallback = _image_ceiling() if block.get("type") in IMAGE_BLOCKS else TOKENS_PER_MEDIA
+    fallback = (_image_ceiling() if block.get("type") in IMAGE_BLOCKS else
+                _video_tokens() if block.get("type") in VIDEO_BLOCKS else TOKENS_PER_MEDIA)
     data = _media_payload(block)
     if not data:
         return fallback
@@ -4095,6 +4139,8 @@ class H(BaseHTTPRequestHandler):
         if body and _is_prompt_route(self.path.split("?", 1)[0]) and not count_only:
             pool = pool_tokens()
             est = nomination_estimate(len(body), pool)
+            if wedge_possible(pool):
+                est += video_parts(body) * _video_ceiling()    # 2026-10-16: see VIDEO_TOTAL_PIXELS
             if pool is None:
                 # The engine just (re)started and its pool is unmeasured: relaying
                 # a monster now is exactly how the scheduler wedges (only a restart
