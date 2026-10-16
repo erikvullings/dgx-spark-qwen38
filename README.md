@@ -401,7 +401,7 @@ core): the cookbook verifies about 12.1 s per denoise step, about 40 s of decode
 time; the Video view refuses a second one, and a duration outside the cookbook's 4 to 15 s band.
 
 **A Turbo switch** in the Video view puts the cookbook's recommended speed adapter (larryvrh's
-MiniMax-H3 Turbo LoRA, 9 steps) on for one video and takes it off after: 4 s at 480P in
+MiniMax-H3 Turbo LoRA, 8 steps) on for one video and takes it off after: 4 s at 480P in
 **127 s against 623 s** for the base at its 50 steps, the same prompt, measured here, the
 speech intact, and the base's next video identical to the byte to one made before. It is
 admitted at 480P and 4 s for now, the sizes measured with it.

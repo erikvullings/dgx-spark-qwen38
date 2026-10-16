@@ -261,8 +261,8 @@ async function scanRegistry(fresh = true){
     (d.models || []).forEach(m => (m.revisions || []).forEach((rv, i) => {
       const tr = tb.insertRow(); tr.insertCell().textContent = i ? '' : m.repo_id.split('/').pop();
       const a = tr.insertCell(); a.className = 'num'; a.textContent = rv.rev.slice(0, 10);
-      const b2 = tr.insertCell(); b2.className = 'r num'; b2.textContent = fmtGiB(rv.bytes);
-      const c = tr.insertCell(); c.className = 'r num'; c.textContent = i ? '' : fmtGiB(m.disk_bytes);
+      const b2 = tr.insertCell(); b2.className = 'r num sz'; b2.textContent = fmtGiB(rv.bytes);
+      const c = tr.insertCell(); c.className = 'r num sz'; c.textContent = i ? '' : fmtGiB(m.disk_bytes);
       const s = tr.insertCell(); s.append(tag(rv.status, rv.status === 'pinned' ? 'cool' : rv.status === 'stray' ? 'warn' : '')); if (rv.pin) s.append(' ', tag(rv.pin));
       // a stray revision: what deleting it frees, or why it stays (the header's button deletes them)
       const del = rv.delete;
@@ -295,12 +295,12 @@ async function scanRegistry(fresh = true){
     const ti = $('reg-images').tBodies[0]; clear(ti);
     // an image named by its digest is one word of 70 characters: allowed to break anywhere, it no
     // longer widens its column past the panel and pushes Size and ID out of view on a desk screen
-    (d.images || []).forEach(im => { const tr = ti.insertRow(); const n = tr.insertCell(); n.className = 'brk'; n.textContent = im.ref; const a = tr.insertCell(); a.className = 'r num'; a.textContent = im.size; const c = tr.insertCell(); c.className = 'r num'; c.textContent = im.id; });
+    (d.images || []).forEach(im => { const tr = ti.insertRow(); const n = tr.insertCell(); n.className = 'brk'; n.textContent = im.ref; const a = tr.insertCell(); a.className = 'r num sz'; a.textContent = im.size; const c = tr.insertCell(); c.className = 'r num'; c.textContent = im.id; });
     if (!ti.rows.length) emptyRow(ti, 3, 'No engine image.');
     labelCells($('reg-images'));
     const to = $('reg-other').tBodies[0]; clear(to);
     const others = (d.other_models || []).slice().sort((x, y) => y.disk_bytes - x.disk_bytes);
-    others.forEach(m => { const tr = to.insertRow(); tr.insertCell().textContent = m.repo_id; const c = tr.insertCell(); c.className = 'r num'; c.textContent = fmtGiB(m.disk_bytes); });
+    others.forEach(m => { const tr = to.insertRow(); tr.insertCell().textContent = m.repo_id; const c = tr.insertCell(); c.className = 'r num sz'; c.textContent = fmtGiB(m.disk_bytes); });
     if (!others.length) emptyRow(to, 2, 'None.');
     setText('reg-other-tag', others.length ? fmtGiB(others.reduce((a, m) => a + m.disk_bytes, 0)) + ' in ' + others.length : '');
     const strays = (d.models || []).flatMap(m => m.revisions).filter(rv => rv.status === 'stray');

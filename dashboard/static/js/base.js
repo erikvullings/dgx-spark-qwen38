@@ -746,7 +746,8 @@ async function runJourney(){
     }
     journeyChanged(); return;
   }
-  S.running = false; setText($('sh-cancel'), 'Cancel');
+  // nothing is left to cancel: the button only closes the window, which closes itself below
+  S.running = false; setText($('sh-cancel'), 'Close');
   setText('sh-status', 'Done. The lane is booting: the Now view and the dock follow it.');
   if (S.hidden){   // put away: the page stays where the person went, a toast says it ended
     if (SHEET === S) closeSheet(); else journeyChanged();

@@ -1,8 +1,10 @@
 #!/usr/bin/env python3
 """The Video view's Turbo switch: offered when the lane's status says the adapter is on the
-box, its nine steps fixed when it is on, its cost counted as the server counts it, and the
-call it sends marked turbo for the cockpit to put the adapter on. Same harness as
-test_page_behaviour.py."""
+box, its steps fixed when it is on, its cost counted as the server counts it, and the call it
+sends marked turbo for the cockpit to put the adapter on. It shows the eight steps the lane
+runs and its progress counts, and sends the 9 the lane's v0.5.21 runtime takes for them: the
+card said 9 over a progress that said "step 0 of 8" (found in the cockpit's test session,
+2026-10-15). Same harness as test_page_behaviour.py."""
 import json
 import pathlib
 import shlex
@@ -48,18 +50,25 @@ class TheTurboSwitch(unittest.TestCase):
         self.assertFalse(r["turbo"])
         self.assertEqual(r["hint"], "the Turbo waits for its next start")
 
-    def test_on_it_fixes_nine_steps_and_says_what_it_costs(self):
+    def test_on_it_fixes_its_steps_and_says_what_it_costs(self):
         r = run(self, LANE % "true" + pick("1") + r"""
         report({turbo: vidTurbo(), steps: vidSteps(), slider: $('vid-steps').disabled, hint: txt('vid-steps-hint'),
-                cost: txt('vid-cost-k'), basis: txt('vid-cost-b'), est: vidEtaSecs(4, '864x480', 9, true),
+                speed: txt('vid-turbo-hint'), card: [...document.querySelectorAll('#vid-turbo button')].map(b => b.textContent),
+                cost: txt('vid-cost-k'), about: txt('vid-cost-v'), basis: txt('vid-cost-b'), est: vidEtaSecs(4, '864x480', 9, true),
                 curl: txt('vid-curl')});
         """)
         self.assertTrue(r["turbo"])
-        self.assertEqual(r["steps"], 9)
+        self.assertEqual(r["steps"], 9, "what the call asks of the v0.5.21 runtime")
         self.assertTrue(r["slider"])
-        self.assertIn("fixed at 9", r["hint"])
-        self.assertIn("9 steps with the Turbo", r["cost"])
+        self.assertIn("fixed at 8", r["hint"])
+        self.assertIn("the Turbo adapter: 8 steps", r["speed"])
+        self.assertIn("Turbo8 steps", r["card"])
+        self.assertIn("8 steps with the Turbo", r["cost"])
+        self.assertNotIn("9", r["hint"] + r["speed"] + r["cost"] + "".join(r["card"]))
+        # the estimate (138.6 s) and the first Turbo after the lane started (2:46): a range
+        self.assertEqual(r["about"], "about 2 to 3 min")
         self.assertIn("2:06 to 2:18", r["basis"])
+        self.assertIn("2:46 the first time after the lane started", r["basis"])
         self.assertAlmostEqual(r["est"], 3.85 * 9 * 4)
         # from a terminal the adapter goes on before the call and off after it
         self.assertLess(r["curl"].index("/v1/set_lora"), r["curl"].index("/v1/videos"))
@@ -90,6 +99,16 @@ class TheTurboSwitch(unittest.TestCase):
         self.assertNotIn("turbo", r["base"])
         self.assertEqual(r["base"]["num_inference_steps"], 50)
 
+    def test_a_turbo_video_made_says_the_steps_its_progress_counted(self):
+        r = run(self, LANE % "true" + r"""
+        vidDone('v1', 166, {prompt: 'a fox', seconds: 4, size: '864x480', num_inference_steps: 9, turbo: true, seed: 7});
+        const turbo = [...$('vid-meta').querySelectorAll('.tag')].map(t => t.textContent);
+        vidDone('v2', 600, {prompt: 'a fox', seconds: 4, size: '864x480', num_inference_steps: 50});
+        report({turbo, base: [...$('vid-meta').querySelectorAll('.tag')].map(t => t.textContent)});
+        """)
+        self.assertIn("4 s, 480p, 8 steps, Turbo, seed 7", r["turbo"])
+        self.assertIn("4 s, 480p, 50 steps", r["base"])
+
     def test_measured_at_480p_only_so_far(self):
         r = run(self, LANE % "true" + pick("1") + r"""
         [...document.querySelectorAll('#vid-size button')].find(b => b.dataset.size === '1280x720').click();
@@ -112,7 +131,7 @@ class TheTurboSwitch(unittest.TestCase):
         self.assertIn("the Turbo’s measured length", r["ends"])
         self.assertEqual(r["problem"], "")
 
-    def test_the_thumb_says_nine_and_the_base_gets_its_setting_back(self):
+    def test_the_thumb_says_eight_and_the_base_gets_its_setting_back(self):
         """The image view's thumb stayed on the base's setting beside the 8 it printed (seen on
         the reference box); this one does not."""
         r = run(self, LANE % "true" + r"""
@@ -122,8 +141,8 @@ class TheTurboSwitch(unittest.TestCase):
         """ + pick("0") + r"""
         report({turbo, base: $('vid-steps').value, shown: txt('vid-steps-o'), body: vidWireBody().num_inference_steps});
         """)
-        self.assertEqual(r["turbo"]["value"], "9")
-        self.assertEqual(r["turbo"]["fill"], "8.1%")
+        self.assertEqual(r["turbo"]["value"], "8")
+        self.assertEqual(r["turbo"]["fill"], "7.1%")
         self.assertEqual(r["base"], "33")
         self.assertEqual(r["shown"], "33")
         self.assertEqual(r["body"], 33)

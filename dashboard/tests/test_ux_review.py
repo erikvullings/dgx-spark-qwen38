@@ -2,7 +2,8 @@
 """What the cockpit's ergonomics review found (2026-10-15), each on the page as it runs: Library
 opening empty below its recipes, a median that was not one, "no engine" over a serving Kolibri
 lane, the Kolibri engine's polls drowning its own journal, and Decide asking for a text lane
-while one served. Same harness as test_page_behaviour.py."""
+while one served; and what the test session of the whole cockpit found after it (Library's
+tables and sizes). Same harness as test_page_behaviour.py."""
 import json
 import pathlib
 import re
@@ -201,6 +202,76 @@ class LibrarysEngineImagesFitTheirPanel(unittest.TestCase):
         breaks = [sel for sel, media, decl in css_rules() if not media and re.search(r"overflow-wrap:\s*anywhere", decl)
                   and any(re.fullmatch(r"\.tbl\s+(td)?\.%s" % re.escape(c), s.strip()) for c in name for s in sel.split(","))]
         self.assertTrue(breaks, "no rule at every width lets the image's name break anywhere")
+
+
+class LibrarysSizesKeepTheirUnit(unittest.TestCase):
+    """Library's Size and On disk columns, squeezed on a desk screen, laid "73.4" over "GiB": a
+    size read as two values (found in the cockpit's test session, 2026-10-15, in the checkpoints
+    and the other models at 1024 to 1600 px). Every size in its tables keeps its unit on its line."""
+
+    def test_every_size_in_librarys_tables_stays_on_one_line(self):
+        reg = dict(REG, models=[{"repo_id": "RadixArk/Qwen3.8-27B-NVFP4", "managed": True, "disk_bytes": 21_900_000_000,
+                                 "revisions": [{"rev": "a" * 40, "bytes": 21_900_000_000, "status": "pinned", "pin": "STOCK_REV"}]}],
+                   other_models=[{"repo_id": "x/y", "disk_bytes": 75_000_000_000}],
+                   images=[{"ref": "lmsysorg/sglang:v0.5.21", "size": "33.7GB", "id": "bc7762f87a5e"}])
+        r = run(self, r"""
+        __fetch = async (url, init) => url.startsWith('/api/recipes') ? __response(200, {builtin: [], custom: [], custom_dir: ''})
+          : url.startsWith('/api/registry') ? __response(200, %s) : new Promise(() => {});
+        feed({config: CONFIG, units: UNITS, lifecycle: life({'qwen38-sglang.service': eng('ready')})});
+        showView('library'); await __settle(); await __settle();
+        report(['reg-models', 'reg-images', 'reg-other'].flatMap(id => [...$(id).tBodies[0].rows].flatMap(row =>
+          [...row.cells].filter(c => /^[0-9.]+ ?(GiB|GB)$/.test(c.textContent)).map(c => ({table: id, text: c.textContent, cls: c.className})))));
+        """ % json.dumps(reg))
+        self.assertEqual(sorted((c["table"], c["text"]) for c in r),
+                         [("reg-images", "33.7GB"), ("reg-models", "20.4 GiB"), ("reg-models", "20.4 GiB"), ("reg-other", "69.8 GiB")])
+        # a rule under no @media: the squeeze is a desk screen's
+        nowrap = {s.strip() for sel, media, decl in css_rules() if not media and re.search(r"white-space:\s*nowrap", decl)
+                  for s in sel.split(",")}
+        for c in r:
+            with self.subTest(**c):
+                self.assertTrue(any(re.fullmatch(r"\.tbl\s+(td)?\.%s" % re.escape(k), s) for k in c["cls"].split() for s in nowrap),
+                                "this size can be laid over two lines")
+
+
+class LibrarysColumnsStackBeforeATableRunsPastItsPanel(unittest.TestCase):
+    """Library's two columns hold tables of five columns, and at 1280 px each column was 468 px:
+    the checkpoints ran 56 px past their panel, behind a scroll nothing showed, and 131 px once
+    their sizes kept their unit and the Nemotron lane's pins came in (measured in the browser,
+    2026-10-15). They stand side by side only while each gets 600 px, else one under the other:
+    nothing past its panel at 1600, 1440, 1280 and 1024 px (the same session)."""
+
+    def test_the_two_columns_wrap_below_six_hundred_pixels_each(self):
+        html = (pagejs.STATIC / "index.html").read_text()
+        lib = html[html.index('id="view-library"'):html.index("<!-- ══ LOGS")]
+        grids = re.findall(r'<div class="(grid [^"]*)">', lib)
+        self.assertEqual(len(grids), 1, grids)
+        cls = set(grids[0].split())
+        wraps = [sel for sel, media, decl in css_rules() if not media
+                 and re.search(r"grid-template-columns:\s*repeat\(auto-fit,\s*minmax\(min\(100%,\s*600px\),\s*1fr\)\)", decl)
+                 and any(set(re.findall(r"\.([\w-]+)", s)) <= cls for s in sel.split(","))]
+        self.assertTrue(wraps, f"no rule at every width lets Library's columns ({sorted(cls)}) wrap below 600 px")
+
+
+class ALoadThatEndedOffersToCloseItsWindow(unittest.TestCase):
+    """Every step done, the load window said "Done. The lane is booting" over a Cancel button, for
+    a chain with nothing left to cancel (found in the cockpit's test session, 2026-10-15, at the end
+    of each lane's Load). Its button closes the window, and says so; the window still closes itself."""
+
+    def test_the_button_of_a_finished_load_says_close(self):
+        from test_page_behaviour import TheLoadWindowFollowsAStepToItsEnd as T
+        r = run(self, T.BODY + r"""
+        const done = (id, name) => ({id, action: name, status: 'done', rc: 0, elapsed: 31});
+        job(null, [done('j1', 'switch')]); await __advance(2000); await __settle(); await __advance(1000);
+        job(null, [done('j2', 'unit'), done('j1', 'switch')]); await __advance(500); await __settle();
+        const end = {status: txt('sh-status'), label: txt('sh-cancel'), open: !$('scrim').hidden, actions: state().actions};
+        await __advance(1500); await __settle();
+        report({end, after: {open: !$('scrim').hidden, view: activeView}});
+        """)
+        self.assertEqual(r["end"]["actions"], ["switch", "unit"], r)
+        self.assertIn("Done. The lane is booting", r["end"]["status"])
+        self.assertTrue(r["end"]["open"], "seen before it closes itself")
+        self.assertEqual(r["end"]["label"], "Close")
+        self.assertEqual(r["after"], {"open": False, "view": "now"})
 
 
 class TheTablesThatStackOnAPhoneStayTablesOnADesk(unittest.TestCase):

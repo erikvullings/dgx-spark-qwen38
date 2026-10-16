@@ -443,10 +443,10 @@
                 <button type="button" role="radio" aria-checked="true" data-size="864x480">480p<small>864 × 480</small></button>
                 <button type="button" role="radio" aria-checked="false" data-size="1280x720">720p<small>1280 × 720</small></button>
               </div></div>
-            <div class="field"><span class="lbl">Speed <span class="hint" id="vid-turbo-hint">the Turbo adapter: 9 steps, about five times faster</span></span>
+            <div class="field"><span class="lbl">Speed <span class="hint" id="vid-turbo-hint">the Turbo adapter: 8 steps, about five times faster</span></span>
               <div class="seg block" role="radiogroup" aria-label="Speed" id="vid-turbo">
                 <button type="button" role="radio" aria-checked="true" data-turbo="0">Base<small>the steps below</small></button>
-                <button type="button" role="radio" aria-checked="false" data-turbo="1">Turbo<small>9 steps</small></button>
+                <button type="button" role="radio" aria-checked="false" data-turbo="1">Turbo<small>8 steps</small></button>
               </div></div>
             <div class="field"><span class="lbl">Quality <span class="hint" id="vid-steps-hint">denoising steps, 50 is the model default</span></span>
               <div class="slider"><input type="range" id="vid-steps" min="1" max="100" step="1" value="50" aria-label="Steps"><output id="vid-steps-o" for="vid-steps">50</output>
@@ -511,7 +511,7 @@
             <thead><tr><th>Recipe</th><th>Engine image</th><th>Checkpoint</th><th>Drafter</th><th>Serving</th><th>On disk</th><th>Against the lane</th></tr></thead><tbody><tr class="empty"><td colspan="7">Reading the recipes…</td></tr></tbody></table></div>
           <p class="help" id="rcp-dir"></p>
         </section>
-        <div class="grid g2">
+        <div class="grid g2 g2-wide">
           <section class="panel">
             <header><h2>Checkpoints on disk</h2><div class="btn-row"><span class="aside" id="reg-age"></span><button class="btn sm danger" id="reg-del" type="button" hidden>Delete the stray revisions</button><button class="btn sm" id="reg-btn" type="button">Scan</button></div></header>
             <div class="scroll-x"><table class="tbl dense stack" id="reg-models"><thead><tr><th>Model</th><th>Revision</th><th class="r">Size</th><th class="r">On disk</th><th>Status</th></tr></thead><tbody><tr class="empty"><td colspan="5">Scan lists the checkpoints in the Hugging Face cache.</td></tr></tbody></table></div>

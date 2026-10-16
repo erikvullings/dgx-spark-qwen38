@@ -403,7 +403,9 @@ class TheTurbo(Base):
 
     def test_the_page_and_the_server_count_the_turbo_alike(self):
         js = (REPO / "dashboard/static/js/video.js").read_text()
-        page = re.search(r"const VID_TURBO_STEPS = (\d+), VID_TURBO_PER_STEP = ([\d.]+), VID_TURBO_MAX_SECONDS = (\d+);", js)
+        page = re.search(r"const VID_TURBO_STEPS = (\d+), VID_TURBO_SHOWN = \d+, VID_TURBO_PER_STEP = ([\d.]+), "
+                         r"VID_TURBO_MAX_SECONDS = (\d+);", js)
+        self.assertIsNotNone(page, "video.js's Turbo constants are not where this test reads them")
         server = (REPO / "dashboard/cockpit.py").read_text()
         self.assertEqual(int(page.group(1)), self.ck.VIDEO_TURBO_STEPS)
         self.assertIn(f"per_step = {page.group(2)}\n", server)

@@ -21,7 +21,14 @@ const VID_BUDGET_S = 2 * 3600;
 // steps with the prompt encoded already, and a new prompt's text encoding adds 9.3 s
 // (2026-10-10): 3.85 per step-second as the server counts it. The cockpit puts the adapter
 // on for a Turbo call and takes it off after (cockpit.py video_call).
-const VID_TURBO_STEPS = 9, VID_TURBO_PER_STEP = 3.85, VID_TURBO_MAX_SECONDS = 4;
+// The call asks for 9, and the view shows 8: the lane runs eight denoiser evaluations and its
+// progress counts those ("step 8 of 8"), its v0.5.21 runtime taking num_inference_steps as the
+// points of the sigma grid, the terminal zero among them (docs/video-lane.md). The card said 9
+// over a progress that said 8 (found in the cockpit's test session, 2026-10-15).
+// The first Turbo after the lane started took 2:46, 28 s past the estimate (its adapter put on
+// from the disk, 12 s more of denoising; same session): the view says the range.
+const VID_TURBO_STEPS = 9, VID_TURBO_SHOWN = 8, VID_TURBO_PER_STEP = 3.85, VID_TURBO_MAX_SECONDS = 4;
+const VID_TURBO_FIRST_EXTRA_S = 28;
 function vidEtaSecs(secs, size, steps, turbo){
   const [sw, sh] = String(size).split('x').map(Number);
   if (!(sw > 0 && sh > 0)) return 0;
@@ -85,17 +92,17 @@ function vidSync(){
   const secsEl = $('vid-secs');
   if (secsEl){ const mx = vidMaxSecs(VS.size); secsEl.max = String(mx); if (Number(secsEl.value) > mx) secsEl.value = String(mx);
     const ends = secsEl.parentElement.querySelector('.ends'); if (ends && ends.lastChild) setText(ends.lastChild, mx + ' s' + (vidTurbo() ? ', the Turbo\u2019s measured length' : mx < 15 ? ', the most 720p holds' : '')); }
-  // Under the Turbo the steps slider shows the nine the adapter runs, its thumb too (as the
+  // Under the Turbo the steps slider shows the eight the adapter runs, its thumb too (as the
   // image view's, whose thumb stayed on the base's setting beside the 8 it printed), and keeps
   // the base's setting aside for when the base comes back.
   const stEl = $('vid-steps');
   if (stEl){
-    if (vidTurbo() && stEl.value !== String(VID_TURBO_STEPS)){ VS.baseSteps = stEl.value; stEl.value = String(VID_TURBO_STEPS); }
+    if (vidTurbo() && stEl.value !== String(VID_TURBO_SHOWN)){ VS.baseSteps = stEl.value; stEl.value = String(VID_TURBO_SHOWN); }
     else if (!vidTurbo() && VS.baseSteps != null){ stEl.value = VS.baseSteps; VS.baseSteps = null; }
   }
   // sliders say their value and fill to it
   const secs = vidSecs(), steps = vidSteps();
-  setText('vid-secs-o', secs + ' s'); setText('vid-steps-o', String(steps));
+  setText('vid-secs-o', secs + ' s'); setText('vid-steps-o', String(vidTurbo() ? VID_TURBO_SHOWN : steps));
   [['vid-secs', 4, vidMaxSecs(VS.size)], ['vid-steps', 1, 100]].forEach(([id, a, b]) => { const e = $(id); if (e) e.style.setProperty('--pct', (100 * (Number(e.value) - a) / Math.max(1, b - a)).toFixed(1) + '%'); });
   document.querySelectorAll('#vid-size button').forEach(b => b.setAttribute('aria-checked', String(b.dataset.size === VS.size)));
   document.querySelectorAll('#vid-mode button').forEach(b => b.setAttribute('aria-checked', String(b.dataset.mode === VS.mode)));
@@ -104,14 +111,16 @@ function vidSync(){
   const turbo = vidTurbo();
   document.querySelectorAll('#vid-turbo button').forEach(b => { b.setAttribute('aria-checked', String((b.dataset.turbo === '1') === turbo));
     if (b.dataset.turbo === '1') b.disabled = !VS.turboOk; });
-  setText('vid-turbo-hint', VS.turboOk ? 'the Turbo adapter: 9 steps, about five times faster'
+  setText('vid-turbo-hint', VS.turboOk ? `the Turbo adapter: ${VID_TURBO_SHOWN} steps, about five times faster`
     : VS.turboWhy || 'the Turbo adapter is not on this box: ./install-video.sh fetches it');
   $('vid-steps').disabled = turbo;
-  setText('vid-steps-hint', turbo ? 'fixed at 9 by the Turbo adapter' : 'denoising steps, 50 is the model default');
+  setText('vid-steps-hint', turbo ? `fixed at ${VID_TURBO_SHOWN} by the Turbo adapter` : 'denoising steps, 50 is the model default');
   // the cost, measured, before anything is asked
   const est = vidEtaSecs(secs, VS.size, steps, turbo);
-  setText('vid-cost-v', 'about ' + fmtMin(est)); setText('vid-cost-k', `for ${secs} s at ${VS.size === '864x480' ? '480p' : '720p'}, ${steps} steps${turbo ? ' with the Turbo' : ''}${VS.mode === 'fl2v' ? ', from keyframes' : ''}`);
-  setText('vid-cost-b', turbo ? 'Timed from runs on this box the same day: 4 s at 480p took 2:06 to 2:18 with the Turbo, 10:23 to 10:32 for the base.'
+  const lo = Math.round(est / 60), hi = Math.round((est + VID_TURBO_FIRST_EXTRA_S) / 60);
+  setText('vid-cost-v', turbo && hi > lo ? `about ${lo} to ${hi} min` : 'about ' + fmtMin(est));
+  setText('vid-cost-k', `for ${secs} s at ${VS.size === '864x480' ? '480p' : '720p'}, ${turbo ? VID_TURBO_SHOWN : steps} steps${turbo ? ' with the Turbo' : ''}${VS.mode === 'fl2v' ? ', from keyframes' : ''}`);
+  setText('vid-cost-b', turbo ? 'Timed from runs on this box: 4 s at 480p took 2:06 to 2:18 with the Turbo, 2:46 the first time after the lane started, and 10:23 to 10:32 for the base.'
     : 'Timed from runs on this box: 4 s at 480p took 9:52 to 12:40 depending on how hot the NVMe runs.');
   const bud = $('vid-budget'); const pct = Math.min(100, 100 * est * 1.1 / VID_BUDGET_S);
   bud.firstChild.style.width = pct.toFixed(1) + '%'; bud.className = 'meter' + (pct > 100 ? ' err' : pct > 70 ? ' warn' : '');
@@ -267,7 +276,7 @@ function vidDone(id, took, req){
   const a = el('a', 'btn primary', 'Download MP4'); a.href = '/api/video/content?id=' + encodeURIComponent(id); a.download = 'minimax-h3-' + id.slice(0, 8) + '.mp4';
   meta.append(a);
   if (took) meta.append(el('span', 'tag gold', `made in ${fmtDur(took)}`));
-  if (req) meta.append(el('span', 'tag', `${req.seconds} s, ${req.size === '864x480' ? '480p' : '720p'}, ${req.num_inference_steps} steps` + (req.turbo ? ', Turbo' : '') + (req.seed != null ? `, seed ${req.seed}` : '')));
+  if (req) meta.append(el('span', 'tag', `${req.seconds} s, ${req.size === '864x480' ? '480p' : '720p'}, ${req.turbo ? VID_TURBO_SHOWN : req.num_inference_steps} steps` + (req.turbo ? ', Turbo' : '') + (req.seed != null ? `, seed ${req.seed}` : '')));
   // a thumbnail for the session's history, taken from the video itself
   const entry = {id, took, req: req || null, thumb: null};
   VS.history = [entry].concat(VS.history.filter(h => h.id !== id)).slice(0, 12);

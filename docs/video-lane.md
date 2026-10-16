@@ -174,12 +174,13 @@ The Video view has a **Speed** choice beside the steps: the base, or the **Turbo
 cookbook's recommended speed and quality adapter for these weights, larryvrh's MiniMax-H3
 Turbo LoRA (`minimax_h3_turbo_v4_step600_ema.safetensors`, Apache-2.0, 0.78 GB, fetched by
 `install-video.sh` at its pinned revision, one file of a 112 GB repository). Its schedule
-is its own, eight denoiser evaluations, which the view shows fixed as 9 steps: on this
-lane's v0.5.21 runtime the request's `num_inference_steps` counts the points of the sigma
-grid, the terminal zero among them. SGLang's main counts evaluations since
-sgl-project/sglang#38671 (2026-10-10), which is why the cookbook now asks this adapter for
-8 and says that older versions ran N-1 updates for the same request; a pin past that change
-sends 8, and `tests/test_video_lane.py` holds the pin and the 9 together.
+is its own, eight denoiser evaluations, which the view shows fixed as its 8 steps, as the
+lane's progress counts them ("step 8 of 8"), and asks for as 9: on this lane's v0.5.21 runtime
+the request's `num_inference_steps` counts the points of the sigma grid, the terminal zero
+among them (the view said 9 over a progress that said 8 until v1.34.0). SGLang's main counts
+evaluations since sgl-project/sglang#38671 (2026-10-10), which is why the cookbook now asks
+this adapter for 8 and says that older versions ran N-1 updates for the same request; a pin
+past that change sends 8, and `tests/test_video_lane.py` holds the pin and the 9 together.
 
 The cockpit puts the adapter on for a call that asks for it and takes it off after, under
 the lane's lock, through the lane's own control routes (`/v1/list_loras`, `/v1/set_lora` in
@@ -209,7 +210,7 @@ Measured on the reference box on 2026-10-10, on the v0.5.21 runtime, 4 s at 480P
 20261010, three prompts (a dog on a beach with gulls, a woman speaking in a kitchen, a tram
 at night in the rain):
 
-| | base, 50 steps | Turbo, 9 steps |
+| | base, 50 steps | Turbo, 8 steps (9 asked) |
 |---|---:|---:|
 | the server's time, end to end | 622.8 to 632.5 s | 126.2 to 127.9 s |
 | of which text encoding | none, or 9.3 s | none |

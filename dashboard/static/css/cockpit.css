@@ -247,6 +247,10 @@ img,svg,video,canvas{display:block; max-width:100%}
 .panel.stale > header .aside{color:var(--warn-hi)}
 .grid{display:grid; gap:var(--s-5)}
 .g2{grid-template-columns:repeat(2, minmax(0,1fr))}
+/* Library's two columns hold tables of five columns: side by side only while each gets 600 px, what
+   the checkpoints take with their sizes on one line; narrower, one under the other (at 1280 px the
+   checkpoints ran 56 px past their panel, behind a scroll nothing showed: found in review, 2026-10-15) */
+.g2.g2-wide{grid-template-columns:repeat(auto-fit, minmax(min(100%, 600px), 1fr))}
 .g3{grid-template-columns:repeat(3, minmax(0,1fr))}
 .g-7-5{grid-template-columns:minmax(0,7fr) minmax(0,5fr)}
 .g-5-7{grid-template-columns:minmax(0,5fr) minmax(0,7fr)}
@@ -389,6 +393,9 @@ input[type=range]:focus-visible::-webkit-slider-thumb{box-shadow:0 0 0 4px color
 .tbl tr > :last-child{padding-right:0}
 .tbl .r{text-align:right}
 .tbl .num{font-variant-numeric:tabular-nums}
+/* a size and its unit on one line: Library read "73.4" over "GiB" in a squeezed column (found in
+   the cockpit's test session, 2026-10-15) */
+.tbl .sz{white-space:nowrap}
 .tbl .brk{overflow-wrap:anywhere}
 /* .stack, the layout's flex column, matched the tables whose class says they stack on a phone:
    their header and body laid out apart on a desk screen, the columns out of line */
