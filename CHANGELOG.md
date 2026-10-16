@@ -140,6 +140,12 @@ drafter's acceptance in the load. Library lists its checkpoint and its drafter w
   engine's `:30000`, which answers on the box only since v1.17, and gave numbers without their
   condition; they now name the five text lanes and list each lane's page, give the flash lane's
   47.9 tok/s its `context` tier and the 27B's 71.4 its SGLang v0.5.19, and the roadmap v1.35.
+- opencode looks for no update now: `autoupdate` is `false` in `~/.config/opencode/opencode.json`,
+  where earlier runs wrote `"notify"`. With any other value, opencode 1.19 offers OpenCode 2 on its
+  home screen, and 1.18.35, the version this repo pins, announces 2.x as soon as GitHub's latest
+  release is one; OpenCode 2's server is not the `opencode serve` the Agent view relays. A `false`
+  you set yourself was kept and still is, and `oc-merge-limits.py`, asked for `false`, wrote the
+  string `"false"`, which opencode's schema refuses: it writes the boolean now.
 
 **Tests.** Each change has a test that fails on the old code: the lane's installer in its two halves
 and its uninstall (the shared image kept while the other Nemotron lane is installed, both ways; the
