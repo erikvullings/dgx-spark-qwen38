@@ -1,5 +1,108 @@
 # Changelog
 
+## v1.34.0 (2026-10-16): Nemotron 3.5 Bolt, NVIDIA's 74B that reads images and video, as a sixth lane
+
+**What it is.** [Nemotron 3.5 Bolt](https://huggingface.co/nvidia/NVIDIA-Nemotron-3.5-Bolt-74B-A9B-24GB) is
+NVIDIA's open model, released 2026-10-15: a hybrid of Mamba-2 and Transformer layers with a mixture
+of experts, 74B parameters with 9B active per token, its experts compressed to 2 bits so that the
+whole of it holds in 24 GB. It reads text, images and video, calls tools and reasons (by default, a
+shorter way on request, or not at all), in a window of 262,144 tokens. Every plain install now puts
+it in as a sixth lane, on demand like the others: its units now, and its first Load from the
+cockpit builds its image and fetches its checkpoint and its drafter (51 GB: 26 of weights, 25 of
+image); `--with-nemotron` or `--all-weights` does it at install and proves it, `--no-nemotron`
+leaves it out and later runs remember it. On the cockpit's Lanes view it is **Nemotron 3.5 Bolt**,
+then **Load**; from a terminal, `./prepare-lane.sh nemotron` the first time, then
+`./switch-model.sh nemotron`. Clients reach it through the proxy on `:30001` with the box's key, as
+model `nemotron-3.5-bolt`, in the OpenAI and the Anthropic dialects alike.
+
+**What an update does.** It puts in the Nemotron lane's units, and nothing heavy: no image is pulled
+and no weight fetched until its first Load. Every other lane's unit names the new one in its
+`Conflicts=` and `After=` lines, which systemd applies at its daemon-reload and no engine reads: such
+a unit keeps its date and its engine keeps running (found in review: the update would have restarted
+the text lane that serves, 5 to 15 minutes, for those lines alone). The proxy restarts once (v6.40,
+and its unit holds requests for this lane too while it boots), and so does the cockpit.
+
+**NVIDIA's build, pinned.** NVIDIA's model card serves Bolt on a DGX Spark with one vLLM nightly,
+`nightly-77154ca6`, and the b12x kernel library, which runs the 2-bit experts, the NVFP4 Mamba layers
+and the Q8_0 layers on the GB10. `install-nemotron.sh` builds the lane's image on that nightly,
+pinned by the digest of its arm64 manifest, plus the b12x 1.5.1 wheel checked against the sha256
+PyPI publishes and installed with `--no-deps`; nothing else. The image already holds the FlashInfer
+kernels the card's `vllm download-kernels` would fetch, so the lane starts with no internet. NVIDIA
+rewrote both repositories' history when it made them public (an "initial commit" at 15:42 UTC): the
+revisions measured first are gone, and the pinned ones hold the same files bit for bit, the model
+card and one note excepted. The key reaches vLLM in the file SGLang's lanes read, its usage report is
+off, and the Kolibri lane's middleware asks the key on every route but `/health` and `/metrics`.
+
+**What differs from the card, each measured on the reference box (2026-10-15).**
+
+- CUDA graphs on, at vLLM's default (the card's first version turned them off and dropped that
+  line the same day): decode 43 to 55 % faster, the same answers.
+- 16 requests at a time (the card: 1), and a memory share of 0.70 (vLLM's default, 0.92, would take
+  the whole box): a KV cache of 4,712,014 tokens, 18 requests at the full window, and 26 GiB left to
+  the box at rest (25.3 at its least, during a 252,000-token prompt's prefill).
+- 16 images and 2 videos per conversation (the card: 1 and 1, which refused a session's second
+  screenshot, and every request after it).
+- Media inside the request only: the card opens `--allowed-local-media-path /`, which lets any client
+  with the key make the engine read any file it can see; here no local path is allowed and no URL is
+  fetched.
+- vLLM's compile cache, FlashInfer's kernels and b12x's kept between boots; nothing left root-owned
+  in the user's HF cache (the reasoning parser's `__pycache__`, transformers' copy of the
+  checkpoint's code).
+
+**Measured.** One request, real work and the reasoning off: 140 tok/s rewriting code, 63
+summarising, 50 writing prose (the drafter's mean acceptance 4.0 tokens per pass; 31 without it).
+Several at once, in all: 74.8 / 113.4 / 163.6 / 201.2 tok/s at 1 / 4 / 8 / 16 streams (median of 3
+passes; 30.3 / 80.3 / 124.8 / 178.0 without the drafter). Boot 7 min 26 s to 7 min 36 s from the USB
+SSD. A code hidden in 32,000, 128,000 and 252,000 tokens found every time. Every answer right: the
+reasoning at its three depths, streamed or not; tool calls 20 of 20 with the reasoning on and off;
+German, French and English; an image; a video; 16 images in one conversation. Token by token, NVIDIA's
+precision (KV cache in FP8, Mamba state in BF16) against the full one: a difference within the
+engine's own noise, at 1,024 and at 61,440 tokens, so NVIDIA's stays (twice the cache, 7 to 10 %
+faster). Tried and not kept: no drafter (2.6 times the cache, slower at every load of real work), a
+16,384-token prefill step (the cache fell from 2.18 to 0.79 million tokens), the full precision, and
+a draft that shortens as the load grows (vLLM's `num_speculative_tokens_per_batch_size`): with the
+CUDA graphs whole the engine did not start (its Mamba layers capture the full draft length only),
+and with them piecewise it ran 7.5 % faster at 16 streams and 2.4 % slower for one request.
+
+**Clients.** Bolt's template reads `enable_thinking` and `medium_effort`, and no reasoning effort: a
+`reasoning_effort` sent to the engine as it came left the answer inside the reasoning, its content
+empty. The proxy (v6.40) says each level in the template's words on this lane: `none` and `minimal`
+turn the reasoning off, `low` and `medium` ask its shorter one, `high` and above its default; a
+request that names `enable_thinking` keeps its choice, and every other lane gets its request as it
+came. opencode gets a `nemotron` provider that may attach images, with the levels `none`, `low`,
+`medium` and `high`, and loading the lane makes it opencode's default; pi and omp send it their
+level, starting at `high`. The reasoning comes in the message's `reasoning` field. System One needs
+a Qwen lane, and says so on this one.
+
+**The cockpit.** The lane's card in the rack, with NVIDIA's mark, its boot read stage by stage from
+its own log, its engine (vLLM, its draft length, its revision) and its drafter's acceptance over the
+last 20 seconds in the load; Library lists its checkpoint and its drafter, with their pins, and its
+image among the engine images, as it now lists the Kolibri lane's (a build on the box carries a tag
+and no digest, and Library showed neither). The Lanes view no longer counts its lanes (it said five).
+
+**Also in this version, from the test session of the whole cockpit (2026-10-15).**
+
+- Library's sizes stood over two lines in a squeezed column ("73.4" over "GiB"): each keeps its unit
+  on its line.
+- At 1280 px, Library's checkpoints ran 56 px past their panel, behind a scroll nothing showed: its
+  two columns stand side by side only while each gets 600 px, else one under the other.
+- A Load whose steps were all done said "Done" over a Cancel button: it says Close.
+- The video Turbo's card said 9 steps over a progress that said "step 0 of 8": the view shows the 8
+  steps the lane runs and counts, and the call still asks the lane's runtime for its 9.
+- The Turbo's estimate said "about 2 min" where its first video after the lane started took 2 min 46:
+  it says "about 2 to 3 min", and its basis names that run.
+
+**Tests.** Each change has a test that fails on the old code: the lane's installer in its two halves,
+its uninstall (the key's middleware kept while the Kolibri lane uses it, and the other way round,
+and every lane installer's pins in the inventory of `./uninstall.sh --list`), its pins in one
+place, its image's tag, its switch, the Download of its checkpoint and drafter and the rewrite of
+its unit when its pins move (each place the unit names them), every sequence of switches up to six
+long through the six lanes (3,905), the proxy's translation through a fake vLLM and the line its
+journal says for each level, the cockpit's card, metrics, boot stages (a real boot replayed line by
+line, never going back when the drafter loads after the model) and acceptance, the units' dates and
+the engine's fingerprint, and the five findings on the page as it runs. Mutants of the proxy's
+translation (13), the uninstall (4), the cockpit's lane (12) and the units' rule (2) are all caught.
+
 ## v1.33.1 (2026-10-15): the cockpit's ergonomics review, and the flash lane's wedge named right
 
 The cockpit's views were read one by one, on a desk screen and on a phone, with the Kolibri lane
