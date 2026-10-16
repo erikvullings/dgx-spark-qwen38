@@ -136,6 +136,17 @@ class TheDiskNeedsAreThePreflights(unittest.TestCase):
         for gb in labels:
             self.assertIn(f"its {gb} GB image", req, f"install.sh names a {gb} GB image the README does not")
 
+    def test_the_help_gives_each_lane_one_size(self):
+        # install.sh's help gave the Nemotron lane 60 GB in its overview, and 51 at its
+        # --no-nemotron line, in the README and in the CHANGELOG (found in review, 2026-10-16)
+        sh = (REPO / "install.sh").read_text()
+        overview = sh[sh.index("A plain run installs the box"):sh.index("  --no-start ")]
+        said = {name.lower(): gb for name, gb in
+                re.findall(r"the (image|video|Kolibri|Nemotron) lane \([^)]*?(\d+)\)", overview)}
+        flags = dict(re.findall(r"--no-(image|video|kolibri|nemotron)\s+leave the .*?\((?:vLLM, )?(\d+) GB\)", sh))
+        self.assertEqual(set(said), {"image", "video", "kolibri", "nemotron"}, overview)
+        self.assertEqual(said, flags)
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)

@@ -87,10 +87,11 @@ dialect is Bearer-only: an `x-api-key` header is not read. The engine
 enforces the key; the proxy forwards it verbatim.
 
 Served model names: `qwen3.8-27b` (27B lane, both context modes),
-`qwen3.8-flash-next` (flash lane) and `kolibri-1` (Kolibri lane). Send the name,
-not the checkpoint path. A client set up for one lane keeps working on another:
-SGLang answers any name, and on the Kolibri lane, whose vLLM refuses a model it does
-not serve, the proxy gives such a request the served name (proxy v6.37).
+`qwen3.8-flash-next` (flash lane), `kolibri-1` (Kolibri lane) and `nemotron-3.5-bolt`
+(Nemotron lane). Send the name, not the checkpoint path. A client set up for one lane
+keeps working on another: SGLang answers any name, and on the vLLM lanes, whose vLLM
+refuses a model it does not serve, the proxy gives such a request the served name
+(proxy v6.37).
 
 The Kolibri lane (vLLM, [docs/kolibri-lane.md](kolibri-lane.md)) differs from the
 Qwen lanes in three things a client sees: its reasoning comes in the `reasoning` field
@@ -98,6 +99,16 @@ of the message (vLLM's name; the Qwen lanes say `reasoning_content`), its levels
 its own (`low`, `medium`, `high`, which its template defaults to, and `none`, in
 `chat_template_kwargs.reasoning_effort` or the top-level `reasoning_effort`), and it
 has no vision. `/v1/systemone` needs a Qwen lane and says so there.
+
+The Nemotron lane (vLLM, [docs/nemotron-lane.md](nemotron-lane.md)) also says its
+reasoning in the `reasoning` field. Its template reads no effort level: it reasons at its
+full depth unasked, `{"enable_thinking": false}` in `chat_template_kwargs` turns that off and
+`{"medium_effort": true}` asks for its shorter reasoning. A `reasoning_effort`, top-level or in
+`chat_template_kwargs`, is said in those words by the proxy (v6.40): `none` and `minimal` turn
+the reasoning off, `low` and `medium` ask the shorter one, `high` and above the default; sent
+straight to the engine, `none` left the answer inside the reasoning. It reads images and
+videos sent inside the request (a data URL), 16 images and 2 videos per conversation; it
+fetches no URL and reads no file of the box for a client.
 
 Reasoning effort is a first-class field in both dialects: `lean`, which a
 request that names no level gets, and Qwen's own `low`, `medium` and `xhigh`
