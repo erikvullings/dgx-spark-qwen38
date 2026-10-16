@@ -1497,6 +1497,15 @@ def body_over_cap(n):
 
 # Routes that only count a prompt, and so never reach the size guard below.
 COUNT_ONLY_PATHS = frozenset({"/v1/messages/count_tokens"})
+# The engine's own counting routes have a ceiling of their own (2026-10-16): /tokenize and
+# /detokenize generate nothing, so the size guard never measured them, and only MAX_BODY_BYTES
+# bounded them, 256 MiB of text for the engine's tokenizer to hold and work through (found in
+# review, 2026-10-16). 16 MiB is over four million tokens of prose, four times the largest window
+# a lane serves; the proxy's own counts go to the engine directly, not through this port.
+# /v1/messages/count_tokens, which an Anthropic client sends its whole conversation to, images
+# included, keeps MAX_BODY_BYTES.
+COUNT_ROUTES = frozenset({"/tokenize", "/detokenize"})
+COUNT_BODY_MAX_BYTES = int(os.environ.get("COUNT_BODY_MAX_BYTES", str(16 * 1024 * 1024)) or 0)
 
 
 def warmup_hold(est, pool):
@@ -4056,11 +4065,13 @@ class H(BaseHTTPRequestHandler):
                         json.dumps({"error": {"type": "invalid_request",
                                               "message": "keepalive-proxy: Content-Length is not a number"}}).encode())
             self._done("400 bad Content-Length"); return
-        if with_body and body_over_cap(n):
-            log(f"{self._peer} REFUSED body {n}b over the {MAX_BODY_BYTES}b cap")
+        cap = (COUNT_BODY_MAX_BYTES if self.path.split("?")[0] in COUNT_ROUTES and COUNT_BODY_MAX_BYTES > 0
+               and (MAX_BODY_BYTES <= 0 or COUNT_BODY_MAX_BYTES < MAX_BODY_BYTES) else MAX_BODY_BYTES)
+        if with_body and cap > 0 and n > cap:
+            log(f"{self._peer} REFUSED body {n}b over the {cap}b cap")
             self._plain(413, {"Content-Type": "application/json"},
                         json.dumps({"error": {"type": "body_too_large",
-                                              "message": f"keepalive-proxy: request body {n}b exceeds the {MAX_BODY_BYTES}b cap"}}).encode())
+                                              "message": f"keepalive-proxy: request body {n}b exceeds the {cap}b cap"}}).encode())
             self._done("413 body over cap"); return
         if with_body and n and not self._reserve_body(n):
             log(f"{self._peer} REFUSED body {n}b: {_BODY_BUDGET['used']}b of bodies already in flight, "
