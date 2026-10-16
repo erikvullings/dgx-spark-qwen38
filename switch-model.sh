@@ -1177,6 +1177,11 @@ systemctl is-active --quiet "$KOLIBRI_UNIT_NAME" 2>/dev/null && RUNNING="$KOLIBR
 systemctl is-active --quiet "$NEMOTRON_UNIT_NAME" 2>/dev/null && RUNNING="$NEMOTRON_UNIT_NAME"
 systemctl is-active --quiet "$NEMOTRON_SUPER_UNIT_NAME" 2>/dev/null && RUNNING="$NEMOTRON_SUPER_UNIT_NAME"
 printf '\n\033[1;32mSwitch queued: %s (%s)\033[0m\n' "$TARGET_REPO" "$TARGET_UNIT_NAME"
+# The target is the operator's choice from here (2026-10-17): an installed.json that a run of
+# v1.36.0 or later wrote records it, and a switch back to the recommended target erases the
+# entry (conformity.py choose). Never fatal: the next ./install.sh classes what the unit serves.
+python3 "$REPO_DIR/conformity.py" choose --config-dir "$CONFIG_DIR" --repo-dir "$REPO_DIR" \
+  "target.$TARGET_LANE" "$CHOICE" || true
 if [ -n "$RUNNING" ]; then
   echo "Effective after:  sudo systemctl stop $RUNNING && sudo systemctl start $TARGET_UNIT_NAME   (or next reboot)"
 else

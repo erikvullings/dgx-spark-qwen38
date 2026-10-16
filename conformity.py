@@ -442,6 +442,41 @@ def record(config_dir, path, lane, chose=None, repo_dir=REPO, units_dir=UNITS, h
     return new
 
 
+def choose(config_dir, knob, value, how="switch", repo_dir=REPO, home=None, now=None):
+    """Record one choice made outside install.sh, in an installed.json that exists: a switch,
+    the cockpit's Load among them, is the operator choosing a target (2026-10-17). The value
+    the release recommends erases the entry instead, so the box follows the defaults again,
+    future ones included. A box no run of FIRST_RELEASE or later recorded gets no file: its next
+    ./install.sh classes what the unit serves. Returns (record, what changed), (None, None)
+    when there is nothing to write in."""
+    config_dir = Path(config_dir)
+    if not (config_dir / FILE).exists():
+        return None, None
+    with open(config_dir / f"{FILE}.lock", "a", encoding="utf-8") as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        rec, note = load_record(config_dir)
+        if rec is None:
+            if note:
+                print(note, file=sys.stderr)
+            return None, None
+        choices = dict(rec["choices"])
+        prev = choices.get(knob)
+        if value == recommended(repo_dir, home).get(knob):
+            if prev is None:
+                return rec, None
+            del choices[knob]
+            changed = "erased"
+        else:
+            now = now or datetime.now(timezone.utc).isoformat(timespec="seconds")
+            same = prev is not None and prev.get("value") == value
+            choices[knob] = {"value": value, "since": prev["since"] if same and prev.get("since") else now,
+                             "how": prev["how"] if same and prev.get("how") else how}
+            changed = None if same else "recorded"
+        rec["choices"] = choices
+        write_record(config_dir, rec)
+    return rec, changed
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser(prog="conformity.py", description=__doc__.split("\n")[0])
     sub = ap.add_subparsers(dest="cmd", required=True)
@@ -453,6 +488,12 @@ def main(argv=None):
     r.add_argument("--path", required=True, choices=("full", "side-boot", "no-start", "no-service"))
     r.add_argument("--chose", action="append", default=[], metavar="KNOB=VALUE",
                    help="a value the operator set explicitly on this run")
+    c = sub.add_parser("choose", help="record a choice made outside install.sh (a switch), in an installed.json that exists")
+    c.add_argument("--config-dir", required=True)
+    c.add_argument("--repo-dir", default=str(REPO))
+    c.add_argument("--how", default="switch", choices=("switch", "env", "flag"))
+    c.add_argument("knob", choices=KNOBS)
+    c.add_argument("value")
     v = sub.add_parser("verdict", help="converge or keep: what an update does with a value an older release made the default")
     v.add_argument("--config-dir", required=True)
     v.add_argument("knob", choices=KNOBS)
@@ -468,6 +509,21 @@ def main(argv=None):
             print("keep error")
             return 0
         print(f"converge {got.old.tag}" if got.cls == "old-default" else f"keep {got.why}")
+        return 0
+    if a.cmd == "choose":
+        # Never a failure either: the switch it follows is done, and the next ./install.sh
+        # classes what the unit serves whatever this wrote.
+        try:
+            _, changed = choose(a.config_dir, a.knob, a.value, how=a.how, repo_dir=a.repo_dir)
+        except Exception as e:  # noqa: BLE001
+            print(f"NOTE: could not record {a.knob}={a.value} in {Path(a.config_dir) / FILE} ({e}).", file=sys.stderr)
+            return 0
+        if changed == "recorded":
+            print(f"  Recorded   : {a.knob}={a.value} as your choice, which updates keep "
+                  f"({Path(a.config_dir) / FILE})")
+        elif changed == "erased":
+            print(f"  Recorded   : {a.knob} back to the recommended {a.value}, which updates follow "
+                  f"({Path(a.config_dir) / FILE})")
         return 0
     chose = {}
     for kv in a.chose:
