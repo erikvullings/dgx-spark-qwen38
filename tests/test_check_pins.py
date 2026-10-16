@@ -104,13 +104,14 @@ elif body is None and "/releases/tags/" in url:
 elif body is None and url.startswith("https://huggingface.co/") and url.rsplit("/", 1)[-1] in up.get("lfs", {}):
     body = "version https://git-lfs.github.com/spec/v1\noid sha256:%s\nsize 804749248\n" % up["lfs"][url.rsplit("/", 1)[-1]]
 elif body is None and "/manifests/" in url:
-    # an index, as Docker Hub answers for lmsysorg/sglang:v0.5.21: amd64, its attestation, arm64
-    body = json.dumps({"mediaType": "application/vnd.oci.image.index.v1+json", "manifests": [
-        {"digest": "sha256:" + "a" * 64, "platform": {"architecture": "amd64", "os": "linux"}},
-        {"digest": "sha256:" + "b" * 64, "platform": {"architecture": "unknown", "os": "unknown"}},
-        {"digest": "sha256:" + "c" * 64, "platform": {"architecture": "arm64", "os": "linux"}}]})
+    # one image, as Docker Hub answers for three of the four pins: its platform is in its config
+    body = json.dumps({"mediaType": "application/vnd.docker.distribution.manifest.v2+json", "schemaVersion": 2,
+                       "config": {"mediaType": "application/vnd.docker.container.image.v1+json", "digest": "sha256:" + "c" * 64},
+                       "layers": [{"digest": "sha256:" + "d" * 64}]})
 elif body is None and "/blobs/" in url:
-    body = json.dumps({"architecture": "arm64", "os": "linux"})
+    # that config: the platform, and a "config" of its own (the container's), as every one has
+    body = json.dumps({"architecture": "arm64", "os": "linux", "config": {"Env": ["PATH=/usr/bin"], "Cmd": ["/bin/bash"]},
+                       "rootfs": {"type": "layers", "diff_ids": ["sha256:" + "e" * 64]}})
 if "-o" not in args:
     sys.stdout.write(body or "")
 if fmt is not None:
@@ -228,24 +229,34 @@ class TheCheckPins(PinsBase):
     def test_an_image_without_linux_arm64_fails(self):
         """The box is aarch64: a digest of no linux/arm64 image pulls, then runs nothing, and the
         watch asked for an HTTP 200 alone (found in the audit of 2026-10-16)."""
-        index = json.dumps({"mediaType": "application/vnd.oci.image.index.v1+json", "manifests": [
-            {"digest": "sha256:" + "a" * 64, "platform": {"architecture": "amd64", "os": "linux"}},
-            {"digest": "sha256:" + "b" * 64, "platform": {"architecture": "unknown", "os": "unknown"}}]})
-        rc, out = self.run_pins({"bodies": {"/manifests/sha256:b125": index}})
+        def index(*platforms):   # an index, as Docker Hub answers for lmsysorg/sglang:v0.5.21
+            return json.dumps({"mediaType": "application/vnd.oci.image.index.v1+json", "manifests": [
+                {"digest": "sha256:" + str(n) * 64, "platform": {"os": p.split("/")[0], "architecture": p.split("/")[1]}}
+                for n, p in enumerate(platforms)]})
+        rc, out = self.run_pins({"bodies": {"/manifests/sha256:b125": index("linux/amd64", "unknown/unknown")}})
         self.assertEqual(rc, 1, out)
         line = self.image_line(out, "27b-base")
         self.assertIn("FAIL", line)
         self.assertIn("no linux/arm64 image: an index of linux/amd64", line)
         self.assertIn("ok", self.image_line(out, "flash-base"), out)
+        # and an index that names it passes, with no blob to fetch: amd64, its attestation, arm64
+        rc, out = self.run_pins({"bodies": {"/manifests/sha256:b125": index("linux/amd64", "unknown/unknown", "linux/arm64")}}, None, "27b-base")
+        self.assertEqual(rc, 0, out)
+        self.assertIn("(linux/arm64)", self.image_line(out, "27b-base"), out)
 
     def test_a_single_platform_image_is_read_from_its_config(self):
-        # three of the four pins are one image, not an index: its platform is in its config blob
+        # three of the four pins are one image, not an index: its platform is in its config blob,
+        # which also holds a "config" key of its own, the container's (the first real run of
+        # 2026-10-16 read that as a manifest, and failed all three)
         manifest = json.dumps({"mediaType": "application/vnd.docker.distribution.manifest.v2+json",
                                "config": {"digest": "sha256:" + "c" * 64}, "layers": []})
         blob = "/v2/lmsysorg/sglang/blobs/sha256:" + "c" * 64
+
+        def config(arch):
+            return json.dumps({"architecture": arch, "os": "linux", "config": {"Env": ["PATH=/usr/bin"]}, "rootfs": {"type": "layers"}})
         for scen, rc_want, said in (
-                ({"bodies": {blob: json.dumps({"architecture": "arm64", "os": "linux"})}}, 0, "ok"),
-                ({"bodies": {blob: json.dumps({"architecture": "amd64", "os": "linux"})}}, 1, "no linux/arm64 image: linux/amd64"),
+                ({"bodies": {blob: config("arm64")}}, 0, "ok"),
+                ({"bodies": {blob: config("amd64")}}, 1, "no linux/arm64 image: linux/amd64"),
                 ({blob: [503, ""]}, 1, "HTTP 503 from the registry for its config, so not checked"),
                 ({"bodies": {blob: "<html>error</html>"}}, 1, "not JSON, so not checked")):
             with self.subTest(said=said):

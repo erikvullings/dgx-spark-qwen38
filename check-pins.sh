@@ -134,7 +134,9 @@ check_model() {  # $1 label, $2 repo, $3 revision, [$4 a file at its root, defau
 
 # What a manifest, an index or an image config says of its platform: "linux/arm64" when it is
 # that (an index naming it, the config of it), "config <digest>" for the manifest of one image,
-# whose platform is in that blob, "not json", or else what it names instead.
+# whose platform is in that blob, "not json", or else what it names instead. A manifest is told
+# by its layers: an image config has a "config" key too, the container's (the first real run,
+# 2026-10-16, read it as a manifest and failed all three single images).
 platform_of() {
   python3 -c '
 import json, sys
@@ -148,7 +150,7 @@ elif "manifests" in d:
     named = sorted({"%s/%s" % ((m.get("platform") or {}).get("os"), (m.get("platform") or {}).get("architecture"))
                     for m in d["manifests"] if isinstance(m, dict)} - {"unknown/unknown"})
     print("linux/arm64" if "linux/arm64" in named else "an index of " + (", ".join(named) or "nothing"))
-elif "config" in d:
+elif "layers" in d:
     print("config", (d.get("config") or {}).get("digest") or "none")
 else:
     print("%s/%s" % (d.get("os"), d.get("architecture")))
