@@ -44,7 +44,9 @@ class Delete(unittest.TestCase):
         spec.loader.exec_module(cls.cp)
         cls.cp.run = lambda argv, timeout=5.0, merge_err=False: ""    # no docker, no systemctl
         cls.unit = cls.tmp / "qwen38-kolibri.service"
-        for name in ("KOLIBRI_UNIT_PATH", "IMAGE_UNIT_PATH", "VIDEO_UNIT_PATH"):
+        # every lane's unit, the Nemotron lane's too: the box's own, once installed, named its real
+        # cache and the scan read it (found on the reference box, 2026-10-16)
+        for name in ("KOLIBRI_UNIT_PATH", "NEMOTRON_UNIT_PATH", "IMAGE_UNIT_PATH", "VIDEO_UNIT_PATH"):
             setattr(cls.cp, name, cls.unit)
         cls.cp.UNIT_PATHS = {k: cls.unit for k in cls.cp.UNIT_PATHS}
         cls.pinned = cls.cp.registry_snapshot(max_age=0.0)["pins"]["DRAFT_REV"]

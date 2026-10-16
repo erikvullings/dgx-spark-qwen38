@@ -33,19 +33,23 @@ PIN_MODELS = {
     "VIDEO_TURBO_REV": "larryvrh/MiniMax-H3-Turbo-Lora",
     "KOLIBRI_FP8_REV": "Aleph-Alpha/Kolibri-1",
     "KOLIBRI_NVFP4_REV": "Quantinine/Kolibri-1-NVFP4A16-FP8",
+    "NEMOTRON_BOLT_REV": "nvidia/NVIDIA-Nemotron-3.5-Bolt-74B-A9B-24GB",
+    "NEMOTRON_BOLT_DRAFT_REV": "nvidia/NVIDIA-Nemotron-3.5-Bolt-74B-A9B-24GB-LiLiCorr",
 }
 
 # Where the pins are written: the text lanes' in the switch and the installer, every other
 # lane's in its own installer.
 PIN_FILES = ("switch-model.sh", "run.sh", "install.sh",
-             "install-image.sh", "install-video.sh", "install-kolibri.sh")
+             "install-image.sh", "install-video.sh", "install-kolibri.sh", "install-nemotron.sh")
 
 PIN_RE = re.compile(r'^\s*([A-Z][A-Z0-9_]*REV)="?\$?\{?[A-Z0-9_:-]*?([0-9a-f]{40})',
                     re.MULTILINE)
 
-# Images that belong to this stack (everything else is none of our business).
+# Images that belong to this stack (everything else is none of our business). The Kolibri and
+# Nemotron lanes run images built on the box, which carry a tag and no digest: their builds were
+# missing from Library's engine images (found on the reference box, 2026-10-16).
 ENGINE_IMAGE_RE = re.compile(
-    r"^(lmsysorg/sglang|qwen38-flash|qwen38-dflash2|qwen38-sglang|vllm)")
+    r"^(lmsysorg/sglang|qwen38-flash|qwen38-dflash2|qwen38-sglang|qwen38-kolibri:|qwen38-nemotron:|vllm)")
 
 
 # Where a lane's unit or launcher says its Hugging Face cache is: a text lane mounts it into

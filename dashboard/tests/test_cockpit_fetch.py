@@ -40,6 +40,8 @@ class Fetch(unittest.TestCase):
         cls.units = cls.tmp / "units"
         cls.units.mkdir()
         cls.cp.KOLIBRI_UNIT_PATH = cls.units / "qwen38-kolibri.service"
+        # the box's own Nemotron unit, once installed, named its real cache (found on the reference box, 2026-10-16)
+        cls.cp.NEMOTRON_UNIT_PATH = cls.units / "qwen38-nemotron.service"
         cls.cp.IMAGE_UNIT_PATH = cls.units / "qwen38-image.service"
         cls.cp.VIDEO_UNIT_PATH = cls.units / "qwen38-video.service"
         cls.cp.UNIT_PATHS = {"qwen38-sglang.service": cls.units / "qwen38-sglang.service",

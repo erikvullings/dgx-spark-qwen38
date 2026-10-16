@@ -2,9 +2,9 @@
 # Rendered by the dashboard installer to /etc/sudoers.d/qwen38-cockpit
 # (validated with visudo -c before install; removed by uninstall).
 # The cockpit runs unprivileged; these lines are the entire privileged
-# surface: start/stop/restart of the units of this repo (the five serving
+# surface: start/stop/restart of the units of this repo (the six serving
 # units and the opencode web server of the Agent tab), the
-# operations switch-model.sh performs (27B, image and Kolibri unit installs from
+# operations switch-model.sh performs (27B, image, Kolibri and Nemotron unit installs from
 # fixed staging paths, enable/disable, daemon-reload, the keepalive ceiling drop-in), one
 # read-only forensics wrapper, and one fixed kernel-journal read.
 # Deliberately free of wildcards now: a glob on install sources once allowed
@@ -30,6 +30,9 @@ __USER__ ALL=(root) NOPASSWD: /usr/bin/systemctl restart qwen38-video.service
 __USER__ ALL=(root) NOPASSWD: /usr/bin/systemctl start qwen38-kolibri.service
 __USER__ ALL=(root) NOPASSWD: /usr/bin/systemctl stop qwen38-kolibri.service
 __USER__ ALL=(root) NOPASSWD: /usr/bin/systemctl restart qwen38-kolibri.service
+__USER__ ALL=(root) NOPASSWD: /usr/bin/systemctl start qwen38-nemotron.service
+__USER__ ALL=(root) NOPASSWD: /usr/bin/systemctl stop qwen38-nemotron.service
+__USER__ ALL=(root) NOPASSWD: /usr/bin/systemctl restart qwen38-nemotron.service
 __USER__ ALL=(root) NOPASSWD: /usr/bin/systemctl start opencode-web.service
 __USER__ ALL=(root) NOPASSWD: /usr/bin/systemctl stop opencode-web.service
 __USER__ ALL=(root) NOPASSWD: /usr/bin/systemctl restart opencode-web.service
@@ -43,11 +46,14 @@ __USER__ ALL=(root) NOPASSWD: /usr/bin/systemctl enable qwen38-video.service
 __USER__ ALL=(root) NOPASSWD: /usr/bin/systemctl disable qwen38-video.service
 __USER__ ALL=(root) NOPASSWD: /usr/bin/systemctl enable qwen38-kolibri.service
 __USER__ ALL=(root) NOPASSWD: /usr/bin/systemctl disable qwen38-kolibri.service
+__USER__ ALL=(root) NOPASSWD: /usr/bin/systemctl enable qwen38-nemotron.service
+__USER__ ALL=(root) NOPASSWD: /usr/bin/systemctl disable qwen38-nemotron.service
 __USER__ ALL=(root) NOPASSWD: /usr/bin/systemctl disable qwen38-llamacpp.service
 __USER__ ALL=(root) NOPASSWD: /usr/bin/systemctl daemon-reload
 __USER__ ALL=(root) NOPASSWD: /usr/bin/install -m 644 __HOME__/.config/qwen38/qwen38-sglang.service.switch-stage /etc/systemd/system/qwen38-sglang.service
 __USER__ ALL=(root) NOPASSWD: /usr/bin/install -m 644 __HOME__/.config/qwen38/qwen38-image.service.switch-stage /etc/systemd/system/qwen38-image.service
 __USER__ ALL=(root) NOPASSWD: /usr/bin/install -m 644 __HOME__/.config/qwen38/qwen38-kolibri.service.switch-stage /etc/systemd/system/qwen38-kolibri.service
+__USER__ ALL=(root) NOPASSWD: /usr/bin/install -m 644 __HOME__/.config/qwen38/qwen38-nemotron.service.switch-stage /etc/systemd/system/qwen38-nemotron.service
 __USER__ ALL=(root) NOPASSWD: /usr/bin/install -m 644 -D __HOME__/.config/qwen38/keepalive-ceiling.conf.switch-stage /etc/systemd/system/qwen38-keepalive.service.d/ceiling.conf
 __USER__ ALL=(root) NOPASSWD: /usr/local/bin/qwen38-pyspy-scheduler ""
 __USER__ ALL=(root) NOPASSWD: /usr/bin/journalctl -k --since -1h --no-pager -o short-iso

@@ -30,6 +30,14 @@ on('decode', d => {
     setText('tr-kv', l.num_tokens ? (100 * (l.num_used_tokens || 0) / l.num_tokens).toFixed(1) + ' %' : 'idle');
     return;
   }
+  if (!d.lane && (servingEngine() || [])[0] === NEMOTRON_UNIT){
+    // the same vLLM counters as Kolibri's, and a drafter: its mean acceptance over the last
+    // seconds, as vLLM counts it (nemotron_load), idle when no draft came in them
+    const l = F.load || {};
+    setText('tr-acc', l.accept_len != null ? l.accept_len.toFixed(2) : 'idle');
+    setText('tr-kv', l.num_tokens ? (100 * (l.num_used_tokens || 0) / l.num_tokens).toFixed(1) + ' %' : 'idle');
+    return;
+  }
   if (!d.lane){ setText('tr-acc', 'none'); setText('tr-kv', 'none'); return; }
   setText('tr-acc', t ? t.accept_len.toFixed(2) : 'idle');
   setText('tr-kv', t ? (100 * t.token_usage).toFixed(1) + ' %' : u.tokens ? (100 * u.tokens).toFixed(0) + ' %' : 'idle');
@@ -44,11 +52,12 @@ on('metrics', d => {
   if (!d.lane){
     // The Kolibri lane serves on vLLM, whose counters are not SGLang's: "no text engine is
     // serving" was said while it served (found in review, 2026-10-14)
-    const kolibri = (servingEngine() || [])[0] === KOLIBRI_UNIT, up = kolibri && textReady();
+    const sv = (servingEngine() || [])[0];
+    const vname = sv === KOLIBRI_UNIT ? 'Kolibri' : sv === NEMOTRON_UNIT ? 'Nemotron' : '', up = !!vname && textReady();
     // while it loads it serves nothing yet, next to a Requests line that says so (review, 2026-10-14)
-    cap('wm-cap', up ? 'Kolibri: vLLM' : kolibri ? 'Kolibri: loading' : 'no text engine', ''); setText('wm-note', '');
-    setText('wm-verdict', up ? 'The Kolibri lane serves on vLLM, and these counters are SGLang\'s: there are none here for it. Its running and waiting requests are above.'
-                         : kolibri ? 'The Kolibri lane is loading: it serves nothing yet, and these counters are SGLang\'s.'
+    cap('wm-cap', up ? `${vname}: vLLM` : vname ? `${vname}: loading` : 'no text engine', ''); setText('wm-note', '');
+    setText('wm-verdict', up ? `The ${vname} lane serves on vLLM, and these counters are SGLang\'s: there are none here for it. Its running and waiting requests are above.`
+                         : vname ? `The ${vname} lane is loading: it serves nothing yet, and these counters are SGLang\'s.`
                          : 'No text engine is serving: there is nothing to count.');
     facts($('wm-facts'), []); return;
   }
@@ -123,7 +132,8 @@ on('reqguard', d => {
   setText('zg-ver', g.version ? 'v' + g.version : 'no banner in the journal');
   // an SGLang setting, which the guard reads on the SGLang lanes only
   setText('zg-override', d.override === true ? 'yes' : d.override === false ? 'no' : d.lane ? 'unknown (docker did not answer)'
-    : (servingEngine() || [])[0] === KOLIBRI_UNIT ? 'not on the Kolibri lane (an SGLang setting)' : 'no engine');
+    : (servingEngine() || [])[0] === KOLIBRI_UNIT ? 'not on the Kolibri lane (an SGLang setting)'
+    : (servingEngine() || [])[0] === NEMOTRON_UNIT ? 'not on the Nemotron lane (an SGLang setting)' : 'no engine');
   const acted = [];
   if (g.aborted) acted.push(`${g.aborted} aborted`);
   if (g.drained) acted.push(`${g.drained} drained${g.drain_max_s != null ? `, longest ${g.drain_max_s.toFixed(0)} s` : ''}`);
@@ -168,13 +178,17 @@ on('machine', d => {
 // On the Kolibri lane neither belt can act: vLLM has no route that aborts a generation or
 // flushes its cache, and they read "armed" there (review, 2026-10-14).
 const kolibriHolds = () => (servingEngine() || [])[0] === KOLIBRI_UNIT;
+// the Nemotron lane runs on vLLM too: neither belt can act there either
+const nemotronHolds = () => (servingEngine() || [])[0] === NEMOTRON_UNIT;
 on('engine_fast', d => {
   if (kolibriHolds()){ setText('mm-floor', `cannot act on the Kolibri lane: vLLM has no route to abort a generation (stopping the lane stops them)`); return; }
+  if (nemotronHolds()){ setText('mm-floor', `cannot act on the Nemotron lane: vLLM has no route to abort a generation (stopping the lane stops them)`); return; }
   if (d.mem_floor){ const f = d.mem_floor; setText('mm-floor', `aborts generations under ${f.gib} GiB` + (f.aborts ? `, fired ${f.aborts} time${f.aborts > 1 ? 's' : ''}` : ', never fired')); }
 });
 on('lifecycle', d => {
   const g = d.pool_guard; if (!g) return;
   if (kolibriHolds()){ setText('mm-guard', 'not on the Kolibri lane: vLLM has no cache flush route, and evicts its prefix cache by itself'); return; }
+  if (nemotronHolds()){ setText('mm-guard', 'not on the Nemotron lane: vLLM has no cache flush route, and evicts its prefix cache by itself'); return; }
   setText('mm-guard', !g.enabled ? 'off (COCKPIT_POOL_GUARD=0)' : g.fails ? `cannot flush since ${clockTime(g.last_fail)}: ${g.last_err}`
     : g.flushes ? `${g.flushes} flush${g.flushes > 1 ? 'es' : ''}, last ${clockTime(g.last)}, above ${Math.round(g.threshold * 100)} % held` : `armed at ${Math.round(g.threshold * 100)} % held, never fired`);
 });
@@ -401,7 +415,7 @@ function defaultLogSource(){
   const s = servingEngine(); const u = LOGS_WANT.src || (s ? s[0] : enabledUnit());
   const e = engines()[u] || {};
   if (u === IMAGE_UNIT || u === VIDEO_UNIT || u === PROXY_UNIT || e.state === 'failed' || e.restarting) return u;
-  return u === UFLASH ? 'qwen38-flash' : u === KOLIBRI_UNIT ? 'qwen38-kolibri' : 'qwen38-sglang';
+  return u === UFLASH ? 'qwen38-flash' : u === KOLIBRI_UNIT ? 'qwen38-kolibri' : u === NEMOTRON_UNIT ? 'qwen38-nemotron' : 'qwen38-sglang';
 }
 onShow('logs', () => {
   if (LOGS_WANT.src || !logTouched){ $('log-src').value = defaultLogSource(); LOGS_WANT.src = null; }

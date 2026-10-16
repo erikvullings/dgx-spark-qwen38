@@ -1,5 +1,5 @@
 "use strict";
-/* Lanes: the five lanes as cards, each with what it serves, what it costs, and the one
+/* Lanes: the lanes as cards, each with what it serves, what it costs, and the one
    verb that makes sense now. Loading a lane is a journey (base.js, askJourney); stop and
    start stay single actions for when that is all you want. */
 
@@ -182,7 +182,10 @@ on('engine_info', d => {
   setText('eng-ctx', i.context_length ? fmtN(i.context_length) + ' tokens' : '…');
   setText('eng-pool', i.max_total_num_tokens ? fmtN(i.max_total_num_tokens) + ' tokens' : '…');
   setText('eng-single', singleLimit() ? `about ${fmtN(singleLimit())} tokens` + (F.ceiling > 0 ? ' (proxy ceiling)' : '') : '…');
-  setText('eng-spec', i.speculative_algorithm ? `${i.speculative_algorithm}, ${i.speculative_num_steps} steps, ${i.speculative_num_draft_tokens} draft tokens` : 'none');
+  // SGLang names steps and draft tokens; the Nemotron lane's vLLM drafter has a draft length only
+  setText('eng-spec', !i.speculative_algorithm ? 'none' : i.speculative_num_steps != null
+    ? `${i.speculative_algorithm}, ${i.speculative_num_steps} steps, ${i.speculative_num_draft_tokens} draft tokens`
+    : i.speculative_num_draft_tokens != null ? `${i.speculative_algorithm}, ${i.speculative_num_draft_tokens} draft tokens` : i.speculative_algorithm);
   setText('eng-attn', i.prefill_attention_backend ? `${i.prefill_attention_backend} / ${i.decode_attention_backend}` : (i.attention_backend ?? 'n/a'));
   setText('eng-radix', i.mamba_radix_cache_strategy ?? 'n/a');
   // which engine, named: SGLang gives a bare number, the Kolibri lane "vLLM 0.29.0" (the row read
@@ -199,6 +202,7 @@ on('containers', d => {
 on('canary', d => {
   setText('px-probe', F.canaryTxt || '…');
   setText('px-last', d.skipped && (servingEngine() || [])[0] === KOLIBRI_UNIT ? 'none on the Kolibri lane'
+    : d.skipped && (servingEngine() || [])[0] === NEMOTRON_UNIT ? 'none on the Nemotron lane'
     : d.last_ok ? clockTime(d.last_ok) : 'never in this cockpit’s life');
 });
 function renderProxy(){

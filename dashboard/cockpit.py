@@ -96,17 +96,19 @@ DRY_RUN = os.environ.get("COCKPIT_DRY_RUN", "0") == "1"
 MASKED_FIELDS = {"api_key", "admin_api_key"}
 
 UNITS = ("qwen38-sglang.service", "qwen38-flash.service", "qwen38-image.service",
-         "qwen38-video.service", "qwen38-kolibri.service", "qwen38-keepalive.service")
-JOURNAL_UNITS = UNITS + (AGENT_UNIT,)   # what the Logs tab may read (UNITS carries the image, video and Kolibri lanes)
+         "qwen38-video.service", "qwen38-kolibri.service", "qwen38-nemotron.service",
+         "qwen38-keepalive.service")
+JOURNAL_UNITS = UNITS + (AGENT_UNIT,)   # what the Logs tab may read (UNITS carries the image, video, Kolibri and Nemotron lanes)
 # The SGLang text engines' containers: what their scheduler lines and their abort contract
-# are read from. The Kolibri lane's vLLM writes neither, so it is only in CONTAINERS, the
-# list the Logs tab, the diagnostics bundle and the container stats read.
+# are read from. The Kolibri and Nemotron lanes' vLLM writes neither, so they are only in
+# CONTAINERS, the list the Logs tab, the diagnostics bundle and the container stats read.
 SGL_CONTAINERS = ("qwen38-sglang", "qwen38-flash")
-CONTAINERS = SGL_CONTAINERS + ("qwen38-kolibri",)
+CONTAINERS = SGL_CONTAINERS + ("qwen38-kolibri", "qwen38-nemotron")
 
 UNIT2CONT = {"qwen38-sglang.service": "qwen38-sglang",
              "qwen38-flash.service": "qwen38-flash",
-             "qwen38-kolibri.service": "qwen38-kolibri"}
+             "qwen38-kolibri.service": "qwen38-kolibri",
+             "qwen38-nemotron.service": "qwen38-nemotron"}
 HISTORY_FILE_NAME = "cockpit-history.json"
 
 EVENTS: deque = deque(maxlen=200)
@@ -491,7 +493,7 @@ KOLIBRI_CANNOT = {
 def vllm_metrics_facts(text: str) -> dict:
     """What the cockpit reads off vLLM's /metrics: requests running and waiting, the share of
     the KV cache in use, and the cache's size in tokens (cache_config_info's label)."""
-    out = {"running": 0, "waiting": 0, "usage": 0.0, "pool": 0}
+    out = {"running": 0, "waiting": 0, "usage": 0.0, "pool": 0, "spec_accepted": 0.0, "spec_drafts": 0.0}
     for name, labels, value in _VLLM_GAUGE.findall(text or ""):
         try:
             v = float(value)
@@ -506,6 +508,11 @@ def vllm_metrics_facts(text: str) -> dict:
         elif name == "vllm:cache_config_info":
             m = re.search(r'kv_cache_size_tokens="(\d+)"', labels or "")
             out["pool"] = int(m.group(1)) if m else 0
+        # a drafter's counters (the Nemotron lane's LiLiCorr; Kolibri has none, both stay 0)
+        elif name == "vllm:spec_decode_num_accepted_tokens_total":
+            out["spec_accepted"] += v
+        elif name == "vllm:spec_decode_num_drafts_total":
+            out["spec_drafts"] += v
     return out
 
 
@@ -559,9 +566,84 @@ def kolibri_engine_state(unit: str, *, active: str, sub: str, prev_state: str | 
     return st, boot, running
 
 
+# ── The Nemotron lane: vLLM on the text port, as the Kolibri lane ───────────────
+# The same engine (a vLLM nightly, with b12x), so the same routes, the same /metrics and the same
+# boot lines (lifecycle.parse_nemotron_boot_log); and a drafter, whose acceptance its /metrics
+# counts, which the Traffic view shows as it shows the Qwen lanes' (measured 2026-10-15).
+NEMOTRON_UNIT = "qwen38-nemotron.service"
+NEMOTRON_UNIT_PATH = Path("/etc/systemd/system/qwen38-nemotron.service")
+NEMOTRON_READY_ENTER: dict = {}
+NEMOTRON_CANNOT = {
+    "flush_cache": "The Nemotron lane has no cache flush route: vLLM evicts its prefix cache by itself.",
+    "abort_all": "The Nemotron lane has no route that aborts its generations: stopping the lane stops them.",
+    "fit_opencode": "Nemotron's opencode limits are its own, set when it is loaded: there is nothing to fit to its pool.",
+}
+# (time, accepted draft tokens, drafts) of the last minute's reads: the acceptance over a window
+# long enough to hold a few hundred drafts, and idle when no draft came in it
+_SPEC_READS: deque = deque(maxlen=240)
+SPEC_WINDOW_S = 20.0
+
+
+def nemotron_serving() -> bool:
+    """True while the Nemotron lane holds the text port (from its boot to its stop)."""
+    with LIFE_LOCK:
+        return (LIFE.get("states") or {}).get(NEMOTRON_UNIT) in lc.BUSY_STATES
+
+
+def spec_accept_len(accepted: float, drafts: float, now: float) -> float | None:
+    """The drafter's mean acceptance length over the last SPEC_WINDOW_S: 1 + accepted draft
+    tokens per draft, as vLLM counts them; None when no draft came in that window."""
+    _SPEC_READS.append((now, accepted, drafts))
+    old = next((r for r in _SPEC_READS if now - r[0] <= SPEC_WINDOW_S), None)
+    if not old or drafts <= old[2] or accepted < old[1]:
+        return None
+    return 1.0 + (accepted - old[1]) / (drafts - old[2])
+
+
+def nemotron_load(timeout: float = 3.0):
+    """The Nemotron lane's load in the /get_load shape, with its drafter's acceptance."""
+    with urllib.request.urlopen(ENGINE_BASE + "/metrics", timeout=timeout) as r:
+        f = vllm_metrics_facts(r.read(2_000_000).decode("utf-8", "replace"))
+    used = int(f["usage"] * f["pool"])
+    return [{"dp_rank": 0, "num_reqs": f["running"] + f["waiting"], "num_waiting_reqs": f["waiting"],
+             "num_tokens": f["pool"], "num_used_tokens": used, "num_pending_tokens": f["pool"] - used,
+             "accept_len": spec_accept_len(f["spec_accepted"], f["spec_drafts"], time.time())}]
+
+
+def _nemotron_log() -> list[str]:
+    """The lane's container log: a new container at every start, so it is this boot's."""
+    return run(["docker", "logs", "--tail", "300", "qwen38-nemotron"], timeout=6, merge_err=True).splitlines()
+
+
+def nemotron_engine_state(unit: str, *, active: str, sub: str, prev_state: str | None,
+                          enter_key: str) -> tuple:
+    """(state, boot, running) for the Nemotron lane, from its own facts, as the Kolibri lane's."""
+    running = bool(run(["docker", "ps", "-q", "-f", "name=^qwen38-nemotron$"]).strip())
+    healthy = running and kolibri_healthy()          # vLLM's /health, on the same port
+    UNHEALTHY_TICKS[unit] = 0 if healthy else UNHEALTHY_TICKS.get(unit, 0) + 1
+    served_here = NEMOTRON_READY_ENTER.get(unit) == enter_key and enter_key != "0"
+    boot = {"stage": None, "fired_up": False, "done": []}
+    if running and not healthy:
+        if served_here:
+            boot = {"stage": "warming-up", "fired_up": True, "done": list(lc.NEMOTRON_STAGES)}
+            healthy = UNHEALTHY_TICKS[unit] < 3
+        else:
+            boot = lc.parse_nemotron_boot_log(_nemotron_log())
+    st = lc.derive_state(unit_active=active, unit_sub=sub, container_running=running,
+                         healthy=healthy, boot=boot)
+    if st["state"] == "degraded" and prev_state not in ("ready", "degraded"):
+        st["state"] = "warming-up"
+    if st["state"] == "ready":
+        NEMOTRON_READY_ENTER[unit] = enter_key
+    return st, boot, running
+
+
 def engine_abort_all(timeout: float = 8.0):
     if kolibri_serving():
         raise RuntimeError("the Kolibri lane's vLLM has no route that aborts its generations "
+                           "(stopping the lane stops them)")
+    if nemotron_serving():
+        raise RuntimeError("the Nemotron lane's vLLM has no route that aborts its generations "
                            "(stopping the lane stops them)")
     req = urllib.request.Request(ENGINE_BASE + "/abort_request", method="POST",
                                  data=json.dumps({"abort_all": True}).encode(),
@@ -577,8 +659,9 @@ HEALTH_RECHECK_S = float(os.environ.get("COCKPIT_HEALTH_RECHECK_S", "30"))
 @guard
 def collect_engine_fast():
     try:
-        # the Kolibri lane's vLLM answers none of SGLang's load routes (404, twice a second)
-        load = kolibri_load(timeout=3) if kolibri_serving() else engine_load(timeout=3)
+        # the Kolibri and Nemotron lanes' vLLM answers none of SGLang's load routes (404, twice a second)
+        load = (kolibri_load(timeout=3) if kolibri_serving() else nemotron_load(timeout=3) if nemotron_serving()
+                else engine_load(timeout=3))
     except Exception as e:  # noqa: BLE001
         load = None
         if vllm_answered("load", e):
@@ -681,6 +764,8 @@ def collect_kernel():
 def collect_engine_info():
     if kolibri_serving():
         return kolibri_engine_info()
+    if nemotron_serving():
+        return nemotron_engine_info()
     # 10 s, not 6: SGLang's event loop stalls under a long prefill and a late answer is
     # far better than none (measured 30/08: three timeouts in a row at 6 s while the same
     # endpoint answered in 0.19 s between two requests).
@@ -688,7 +773,7 @@ def collect_engine_info():
         info = engine_server_info(timeout=10)
     except Exception as e:  # noqa: BLE001
         if vllm_answered("info", e):
-            return kolibri_engine_info()
+            return vllm_engine_info()
         raise
     kept = ("model_path", "served_model_name", "revision", "quantization",
             "context_length", "mem_fraction_static", "max_running_requests",
@@ -744,6 +829,47 @@ def kolibri_engine_info():
             "quantization": "nvfp4" if target == "kolibri-nvfp4" else "fp8" if target else None,
             "version": f"vLLM {version}" if version else None}
     return {"node_id": "local", "info": slim, "prompt_ceiling_tokens": 0, "served_target": target}
+
+
+def nemotron_engine_info():
+    """The engine panel's facts for the Nemotron lane, read as the Kolibri lane's are."""
+    models = http_json(ENGINE_BASE + "/v1/models", timeout=10).get("data") or [{}]
+    with urllib.request.urlopen(ENGINE_BASE + "/metrics", timeout=10) as r:
+        text = r.read(2_000_000).decode("utf-8", "replace")
+    facts = vllm_metrics_facts(text)
+    cfg = re.search(r"^vllm:cache_config_info\{([^}]*)\}", text, re.M)
+    labels = dict(re.findall(r'(\w+)="([^"]*)"', cfg.group(1))) if cfg else {}
+    version = (http_json(ENGINE_BASE + "/version", timeout=5) or {}).get("version")
+    root = models[0].get("root") or ""
+    target = "nemotron" if root else None
+    slim = {"model_path": models[0].get("root"), "served_model_name": models[0].get("id"),
+            "context_length": models[0].get("max_model_len"),
+            "max_total_num_tokens": facts["pool"] or None,
+            "kv_cache_dtype": labels.get("cache_dtype"),
+            "mem_fraction_static": float(labels["gpu_memory_utilization"]) if labels.get("gpu_memory_utilization") else None,
+            # NVIDIA's mixed precision: the experts IQ2_XXS, the Mamba layers NVFP4, the rest Q8_0
+            "quantization": "iq2_xxs" if target else None,
+            "speculative_algorithm": "LiLiCorr (DFlash)" if target else None,
+            # its draft length, from the unit that started it (the engine does not publish it)
+            "speculative_num_draft_tokens": _unit_int(NEMOTRON_UNIT_PATH, r"--speculative-config\.num_speculative_tokens (\d+)") if target else None,
+            "version": f"vLLM {version}" if version else None}
+    return {"node_id": "local", "info": slim, "prompt_ceiling_tokens": 0, "served_target": target}
+
+
+def _unit_int(path: Path, pattern: str) -> int | None:
+    """An integer a unit's text gives, or None."""
+    try:
+        m = re.search(pattern, path.read_text(errors="replace"))
+    except OSError:
+        return None
+    return int(m.group(1)) if m else None
+
+
+def vllm_engine_info():
+    """A vLLM engine's facts read before the lifecycle says which lane it is: by the name it
+    serves, the Nemotron lane's or else the Kolibri lane's."""
+    models = http_json(ENGINE_BASE + "/v1/models", timeout=10).get("data") or [{}]
+    return nemotron_engine_info() if str(models[0].get("id") or "").startswith("nemotron-") else kolibri_engine_info()
 
 
 CANARY: dict = {"fails": 0, "last_ok": None, "last_err": "", "latency": None}
@@ -827,6 +953,9 @@ def collect_canary():
         # vLLM refuses the probe's model name, and its own /health already answers for it
         return {"node_id": "local", **CANARY, "skipped": True,
                 "why": "the Kolibri lane is checked by vLLM's own /health, not by a generation"}
+    if not ready and states.get(NEMOTRON_UNIT) in ("ready", "degraded"):
+        return {"node_id": "local", **CANARY, "skipped": True,
+                "why": "the Nemotron lane is checked by vLLM's own /health, not by a generation"}
     why = ("this cockpit is a dry run" if DRY_RUN else "no text engine is ready" if not ready
            else "an action is running" if JOB_LOCK.locked() else "requests are running" if busy
            else "a client was active in the last minute" if recent else "")
@@ -1188,7 +1317,7 @@ def collect_opencode():
         out[key]["default"] = cfg.get("model")
         if key == "real":
             for prov, pv in (cfg.get("provider") or {}).items():
-                if prov not in ("qwen38", "flashnext", "kolibri"):
+                if prov not in ("qwen38", "flashnext", "kolibri", "nemotron"):
                     continue
                 for mid, mv in (pv.get("models") or {}).items():
                     lim = mv.get("limit") or {}
@@ -1207,7 +1336,8 @@ def collect_opencode():
     served = info.get("served_model_name") or ""
     out["fit"] = None
     if pool and served:
-        prov = {"qwen3.8-27b": "qwen38", "qwen3.8-flash-next": "flashnext", "kolibri-1": "kolibri"}.get(served)
+        prov = {"qwen3.8-27b": "qwen38", "qwen3.8-flash-next": "flashnext", "kolibri-1": "kolibri",
+                "nemotron-3.5-bolt": "nemotron"}.get(served)
         lim = (out["real"]["limits"] or {}).get(f"{prov}/{served}") if prov else None
         if lim and lim.get("context"):
             ctx, outp = int(lim["context"]), int(lim.get("output") or 0)
@@ -1476,6 +1606,15 @@ def unit_target(unit: str) -> dict:
         model = m.group(1) if m else None
         target = ("kolibri-nvfp4" if model and "NVFP4" in model.upper() else "kolibri") if model else None
         return {"model": model, "target": target}
+    if unit == NEMOTRON_UNIT:
+        # one checkpoint today, named in its unit as <repo> --revision <sha>
+        try:
+            text = NEMOTRON_UNIT_PATH.read_text(errors="replace")
+        except OSError:
+            return {"model": None, "target": None}
+        m = re.search(r"(\S+) --revision [0-9a-f]{40}", text)
+        model = m.group(1) if m else None
+        return {"model": model, "target": "nemotron" if model else None}
     if unit == "qwen38-video.service":
         # one checkpoint, one target, same rule as the image lane
         model = _video_unit_flag("--model-path", "MiniMaxAI/MiniMax-H3") \
@@ -1572,12 +1711,15 @@ def collect_lifecycle():
         is_image = unit == lc.IMAGE_UNIT
         is_video = unit == lc.VIDEO_UNIT
         is_kolibri = unit == lc.KOLIBRI_UNIT
+        is_nemotron = unit == lc.NEMOTRON_UNIT
         if (is_image or is_video) and not (IMAGE_UNIT_PATH.exists() if is_image else VIDEO_UNIT_PATH.exists()):
             continue                    # not installed: no card, no pill, no gate
         if is_kolibri and not KOLIBRI_UNIT_PATH.exists():
             continue
+        if is_nemotron and not NEMOTRON_UNIT_PATH.exists():
+            continue
         # the lanes the cockpit follows on their own facts, not the SGLang text belts
-        own_facts = is_image or is_video or is_kolibri
+        own_facts = is_image or is_video or is_kolibri or is_nemotron
         # The checkpoint the unit names, read once per unit and per poll; and the one this
         # activation booted, kept from its start: a switch during a boot rewrites the unit,
         # whose file then names the NEXT start's checkpoint, and the boot landed in that
@@ -1604,6 +1746,10 @@ def collect_lifecycle():
                 invocation=d.get("InvocationID", ""))
         elif is_kolibri:
             st, boot, running = kolibri_engine_state(
+                unit, active=active, sub=d.get("SubState", "?"), prev_state=prev.get(unit),
+                enter_key=d.get("ActiveEnterTimestampMonotonic", "0"))
+        elif is_nemotron:
+            st, boot, running = nemotron_engine_state(
                 unit, active=active, sub=d.get("SubState", "?"), prev_state=prev.get(unit),
                 enter_key=d.get("ActiveEnterTimestampMonotonic", "0"))
         else:
@@ -1872,7 +2018,8 @@ def collect_lifecycle():
                          # which stage list this engine walks, and what it is loading
                          # now: the UI draws each from here rather than assuming
                           "stages": list(lc.VIDEO_STAGES if is_video else lc.IMAGE_STAGES if is_image
-                                         else lc.KOLIBRI_STAGES if is_kolibri else lc.STAGES),
+                                         else lc.KOLIBRI_STAGES if is_kolibri
+                                         else lc.NEMOTRON_STAGES if is_nemotron else lc.STAGES),
                           "detail": boot.get("detail", ""),
                           "kind": "video" if is_video else "image" if is_image else "text",
                          # systemd's own word for how the last run ended: "timeout" is a
@@ -1903,7 +2050,7 @@ def collect_lifecycle():
                 if own_facts:
                     # Neither diffusion lane has a KV pool, and ENGINE_BASE is the text lane's
                     # port: reading a pool here would record the wrong engine's, or nothing.
-                    # The Kolibri lane's is set by its memory share, read on /metrics.
+                    # The Kolibri and Nemotron lanes' are set by their memory share, read on /metrics.
                     save_history(history)
                     with LIFE_LOCK:
                         LIFE["witnessed"][unit] = False
@@ -2024,6 +2171,7 @@ def lane_prepared(lane: str):
     less to update a lane whole (its runtime begun: a venv, an image); this asks what a Load
     needs. None when the lane is not installed (no unit, no launcher)."""
     unit = {"image": IMAGE_UNIT_PATH, "video": VIDEO_UNIT_PATH, "kolibri": KOLIBRI_UNIT_PATH,
+            "nemotron": NEMOTRON_UNIT_PATH,
             "flash": UNIT_PATHS["qwen38-flash.service"], "27b": UNIT_PATHS["qwen38-sglang.service"]}[lane]
     try:
         text = unit.read_text(errors="replace")
@@ -2043,8 +2191,8 @@ def lane_prepared(lane: str):
             return Path(waits.group(1)).stat().st_size > 0     # [ -s ]: an empty one is skipped
         except OSError:
             return False
-    if lane == "kolibri":
-        m = re.search(r"qwen38-kolibri:\S+", text)
+    if lane in ("kolibri", "nemotron"):
+        m = re.search(rf"qwen38-{lane}:\S+", text)
         return bool(m) and run(["docker", "image", "inspect", "--format", "{{.Id}}", m.group(0)],
                                timeout=10).strip().startswith("sha256:")
     m = re.search(r"^WorkingDirectory=(.+)$", text, re.M)
@@ -2059,10 +2207,11 @@ def lane_prepared(lane: str):
 def collect_lanes_ready():
     """30 s tier: which side lanes are prepared, for the Load journey (it builds a lane's
     runtime first when it is not)."""
-    return {lane: lane_prepared(lane) for lane in ("image", "video", "kolibri", "flash", "27b")}
+    return {lane: lane_prepared(lane) for lane in ("image", "video", "kolibri", "nemotron", "flash", "27b")}
 
 
 UNIT_OF_LANE = {"image": "qwen38-image.service", "video": "qwen38-video.service", "kolibri": KOLIBRI_UNIT,
+                "nemotron": NEMOTRON_UNIT,
                 "flash": "qwen38-flash.service", "27b": "qwen38-sglang.service"}
 
 
@@ -2105,7 +2254,8 @@ def lane_startable(lane: str):
     if not built:
         return built
     unit = UNIT_OF_LANE[lane]
-    path = {"image": IMAGE_UNIT_PATH, "video": VIDEO_UNIT_PATH, "kolibri": KOLIBRI_UNIT_PATH}.get(lane) or UNIT_PATHS[unit]
+    path = {"image": IMAGE_UNIT_PATH, "video": VIDEO_UNIT_PATH, "kolibri": KOLIBRI_UNIT_PATH,
+            "nemotron": NEMOTRON_UNIT_PATH}.get(lane) or UNIT_PATHS[unit]
     try:
         text = path.read_text(errors="replace")
     except OSError:
@@ -2148,7 +2298,7 @@ def lane_startable(lane: str):
 @guard
 def collect_lanes_startable():
     """30 s tier: which side lanes can start as installed (their Start), lane_startable."""
-    return {lane: lane_startable(lane) for lane in ("image", "video", "kolibri", "flash", "27b")}
+    return {lane: lane_startable(lane) for lane in ("image", "video", "kolibri", "nemotron", "flash", "27b")}
 
 TIERS = [
     (1.0, {"machine": collect_machine, "engine_fast": collect_engine_fast, "job": collect_jobs}),
@@ -2217,7 +2367,7 @@ AUDIT_LOG = CONFIG_DIR / "cockpit-audit.log"
 # text lane (each unit's own Conflicts=), which is why the modal says so before it runs.
 SERVING_UNITS = {"qwen38-sglang.service", "qwen38-flash.service",
                  "qwen38-keepalive.service", "qwen38-image.service",
-                 "qwen38-video.service", "qwen38-kolibri.service", AGENT_UNIT}
+                 "qwen38-video.service", "qwen38-kolibri.service", "qwen38-nemotron.service", AGENT_UNIT}
 UNIT_VERBS = {"start", "stop", "restart"}
 
 def _lane_unit_texts() -> list[str]:
@@ -2225,7 +2375,7 @@ def _lane_unit_texts() -> list[str]:
     serves), '' for one not installed."""
     texts = []
     for path in (UNIT_PATHS["qwen38-sglang.service"], UNIT_PATHS["qwen38-flash.service"],
-                 KOLIBRI_UNIT_PATH, IMAGE_UNIT_PATH, VIDEO_UNIT_PATH):
+                 KOLIBRI_UNIT_PATH, NEMOTRON_UNIT_PATH, IMAGE_UNIT_PATH, VIDEO_UNIT_PATH):
         try:
             texts.append(path.read_text(errors="replace"))
         except OSError:
@@ -2247,7 +2397,7 @@ ACTIONS = {
         "danger": "medium",
         "params": {"target": ["stock", "uncensored", "fp8", "uncensored-fp8",
                               "flash", "flash-nvda", "flash-uncensored", "image", "image-turbo",
-                              "video", "kolibri", "kolibri-nvfp4"]},
+                              "video", "kolibri", "kolibri-nvfp4", "nemotron"]},
         "argv": lambda p: ["bash", str(REPO_DIR / "switch-model.sh"), p["target"]],
         # A switch can download a whole checkpoint: 124 GB for flash take about 23 min at
         # the 89 MB/s the reference box gets, so 30 min failed it on any slower link, and
@@ -2328,6 +2478,8 @@ def target_lane(target: str) -> str:
         return "video"
     if target.startswith("kolibri"):
         return "kolibri"
+    if target.startswith("nemotron"):
+        return "nemotron"
     if target.startswith("flash"):
         return "flash"
     return "27b"
@@ -2350,7 +2502,8 @@ ACTIONS["prepare"] = {
 TARGET_PIN = {"stock": "STOCK_REV", "uncensored": "UNC_REV", "fp8": "FP8_REV", "uncensored-fp8": "UNCFP8_REV",
               "flash": "FLASH_REV", "flash-nvda": "FLASH_NVDA_REV", "flash-uncensored": "FLASH_UNC_REV",
               "image": "IMAGE_MODEL_PIN_REV", "image-turbo": "IMAGE_TURBO_PIN_REV",
-              "video": "VIDEO_MODEL_PIN_REV", "kolibri": "KOLIBRI_FP8_REV", "kolibri-nvfp4": "KOLIBRI_NVFP4_REV"}
+              "video": "VIDEO_MODEL_PIN_REV", "kolibri": "KOLIBRI_FP8_REV", "kolibri-nvfp4": "KOLIBRI_NVFP4_REV",
+              "nemotron": "NEMOTRON_BOLT_REV"}
 
 
 def target_unit(target: str) -> Path:
@@ -2361,6 +2514,8 @@ def target_unit(target: str) -> Path:
         return VIDEO_UNIT_PATH
     if target.startswith("kolibri"):
         return KOLIBRI_UNIT_PATH
+    if target.startswith("nemotron"):
+        return NEMOTRON_UNIT_PATH
     if target.startswith("flash"):
         return UNIT_PATHS["qwen38-flash.service"]
     return UNIT_PATHS["qwen38-sglang.service"]
@@ -2566,6 +2721,8 @@ def served_model_name() -> str:
         return "qwen3.8-flash-next"
     if states.get(KOLIBRI_UNIT) not in (None, "stopped", "failed"):
         return "kolibri-1"
+    if states.get(NEMOTRON_UNIT) not in (None, "stopped", "failed"):
+        return "nemotron-3.5-bolt"
     return "qwen3.8-27b"
 
 
@@ -2599,6 +2756,10 @@ def systemone_available(max_age: float = 60.0) -> dict:
         # the proxy refuses it there (v6.37): its labels are measured on the Qwen tokenizer
         return {"available": False, "lane": "", "status": None,
                 "reason": "the Kolibri lane is serving: System One is answered by the 27B or the flash "
+                          "lane (its options are measured on the Qwen tokenizer), so load one of them"}
+    if text is None and states.get(NEMOTRON_UNIT) in lc.BUSY_STATES:
+        return {"available": False, "lane": "", "status": None,
+                "reason": "the Nemotron lane is serving: System One is answered by the 27B or the flash "
                           "lane (its options are measured on the Qwen tokenizer), so load one of them"}
     key = (text, served_model_name() if text else "")
     with SYSTEMONE_LOCK:
@@ -2903,7 +3064,7 @@ def image_status() -> dict:
     # and saying so beats guessing "stopped" at a lane that may be serving
     out["state"] = states.get(IMAGE_UNIT) or "unknown"
     out["available"] = out["state"] in ("ready", "degraded")
-    out["llm_lane"] = next((u for u in lc.TEXT_UNITS + (KOLIBRI_UNIT,) if states.get(u) in lc.BUSY_STATES), "")
+    out["llm_lane"] = next((u for u in lc.TEXT_UNITS + (KOLIBRI_UNIT, NEMOTRON_UNIT) if states.get(u) in lc.BUSY_STATES), "")
     if out["available"]:
         out["progress"] = image_progress(serving=True)
     return out
@@ -3468,7 +3629,7 @@ def video_status() -> dict:
     # yet, and saying so beats guessing "stopped" at a lane that may be serving
     out["state"] = states.get(VIDEO_UNIT) or "unknown"
     out["available"] = out["state"] in ("ready", "degraded")
-    out["llm_lane"] = next((u for u in lc.TEXT_UNITS + (KOLIBRI_UNIT,) if states.get(u) in lc.BUSY_STATES), "")
+    out["llm_lane"] = next((u for u in lc.TEXT_UNITS + (KOLIBRI_UNIT, NEMOTRON_UNIT) if states.get(u) in lc.BUSY_STATES), "")
     if out["available"]:
         out["progress"] = dict(VIDEO_LAST) if VIDEO_LAST.get("status") not in ("completed", "failed", "") else {}
         out["run"] = video_run_now()
@@ -4107,6 +4268,9 @@ def job_flush_cache(job: Job):
     if kolibri_serving():
         return False, ["the Kolibri lane's vLLM has no cache flush route (nothing was flushed); "
                        "vLLM evicts its prefix cache by itself"], {"ok": False, "reason": "unsupported"}
+    if nemotron_serving():
+        return False, ["the Nemotron lane's vLLM has no cache flush route (nothing was flushed); "
+                       "vLLM evicts its prefix cache by itself"], {"ok": False, "reason": "unsupported"}
     req = urllib.request.Request(ENGINE_BASE + "/flush_cache", method="POST", data=b"",
                                  headers={"Authorization": f"Bearer {api_key()}"})
     try:
@@ -4160,6 +4324,7 @@ def job_diag_bundle(job: Job):
         (tdp / "journal-image.txt").write_text(run(["journalctl", "-u", IMAGE_UNIT, "-n", "300", "--no-pager", "-o", "short-iso"], timeout=15))
         (tdp / "journal-video.txt").write_text(run(["journalctl", "-u", VIDEO_UNIT, "-n", "300", "--no-pager", "-o", "short-iso"], timeout=15))
         (tdp / "journal-kolibri.txt").write_text(run(["journalctl", "-u", KOLIBRI_UNIT, "-n", "300", "--no-pager", "-o", "short-iso"], timeout=15))
+        (tdp / "journal-nemotron.txt").write_text(run(["journalctl", "-u", NEMOTRON_UNIT, "-n", "300", "--no-pager", "-o", "short-iso"], timeout=15))
         (tdp / "journal-opencode-web.txt").write_text(run(["journalctl", "-u", AGENT_UNIT, "-n", "200", "--no-pager", "-o", "short-iso"], timeout=15))
         for cont in CONTAINERS:
             (tdp / f"docker-{cont}.txt").write_text(run(["docker", "logs", "--tail", "600", cont], timeout=15, merge_err=True))
@@ -4167,13 +4332,14 @@ def job_diag_bundle(job: Job):
         (tdp / "system.txt").write_text(run(["uname", "-a"]) + run(["free", "-g"]) + run(["df", "-h", str(Path.home())]) + run(["docker", "images", "--format", "{{.Repository}}:{{.Tag}} {{.Size}} {{.ID}}"], timeout=10))
         (tdp / "units.txt").write_text("".join(run(["systemctl", "show", u, "--no-pager"], timeout=5) + "\n" for u in JOURNAL_UNITS))
         try:
-            # the Kolibri lane's facts are its own: SGLang's route was a 404 there (review, 2026-10-14)
+            # the Kolibri and Nemotron lanes' facts are their own: SGLang's route was a 404 there (review, 2026-10-14)
             try:
-                info = kolibri_engine_info() if kolibri_serving() else engine_server_info(timeout=6)
+                info = (kolibri_engine_info() if kolibri_serving() else nemotron_engine_info() if nemotron_serving()
+                        else engine_server_info(timeout=6))
             except Exception as e:  # noqa: BLE001
                 if not vllm_answered("info", e):
                     raise
-                info = kolibri_engine_info()
+                info = vllm_engine_info()
             for f in MASKED_FIELDS:
                 info.pop(f, None)
             (tdp / "server-info.json").write_text(json.dumps(info, default=str, indent=1))
@@ -4266,6 +4432,9 @@ def start_action(name: str, params: dict, origin: str = "ui") -> tuple[int, dict
     if name in KOLIBRI_CANNOT and kolibri_serving():
         audit({"kind": "action_blocked", "action": name, "params": clean, "reasons": [KOLIBRI_CANNOT[name]]})
         return 409, {"error": "blocked", "reasons": [KOLIBRI_CANNOT[name]]}
+    if name in NEMOTRON_CANNOT and nemotron_serving():
+        audit({"kind": "action_blocked", "action": name, "params": clean, "reasons": [NEMOTRON_CANNOT[name]]})
+        return 409, {"error": "blocked", "reasons": [NEMOTRON_CANNOT[name]]}
     warnings = []
     if name in ("unit", "switch", "prepare"):
         with LIFE_LOCK:

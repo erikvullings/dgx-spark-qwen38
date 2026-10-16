@@ -54,6 +54,15 @@ class DockerImages(unittest.TestCase):
     def test_short_rows_are_ignored(self):
         self.assertEqual(rg.parse_docker_images(["", "only-one-field", "two fields"]), [])
 
+    def test_the_images_the_vllm_lanes_build_are_ours(self):
+        # built on the box, tagged and with no digest: Library did not list them (2026-10-16)
+        rows = rg.parse_docker_images([
+            "qwen38-nemotron:vllm77154ca6-b12x1.5.1-1ee85ca80e0fc 24.5GB aaaaaaaaaaaa",
+            "qwen38-kolibri:vllm0.29.0-aai1.0.0-18372a72249386434 22.1GB bbbbbbbbbbbb",
+            "qwen38-nemotron-test:b12x1.5.1 24.5GB cccccccccccc",
+        ])
+        self.assertEqual([r["engine"] for r in rows], [True, True, False])
+
     def test_a_foreign_image_is_not_ours(self):
         rows = rg.parse_docker_images(["postgres:16-alpine 288MB cccccccccccc"])
         self.assertEqual(len(rows), 1)

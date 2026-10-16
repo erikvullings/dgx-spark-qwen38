@@ -44,6 +44,8 @@ class Prepare(unittest.TestCase):
         cls.cp.IMAGE_UNIT_PATH = cls.units / "qwen38-image.service"
         cls.cp.VIDEO_UNIT_PATH = cls.units / "qwen38-video.service"
         cls.cp.KOLIBRI_UNIT_PATH = cls.units / "qwen38-kolibri.service"
+        # the box's own Nemotron unit, once installed, read as this test's (found on the reference box, 2026-10-16)
+        cls.cp.NEMOTRON_UNIT_PATH = cls.units / "qwen38-nemotron.service"
         cls.cp.UNIT_PATHS = {"qwen38-sglang.service": cls.units / "qwen38-sglang.service",
                              "qwen38-flash.service": cls.units / "launch-flash.sh"}
 
@@ -71,7 +73,8 @@ class Prepare(unittest.TestCase):
     def test_which_lanes_are_prepared(self):
         self.lane("image", built=True)
         self.lane("video", built=False)
-        self.assertEqual(self.cp.collect_lanes_ready(), {"image": True, "video": False, "kolibri": None, "flash": None, "27b": None})
+        self.assertEqual(self.cp.collect_lanes_ready(), {"image": True, "video": False, "kolibri": None, "nemotron": None,
+                                                          "flash": None, "27b": None})
         (self.units / "qwen38-kolibri.service").write_text("ExecStart=/usr/bin/docker run qwen38-kolibri:1.0\n")
         self.assertIs(self.cp.collect_lanes_ready()["kolibri"], False)
         self.images.add("qwen38-kolibri:1.0")

@@ -383,6 +383,74 @@ class KolibriBootLog(unittest.TestCase):
         self.assertEqual(b["done"], [])
 
 
+class NemotronBootLog(unittest.TestCase):
+    """A real boot of the Nemotron lane, its container log on the reference box (Bolt on the vLLM
+    nightly with b12x, 2026-10-15): the model's 90 shards and its "Loading weights took", then its
+    drafter's one shard and its own, "Model loading took" for the two, the compile, the KV cache, the
+    CUDA graphs and the API. Read with Kolibri's markers, the drafter's shard put the boot back from
+    allocating-kv to loading-weights (found in review, 2026-10-16)."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.lines = (HERE.parent / "fixtures" / "nemotron-boot.log").read_text().splitlines()
+
+    def at(self, needle, nth=1):
+        """The boot as it looked the moment the nth line with this text was written."""
+        seen = 0
+        for i, ln in enumerate(self.lines):
+            if needle in ln:
+                seen += 1
+                if seen == nth:
+                    return lc.parse_nemotron_boot_log(self.lines[:i + 1])
+        self.fail(f"the fixture has no line {nth} with {needle!r}")
+
+    def test_a_complete_boot_is_fired_up_with_every_stage_done(self):
+        b = lc.parse_nemotron_boot_log(self.lines)
+        self.assertTrue(b["fired_up"])
+        self.assertEqual(b["done"], list(lc.NEMOTRON_STAGES))
+        self.assertEqual((b["stage"], b["detail"]), ("warming-up", "ready"))
+
+    def test_the_models_shards_then_the_drafters(self):
+        for needle, nth, stage, detail in (
+                ("Initializing a V1 LLM engine", 1, "init", "starting vLLM"),
+                (" 0/90 [", 1, "loading-weights", "shard 0 of 90 (0 %)"),
+                (" 45/90 [", 1, "loading-weights", "shard 45 of 90 (50 %)"),
+                ("Loading weights took", 1, "loading-weights", "preparing the weights, then the drafter"),
+                (" 0/1 [", 1, "loading-weights", "the drafter, shard 0 of 1 (0 %)"),
+                (" 1/1 [", 1, "loading-weights", "the drafter, shard 1 of 1 (100 %)"),
+                ("Loading weights took", 2, "loading-weights", "preparing the weights, then the drafter"),
+                ("Model loading took", 1, "allocating-kv", "compiling the model and measuring its memory"),
+                ("GPU KV cache size:", 1, "capturing-graphs", "capturing the CUDA graphs"),
+                ("init engine (profile, create kv cache, warmup model) took", 1, "warming-up", "starting the API")):
+            with self.subTest(line=needle, nth=nth):
+                b = self.at(needle, nth)
+                self.assertEqual((b["stage"], b["detail"]), (stage, detail))
+                self.assertFalse(b["fired_up"])
+                self.assertEqual(b["done"], list(lc.NEMOTRON_STAGES[:lc.NEMOTRON_STAGES.index(stage)]))
+
+    def test_its_stage_never_goes_back(self):
+        start = next(i for i, ln in enumerate(self.lines) if "Initializing a V1 LLM engine" in ln)
+        order = [lc.NEMOTRON_STAGES.index(lc.parse_nemotron_boot_log(self.lines[:k])["stage"])
+                 for k in range(start + 1, len(self.lines) + 1)]
+        self.assertEqual(order, sorted(order))
+
+    def test_only_the_latest_boot_counts(self):
+        restarted = self.lines + ["(EngineCore pid=9) INFO 10-16 01:00:00 [core.py:133] Initializing a V1 LLM engine (v0.32.0) with config: x",
+                                  "Loading safetensors checkpoint shards:   1% Completed | 1/90 [00:09<14:08,  9.53s/it]"]
+        b = lc.parse_nemotron_boot_log(restarted)
+        self.assertFalse(b["fired_up"])
+        self.assertEqual((b["stage"], b["detail"], b["done"]), ("loading-weights", "shard 1 of 90 (1 %)", ["init"]))
+
+    def test_a_log_kept_from_its_first_line_is_read_from_there(self):
+        # docker logs --tail keeps the last lines: the engine's start may be cut off
+        b = lc.parse_nemotron_boot_log(["Loading safetensors checkpoint shards:  50% Completed | 45/90 [01:02<01:25,  1.89s/it]"])
+        self.assertEqual((b["stage"], b["detail"], b["done"]), ("loading-weights", "shard 45 of 90 (50 %)", ["init"]))
+
+    def test_an_empty_log_is_not_a_boot(self):
+        b = lc.parse_nemotron_boot_log([])
+        self.assertEqual((b["stage"], b["fired_up"], b["done"], b["detail"]), (None, False, [], ""))
+
+
 class KolibriLane(unittest.TestCase):
     K = "qwen38-kolibri.service"
 

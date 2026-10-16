@@ -126,6 +126,52 @@ def parse_kolibri_boot_log(lines: list[str]) -> dict:
     return {"stage": stage, "done": done, "fired_up": fired, "detail": detail}
 
 
+# ── The Nemotron lane speaks vLLM too ───────────────────────────────────────────
+# Bolt's boot on the vLLM nightly writes Kolibri's lines (the reference box, 2026-10-15), with a
+# drafter's after the model's: its 90 checkpoint shards and "Loading weights took", the drafter's
+# one shard and its own "Loading weights took", then "Model loading took" for the two. Read with
+# Kolibri's markers, the drafter's shard put the boot back from allocating-kv to loading-weights,
+# "shard 1 of 1" after the 90 (found in review, 2026-10-16): here the weights stage lasts until
+# "Model loading took", and the drafter's load is named as its.
+NEMOTRON_STAGES = KOLIBRI_STAGES
+NEMOTRON_MARKERS = [
+    ("Initializing a V1 LLM engine", "init", "starting vLLM"),
+    ("Loading safetensors checkpoint shards", "loading-weights", "the checkpoint, shard by shard"),
+    ("Loading weights took", "loading-weights", "preparing the weights, then the drafter"),
+    ("Model loading took", "allocating-kv", "compiling the model and measuring its memory"),
+    ("GPU KV cache size:", "capturing-graphs", "capturing the CUDA graphs"),
+    ("init engine (profile, create kv cache, warmup model) took", "warming-up", "starting the API"),
+    ("Application startup complete", "warming-up", "ready"),
+]
+
+
+def parse_nemotron_boot_log(lines: list[str]) -> dict:
+    """The Nemotron lane's container log, in the shape parse_kolibri_boot_log returns, the shard
+    being read in `detail` (the drafter's named so). Only the latest boot counts."""
+    start = 0
+    for i, ln in enumerate(lines):
+        if "Initializing a V1 LLM engine" in ln:
+            start = i
+    stage, detail, fired, drafter = None, "", False, False
+    for ln in lines[start:]:
+        for needle, st, what in NEMOTRON_MARKERS:
+            if needle in ln:
+                if needle == "Loading safetensors checkpoint shards" and drafter:
+                    what = "the drafter"
+                stage, detail = st, what
+                if needle == "Loading weights took":      # the model's: what loads next is the drafter
+                    drafter = True
+                if needle == "Application startup complete":
+                    fired = True
+        m = _KOLIBRI_SHARDS.search(ln)     # a shard line is a weights line: the marker above set it
+        if m:
+            detail = f"{'the drafter, ' if drafter else ''}shard {m.group(2)} of {m.group(3)} ({m.group(1)} %)"
+    done = list(NEMOTRON_STAGES[:NEMOTRON_STAGES.index(stage)]) if stage in NEMOTRON_STAGES else []
+    if fired:
+        done = list(NEMOTRON_STAGES)
+    return {"stage": stage, "done": done, "fired_up": fired, "detail": detail}
+
+
 def _parse_diffusion_boot_log(lines: list[str], markers: list, stages: tuple) -> dict:
     """A diffusion lane's journal, reduced to the same shape parse_boot_log returns.
 
@@ -377,20 +423,23 @@ TRANSITIONAL = BUSY_STATES - {"ready", "degraded", "orphan", "wedged"}
 # livelock this whole module exists to prevent. The video lane is one of them too:
 # about 116 GiB of weights by measured components (48.09 + 61.73 + 0.56 + 5.2,
 # docs/video-lane.md), for the same reason. So is the Kolibri lane: 73.6 GiB of weights
-# (42.8 for its NVFP4 variant) and a KV cache beside them.
+# (42.8 for its NVFP4 variant) and a KV cache beside them; and the Nemotron lane, 24.1 GiB of
+# weights and a KV cache set by its memory share, 85 GiB in all.
 ENGINE_UNITS = ("qwen38-sglang.service", "qwen38-flash.service",
-                "qwen38-image.service", "qwen38-video.service", "qwen38-kolibri.service")
+                "qwen38-image.service", "qwen38-video.service", "qwen38-kolibri.service",
+                "qwen38-nemotron.service")
 IMAGE_UNIT = "qwen38-image.service"
 VIDEO_UNIT = "qwen38-video.service"
 KOLIBRI_UNIT = "qwen38-kolibri.service"
+NEMOTRON_UNIT = "qwen38-nemotron.service"
 # The SGLang engines that serve text on ENGINE_BASE. Every probe, guard and belt that talks
 # to that port (the generation canary, the pool guard, the wedge autoheal) is about these
 # and only these: with a diffusion lane serving, :30000 is closed, and asking "is an
 # engine ready" instead sent the canary a chat completion to a dead port every 90 s. The
 # Kolibri lane serves text on that port too, from vLLM, which none of those belts know
 # (its routes, its log and its model names are not SGLang's): the cockpit follows it on
-# its own facts, as it does the image and the video lanes.
-TEXT_UNITS = tuple(u for u in ENGINE_UNITS if u not in (IMAGE_UNIT, VIDEO_UNIT, KOLIBRI_UNIT))
+# its own facts, as it does the image and the video lanes. So does the Nemotron lane.
+TEXT_UNITS = tuple(u for u in ENGINE_UNITS if u not in (IMAGE_UNIT, VIDEO_UNIT, KOLIBRI_UNIT, NEMOTRON_UNIT))
 
 
 def blocked_reasons(action: str, params: dict, states: dict) -> list[str]:
@@ -909,7 +958,7 @@ def guard_verdict(zombies: dict, guard: dict, override_env: bool | None) -> tupl
 
 # opencode default model vs the lane actually serving (the cockpit panel's verdict).
 LANE_PROVIDER = {"qwen38-sglang.service": "qwen38", "qwen38-flash.service": "flashnext",
-                 "qwen38-kolibri.service": "kolibri"}
+                 "qwen38-kolibri.service": "kolibri", "qwen38-nemotron.service": "nemotron"}
 
 
 def opencode_default_follows(default_model, states: dict) -> tuple:

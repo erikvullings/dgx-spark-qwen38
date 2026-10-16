@@ -2,7 +2,7 @@
 /* Now: the one screen that answers "what is the box doing?".
 
    The hero is the unified pool, drawn at the machine's own scale and split live by what
-   holds it. The rack under it shows the five lanes as bays, one seated. Then what the
+   holds it. The rack under it shows the lanes as bays, one seated. Then what the
    seated lane is doing, what happened lately, and the vitals of the machine. */
 
 const TOTAL_FALLBACK = 121.6 * GIB;
@@ -121,7 +121,10 @@ function renderRack(){
       + (st === 'failed' || st === 'wedged' || st === 'orphan' ? ' broken' : '') + (!has ? ' absent' : '');
     cap(b.state, !has ? 'not installed' : stateLabel(e), !has ? '' : stateKind(st), !has ? false : stateLive(st));
     const t = laneTarget(unit);
-    setText(b.h, LANE_META[unit].title + (t && TARGET_SHORT[t] && !['image', 'video', 'flash'].includes(t) ? ` ${TARGET_SHORT[t]}` : ''));
+    // the version after the lane's name, unless the name ends with it, as laneLabel() says it: the Nemotron
+    // lane's card read "Nemotron 3.5 Bolt Bolt" (found on the reference box, 2026-10-16)
+    const title = LANE_META[unit].title, short = t && TARGET_SHORT[t];
+    setText(b.h, title + (short && !['image', 'video', 'flash'].includes(t) && !title.endsWith(short) ? ` ${short}` : ''));
     // the boot bar, when it boots
     if (e && TRANSITIONAL.has(st)){
       b.boot.hidden = false; clear(b.boot);
@@ -245,6 +248,7 @@ on('canary', d => {
   if (d.skipped && !textReady()) txt = imageServing() ? 'no text engine (the image lane serves)' : videoServing() ? 'no text engine (the video lane serves)' : 'no text engine';
   // the Kolibri lane is not probed: the last Qwen lane's result read as its own (review, 2026-10-14)
   else if (d.skipped && (servingEngine() || [])[0] === KOLIBRI_UNIT) txt = `not run: ${d.why || 'the Kolibri lane is checked by its own /health'}`;
+  else if (d.skipped && (servingEngine() || [])[0] === NEMOTRON_UNIT) txt = `not run: ${d.why || 'the Nemotron lane is checked by its own /health'}`;
   else if (d.skipped && d.last_ok == null) txt = 'not yet run';
   else if (d.fails > 0) txt = `${d.fails} failure${d.fails > 1 ? 's' : ''} in a row: ${d.last_err || ''}`;
   else if (d.last_ok) txt = `ok, ${d.latency} s` + (d.skipped ? ` (skipped this round: ${d.why || 'busy'})` : '');

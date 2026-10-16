@@ -111,7 +111,7 @@ class ItsMetrics(Base):
 
     def test_a_page_that_is_not_vllms_reads_as_nothing(self):
         self.assertEqual(self.ck.vllm_metrics_facts("sglang:num_running_reqs 4\n"),
-                         {"running": 0, "waiting": 0, "usage": 0.0, "pool": 0})
+                         {"running": 0, "waiting": 0, "usage": 0.0, "pool": 0, "spec_accepted": 0.0, "spec_drafts": 0.0})
         self.assertEqual(self.ck.vllm_metrics_facts('vllm:num_requests_running{engine="0"} NaNx\n')["running"], 0)
         # "1e" passes the gauge's pattern and not float(): the case the try is for ("NaNx" never
         # reached it, review of 2026-10-14)
@@ -370,7 +370,7 @@ class ItsUnit(Base):
 
     def test_it_is_a_switch_target_and_a_unit_the_page_may_drive(self):
         self.assertIn("qwen38-kolibri.service", self.ck.SERVING_UNITS)
-        self.assertEqual(self.ck.ACTIONS["switch"]["params"]["target"][-2:], ["kolibri", "kolibri-nvfp4"])
+        self.assertEqual(self.ck.ACTIONS["switch"]["params"]["target"][-3:-1], ["kolibri", "kolibri-nvfp4"])
         self.assertIn("qwen38-kolibri", self.ck.CONTAINERS)
         self.assertNotIn("qwen38-kolibri", self.ck.SGL_CONTAINERS)
         self.assertIn("qwen38-kolibri.service", self.ck.JOURNAL_UNITS)

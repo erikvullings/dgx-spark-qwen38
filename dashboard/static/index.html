@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-content">
-<meta name="description" content="The control room of one DGX Spark: one pool of unified memory, five lanes that take turns in it, and the tools that run on them.">
+<meta name="description" content="The control room of one DGX Spark: one pool of unified memory, the lanes that take turns in it, and the tools that run on them.">
 <meta name="theme-color" content="#120b36">
 <title>Spark cockpit</title>
 <link rel="icon" href="/static/favicon.svg">
@@ -105,7 +105,7 @@
         </div>
         <div class="pool-scale" id="pool-scale" aria-hidden="true"></div>
         <div class="pool-legend" id="pool-legend"></div>
-        <div class="rack" id="rack" role="list" aria-label="The five lanes"></div>
+        <div class="rack" id="rack" role="list" aria-label="The lanes"></div>
       </section>
       <div class="grid g-7-5" style="margin-top:var(--s-5)">
         <section class="panel activity" data-src="engine_fast,lifecycle,feed" id="now-activity">
@@ -132,7 +132,7 @@
     <!-- ══ LANES ════════════════════════════════════════════════════════════ -->
     <section class="view" id="view-lanes" aria-labelledby="h-lanes">
       <div class="vhead">
-        <div><h1 id="h-lanes">Lanes</h1><p>Five lanes share one pool, so one serves at a time. Loading a lane hands it the whole box: the one serving stops first, and nothing restarts by itself.</p></div>
+        <div><h1 id="h-lanes">Lanes</h1><p>The lanes share one pool, so one serves at a time. Loading a lane hands it the whole box: the one serving stops first, and nothing restarts by itself.</p></div>
       </div>
       <div class="stack" id="lanes-list"></div>
       <div class="grid g2" style="margin-top:var(--s-5)">
@@ -547,8 +547,8 @@
         <div class="toolbar">
           <label class="sr" for="log-src">Source</label>
           <select class="input" id="log-src">
-            <optgroup label="Serving containers"><option value="qwen38-flash">flash 176B container</option><option value="qwen38-sglang">27B container</option><option value="qwen38-kolibri">Kolibri-1 container</option></optgroup>
-            <optgroup label="Unit journals"><option value="qwen38-flash.service">flash 176B journal</option><option value="qwen38-sglang.service">27B journal</option><option value="qwen38-image.service">Qwen-Image journal</option><option value="qwen38-video.service">MiniMax-H3 journal</option><option value="qwen38-kolibri.service">Kolibri-1 journal</option><option value="qwen38-keepalive.service">proxy journal</option><option value="opencode-web.service" id="log-opt-agent">agent server journal</option></optgroup>
+            <optgroup label="Serving containers"><option value="qwen38-flash">flash 176B container</option><option value="qwen38-sglang">27B container</option><option value="qwen38-kolibri">Kolibri-1 container</option><option value="qwen38-nemotron">Nemotron Bolt container</option></optgroup>
+            <optgroup label="Unit journals"><option value="qwen38-flash.service">flash 176B journal</option><option value="qwen38-sglang.service">27B journal</option><option value="qwen38-image.service">Qwen-Image journal</option><option value="qwen38-video.service">MiniMax-H3 journal</option><option value="qwen38-kolibri.service">Kolibri-1 journal</option><option value="qwen38-nemotron.service">Nemotron Bolt journal</option><option value="qwen38-keepalive.service">proxy journal</option><option value="opencode-web.service" id="log-opt-agent">agent server journal</option></optgroup>
           </select>
           <label class="switch"><input type="checkbox" id="log-follow"> Follow</label>
           <input class="input grow" id="log-filter" type="search" placeholder="Filter lines" aria-label="Filter lines">

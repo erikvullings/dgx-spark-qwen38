@@ -30,6 +30,7 @@ const UNITS = {units: {'qwen38-sglang.service': {active: 'active', enabled: 'ena
                        'qwen38-image.service': {active: 'inactive', enabled: 'disabled'},
                        'qwen38-video.service': {active: 'inactive', enabled: 'disabled'},
                        'qwen38-kolibri.service': {active: 'inactive', enabled: 'disabled'},
+                       'qwen38-nemotron.service': {active: 'inactive', enabled: 'disabled'},
                        'qwen38-keepalive.service': {active: 'active', enabled: 'enabled'}}};
 const life = (engines, extra) => Object.assign({engines, events: [], blocked: {}}, extra || {});
 const eng = (state, extra) => Object.assign({state, target: 'stock', elapsed: 600}, extra || {});
@@ -920,6 +921,39 @@ class RunningIsWhatTheEngineRuns(unittest.TestCase):
 
 
 
+class EachVersionIsNamedOnce(unittest.TestCase):
+    """The Now view's card of a lane adds the version it serves to the lane's name, unless the
+    name ends with it, as the top bar does: the Nemotron lane's card read "Nemotron 3.5 Bolt
+    Bolt" on the reference box (2026-10-16)."""
+
+    def test_no_card_repeats_its_version(self):
+        r = run(self, r"""
+        const out = {};
+        for (const [unit, targets] of Object.entries(LANE_TARGETS)) for (const t of targets) {
+          const units = {units: Object.assign({}, UNITS.units, {[unit]: {active: 'active', enabled: 'enabled'}})};
+          feed({config: CONFIG, units, lifecycle: life({[unit]: eng('ready', {target: t})})});
+          out[t] = bay(unit).h.textContent;
+        }
+        report(out);
+        """)
+        self.assertGreaterEqual(len(r), 12, r)
+        for t, title in r.items():
+            with self.subTest(target=t):
+                words = title.split()
+                self.assertTrue(len(words) < 2 or words[-1] != words[-2], title)
+        self.assertEqual((r["nemotron"], r["kolibri-nvfp4"], r["stock"]), ("Nemotron 3.5 Bolt", "Kolibri-1 NVFP4", "Qwen3.8 27B stock"))
+
+
+class TheLanesViewCountsNoLanes(unittest.TestCase):
+    def test_its_intro_names_no_number_of_lanes(self):
+        # "Five lanes share one pool" stayed when the sixth came (found on the reference box,
+        # 2026-10-16): the view lists them, its intro does not count them
+        html = (pagejs.STATIC / "index.html").read_text()
+        intro = re.search(r'<h1 id="h-lanes">Lanes</h1><p>(.*?)</p>', html, re.S).group(1)
+        self.assertIn("share one pool", intro)
+        self.assertNotRegex(intro, r"(?i)\b(two|three|four|five|six|seven|eight|nine|ten|\d+) lanes\b")
+
+
 class TheStartGuardAndALostSchedulerAreSaidAsTheyAre(unittest.TestCase):
     """A lane the start guard held read "starting", one it refused "keeps crashing: it dies
     during startup", and a server left without its scheduler only "stopped answering",
@@ -1025,12 +1059,13 @@ class AnEmptyStateIsSaidNotPending(unittest.TestCase):
         const cps = [...document.querySelectorAll('#view-lanes dt')].filter(d => d.textContent === 'Checkpoint')
                                                                   .map(d => d.nextSibling.textContent);
         report({cps, image: installed('qwen38-image.service'), video: installed('qwen38-video.service'),
-                kolibri: installed('qwen38-kolibri.service'),
+                kolibri: installed('qwen38-kolibri.service'), nemotron: installed('qwen38-nemotron.service'),
                 u27: installed('qwen38-sglang.service'), flash: installed('qwen38-flash.service')});
         """)
         self.assertNotIn("…", r["cps"], r)
-        self.assertEqual(sorted(r["cps"]), ["not installed"] * 3 + ["unknown"] * 2, r)
-        self.assertEqual((r["image"], r["video"], r["kolibri"], r["u27"], r["flash"]), (False, False, False, True, True), r)
+        self.assertEqual(sorted(r["cps"]), ["not installed"] * 4 + ["unknown"] * 2, r)
+        self.assertEqual((r["image"], r["video"], r["kolibri"], r["nemotron"], r["u27"], r["flash"]),
+                         (False, False, False, False, True, True), r)
 
     def test_a_gpu_that_did_not_answer_reads_no_reading_and_nothing_made_up(self):
         r = run(self, r"""
@@ -1067,7 +1102,8 @@ class TheBootLaneIsSaidOnlyWhenOneIs(unittest.TestCase):
 
     BODY = r"""
     const units = JSON.parse(JSON.stringify(UNITS));
-    for (const u of ['qwen38-sglang.service', 'qwen38-flash.service', 'qwen38-image.service', 'qwen38-video.service', 'qwen38-kolibri.service'])
+    for (const u of ['qwen38-sglang.service', 'qwen38-flash.service', 'qwen38-image.service', 'qwen38-video.service', 'qwen38-kolibri.service',
+                     'qwen38-nemotron.service'])
       if (%s !== null) units.units[u].enabled = %s;
     feed({config: CONFIG, units, lifecycle: life({'qwen38-sglang.service': eng('stopped', {target: 'uncensored'}),
                                                  'qwen38-flash.service': eng('stopped', {target: 'flash'})})});
@@ -1087,7 +1123,7 @@ class TheBootLaneIsSaidOnlyWhenOneIs(unittest.TestCase):
         r = self.page("'disabled'")
         self.assertEqual(r["sub"], "no lane starts at boot; load one from Lanes", r)
         self.assertTrue(r["atBoot"] and all(a == "manual start" for a in r["atBoot"]), r["atBoot"])
-        self.assertEqual(r["notes"], ["manual start"] * 5, r["notes"])
+        self.assertEqual(r["notes"], ["manual start"] * 6, r["notes"])
         self.assertIn("Boot lanenone", r["facts"])
         self.assertEqual(len(r["steps"]), 2, r["steps"])
         self.assertIn("switch-model.sh uncensored", r["steps"][0])
@@ -1757,7 +1793,7 @@ class EachLaneWearsItsMakersMark(unittest.TestCase):
                 hidden: [...document.querySelectorAll('#rack .mark, #lanes-list .mark')].map(m => m.getAttribute('aria-hidden')),
                 none, flash, video});
         """)
-        lanes = ["qwen.svg", "qwen.svg", "alephalpha.svg", "qwen.svg", "minimax.svg"]   # 27B, flash, Kolibri, image, video
+        lanes = ["qwen.svg", "qwen.svg", "alephalpha.svg", "nvidia.svg", "qwen.svg", "minimax.svg"]   # 27B, flash, Kolibri, Nemotron, image, video
         self.assertEqual(r["bays"], lanes)
         self.assertEqual(r["cards"], lanes)
         # the mark is decoration beside the lane's name: no alt text to read twice
@@ -1771,12 +1807,12 @@ class EachLaneWearsItsMakersMark(unittest.TestCase):
         names = set()
         for f in (pagejs.STATIC / "js").glob("*.js"):
             names |= set(re.findall(r"maker: '([a-z]+)'", f.read_text()))
-        self.assertEqual(names, {"qwen", "minimax", "alephalpha"})
+        self.assertEqual(names, {"qwen", "minimax", "alephalpha", "nvidia"})
         for n in names:
             self.assertTrue((pagejs.STATIC / "img" / "logos" / f"{n}.svg").is_file(), n)
         css = (pagejs.STATIC / "css" / "cockpit.css").read_text()
         lanes = set(re.findall(r"lane: '([a-z0-9]+)'", (pagejs.STATIC / "js" / "base.js").read_text()))
-        self.assertEqual(lanes, {"27b", "flash", "kolibri", "image", "video"})
+        self.assertEqual(lanes, {"27b", "flash", "kolibri", "nemotron", "image", "video"})
         for lane in lanes:
             self.assertRegex(css, r"--lane-%s:#[0-9a-f]{6};" % lane)
 
