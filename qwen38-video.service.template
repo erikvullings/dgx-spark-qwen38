@@ -32,6 +32,10 @@ ExecStartPre=/bin/bash __HOME__/.config/qwen38/engine-preflight.sh qwen38-video.
 # review, a lane bound past loopback could overwrite either). engine-preflight.sh writes
 # nothing either.
 ReadOnlyPaths=__HOME__/.config/qwen38
+# Nor can it read the serving key there (2026-10-16): it takes media sources from its callers,
+# local paths included, with this user's rights (found in review, 2026-10-16). It has no key
+# of its own to need, and engine-preflight.sh reads none.
+InaccessiblePaths=-__HOME__/.config/qwen38/api-key
 # The cookbook's DGX Spark recipe, and nothing else: every component resident, no
 # offload flags. The cookbook verifies about 12.1 s per denoise step, about 40 s of
 # decode and about 12 min per warm request at 480P with no flags at all, and adding

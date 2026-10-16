@@ -33,6 +33,15 @@ class SideLanesConfigReadOnly(unittest.TestCase):
                 lines = service_section((REPO / name).read_text())
                 self.assertIn("__HOME__/.config/qwen38", values(lines, "ReadOnlyPaths"))
 
+    def test_the_serving_key_is_out_of_the_lanes_reach(self):
+        """The lanes take media sources from their callers, local paths included, with this
+        user's rights; they hold no key of their own to need (2026-10-16)."""
+        for name in UNITS:
+            with self.subTest(unit=name):
+                lines = service_section((REPO / name).read_text())
+                self.assertIn("-__HOME__/.config/qwen38/api-key", values(lines, "InaccessiblePaths"))
+                self.assertNotIn("--api-key", " ".join(values(lines, "ExecStart")))
+
     def test_the_preflight_still_runs_under_them(self):
         """It is read and run from the read-only directory, and needs no write there: a unit
         whose ExecStartPre fails never starts."""
@@ -41,6 +50,7 @@ class SideLanesConfigReadOnly(unittest.TestCase):
                 pre = values(service_section((REPO / name).read_text()), "ExecStartPre")
                 self.assertIn("__HOME__/.config/qwen38/engine-preflight.sh", pre)
         script = (REPO / "engine-preflight.sh").read_text()
+        self.assertNotIn("api-key", script)
         self.assertNotRegex(script, r"\.config/qwen38\S*\s*$|>>?\s*\S*\.config/qwen38")
 
 

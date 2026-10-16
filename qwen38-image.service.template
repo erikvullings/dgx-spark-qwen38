@@ -29,6 +29,10 @@ ExecStartPre=/bin/bash __HOME__/.config/qwen38/engine-preflight.sh qwen38-image.
 # review, a lane bound past loopback could overwrite either). engine-preflight.sh writes
 # nothing either.
 ReadOnlyPaths=__HOME__/.config/qwen38
+# Nor can it read the serving key there (2026-10-16): it takes media sources from its callers,
+# local paths included, with this user's rights (found in review, 2026-10-16). It has no key
+# of its own to need, and engine-preflight.sh reads none.
+InaccessiblePaths=-__HOME__/.config/qwen38/api-key
 # The cookbook's DGX Spark recipe, and nothing else: one GPU, every component resident,
 # the runtime picking its own attention (it logs "Defaulting to Torch SDPA backend on
 # SM12.x"), full-image VAE decode, eager execution, batch 1. Forcing any of those is how
