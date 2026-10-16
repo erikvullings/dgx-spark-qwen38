@@ -1,5 +1,130 @@
 # Changelog
 
+## v1.35.0 (2026-10-16): Nemotron 3.5 Super VL, NVIDIA's 120B with vision and a 1M-token window, as a seventh lane
+
+**What it is.** [Nemotron 3.5 Super VL](https://huggingface.co/nvidia/NVIDIA-Nemotron-3.5-Super-VL-120B-A12B-NVFP4)
+is NVIDIA's open vision-language model, released 2026-10-15, the model Bolt (v1.34.0) was compressed
+from: a hybrid of Mamba-2, Transformer and mixture-of-experts layers, 120B parameters with 12B active
+per token, in NVFP4 (75 GB). It reads text, images and video, calls tools and reasons (by default, a
+shorter way on request, or not at all), in a window of 1,048,576 tokens. Every plain install now puts
+it in as a seventh lane, on demand like the others: its units now, and its first Load from the
+cockpit fetches its checkpoint and its drafter (77 GB), and builds the image it runs when the
+Nemotron lane has not (102 GB then); `--with-nemotron-super` or `--all-weights` does it at install
+and proves it, `--no-nemotron-super` leaves it out and later runs remember it. On the cockpit's Lanes
+view it is **Nemotron 3.5 Super VL**, then **Load**; from a terminal, `./prepare-lane.sh
+nemotron-super` the first time, then `./switch-model.sh nemotron-super`. Clients reach it through the
+proxy on `:30001` with the box's key, as model `nemotron-3.5-super-vl`, in the OpenAI and the
+Anthropic dialects alike.
+
+**What an update does.** It puts in the Nemotron Super lane's units, and nothing heavy: no image is
+built and no weight fetched until its first Load. Every other lane's unit names the new one in its
+`Conflicts=` and `After=` lines, which systemd applies at its daemon-reload: each such unit keeps
+its date and its engine keeps running (v1.34.0's rule). The proxy restarts once (its unit holds
+requests for this lane too while it boots), and so does the cockpit. The two Nemotron lanes run one
+image: a Nemotron lane counts as begun on a box once its own first Load began (that image and its
+own checkpoint), so loading one leaves the other its units only, and a build of the image goes only
+once no installed unit names it.
+
+**NVIDIA's build, and the image it runs.** NVIDIA's model card serves Super VL on a DGX Spark with
+the vLLM nightly `nightly-3f1bcfd8`, one request at a time, at a memory share of 0.75, with its
+LiLiCorr drafter, over the whole window. The box measured that build first: with this box's 16
+images and 2 videos per conversation it left 9.61 GiB to the KV cache, short of the 10.04 the full
+window needs (vLLM refused to start), and its own MTP head's kernel tuning took the box under 8 GiB
+of free memory. The Nemotron lane's image (the vLLM nightly `nightly-77154ca6` with b12x) serves the
+same checkpoint with the same answers, within the engine's own noise, and a cache of 1.17 to 1.38
+million tokens at the same share: the lane runs it, one image for the two Nemotron lanes, built once
+by either lane's first Load from its pins in `install-nemotron.sh`. Each lane's uninstall keeps the
+image while the other is installed. The model is pinned at its revision of 2026-10-15, 21:36 UTC:
+the revisions since the one the box measured changed only its model card, every other file the same
+blob (checked on 2026-10-16).
+
+**What differs from the card, each measured on the reference box (2026-10-16).**
+
+- The Nemotron lane's image, for the cache (above).
+- 4 requests at a time (the card: 1), sharing a cache that holds the whole window more than once:
+  81.7 tok/s in all at 4 streams against 45.6 for one, and one request alone 1 to 4 % slower than
+  with one at a time.
+- 16 images and 2 videos per conversation, and media inside the request only: no local file, no URL
+  fetched, as on the Nemotron lane.
+- Its own caches (vLLM's compile cache, FlashInfer's kernels), and nothing left root-owned in the
+  user's HF cache.
+- The KV cache in FP8, the checkpoint's own choice: against BF16, a difference within the engine's
+  own noise, token by token on 150 articles and on 61,440-token documents, for twice the tokens.
+
+**Measured.** One request, real work and the reasoning off: 69.5 tok/s rewriting code, 35.7
+summarising, 30.7 writing prose (the drafter's mean acceptance 4.4 tokens per pass). Several at once,
+in all: 45.6 / 51.9 / 81.7 tok/s at 1 / 2 / 4 streams. Boot 8 min 51 s to 11 min 02 s from the USB
+SSD. A code hidden at three depths of 32,000, 128,000, 500,000 and 1,000,000 tokens found every time, 12 of
+12 (at a million, the first token after 19 min 22 s to 19 min 28 s, and 15 to 16 s when the prompt
+came back). Every answer right:
+the reasoning at its three depths, streamed or not; tool calls 20 of 20 with the reasoning on and off;
+German, French and English; an image; a video; 16 images in one conversation (the 17th refused).
+MemAvailable at its least 9.2 GiB in service (scoring 61,440-token documents token by token; 9.3
+during a million-token prefill) and 9.1 at the end of a first boot, while vLLM builds its kernels
+(the installed lane's, a browser open on the cockpit; 9.5 in the measurement runs). Tried and not
+kept: the card's own image (above), and the native
+MTP head, which took the box under 8 GiB of free memory at a share of 0.75 and at 0.70 (6.4 and 4.1
+GiB), the guard stopping it each time before it served.
+
+**Clients.** Super VL's template reads Bolt's words (`enable_thinking`, `medium_effort`), and the
+proxy says a `reasoning_effort` in them on this lane as on Bolt's (v6.40). opencode gets a
+`nemotron-super` provider that may attach images, with the levels `none`, `low`, `medium` and `high`
+and a window of 990,000 tokens with 32,000 of output, and loading the lane makes it opencode's
+default; pi and omp send it their level, starting at `high`. System One needs a Qwen lane, and says
+so on this one.
+
+**The cockpit.** The lane's card in the rack beside Bolt's, with NVIDIA's mark, its boot read stage
+by stage from its own log, its engine (vLLM, NVFP4, its draft length from its own unit) and its
+drafter's acceptance in the load. Library lists its checkpoint and its drafter with their pins.
+
+**Also in this version.**
+
+- Library counted a Nemotron target whole with its checkpoint alone: Bolt read "on disk" with its
+  drafter missing, which its Load then fetched. A Nemotron target is whole now with its drafter
+  whole too (the Download fetches both), and a lane's Start, which loads both from the cache, is
+  offered only then.
+- The three vLLM lanes' installers (Kolibri, Nemotron, Nemotron Super) share one base, `vllm-lane.sh`:
+  the engine's cache and port, the preflight and the room, the fetch, the service, the uninstall
+  with its opencode and pi cleanup, and the proof, which each carried in a copy of its own, a fix
+  made in one missing from the next (the shared image's old builds were pruned by one lane only,
+  found in review). Each says what it said, its own name in it, but for Kolibri's three lines now
+  the three lanes' words: a failed download names its repository, the key's middleware is kept
+  while "another vLLM lane" uses it, and the base image's line comes before the caches'; and a
+  missing file is named alone. Each now names its unit where every other is read
+  (`LANES_UNIT_DIR`), and the proof refuses to run before the service step.
+- One reading of the Hugging Face cache a unit mounts and of a path's nearest existing folder,
+  in lanes.sh, for install.sh, the switch, the image and video lanes' installers and the vLLM
+  lanes': they were copied into a dozen places.
+- The cockpit asks a vLLM engine its models once where it asked twice (the lane chosen, then the
+  lane's panel), and tells the Nemotron lanes apart by the exact model their engine serves.
+- Each lane installer's `--help` prints its whole header: the Nemotron lane's printed two lines of
+  its code, the image lane's stopped in the middle of a sentence, and the Kolibri and video lanes'
+  left out their last paragraph (fixed line numbers that drifted as the headers grew).
+- The README gave `--all-weights` 92 minutes of work, measured at v1.29.0, before the two Nemotron
+  lanes: it says so now, and its downloads, Super VL's with them, come to about 571 GB (95 minutes
+  at 100 MB/s).
+
+**Tests.** Each change has a test that fails on the old code: the lane's installer in its two halves
+and its uninstall (the shared image kept while the other Nemotron lane is installed, both ways; the
+key's middleware while another vLLM lane is), the two lanes' pins in one place and their one image,
+the switch's rewrite of each lane's unit when its pins move (Super VL's requests at a time with its
+memory share, which were measured together), the Download of its checkpoint and
+drafter, every sequence of switches up to six long through the seven lanes (9,330), every lane's
+`Conflicts=`, the proxy's held units, install.sh's run end with the seventh lane, the boot lane kept,
+the cockpit's card, engine panel, boot stages and gates, and Library's count of a Nemotron target's
+drafter. And, found in this version's review, each with a test that fails on the code before it: a
+Nemotron lane loaded leaves the other its units only and `--all-weights` proves the one never loaded
+(the shared image called it begun, and an update fetched its 77 GB); each Nemotron lane's service
+step keeps the build the other's unit names; Bolt's unit whose reasoning parser names another
+snapshot than its revision is refused, as before the switch's block was the two lanes'; the engine
+panel names the Nemotron lane by the exact model its engine serves, and a name of neither lane is
+neither's; each installer's `--help` is its header; the three vLLM installers run the shared service
+step and proof, read where they now live, the service step first; an uninstall whose opencode-web
+restart fails goes on (the shared step had returned the failure, and set -e stopped the uninstall
+half done); the vLLM installers' tests read no unit of the machine running them (they read its
+proxy's port and its units for the image's prune); every shell script compares disks through
+links; and each test is declared once (a class inheriting another's tests ran them twice).
+
 ## v1.34.0 (2026-10-16): Nemotron 3.5 Bolt, NVIDIA's 74B that reads images and video, as a sixth lane
 
 **What it is.** [Nemotron 3.5 Bolt](https://huggingface.co/nvidia/NVIDIA-Nemotron-3.5-Bolt-74B-A9B-24GB) is
