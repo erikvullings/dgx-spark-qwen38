@@ -5,7 +5,34 @@ so that "on the roadmap" means a checkbox with a definition of done, not a
 mood. Statuses: shipped, in progress, planned, considered (considered items
 have a reason they are not yet planned, stated here or in an issue).
 
-## Shipped, current: v1.25
+## Shipped, current: v1.35
+
+- **Nemotron 3.5 Super VL, a seventh lane** (v1.35.0): NVIDIA's 120B with
+  vision and a 1M-token window, on vLLM in the Nemotron lane's image,
+  installed on demand like the others.
+
+## Shipped, v1.26 to v1.34
+
+- **Nemotron 3.5 Bolt, a sixth lane** (v1.34.0): NVIDIA's 74B that reads
+  images and video, in 24 GB.
+- **Every lane but the one that serves installed on demand** (v1.33.0), and
+  built at its first Load; the cockpit's ergonomics review (v1.33.1).
+- **A speech lane on the CPU** (v1.32.0), opt-in, and a cockpit update
+  command that updates.
+- **One fetch for every lane's checkpoint** (v1.31.0), and a text Load that
+  needs no network.
+- **Each lane proved on what is installed** (v1.30.0), and Kolibri compacting
+  at 185,000 tokens.
+- **Kolibri-1, a fifth lane** (v1.29.0): Aleph Alpha's German and English
+  model, on vLLM.
+- **The flash lane on `nightly-cu134-20261011-53295c6`** (v1.28.0), measured
+  equal or better.
+- **The cockpit in deep indigo** (v1.27.0): each lane with its maker's mark
+  and its colour, every version in sight.
+- **The Traffic view says the prefill speed too** (v1.26.0), the queue, the
+  idleness and the peaks.
+
+## Shipped, v1.25
 
 - **A Turbo switch for videos, and the video lane on a release** (v1.25.0): the cookbook's
   speed adapter for MiniMax-H3 put on for one video and taken off after (4 s at 480P in 127 s
@@ -145,10 +172,12 @@ the cockpit drift panel says so, per lane, until it is.
   OEMs and kernels; hardware beyond GB10 is only honest once the recipes are
   parameterised by what the card can do, not by what this one does (the
   sm_121 story in v1.14 is the shape of that work: an objection that turned
-  out to be about neither image); and a second model family earns its lane on
-  the frozen battery, not on a README claim. None of this is a rewrite, it is
-  the same discipline applied to a wider set of pins, and nothing ships as
-  "supported" before a measured row exists for it.
+  out to be about neither image). More model families, last in that order, came
+  first: Aleph Alpha's Kolibri-1 (v1.29), NVIDIA's Nemotron 3.5 Bolt (v1.34)
+  and Nemotron 3.5 Super VL (v1.35) each have a lane, measured by the method
+  its lane's page states. None of this is a rewrite, it is the same discipline
+  applied to a wider set of pins, and nothing ships as "supported" before a
+  measured row exists for it.
 
 - **A supported-GB10 matrix beyond the reference box**: every performance
   claim carries "reference box", and the box-report protocol plus

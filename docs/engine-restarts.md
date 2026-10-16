@@ -1,7 +1,8 @@
 # When an engine stops: what the box does, measured
 
 An engine that dies is started again by systemd, and a boot takes minutes: about 7.5 on the
-27B lane, 11 on the flash lane. This page says what happens in that time, to the box and to
+27B lane and 11 on the flash lane in the runs below (the README gives 5 to 9 and 12 to 15).
+This page says what happens in that time, to the box and to
 the clients, and what v1.21.0 added so that a restart can neither freeze the machine nor end
 an agent's session. Every number here was measured on the reference box (DGX Spark, driver
 580.178.04, kernel 6.17.0-1032) on 2026-10-01, for [issue #26](https://github.com/hasso5703/dgx-spark-qwen38/issues/26).

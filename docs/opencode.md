@@ -1,8 +1,8 @@
 # opencode integration
 
-What the installer writes for [opencode](https://opencode.ai), why each piece is there, and how to opt out. Moved out of the README in v1.14.2.
+What the installer writes for [opencode](https://opencode.ai), why each piece is there, and how to opt out.
 
-The installer writes a complete, ready-to-use [opencode](https://opencode.ai) config at `~/.config/qwen38/opencode.json` (the API key is referenced via `{file:...}`, no secret inside). It contains one provider per installed engine (`qwen38` for the 27B pair, `flashnext` for flash), each with `lean` / `low` / `medium` / `xhigh` reasoning-effort variants (no variant = the patched template's default, `lean`, or Qwen's `xhigh` on a box installed with `LEAN_DEFAULT=0`), and its default model follows the installed target (`./switch-model.sh` re-points it on every switch):
+The installer writes a complete, ready-to-use [opencode](https://opencode.ai) config at `~/.config/qwen38/opencode.json` (the API key is referenced via `{file:...}`, no secret inside). It contains one provider per installed lane (`qwen38` for the 27B, `flashnext` for flash, `kolibri`, `nemotron` and `nemotron-super`), the two Qwen ones with `lean` / `low` / `medium` / `xhigh` reasoning-effort variants (no variant = the patched template's default, `lean`, or Qwen's `xhigh` on a box installed with `LEAN_DEFAULT=0`; the vLLM ones offer `none` / `low` / `medium` / `high`), and its default model follows the installed target (`./switch-model.sh` re-points it on every switch):
 
 A box with no opencode config of its own gets this one as `~/.config/opencode/opencode.json`
 (since v1.18.4: before, it was printed as a `cp` command, and a first install left opencode,
@@ -10,7 +10,7 @@ A box with no opencode config of its own gets this one as `~/.config/opencode/op
 A config you already have is kept: the installer merges the served lane's limits into it,
 and adds the provider of a lane installed since (the 27B first, the flash lane later) when
 it already has one of this repo's providers. When it has none of them, the installer says
-so and leaves it alone: merge the `qwen38` (and/or `flashnext`) block from
+so and leaves it alone: merge this repo's provider blocks (`qwen38`, `flashnext`, `kolibri`, `nemotron`, `nemotron-super`) from
 `~/.config/qwen38/opencode.json` into it yourself.
 
 ```bash

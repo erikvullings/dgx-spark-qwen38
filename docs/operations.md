@@ -1,6 +1,6 @@
 # Operations, extras and upgrades
 
-Day-to-day commands, the opt-in extras, and what an upgrade from an earlier version does. Moved out of the README in v1.14.2.
+Day-to-day commands, the opt-in extras, and what an upgrade from an earlier version does.
 
 ## Day to day
 

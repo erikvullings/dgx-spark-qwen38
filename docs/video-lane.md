@@ -28,10 +28,10 @@ weights under `~/.cache/sglang/diffusion/host_spill` (11.2 GiB) and the video de
 weights in its decode dtype under `~/.cache/sgl_diffusion/decode_dtype_store` (4.5 GiB).
 `uninstall.sh` lists both.
 
-## A fourth lane, switched to like the other three
+## Switched to like the other lanes
 
-Once installed, the video lane is driven exactly like the 27B, flash and image lanes,
-from the same three controls at the top of the cockpit, and it obeys the same rule.
+Once installed, the video lane is driven exactly like the other lanes,
+from the same Load button in the Lanes view, and it obeys the same rule.
 
 1. **Load it.** On the cockpit's Lanes view pick `MiniMax-H3` and press **Load**: one
    journey that switches the boot, stops the serving lane and starts the video lane,

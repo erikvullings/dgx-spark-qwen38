@@ -134,6 +134,12 @@ drafter's acceptance in the load. Library lists its checkpoint and its drafter w
 - The README gave `--all-weights` 92 minutes of work, measured at v1.29.0, before the two Nemotron
   lanes: it says so now, and its downloads, Super VL's with them, come to about 571 GB (95 minutes
   at 100 MB/s).
+- The documents caught up with the seven lanes. The README, ARCHITECTURE.md, ROADMAP.md and the
+  pages in docs/ said of every text lane what holds for the two Qwen lanes alone (System One from
+  any lane, two opencode providers, seven targets for `./switch-model.sh`), sent clients to the
+  engine's `:30000`, which answers on the box only since v1.17, and gave numbers without their
+  condition; they now name the five text lanes and list each lane's page, give the flash lane's
+  47.9 tok/s its `context` tier and the 27B's 71.4 its SGLang v0.5.19, and the roadmap v1.35.
 
 **Tests.** Each change has a test that fails on the old code: the lane's installer in its two halves
 and its uninstall (the shared image kept while the other Nemotron lane is installed, both ways; the

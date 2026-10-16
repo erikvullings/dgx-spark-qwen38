@@ -1,6 +1,6 @@
-# Where each lane stands against upstream
+# Where the Qwen text lanes stand against upstream
 
-Re-checked on 2026-10-09 against the GitHub API, the cookbook and inside the images rather than against dates (flash lane: 2026-10-12), and re-measured on the box before any conclusion. Moved out of the README in v1.14.2.
+Re-checked on 2026-10-09 against the GitHub API, the cookbook and inside the images rather than against dates (flash lane: 2026-10-12), and re-measured on the box before any conclusion.
 
 Since 2026-08-21, this same combination (DFLASH2, draft depth 16 since v1.9) is the **official recipe in the [SGLang cookbook](https://docs.sglang.io/cookbook/autoregressive/Qwen/Qwen3.8-27B)**, and since v1.14 this repo serves an official release image on that lane, with no overlay built on top: `v0.5.21` since v1.23 (`v0.5.19` before it). It held out until 2026-09-17 over the mrope fix ([sglang#34446](https://github.com/sgl-project/sglang/pull/34446), the fused Qwen3.5 RoPE kernel discarding mrope height and width), which merged 2026-08-30 and is in the release; checked in the image rather than assumed. Neither lane builds anything on top of its image: the 27B serves a release, the flash lane a nightly, both from `lmsysorg/sglang` and pinned by digest.
 

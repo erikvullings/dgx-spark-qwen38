@@ -21,9 +21,9 @@ to the cache the installed unit names (`HF_HOME`), else the one the text lane mo
 `~/.cache/huggingface`, and `HF_CACHE=` picks another; the room it needs is measured on
 that disk and on the one the runtime goes to (`IMAGE_LANE_DIR`).
 
-## A third lane, switched to like the other two
+## Switched to like the other lanes
 
-Once installed, the image lane is driven exactly like the 27B and flash lanes, from the
+Once installed, the image lane is driven exactly like the other lanes, from the
 same single Load control, and it obeys the same rule.
 
 1. **Load it.** On the cockpit's Lanes view pick `Qwen-Image 2.1` and press **Load**: one
@@ -48,7 +48,7 @@ unit's `--model-path` and nothing else, then restarts the lane (about 80 s). See
 
 **Never two engines at once.** 31 GB of weights do not fit beside a serving LLM, and a
 request takes the lane to 34.8 GiB at 1024x1024 (45.4 GiB at 2048x2048). The cockpit refuses to start any engine while
-another one is busy, and says which one to stop, for all three lanes alike: starting the
+another one is busy, and says which one to stop, for the seven lanes alike: starting the
 image lane while the 27B serves comes back `409 blocked`, and so does starting the 27B
 while the image lane loads. That gate used to pick "the other engine" with `[0]`, which
 with three of them checked one neighbour in two.

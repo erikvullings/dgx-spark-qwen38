@@ -1,6 +1,6 @@
 # The 1M context mode (27B lanes)
 
-What a plain 27B install serves since v1.12.1: a 1,010,000-token window, what it costs, and how the limits are fitted to the pool your own boot got. Moved out of the README in v1.14.2 so the README could stay an entry point.
+What a plain 27B install serves since v1.12.1: a 1,010,000-token window, what it costs, and how the limits are fitted to the pool your own boot got.
 
 Since v1.12.1 this is what a plain 27B install serves. It was opt-in behind an
 env var until then, which meant the window this whole stack is built around was

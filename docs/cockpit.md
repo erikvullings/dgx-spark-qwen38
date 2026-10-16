@@ -61,7 +61,7 @@ that script with `AGENT_BIND=`.
 *Lanes: each lane with what it serves, what its boots took on this box and the KV pool each one won, and one button that loads it: switch, stop, start, each step asking first and showing its command.*
 
 A lane installed on demand says so on its card (built at its first Load): its Load builds it first,
-as you, with no sudo (`./prepare-lane.sh <lane>`, with the target it loads for the two text lanes,
+as you, with no sudo (`./prepare-lane.sh <lane>`, with the target it loads for the two Qwen lanes,
 whose preparation fetches that checkpoint), then switches, stops and starts. Its Start, which starts
 the unit as it is with no switch, appears once a Load has switched to it: before, the unit had no
 checkpoint or chat template to run.

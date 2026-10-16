@@ -140,8 +140,8 @@ byte of it is read.
 - **opencode**: the primary client; the installer writes its provider
   config (effort variants, default model follows the target). Everything
   in README applies through the proxy.
-- **Claude Code (legacy support)**: works through the proxy on the
-  Anthropic dialect. The env block that makes it behave:
+- **Claude Code**: works through the proxy's Anthropic route
+  (`/v1/messages`). The env block that makes it behave:
 
   ```bash
   ANTHROPIC_BASE_URL=http://<host>:30001   ANTHROPIC_AUTH_TOKEN="<key>"
@@ -157,7 +157,7 @@ byte of it is read.
   `max_tokens` on top. The proxy refuses a prompt past 92% of the pool,
   prompt and answer together must fit in it, and the pool is decided at
   boot (832,993 to 922,094 tokens over sixteen 27B boots here; the
-  cockpit's Overview shows yours). Set to the window, a session grows past
+  cockpit's Lanes view shows yours). Set to the window, a session grows past
   what the proxy takes and is refused mid-conversation instead of
   compacting. Sized on the smallest pool: `700000` with the
   default output (worst case 709,000), or `529000` with
@@ -177,8 +177,7 @@ byte of it is read.
   The idle-timeout variables are the difference between "hangs" and "slow";
   they are named in issue #2 and in the failure family diagnosed in
   issue #1 (clients cap total turn duration, not idle time). Quality and
-  tool calls were validated here; the client itself is not the maintained
-  integration.
+  tool calls were validated here.
 - **VS Code Copilot BYOK**: reports the same total-duration watchdog in
   issue #1 (VSCode Copilot gives no timeout env to widen it). The fix that
   worked for the reporter is the config shape in that issue: chat-completions
@@ -188,8 +187,9 @@ byte of it is read.
 ## Standard OpenAI-compatible clients (configured here, not measured)
 
 Anything that takes `base_url` + API key points at
-`http://<host>:30001/v1` with the API key as the token, and gets the
-`qwen3.8-27b` model name. Two examples because they are the ones asked for
+`http://<host>:30001/v1` with the API key as the token, and may send
+any model name: the lane that serves answers it (`qwen3.8-27b` on the
+27B). Two examples because they are the ones asked for
 most; the configurations are their vendors' standard OpenAI fields, and
 the claims below about the engine side are the ones this repo has verified:
 

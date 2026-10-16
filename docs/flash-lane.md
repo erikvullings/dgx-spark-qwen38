@@ -1,6 +1,6 @@
 # The flash lane: Qwen3.8-Flash-Next 176B on one Spark
 
-How a 176B hybrid MoE serves on a single GB10, the three serving tiers, and what each one measured on this box. Moved out of the README in v1.14.2.
+How a 176B hybrid MoE serves on a single GB10, the three serving tiers, and what each one measured on this box.
 
 Since v1.20 every plain install puts this lane on the box beside the 27B, installed and not
 enabled at boot, by the same installer started again for this lane (its target and tier are

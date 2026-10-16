@@ -7,8 +7,9 @@ else, starting with the contract it speaks.
 Since v1.15 the keepalive proxy answers **`POST /v1/systemone`** with the wire contract of
 TypeSafe's Jev ([docs.typesafe.ai/api](https://docs.typesafe.ai/api)): one `state` (a string
 or JSON), a map of typed `questions` (`choice`, `score`, `noul`), and one typed answer per
-question with its probabilities and a confidence. The answers come from **the lane you already
-run**. Every question becomes one chat completion of exactly one token, the options are named
+question with its probabilities and a confidence. The answers come from **the Qwen lane you already
+run** (27B or flash; on the other text lanes the proxy says so, 400). Every question becomes one
+chat completion of exactly one token, the options are named
 by single-token letters, and `top_logprobs` hands back the probability of each letter. Nothing
 is generated, nothing is parsed, and the state is the shared prefix the radix cache reuses from
 one question to the next: ask twenty questions about one document in one call and the document

@@ -54,7 +54,7 @@ launcher in `~/.local/bin`, and the two weight trees (HF cache, PLE dir).
 | `patch-yarn.py`, `patch-template.py`, `build-token-map.py`, `oc-*.py`, `oc-*.sh` | the config surgery, all idempotent, all reversible | patch-yarn has `--restore`/`--check` because a native install coming home from 1m would otherwise crash at load |
 | `check-pins.sh` | supply-chain availability, over the network, on demand | deliberately not in CI: a green build must not depend on Hugging Face being up |
 | `evals/` | the two quality drivers, MMLU and HumanEval, because the image's own invocations do not run and fail by printing an empty score | the failure modes and the exact docker commands are in its README; gated against a stub sglang so the contracts that make them work cannot rot silently |
-| `docs/` | one subject per file, everything the README is an entry point to: the 1M mode, the flash lane, the cockpit tour, operations, opencode, clients, the memory trap, upstream standing | the README's index table is the map; a section that outgrows the README moves here and leaves a summary and a link behind |
+| `docs/` | one subject per file, everything the README is an entry point to: a page per lane (the 27B's 1M mode, flash, image, video, Kolibri, Bolt, Super VL, speech), the cockpit tour, operations, engine restarts, opencode, pi and omp, clients, typed decisions, the memory trap, upstream standing | the README's index table is the map; a section that outgrows the README moves here and leaves a summary and a link behind |
 | `extras/` | opt-ins that earned their keep on the reference box | CAKE anti-bufferbloat for downloads, opencode auto-continue plugin |
 
 ## Invariants the CI holds (each one exists because it once broke)
