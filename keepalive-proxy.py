@@ -510,6 +510,15 @@ FLASH_SERVED_NAMES = frozenset({"qwen3.8-flash-next"})
 # 256 MiB is ~100x the largest legit text request on the 1M lane and leaves
 # heavy vision payloads room.
 MAX_BODY_BYTES = int(os.environ.get("MAX_BODY_BYTES", str(256 * 1024 * 1024)) or 0)
+# Every body in flight at once, in bytes (2026-10-16; 0 = none). MAX_BODY_BYTES caps one body
+# and nothing capped them together: each is read whole and parsed again by the guards, and four
+# legitimate bodies near the cap reach the unit's MemoryMax=1G at once, where the kernel kills
+# the proxy and every stream in flight with it (found in review, 2026-10-16). Past this budget a
+# body is not read: 503 with Retry-After, which the SDKs and the agents retry. A body arriving
+# when none is in flight is always read, so a budget under the cap never refuses one forever.
+BODY_BUDGET_BYTES = int(os.environ.get("BODY_BUDGET_BYTES", str(384 * 1024 * 1024)) or 0)
+_BODY_BUDGET = {"used": 0}
+_BODY_BUDGET_LOCK = threading.Lock()
 # Time to first response byte from the upstream on GETs (models, health, load:
 # always fast or dead). Generations keep no deadline: a cold 690k-token
 # prefill legitimately takes tens of minutes to answer, streaming or not, and
@@ -4030,6 +4039,15 @@ class H(BaseHTTPRequestHandler):
                         json.dumps({"error": {"type": "body_too_large",
                                               "message": f"keepalive-proxy: request body {n}b exceeds the {MAX_BODY_BYTES}b cap"}}).encode())
             self._done("413 body over cap"); return
+        if with_body and n and not self._reserve_body(n):
+            log(f"{self._peer} REFUSED body {n}b: {_BODY_BUDGET['used']}b of bodies already in flight, "
+                f"budget {BODY_BUDGET_BYTES}b (BODY_BUDGET_BYTES)")
+            self._plain(503, {"Content-Type": "application/json", "Retry-After": "5"},
+                        json.dumps({"error": {"type": "overloaded", "message":
+                                              f"keepalive-proxy: {_BODY_BUDGET['used']} bytes of request bodies "
+                                              f"are in flight on this proxy, and this one ({n} bytes) would pass "
+                                              f"its {BODY_BUDGET_BYTES}-byte budget; retry it unchanged"}}).encode())
+            self._done("503 bodies over budget"); return
         body = self.rfile.read(n) if (with_body and n) else None
         self._body_read = True
         if body is not None and len(body) < n:
@@ -4409,6 +4427,23 @@ class H(BaseHTTPRequestHandler):
         self._plain(status, headers, out)
         self._done("ok systemone")
 
+    def _reserve_body(self, n):
+        """Take n bytes of BODY_BUDGET_BYTES for this request's body, or say there are none."""
+        if BODY_BUDGET_BYTES <= 0:
+            return True
+        with _BODY_BUDGET_LOCK:
+            if _BODY_BUDGET["used"] and _BODY_BUDGET["used"] + n > BODY_BUDGET_BYTES:
+                return False
+            _BODY_BUDGET["used"] += n
+        self._body_reserved = n
+        return True
+
+    def _release_body(self):
+        n, self._body_reserved = getattr(self, "_body_reserved", 0), 0
+        if n:
+            with _BODY_BUDGET_LOCK:
+                _BODY_BUDGET["used"] -= n
+
     def _handle(self, with_body):
         """Every request leaves exactly one end line in the journal, even when the
         client vanishes while the body is read or before the upstream answers
@@ -4416,6 +4451,7 @@ class H(BaseHTTPRequestHandler):
         try:
             self._handle_inner(with_body)
         finally:
+            self._release_body()
             if not getattr(self, "_ended", False):
                 self._t0 = getattr(self, "_t0", time.time())
                 self._peer = getattr(self, "_peer", "?")

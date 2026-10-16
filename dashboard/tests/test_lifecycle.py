@@ -633,6 +633,7 @@ class FeedOutcomes(unittest.TestCase):
         "400 oversize refused": "fail",
         "400 bad Content-Length": "fail",
         "413 body over cap": "fail",
+        "503 bodies over budget": "fail",   # past BODY_BUDGET_BYTES in flight, not read (2026-10-16)
         "401 unknown client key": "fail",   # the identity wall's refusal (v6.16)
         "401 without the serving key": "fail",   # the door's refusal, before the body (v6.34)
         "403 operator route": "fail",   # a listed client key on an engine operator route (2026-10-16)
