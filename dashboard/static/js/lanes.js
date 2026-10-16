@@ -202,7 +202,7 @@ on('containers', d => {
 on('canary', d => {
   setText('px-probe', F.canaryTxt || '…');
   setText('px-last', d.skipped && (servingEngine() || [])[0] === KOLIBRI_UNIT ? 'none on the Kolibri lane'
-    : d.skipped && (servingEngine() || [])[0] === NEMOTRON_UNIT ? 'none on the Nemotron lane'
+    : d.skipped && isNemotron((servingEngine() || [])[0]) ? 'none on the Nemotron lanes'
     : d.last_ok ? clockTime(d.last_ok) : 'never in this cockpit’s life');
 });
 function renderProxy(){

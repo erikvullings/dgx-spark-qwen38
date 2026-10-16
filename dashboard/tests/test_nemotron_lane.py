@@ -214,7 +214,7 @@ class ItsState(Base):
 
     def state(self, healthy, enter="100", prev="ready", log=()):
         self.ck.kolibri_healthy = lambda: healthy
-        self.ck._nemotron_log = lambda: list(log)
+        self.ck._nemotron_log = lambda *container: list(log)
         st, boot, running = self.ck.nemotron_engine_state(U, active="active", sub="running",
                                                           prev_state=prev, enter_key=enter)
         return st["state"], boot, running
@@ -285,7 +285,7 @@ class WhatItDoesNotHave(Base):
         finally:
             self.serving(None)
         self.assertFalse(out["available"])
-        self.assertIn("the Nemotron lane is serving", out["reason"])
+        self.assertIn("a Nemotron lane is serving", out["reason"])
 
     def test_its_served_name_is_its_own(self):
         with self.ck.STATE_LOCK:
@@ -329,7 +329,7 @@ class ItsUnit(Base):
 
     def test_it_is_a_switch_target_a_unit_the_page_may_drive_and_a_lane_it_prepares(self):
         self.assertIn(U, self.ck.SERVING_UNITS)
-        self.assertEqual(self.ck.ACTIONS["switch"]["params"]["target"][-1], "nemotron")
+        self.assertEqual(self.ck.ACTIONS["switch"]["params"]["target"][-2:], ["nemotron", "nemotron-super"])
         self.assertEqual(self.ck.target_lane("nemotron"), "nemotron")
         self.assertEqual(self.ck.TARGET_PIN["nemotron"], "NEMOTRON_BOLT_REV")
         self.assertIn("NEMOTRON_BOLT_REV", self.ck.rg.PIN_MODELS)

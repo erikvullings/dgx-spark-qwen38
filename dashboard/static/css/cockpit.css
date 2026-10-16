@@ -46,7 +46,7 @@
   /* memory that flows, and the pool's quiet parts: page cache (steel), system and apps (slate) */
   --mem:#7c9cff; --mem-lo:#4c6fe0; --steel:rgba(124,156,255,.35); --slate:rgba(255,255,255,.18);
   /* each lane's own hue: its share of the pool, the pool's legend, the head's gauge */
-  --lane-27b:#8c6cff; --lane-flash:#38bdf8; --lane-image:#f472b6; --lane-video:#fb923c; --lane-kolibri:#34d399; --lane-nemotron:#84cc16;
+  --lane-27b:#8c6cff; --lane-flash:#38bdf8; --lane-image:#f472b6; --lane-video:#fb923c; --lane-kolibri:#34d399; --lane-nemotron:#84cc16; --lane-nemotron-super:#eab308;
   /* what floats over the page (a sheet, the dock, a toast, the phone's drawer) is opaque */
   --raised:#1d164d; --raised-hi:#271e62;
   --shadow-1:0 1px 0 rgba(255,255,255,.06) inset, 0 18px 40px -24px rgba(5,2,20,.7);

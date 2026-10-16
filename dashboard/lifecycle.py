@@ -126,7 +126,7 @@ def parse_kolibri_boot_log(lines: list[str]) -> dict:
     return {"stage": stage, "done": done, "fired_up": fired, "detail": detail}
 
 
-# ── The Nemotron lane speaks vLLM too ───────────────────────────────────────────
+# ── The Nemotron lanes speak vLLM too ───────────────────────────────────────────
 # Bolt's boot on the vLLM nightly writes Kolibri's lines (the reference box, 2026-10-15), with a
 # drafter's after the model's: its 90 checkpoint shards and "Loading weights took", the drafter's
 # one shard and its own "Loading weights took", then "Model loading took" for the two. Read with
@@ -423,23 +423,25 @@ TRANSITIONAL = BUSY_STATES - {"ready", "degraded", "orphan", "wedged"}
 # livelock this whole module exists to prevent. The video lane is one of them too:
 # about 116 GiB of weights by measured components (48.09 + 61.73 + 0.56 + 5.2,
 # docs/video-lane.md), for the same reason. So is the Kolibri lane: 73.6 GiB of weights
-# (42.8 for its NVFP4 variant) and a KV cache beside them; and the Nemotron lane, 24.1 GiB of
-# weights and a KV cache set by its memory share, 85 GiB in all.
+# (42.8 for its NVFP4 variant) and a KV cache beside them; the Nemotron lane, 24.1 GiB of
+# weights and a KV cache set by its memory share, 85 GiB in all; and the Nemotron Super lane,
+# 70 GiB of weights, 91 in all at its share.
 ENGINE_UNITS = ("qwen38-sglang.service", "qwen38-flash.service",
                 "qwen38-image.service", "qwen38-video.service", "qwen38-kolibri.service",
-                "qwen38-nemotron.service")
+                "qwen38-nemotron.service", "qwen38-nemotron-super.service")
 IMAGE_UNIT = "qwen38-image.service"
 VIDEO_UNIT = "qwen38-video.service"
 KOLIBRI_UNIT = "qwen38-kolibri.service"
 NEMOTRON_UNIT = "qwen38-nemotron.service"
+NEMOTRON_SUPER_UNIT = "qwen38-nemotron-super.service"
 # The SGLang engines that serve text on ENGINE_BASE. Every probe, guard and belt that talks
 # to that port (the generation canary, the pool guard, the wedge autoheal) is about these
 # and only these: with a diffusion lane serving, :30000 is closed, and asking "is an
 # engine ready" instead sent the canary a chat completion to a dead port every 90 s. The
 # Kolibri lane serves text on that port too, from vLLM, which none of those belts know
 # (its routes, its log and its model names are not SGLang's): the cockpit follows it on
-# its own facts, as it does the image and the video lanes. So does the Nemotron lane.
-TEXT_UNITS = tuple(u for u in ENGINE_UNITS if u not in (IMAGE_UNIT, VIDEO_UNIT, KOLIBRI_UNIT, NEMOTRON_UNIT))
+# its own facts, as it does the image and the video lanes. So do the Nemotron lanes.
+TEXT_UNITS = tuple(u for u in ENGINE_UNITS if u not in (IMAGE_UNIT, VIDEO_UNIT, KOLIBRI_UNIT, NEMOTRON_UNIT, NEMOTRON_SUPER_UNIT))
 
 
 def blocked_reasons(action: str, params: dict, states: dict) -> list[str]:
@@ -958,7 +960,8 @@ def guard_verdict(zombies: dict, guard: dict, override_env: bool | None) -> tupl
 
 # opencode default model vs the lane actually serving (the cockpit panel's verdict).
 LANE_PROVIDER = {"qwen38-sglang.service": "qwen38", "qwen38-flash.service": "flashnext",
-                 "qwen38-kolibri.service": "kolibri", "qwen38-nemotron.service": "nemotron"}
+                 "qwen38-kolibri.service": "kolibri", "qwen38-nemotron.service": "nemotron",
+                 "qwen38-nemotron-super.service": "nemotron-super"}
 
 
 def opencode_default_follows(default_model, states: dict) -> tuple:

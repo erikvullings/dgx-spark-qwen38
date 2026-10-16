@@ -97,18 +97,19 @@ MASKED_FIELDS = {"api_key", "admin_api_key"}
 
 UNITS = ("qwen38-sglang.service", "qwen38-flash.service", "qwen38-image.service",
          "qwen38-video.service", "qwen38-kolibri.service", "qwen38-nemotron.service",
-         "qwen38-keepalive.service")
+         "qwen38-nemotron-super.service", "qwen38-keepalive.service")
 JOURNAL_UNITS = UNITS + (AGENT_UNIT,)   # what the Logs tab may read (UNITS carries the image, video, Kolibri and Nemotron lanes)
 # The SGLang text engines' containers: what their scheduler lines and their abort contract
 # are read from. The Kolibri and Nemotron lanes' vLLM writes neither, so they are only in
 # CONTAINERS, the list the Logs tab, the diagnostics bundle and the container stats read.
 SGL_CONTAINERS = ("qwen38-sglang", "qwen38-flash")
-CONTAINERS = SGL_CONTAINERS + ("qwen38-kolibri", "qwen38-nemotron")
+CONTAINERS = SGL_CONTAINERS + ("qwen38-kolibri", "qwen38-nemotron", "qwen38-nemotron-super")
 
 UNIT2CONT = {"qwen38-sglang.service": "qwen38-sglang",
              "qwen38-flash.service": "qwen38-flash",
              "qwen38-kolibri.service": "qwen38-kolibri",
-             "qwen38-nemotron.service": "qwen38-nemotron"}
+             "qwen38-nemotron.service": "qwen38-nemotron",
+             "qwen38-nemotron-super.service": "qwen38-nemotron-super"}
 HISTORY_FILE_NAME = "cockpit-history.json"
 
 EVENTS: deque = deque(maxlen=200)
@@ -566,13 +567,26 @@ def kolibri_engine_state(unit: str, *, active: str, sub: str, prev_state: str | 
     return st, boot, running
 
 
-# ── The Nemotron lane: vLLM on the text port, as the Kolibri lane ───────────────
+# ── The Nemotron lanes: vLLM on the text port, as the Kolibri lane ──────────────
 # The same engine (a vLLM nightly, with b12x), so the same routes, the same /metrics and the same
 # boot lines (lifecycle.parse_nemotron_boot_log); and a drafter, whose acceptance its /metrics
-# counts, which the Traffic view shows as it shows the Qwen lanes' (measured 2026-10-15).
+# counts, which the Traffic view shows as it shows the Qwen lanes' (measured 2026-10-15). Two lanes
+# of that family: Bolt (nemotron) and Super VL (nemotron-super), each its own unit and container,
+# one image for the two (install-nemotron-super.sh says why).
 NEMOTRON_UNIT = "qwen38-nemotron.service"
 NEMOTRON_UNIT_PATH = Path("/etc/systemd/system/qwen38-nemotron.service")
+NEMOTRON_SUPER_UNIT = "qwen38-nemotron-super.service"
+NEMOTRON_SUPER_UNIT_PATH = Path("/etc/systemd/system/qwen38-nemotron-super.service")
+# each lane's container, lane, served model and precision, by unit: the one table of the two lanes
+# (Bolt's experts in IQ2_XXS, its Mamba layers NVFP4, the rest Q8_0; Super VL in NVFP4)
+NEMOTRON_LANES = {NEMOTRON_UNIT: ("qwen38-nemotron", "nemotron", "nemotron-3.5-bolt", "iq2_xxs"),
+                  NEMOTRON_SUPER_UNIT: ("qwen38-nemotron-super", "nemotron-super", "nemotron-3.5-super-vl", "nvfp4")}
 NEMOTRON_READY_ENTER: dict = {}
+
+
+def nemotron_unit_path(unit: str) -> Path:
+    """A Nemotron lane's unit file, read where the module says it is now (tests move it)."""
+    return NEMOTRON_SUPER_UNIT_PATH if unit == NEMOTRON_SUPER_UNIT else NEMOTRON_UNIT_PATH
 NEMOTRON_CANNOT = {
     "flush_cache": "The Nemotron lane has no cache flush route: vLLM evicts its prefix cache by itself.",
     "abort_all": "The Nemotron lane has no route that aborts its generations: stopping the lane stops them.",
@@ -585,9 +599,11 @@ SPEC_WINDOW_S = 20.0
 
 
 def nemotron_serving() -> bool:
-    """True while the Nemotron lane holds the text port (from its boot to its stop)."""
+    """True while a Nemotron lane holds the text port (from its boot to its stop). Which one, the
+    engine says (nemotron_engine_info)."""
     with LIFE_LOCK:
-        return (LIFE.get("states") or {}).get(NEMOTRON_UNIT) in lc.BUSY_STATES
+        states = LIFE.get("states") or {}
+        return any(states.get(u) in lc.BUSY_STATES for u in NEMOTRON_LANES)
 
 
 def spec_accept_len(accepted: float, drafts: float, now: float) -> float | None:
@@ -610,15 +626,16 @@ def nemotron_load(timeout: float = 3.0):
              "accept_len": spec_accept_len(f["spec_accepted"], f["spec_drafts"], time.time())}]
 
 
-def _nemotron_log() -> list[str]:
+def _nemotron_log(container: str = "qwen38-nemotron") -> list[str]:
     """The lane's container log: a new container at every start, so it is this boot's."""
-    return run(["docker", "logs", "--tail", "300", "qwen38-nemotron"], timeout=6, merge_err=True).splitlines()
+    return run(["docker", "logs", "--tail", "300", container], timeout=6, merge_err=True).splitlines()
 
 
 def nemotron_engine_state(unit: str, *, active: str, sub: str, prev_state: str | None,
                           enter_key: str) -> tuple:
-    """(state, boot, running) for the Nemotron lane, from its own facts, as the Kolibri lane's."""
-    running = bool(run(["docker", "ps", "-q", "-f", "name=^qwen38-nemotron$"]).strip())
+    """(state, boot, running) for a Nemotron lane, from its own facts, as the Kolibri lane's."""
+    container = NEMOTRON_LANES[unit][0]
+    running = bool(run(["docker", "ps", "-q", "-f", f"name=^{container}$"]).strip())
     healthy = running and kolibri_healthy()          # vLLM's /health, on the same port
     UNHEALTHY_TICKS[unit] = 0 if healthy else UNHEALTHY_TICKS.get(unit, 0) + 1
     served_here = NEMOTRON_READY_ENTER.get(unit) == enter_key and enter_key != "0"
@@ -628,7 +645,7 @@ def nemotron_engine_state(unit: str, *, active: str, sub: str, prev_state: str |
             boot = {"stage": "warming-up", "fired_up": True, "done": list(lc.NEMOTRON_STAGES)}
             healthy = UNHEALTHY_TICKS[unit] < 3
         else:
-            boot = lc.parse_nemotron_boot_log(_nemotron_log())
+            boot = lc.parse_nemotron_boot_log(_nemotron_log(container))
     st = lc.derive_state(unit_active=active, unit_sub=sub, container_running=running,
                          healthy=healthy, boot=boot)
     if st["state"] == "degraded" and prev_state not in ("ready", "degraded"):
@@ -807,11 +824,12 @@ def collect_engine_info():
             "served_target": served_target}
 
 
-def kolibri_engine_info():
+def kolibri_engine_info(models: list | None = None):
     """The engine panel's facts for the Kolibri lane, in the names SGLang's /server_info
     gives them: what it serves (/v1/models), its KV cache and memory share (/metrics), and
-    its version (/version)."""
-    models = http_json(ENGINE_BASE + "/v1/models", timeout=10).get("data") or [{}]
+    its version (/version). models: /v1/models when the caller has just read it."""
+    if models is None:
+        models = http_json(ENGINE_BASE + "/v1/models", timeout=10).get("data") or [{}]
     with urllib.request.urlopen(ENGINE_BASE + "/metrics", timeout=10) as r:
         text = r.read(2_000_000).decode("utf-8", "replace")
     facts = vllm_metrics_facts(text)
@@ -831,9 +849,20 @@ def kolibri_engine_info():
     return {"node_id": "local", "info": slim, "prompt_ceiling_tokens": 0, "served_target": target}
 
 
-def nemotron_engine_info():
-    """The engine panel's facts for the Nemotron lane, read as the Kolibri lane's are."""
-    models = http_json(ENGINE_BASE + "/v1/models", timeout=10).get("data") or [{}]
+def nemotron_unit_serving(models: list) -> str | None:
+    """The Nemotron lane's unit whose model the engine serves (its /v1/models), by NEMOTRON_LANES:
+    the name exactly, never a guess (a name of neither lane is neither lane's)."""
+    served = str((models or [{}])[0].get("id") or "")
+    return next((u for u, lane in NEMOTRON_LANES.items() if lane[2] == served), None)
+
+
+def nemotron_engine_info(models: list | None = None):
+    """The engine panel's facts for a Nemotron lane, read as the Kolibri lane's are: which one, by
+    the model its engine serves; its precision and its unit's draft length, that lane's. models: the
+    engine's /v1/models when the caller has just read it (read once, not twice: review, 2026-10-16)."""
+    if models is None:
+        models = http_json(ENGINE_BASE + "/v1/models", timeout=10).get("data") or [{}]
+    unit = nemotron_unit_serving(models)
     with urllib.request.urlopen(ENGINE_BASE + "/metrics", timeout=10) as r:
         text = r.read(2_000_000).decode("utf-8", "replace")
     facts = vllm_metrics_facts(text)
@@ -841,17 +870,17 @@ def nemotron_engine_info():
     labels = dict(re.findall(r'(\w+)="([^"]*)"', cfg.group(1))) if cfg else {}
     version = (http_json(ENGINE_BASE + "/version", timeout=5) or {}).get("version")
     root = models[0].get("root") or ""
-    target = "nemotron" if root else None
+    target = NEMOTRON_LANES[unit][1] if unit and root else None
     slim = {"model_path": models[0].get("root"), "served_model_name": models[0].get("id"),
             "context_length": models[0].get("max_model_len"),
             "max_total_num_tokens": facts["pool"] or None,
             "kv_cache_dtype": labels.get("cache_dtype"),
             "mem_fraction_static": float(labels["gpu_memory_utilization"]) if labels.get("gpu_memory_utilization") else None,
-            # NVIDIA's mixed precision: the experts IQ2_XXS, the Mamba layers NVFP4, the rest Q8_0
-            "quantization": "iq2_xxs" if target else None,
+            "quantization": NEMOTRON_LANES[unit][3] if target else None,
             "speculative_algorithm": "LiLiCorr (DFlash)" if target else None,
             # its draft length, from the unit that started it (the engine does not publish it)
-            "speculative_num_draft_tokens": _unit_int(NEMOTRON_UNIT_PATH, r"--speculative-config\.num_speculative_tokens (\d+)") if target else None,
+            "speculative_num_draft_tokens": _unit_int(nemotron_unit_path(unit),
+                                                      r"--speculative-config\.num_speculative_tokens (\d+)") if target else None,
             "version": f"vLLM {version}" if version else None}
     return {"node_id": "local", "info": slim, "prompt_ceiling_tokens": 0, "served_target": target}
 
@@ -867,9 +896,9 @@ def _unit_int(path: Path, pattern: str) -> int | None:
 
 def vllm_engine_info():
     """A vLLM engine's facts read before the lifecycle says which lane it is: by the name it
-    serves, the Nemotron lane's or else the Kolibri lane's."""
+    serves, a Nemotron lane's or else the Kolibri lane's."""
     models = http_json(ENGINE_BASE + "/v1/models", timeout=10).get("data") or [{}]
-    return nemotron_engine_info() if str(models[0].get("id") or "").startswith("nemotron-") else kolibri_engine_info()
+    return nemotron_engine_info(models) if nemotron_unit_serving(models) else kolibri_engine_info(models)
 
 
 CANARY: dict = {"fails": 0, "last_ok": None, "last_err": "", "latency": None}
@@ -953,7 +982,7 @@ def collect_canary():
         # vLLM refuses the probe's model name, and its own /health already answers for it
         return {"node_id": "local", **CANARY, "skipped": True,
                 "why": "the Kolibri lane is checked by vLLM's own /health, not by a generation"}
-    if not ready and states.get(NEMOTRON_UNIT) in ("ready", "degraded"):
+    if not ready and any(states.get(u) in ("ready", "degraded") for u in NEMOTRON_LANES):
         return {"node_id": "local", **CANARY, "skipped": True,
                 "why": "the Nemotron lane is checked by vLLM's own /health, not by a generation"}
     why = ("this cockpit is a dry run" if DRY_RUN else "no text engine is ready" if not ready
@@ -1317,7 +1346,7 @@ def collect_opencode():
         out[key]["default"] = cfg.get("model")
         if key == "real":
             for prov, pv in (cfg.get("provider") or {}).items():
-                if prov not in ("qwen38", "flashnext", "kolibri", "nemotron"):
+                if prov not in ("qwen38", "flashnext", "kolibri", "nemotron", "nemotron-super"):
                     continue
                 for mid, mv in (pv.get("models") or {}).items():
                     lim = mv.get("limit") or {}
@@ -1337,7 +1366,7 @@ def collect_opencode():
     out["fit"] = None
     if pool and served:
         prov = {"qwen3.8-27b": "qwen38", "qwen3.8-flash-next": "flashnext", "kolibri-1": "kolibri",
-                "nemotron-3.5-bolt": "nemotron"}.get(served)
+                "nemotron-3.5-bolt": "nemotron", "nemotron-3.5-super-vl": "nemotron-super"}.get(served)
         lim = (out["real"]["limits"] or {}).get(f"{prov}/{served}") if prov else None
         if lim and lim.get("context"):
             ctx, outp = int(lim["context"]), int(lim.get("output") or 0)
@@ -1606,15 +1635,15 @@ def unit_target(unit: str) -> dict:
         model = m.group(1) if m else None
         target = ("kolibri-nvfp4" if model and "NVFP4" in model.upper() else "kolibri") if model else None
         return {"model": model, "target": target}
-    if unit == NEMOTRON_UNIT:
-        # one checkpoint today, named in its unit as <repo> --revision <sha>
+    if unit in NEMOTRON_LANES:
+        # one checkpoint for each lane, named in its unit as <repo> --revision <sha>
         try:
-            text = NEMOTRON_UNIT_PATH.read_text(errors="replace")
+            text = nemotron_unit_path(unit).read_text(errors="replace")
         except OSError:
             return {"model": None, "target": None}
         m = re.search(r"(\S+) --revision [0-9a-f]{40}", text)
         model = m.group(1) if m else None
-        return {"model": model, "target": "nemotron" if model else None}
+        return {"model": model, "target": NEMOTRON_LANES[unit][1] if model else None}
     if unit == "qwen38-video.service":
         # one checkpoint, one target, same rule as the image lane
         model = _video_unit_flag("--model-path", "MiniMaxAI/MiniMax-H3") \
@@ -1711,12 +1740,12 @@ def collect_lifecycle():
         is_image = unit == lc.IMAGE_UNIT
         is_video = unit == lc.VIDEO_UNIT
         is_kolibri = unit == lc.KOLIBRI_UNIT
-        is_nemotron = unit == lc.NEMOTRON_UNIT
+        is_nemotron = unit in (lc.NEMOTRON_UNIT, lc.NEMOTRON_SUPER_UNIT)
         if (is_image or is_video) and not (IMAGE_UNIT_PATH.exists() if is_image else VIDEO_UNIT_PATH.exists()):
             continue                    # not installed: no card, no pill, no gate
         if is_kolibri and not KOLIBRI_UNIT_PATH.exists():
             continue
-        if is_nemotron and not NEMOTRON_UNIT_PATH.exists():
+        if is_nemotron and not nemotron_unit_path(unit).exists():
             continue
         # the lanes the cockpit follows on their own facts, not the SGLang text belts
         own_facts = is_image or is_video or is_kolibri or is_nemotron
@@ -2171,7 +2200,7 @@ def lane_prepared(lane: str):
     less to update a lane whole (its runtime begun: a venv, an image); this asks what a Load
     needs. None when the lane is not installed (no unit, no launcher)."""
     unit = {"image": IMAGE_UNIT_PATH, "video": VIDEO_UNIT_PATH, "kolibri": KOLIBRI_UNIT_PATH,
-            "nemotron": NEMOTRON_UNIT_PATH,
+            "nemotron": NEMOTRON_UNIT_PATH, "nemotron-super": NEMOTRON_SUPER_UNIT_PATH,
             "flash": UNIT_PATHS["qwen38-flash.service"], "27b": UNIT_PATHS["qwen38-sglang.service"]}[lane]
     try:
         text = unit.read_text(errors="replace")
@@ -2191,8 +2220,9 @@ def lane_prepared(lane: str):
             return Path(waits.group(1)).stat().st_size > 0     # [ -s ]: an empty one is skipped
         except OSError:
             return False
-    if lane in ("kolibri", "nemotron"):
-        m = re.search(rf"qwen38-{lane}:\S+", text)
+    if lane in ("kolibri", "nemotron", "nemotron-super"):
+        # the two Nemotron lanes run the one image the Bolt lane builds
+        m = re.search(rf"qwen38-{'nemotron' if lane.startswith('nemotron') else lane}:\S+", text)
         return bool(m) and run(["docker", "image", "inspect", "--format", "{{.Id}}", m.group(0)],
                                timeout=10).strip().startswith("sha256:")
     m = re.search(r"^WorkingDirectory=(.+)$", text, re.M)
@@ -2207,25 +2237,28 @@ def lane_prepared(lane: str):
 def collect_lanes_ready():
     """30 s tier: which side lanes are prepared, for the Load journey (it builds a lane's
     runtime first when it is not)."""
-    return {lane: lane_prepared(lane) for lane in ("image", "video", "kolibri", "nemotron", "flash", "27b")}
+    return {lane: lane_prepared(lane) for lane in ("image", "video", "kolibri", "nemotron", "nemotron-super", "flash", "27b")}
 
 
 UNIT_OF_LANE = {"image": "qwen38-image.service", "video": "qwen38-video.service", "kolibri": KOLIBRI_UNIT,
-                "nemotron": NEMOTRON_UNIT,
+                "nemotron": NEMOTRON_UNIT, "nemotron-super": NEMOTRON_SUPER_UNIT,
                 "flash": "qwen38-flash.service", "27b": "qwen38-sglang.service"}
 
 
-def served_snapshot(text: str, model: str, allow=None):
+def served_snapshot(text: str, model: str, allow=None, rev: str | None = None):
     """(state, snapshot) of the checkpoint a unit or launcher serves: its model at the revision
-    it names (--revision), or the one refs/main names (HF_HUB_OFFLINE), in the cache it reads
-    (its HF_HOME or its mount, ~/.cache/huggingface when it names none): complete
-    (registry.snapshot_complete, for what the lane serves), incomplete or absent. Another
-    lane's cache, where the same model may be whole, is not the one this unit starts from."""
-    rev = re.search(r"--revision\s+([0-9a-f]{40})\b", text)
+    it names (--revision, or rev for another checkpoint it names, a drafter), or the one refs/main
+    names (HF_HUB_OFFLINE), in the cache it reads (its HF_HOME or its mount,
+    ~/.cache/huggingface when it names none): complete (registry.snapshot_complete, for what the
+    lane serves), incomplete or absent. Another lane's cache, where the same model may be whole,
+    is not the one this unit starts from."""
+    if rev is None:
+        m = re.search(r"--revision\s+([0-9a-f]{40})\b", text)
+        rev = m.group(1) if m else None
     state, where = "absent", None
     for d in rg.cache_dirs([text]) or [str(Path.home() / ".cache/huggingface")]:
         repo_dir = Path(d) / "hub" / ("models--" + model.replace("/", "--"))
-        r = rev.group(1) if rev else None
+        r = rev
         if not r:
             try:
                 r = (repo_dir / "refs" / "main").read_text().strip()
@@ -2255,7 +2288,7 @@ def lane_startable(lane: str):
         return built
     unit = UNIT_OF_LANE[lane]
     path = {"image": IMAGE_UNIT_PATH, "video": VIDEO_UNIT_PATH, "kolibri": KOLIBRI_UNIT_PATH,
-            "nemotron": NEMOTRON_UNIT_PATH}.get(lane) or UNIT_PATHS[unit]
+            "nemotron": NEMOTRON_UNIT_PATH, "nemotron-super": NEMOTRON_SUPER_UNIT_PATH}.get(lane) or UNIT_PATHS[unit]
     try:
         text = path.read_text(errors="replace")
     except OSError:
@@ -2284,6 +2317,13 @@ def lane_startable(lane: str):
     state, snap = served_snapshot(text, model, allow)
     if state != "complete":
         return False
+    # a Nemotron lane loads its drafter with the checkpoint, from the cache, offline: both whole
+    # (found on the reference box, 2026-10-16)
+    draft = re.search(r"--speculative-config\.model\s+(\S+)", text)
+    drev = re.search(r"--speculative-config\.revision\s+([0-9a-f]{40})\b", text)
+    if draft and drev and not draft.group(1).startswith(("/", ".")):
+        if served_snapshot(text, draft.group(1), rev=drev.group(1))[0] != "complete":
+            return False
     if lane == "27b":
         try:
             cfg = json.loads((snap / "config.json").read_text())
@@ -2298,7 +2338,7 @@ def lane_startable(lane: str):
 @guard
 def collect_lanes_startable():
     """30 s tier: which side lanes can start as installed (their Start), lane_startable."""
-    return {lane: lane_startable(lane) for lane in ("image", "video", "kolibri", "nemotron", "flash", "27b")}
+    return {lane: lane_startable(lane) for lane in ("image", "video", "kolibri", "nemotron", "nemotron-super", "flash", "27b")}
 
 TIERS = [
     (1.0, {"machine": collect_machine, "engine_fast": collect_engine_fast, "job": collect_jobs}),
@@ -2367,7 +2407,8 @@ AUDIT_LOG = CONFIG_DIR / "cockpit-audit.log"
 # text lane (each unit's own Conflicts=), which is why the modal says so before it runs.
 SERVING_UNITS = {"qwen38-sglang.service", "qwen38-flash.service",
                  "qwen38-keepalive.service", "qwen38-image.service",
-                 "qwen38-video.service", "qwen38-kolibri.service", "qwen38-nemotron.service", AGENT_UNIT}
+                 "qwen38-video.service", "qwen38-kolibri.service", "qwen38-nemotron.service",
+                 "qwen38-nemotron-super.service", AGENT_UNIT}
 UNIT_VERBS = {"start", "stop", "restart"}
 
 def _lane_unit_texts() -> list[str]:
@@ -2375,7 +2416,7 @@ def _lane_unit_texts() -> list[str]:
     serves), '' for one not installed."""
     texts = []
     for path in (UNIT_PATHS["qwen38-sglang.service"], UNIT_PATHS["qwen38-flash.service"],
-                 KOLIBRI_UNIT_PATH, NEMOTRON_UNIT_PATH, IMAGE_UNIT_PATH, VIDEO_UNIT_PATH):
+                 KOLIBRI_UNIT_PATH, NEMOTRON_UNIT_PATH, NEMOTRON_SUPER_UNIT_PATH, IMAGE_UNIT_PATH, VIDEO_UNIT_PATH):
         try:
             texts.append(path.read_text(errors="replace"))
         except OSError:
@@ -2397,7 +2438,7 @@ ACTIONS = {
         "danger": "medium",
         "params": {"target": ["stock", "uncensored", "fp8", "uncensored-fp8",
                               "flash", "flash-nvda", "flash-uncensored", "image", "image-turbo",
-                              "video", "kolibri", "kolibri-nvfp4", "nemotron"]},
+                              "video", "kolibri", "kolibri-nvfp4", "nemotron", "nemotron-super"]},
         "argv": lambda p: ["bash", str(REPO_DIR / "switch-model.sh"), p["target"]],
         # A switch can download a whole checkpoint: 124 GB for flash take about 23 min at
         # the 89 MB/s the reference box gets, so 30 min failed it on any slower link, and
@@ -2478,6 +2519,8 @@ def target_lane(target: str) -> str:
         return "video"
     if target.startswith("kolibri"):
         return "kolibri"
+    if target == "nemotron-super":
+        return "nemotron-super"
     if target.startswith("nemotron"):
         return "nemotron"
     if target.startswith("flash"):
@@ -2503,7 +2546,12 @@ TARGET_PIN = {"stock": "STOCK_REV", "uncensored": "UNC_REV", "fp8": "FP8_REV", "
               "flash": "FLASH_REV", "flash-nvda": "FLASH_NVDA_REV", "flash-uncensored": "FLASH_UNC_REV",
               "image": "IMAGE_MODEL_PIN_REV", "image-turbo": "IMAGE_TURBO_PIN_REV",
               "video": "VIDEO_MODEL_PIN_REV", "kolibri": "KOLIBRI_FP8_REV", "kolibri-nvfp4": "KOLIBRI_NVFP4_REV",
-              "nemotron": "NEMOTRON_BOLT_REV"}
+              "nemotron": "NEMOTRON_BOLT_REV", "nemotron-super": "NEMOTRON_SUPER_REV"}
+# The Nemotron lanes load a drafter with the checkpoint, and their Download (the switch's --fetch)
+# fetches both: Library's state of such a target counts its drafter too. Bolt's read whole with its
+# drafter missing, which its Load then fetched (found on the reference box, 2026-10-15). The 27B's
+# DFlash2 draft belongs to its lane's preparation instead (lane_prepared), not to a target.
+TARGET_DRAFT_PIN = {"nemotron": "NEMOTRON_BOLT_DRAFT_REV", "nemotron-super": "NEMOTRON_SUPER_DRAFT_REV"}
 
 
 def target_unit(target: str) -> Path:
@@ -2514,6 +2562,8 @@ def target_unit(target: str) -> Path:
         return VIDEO_UNIT_PATH
     if target.startswith("kolibri"):
         return KOLIBRI_UNIT_PATH
+    if target == "nemotron-super":
+        return NEMOTRON_SUPER_UNIT_PATH
     if target.startswith("nemotron"):
         return NEMOTRON_UNIT_PATH
     if target.startswith("flash"):
@@ -2721,8 +2771,9 @@ def served_model_name() -> str:
         return "qwen3.8-flash-next"
     if states.get(KOLIBRI_UNIT) not in (None, "stopped", "failed"):
         return "kolibri-1"
-    if states.get(NEMOTRON_UNIT) not in (None, "stopped", "failed"):
-        return "nemotron-3.5-bolt"
+    for unit, (_, _, served, _) in NEMOTRON_LANES.items():
+        if states.get(unit) not in (None, "stopped", "failed"):
+            return served
     return "qwen3.8-27b"
 
 
@@ -2757,9 +2808,9 @@ def systemone_available(max_age: float = 60.0) -> dict:
         return {"available": False, "lane": "", "status": None,
                 "reason": "the Kolibri lane is serving: System One is answered by the 27B or the flash "
                           "lane (its options are measured on the Qwen tokenizer), so load one of them"}
-    if text is None and states.get(NEMOTRON_UNIT) in lc.BUSY_STATES:
+    if text is None and any(states.get(u) in lc.BUSY_STATES for u in NEMOTRON_LANES):
         return {"available": False, "lane": "", "status": None,
-                "reason": "the Nemotron lane is serving: System One is answered by the 27B or the flash "
+                "reason": "a Nemotron lane is serving: System One is answered by the 27B or the flash "
                           "lane (its options are measured on the Qwen tokenizer), so load one of them"}
     key = (text, served_model_name() if text else "")
     with SYSTEMONE_LOCK:
@@ -3064,7 +3115,7 @@ def image_status() -> dict:
     # and saying so beats guessing "stopped" at a lane that may be serving
     out["state"] = states.get(IMAGE_UNIT) or "unknown"
     out["available"] = out["state"] in ("ready", "degraded")
-    out["llm_lane"] = next((u for u in lc.TEXT_UNITS + (KOLIBRI_UNIT, NEMOTRON_UNIT) if states.get(u) in lc.BUSY_STATES), "")
+    out["llm_lane"] = next((u for u in lc.TEXT_UNITS + (KOLIBRI_UNIT, NEMOTRON_UNIT, NEMOTRON_SUPER_UNIT) if states.get(u) in lc.BUSY_STATES), "")
     if out["available"]:
         out["progress"] = image_progress(serving=True)
     return out
@@ -3629,7 +3680,7 @@ def video_status() -> dict:
     # yet, and saying so beats guessing "stopped" at a lane that may be serving
     out["state"] = states.get(VIDEO_UNIT) or "unknown"
     out["available"] = out["state"] in ("ready", "degraded")
-    out["llm_lane"] = next((u for u in lc.TEXT_UNITS + (KOLIBRI_UNIT, NEMOTRON_UNIT) if states.get(u) in lc.BUSY_STATES), "")
+    out["llm_lane"] = next((u for u in lc.TEXT_UNITS + (KOLIBRI_UNIT, NEMOTRON_UNIT, NEMOTRON_SUPER_UNIT) if states.get(u) in lc.BUSY_STATES), "")
     if out["available"]:
         out["progress"] = dict(VIDEO_LAST) if VIDEO_LAST.get("status") not in ("completed", "failed", "") else {}
         out["run"] = video_run_now()
@@ -4325,6 +4376,7 @@ def job_diag_bundle(job: Job):
         (tdp / "journal-video.txt").write_text(run(["journalctl", "-u", VIDEO_UNIT, "-n", "300", "--no-pager", "-o", "short-iso"], timeout=15))
         (tdp / "journal-kolibri.txt").write_text(run(["journalctl", "-u", KOLIBRI_UNIT, "-n", "300", "--no-pager", "-o", "short-iso"], timeout=15))
         (tdp / "journal-nemotron.txt").write_text(run(["journalctl", "-u", NEMOTRON_UNIT, "-n", "300", "--no-pager", "-o", "short-iso"], timeout=15))
+        (tdp / "journal-nemotron-super.txt").write_text(run(["journalctl", "-u", NEMOTRON_SUPER_UNIT, "-n", "300", "--no-pager", "-o", "short-iso"], timeout=15))
         (tdp / "journal-opencode-web.txt").write_text(run(["journalctl", "-u", AGENT_UNIT, "-n", "200", "--no-pager", "-o", "short-iso"], timeout=15))
         for cont in CONTAINERS:
             (tdp / f"docker-{cont}.txt").write_text(run(["docker", "logs", "--tail", "600", cont], timeout=15, merge_err=True))
@@ -4696,10 +4748,9 @@ def registry_snapshot(max_age: float = 300.0) -> dict:
             switch_text = ""
         variant = video_variant()
         targets = []
-        for t in ACTIONS["switch"]["params"]["target"]:
-            var = TARGET_PIN[t]
-            repo, rev = rg.PIN_MODELS[var], pins.get(var, "")
-            allow = rg.video_allow(switch_text, variant or "fl2va") if t == "video" else None
+
+        def ckpt_state(t, repo, rev, allow=None):
+            """complete, incomplete or absent: the checkpoint at its pin in the caches the lanes read."""
             state = "absent"
             for d in caches:
                 repo_dir = Path(d) / "hub" / ("models--" + repo.replace("/", "--"))
@@ -4714,6 +4765,18 @@ def registry_snapshot(max_age: float = 300.0) -> dict:
                     state = "complete" if rg.snapshot_complete(repo_dir / "snapshots" / r, allow) else "incomplete"
                     if state == "complete":
                         break
+            return state
+
+        for t in ACTIONS["switch"]["params"]["target"]:
+            var = TARGET_PIN[t]
+            repo, rev = rg.PIN_MODELS[var], pins.get(var, "")
+            allow = rg.video_allow(switch_text, variant or "fl2va") if t == "video" else None
+            state = ckpt_state(t, repo, rev, allow)
+            dvar = TARGET_DRAFT_PIN.get(t)
+            if dvar:
+                # whole with its drafter whole, absent with none of the two, begun otherwise
+                dstate = ckpt_state(t, rg.PIN_MODELS[dvar], pins.get(dvar, ""))
+                state = state if state == dstate else "incomplete"
             targets.append({"target": t, "repo": repo, "rev": rev, "state": state,
                             "installed": target_unit(t).exists()})
         data = {"pins": pins, "managed_repos": sorted(set(rg.PIN_MODELS.values())), "caches": caches,

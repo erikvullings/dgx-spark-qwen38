@@ -42,6 +42,7 @@ class Fetch(unittest.TestCase):
         cls.cp.KOLIBRI_UNIT_PATH = cls.units / "qwen38-kolibri.service"
         # the box's own Nemotron unit, once installed, named its real cache (found on the reference box, 2026-10-16)
         cls.cp.NEMOTRON_UNIT_PATH = cls.units / "qwen38-nemotron.service"
+        cls.cp.NEMOTRON_SUPER_UNIT_PATH = cls.units / "qwen38-nemotron-super.service"
         cls.cp.IMAGE_UNIT_PATH = cls.units / "qwen38-image.service"
         cls.cp.VIDEO_UNIT_PATH = cls.units / "qwen38-video.service"
         cls.cp.UNIT_PATHS = {"qwen38-sglang.service": cls.units / "qwen38-sglang.service",
@@ -94,6 +95,32 @@ class Fetch(unittest.TestCase):
             "[Service]\nExecStart=/x/python -m sglang.multimodal_gen.runtime.launch_server "
             "--model-path MiniMaxAI/MiniMax-H3 --model-variant fl2va\n")
         self.assertEqual(self.targets()["video"]["state"], "complete")
+
+    def test_a_nemotron_target_is_whole_with_its_drafter_whole_too(self):
+        # the two Nemotron lanes load a drafter with the checkpoint, and their Download fetches the
+        # two: Bolt's read "on disk" with its drafter missing (found on the reference box, 2026-10-15)
+        for target, model, draft in (
+                ("nemotron", "nvidia/NVIDIA-Nemotron-3.5-Bolt-74B-A9B-24GB", "nvidia/NVIDIA-Nemotron-3.5-Bolt-74B-A9B-24GB-LiLiCorr"),
+                ("nemotron-super", "nvidia/NVIDIA-Nemotron-3.5-Super-VL-120B-A12B-NVFP4",
+                 "nvidia/NVIDIA-Nemotron-3.5-Super-VL-120B-A12B-NVFP4-LiLiCorr")):
+            pin = self.cp.TARGET_PIN[target]
+            dpin = self.cp.TARGET_DRAFT_PIN[target]
+            with self.subTest(target=target):
+                self.setUp()
+                self.assertEqual(self.targets()[target]["state"], "absent")
+                self.snap(model, self.pins[pin])
+                self.assertEqual(self.targets()[target]["state"], "incomplete", "its drafter is missing")
+                self.snap(draft, self.pins[dpin], whole=False)
+                self.assertEqual(self.targets()[target]["state"], "incomplete", "its drafter is begun")
+                shutil.rmtree(self.hub / ("models--" + draft.replace("/", "--")))
+                self.snap(draft, self.pins[dpin])
+                self.assertEqual(self.targets()[target]["state"], "complete")
+                shutil.rmtree(self.hub / ("models--" + model.replace("/", "--")))
+                self.assertEqual(self.targets()[target]["state"], "incomplete", "its drafter alone")
+        # a target with no drafter of its own reads its checkpoint alone, as before
+        self.setUp()
+        self.snap("RadixArk/Qwen3.8-27B-NVFP4", self.pins["STOCK_REV"])
+        self.assertEqual(self.targets()["stock"]["state"], "complete")
 
     def test_the_action_runs_the_switch_with_fetch_and_nothing_else(self):
         code, body = self.cp.start_action("fetch", {"target": "kolibri-nvfp4"})
