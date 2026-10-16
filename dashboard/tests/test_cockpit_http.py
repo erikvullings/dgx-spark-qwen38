@@ -636,7 +636,11 @@ class ReadRoutes(Base):
         # Library's release line compared the two tags as strings, so a box ahead of the
         # newest release, as one that develops this repo is, was told an update was out
         # (found in review, 2026-10-14): the route says behind or ahead, by number, as the
-        # update banner decides it.
+        # update banner decides it. The release a box runs is the one its last install
+        # recorded (installed.json, 2026-10-17): this box ran the clone it has.
+        rec = self.cp.CONFIG_DIR / "installed.json"
+        rec.write_text(json.dumps({"schema": 1, "release": self.cp.clone_release(), "path": "full", "choices": {}}))
+        self.addCleanup(rec.unlink, missing_ok=True)
         local = self.cp.installed_release()
         seen = {}
         for latest in ("v9.9.9", "v0.0.1", local):
@@ -970,16 +974,21 @@ class UpdateCheck(Base):
             self.assertIsNone(self.cp._semver(bad), bad)
 
     def _with_latest(self, tag, installed="v1.15.0", described="v1.0.0"):
-        """`installed` is the release the checkout's CHANGELOG names; `described` is what
-        its tags say, which since v1.20.2 the check reads only when the file names none."""
+        """`installed` is the release the last install recorded in installed.json (none when
+        empty) and the one the checkout's CHANGELOG names; `described` is what its tags say,
+        which since v1.20.2 the clone's release reads only when the file names none."""
         self.cp._get_json = lambda url, timeout=5.0: {"tag_name": tag}
         real_run, real_release = self.cp.run, self.cp._release
         self.cp.run = lambda argv, **k: described if "describe" in argv else real_run(argv, **k)
         self.cp._release = lambda: installed.lstrip("v") if installed else "unknown"
+        rec = self.cp.CONFIG_DIR / "installed.json"
+        if installed:
+            rec.write_text(json.dumps({"schema": 1, "release": installed, "path": "full", "choices": {}}))
         try:
             return self.cp.collect_update()
         finally:
             self.cp.run, self.cp._release = real_run, real_release
+            rec.unlink(missing_ok=True)
 
     def test_the_release_a_box_runs_is_the_one_its_files_name_not_its_tags(self):
         """get.sh fetched main and no tag, so a box updated by the one-liner described
@@ -991,8 +1000,11 @@ class UpdateCheck(Base):
 
     def test_a_checkout_that_names_no_release_falls_back_on_its_tags(self):
         out = self._with_latest("v1.20.1", installed="", described="v1.19.0")
-        self.assertEqual(out["installed"], "v1.19.0")
-        self.assertTrue(out["behind"])
+        self.assertEqual(out["clone"], "v1.19.0")
+        # and nothing recorded what the services run: a release before v1.36.0, which
+        # claims nothing against v1.20.1 (2026-10-17)
+        self.assertEqual(out["installed"], "before v1.36.0")
+        self.assertFalse(out["behind"])
 
     def test_a_newer_published_release_is_reported_as_behind(self):
         out = self._with_latest("v1.15.2")

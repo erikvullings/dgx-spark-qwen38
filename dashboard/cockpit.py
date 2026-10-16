@@ -77,16 +77,59 @@ def _release() -> str:
 VERSION = _release()
 
 
-def installed_release():
-    """The release this checkout is, for the release check: CHANGELOG.md's first heading,
-    read now. The tags were the witness until v1.20.2, and get.sh fetched main and no tag,
-    so a box updated by the one-liner kept naming the release it was first cloned at and
-    was told an update was out for the release it ran (v1.19.0 on the reference box
-    running v1.20.1, 2026-10-01). The tags answer only when the file names no release."""
+def clone_release():
+    """The release this checkout is: CHANGELOG.md's first heading, read now. The tags were
+    the witness until v1.20.2, and get.sh fetched main and no tag, so a box updated by the
+    one-liner kept naming the release it was first cloned at and was told an update was out
+    for the release it ran (v1.19.0 on the reference box running v1.20.1, 2026-10-01). The
+    tags answer only when the file names no release."""
     rel = _release()
     if rel != "unknown":
         return "v" + rel
     return run(["git", "-C", str(REPO_DIR), "describe", "--tags", "--abbrev=0"]).strip() or None
+
+
+_CONFORMITY: dict = {}
+
+
+def _conformity():
+    """conformity.py at the root of the repo, which reads installed.json, loaded the way
+    engine-inputs.py is."""
+    if "mod" not in _CONFORMITY:
+        spec = importlib.util.spec_from_file_location("conformity_for_cockpit", REPO_DIR / "conformity.py")
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+        _CONFORMITY["mod"] = mod
+    return _CONFORMITY["mod"]
+
+
+def release_state():
+    """{installed, clone, behind_clone[, behind_clone_why]}. The release the services run is
+    the one the last ./install.sh that ended well recorded in installed.json (since v1.36.0,
+    2026-10-17), not the clone's: a git pull moves the CHANGELOG with no install at all, and
+    the cockpit then called services up to date that were not. "before v1.36.0" on a box no
+    run of v1.36.0 or later recorded. behind_clone_why: no-record, commit (the clone moved on
+    since the last run) or no-start (the last run stopped before the side lanes, the proxy
+    and the cockpit)."""
+    clone = clone_release()
+    try:
+        mod = _conformity()
+        rec = mod.load_record(CONFIG_DIR)[0]
+        first = mod.FIRST_RELEASE
+    except Exception:  # noqa: BLE001 (what cannot be read is said as unknown, never a failed panel)
+        return {"installed": "unknown", "clone": clone, "behind_clone": False}
+    head = run(["git", "-C", str(REPO_DIR), "rev-parse", "HEAD"]).strip() or None
+    lag = mod.release_lag(rec, head)
+    out = {"installed": (rec.get("release") or "unknown") if rec else "before " + first,
+           "clone": clone, "behind_clone": bool(lag)}
+    if lag:
+        out["behind_clone_why"] = lag
+    return out
+
+
+def installed_release():
+    """The release the services run (release_state)."""
+    return release_state()["installed"]
 # Dry run: every mutating action and every automatic belt is logged, audited and
 # shown exactly as usual, but nothing is executed. This is how the click-storm test
 # (tests/monkey-check.mjs) exercises the whole UI against a second cockpit instance.
@@ -1527,6 +1570,20 @@ def _semver(tag):
     return tuple(int(p or 0) for p in m.groups()) if m else None
 
 
+def _newer(there, installed) -> bool:
+    """Whether release `there` is strictly newer than `installed`, by number. "before vX", a box
+    no run of vX or later recorded, is older than vX and everything after it, and says nothing
+    against an older release (it may be that very one)."""
+    t = _semver(there)
+    if not t:
+        return False
+    if isinstance(installed, str) and installed.startswith("before "):
+        b = _semver(installed[len("before "):])
+        return bool(b and t >= b)
+    h = _semver(installed)
+    return bool(h and t > h)
+
+
 # ---- "an update changed what the serving engine runs" -------------------------------
 # An update rewrites a lane's unit (its serving command), a script the unit runs or the image
 # it names, and leaves the engine that serves running, as the installers mean to: a box keeps
@@ -1619,9 +1676,10 @@ def refresh_owed():
 
 @guard
 def collect_update():
-    """{installed, latest, behind, stale_code, stale_engines}. Every field is optional: a box
-    with no network, or one that opted out, reports what it knows and claims nothing else."""
-    out = {"installed": installed_release()}
+    """{installed, clone, behind_clone, latest, behind, stale_code, stale_engines}. Every field
+    past the first three is optional: a box with no network, or one that opted out, reports
+    what it knows and claims nothing else."""
+    out = release_state()
     stale = code_is_stale()
     if stale:
         out["stale_code"] = stale
@@ -1656,10 +1714,9 @@ def collect_update():
         except Exception:  # noqa: BLE001 (an update check must never be a failure mode)
             _RELEASE["fails"] += 1
     out["latest"] = _RELEASE["latest"]
-    here, there = _semver(out["installed"]), _semver(_RELEASE["latest"])
     # Strictly newer, never merely different: this repo is developed on a box that runs it,
     # and that box is regularly ahead of the newest tag.
-    out["behind"] = bool(here and there and there > here)
+    out["behind"] = _newer(_RELEASE["latest"], out["installed"])
     return out
 
 
@@ -4700,9 +4757,8 @@ def upstream_snapshot(max_age: float = 3600.0) -> dict:
         # Which way, by number, as the update banner decides it: the page compared the two
         # tags as strings, and told a box ahead of the newest release that an update was out
         # (found in review, 2026-10-14).
-        here, there = _semver(rel["local"]), _semver(rel.get("latest") or "")
-        rel["behind"] = bool(here and there and there > here)
-        rel["ahead"] = bool(here and there and here > there)
+        rel["behind"] = _newer(rel.get("latest") or "", rel["local"])
+        rel["ahead"] = _newer(rel["local"], rel.get("latest") or "")
         stale = code_is_stale()
         if stale:
             rel["stale_code"] = stale
