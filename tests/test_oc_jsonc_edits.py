@@ -125,13 +125,13 @@ class TheMergesReadWhatOpencodeReads(Case):
 
     def test_the_compaction_autoupdate_and_variant(self):
         self.write(CONFIG)
-        for args in (("--compaction", 170000), ("--autoupdate", "notify"),
+        for args in (("--compaction", 170000), ("--autoupdate", "false"),
                      ("qwen38", "qwen3.8-27b", "--add-variant", "lean")):
             rc, out = run(MERGE, self.path, *args)
             self.assertEqual(rc, 0, f"{args}: {out}")
         doc = jsonc(self.text())
         self.assertEqual(doc["compaction"], {"preserve_recent_tokens": 170000, "prune": False})
-        self.assertEqual(doc["autoupdate"], "notify")
+        self.assertIs(doc["autoupdate"], False)
         self.assertEqual(doc["provider"]["qwen38"]["models"]["qwen3.8-27b"]["variants"]["lean"],
                          {"chat_template_kwargs": {"reasoning_effort": "lean"}})
         self.assertCommentsKept()
@@ -213,7 +213,7 @@ class TheFileIsKept(Case):
         self.write(CONFIG)
         original = self.text()
         with mock.patch.object(m.time, "strftime", return_value="20260924-120000"):
-            for argv in ((self.path, "--autoupdate", "notify"),
+            for argv in ((self.path, "--autoupdate", "false"),
                          (self.path, "qwen38", "qwen3.8-27b", "173000", "64000"),
                          (self.path, "--compaction", "170000"),
                          (self.path, "qwen38", "qwen3.8-27b", "--add-variant", "lean")):
@@ -349,6 +349,8 @@ class TheGeneratedConfigIsWrittenOnce(unittest.TestCase):
             self.assertEqual(rc, 0, out)
             self.assertIn("unchanged", out, f"run {turn}: the generator's name was not the served one")
         self.assertEqual([p.name for p in d.iterdir() if ".bak-" in p.name], [])
+        self.assertIs(jsonc((d / "opencode.json").read_text())["autoupdate"], False,
+                      "a pinned install writes the JSON boolean: opencode refuses the string")
 
 
 if __name__ == "__main__":

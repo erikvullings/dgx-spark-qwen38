@@ -55,12 +55,16 @@ What a run does with the opencode it finds:
 | an older one elsewhere (npm, brew, bun) | `opencode upgrade <pinned>`, opencode's own upgrader, which knows how it was installed |
 | a newer one | keeps it and says so: going back a version can leave sessions a newer opencode wrote unreadable |
 
-Left alone, opencode installs its own patch releases (read out of its binary: only
-`"autoupdate": false`, `"notify"` or a minor/major release stop it), which is how two boxes
-installed a week apart end up on two versions. With the pin, the generated config and
-yours get `"autoupdate": "notify"`: opencode still announces a release, and does not
-install it itself. A stricter `false` you set is kept. The Agent view says when the
-opencode it serves is not the pinned one.
+Up to 1.18, left alone, opencode installed its own patch releases (read out of its binary:
+only `"autoupdate": false`, `"notify"` or a minor/major release stopped it), which is how
+two boxes installed a week apart ended up on two versions. 1.19 installs nothing by itself,
+but with any value other than `false` its TUI checks every 10 minutes and, once it is on
+the newest 1.x, shows "/update to upgrade to OpenCode 2.0" on its home screen; 1.18.35
+announces 2.x as soon as GitHub's latest release is one. OpenCode 2's server is not the
+1.x `opencode serve` the Agent view relays. So, with the pin, the generated config and
+yours get `"autoupdate": false`: no check and no notice (`OPENCODE_DISABLE_AUTOUPDATE=1`
+does the same for one run). The Agent view says when the opencode it serves is not the
+pinned one.
 
 `OPENCODE_PIN=0 ./install.sh` keeps whatever opencode you have and leaves `autoupdate`
 alone. `OPENCODE_VERSION=<x> OPENCODE_SHA256=<its digest>` pins another release (a
@@ -70,7 +74,7 @@ install.
 
 ## Opting out
 
-Do not want any of it? `./install.sh --no-opencode` (one-liner: `| bash -s -- --no-opencode`) installs the API only: no generated config, no `oc` launcher, and `switch-model.sh` never touches your opencode default model. The choice is remembered by later runs (marker `~/.config/qwen38/opencode.off`); `./install.sh --with-opencode` turns it back on. Your own `~/.config/opencode/opencode.json` is never rewritten in either mode: when the integration is on, the installer only merges into it the served lane's limits, its compaction block, the provider of a lane installed since, the default model when it is unset or already one of this box's (a default you pointed at another provider is yours, and stays) and, with the version pinned, `"autoupdate": "notify"`, each by a targeted edit that keeps your comments (in every form opencode accepts: `//`, `/* */`, trailing commas), your other providers and your line endings, with a dated backup first (the ten newest of each file are kept) and in one step, so a full disk leaves the file as it was.
+Do not want any of it? `./install.sh --no-opencode` (one-liner: `| bash -s -- --no-opencode`) installs the API only: no generated config, no `oc` launcher, and `switch-model.sh` never touches your opencode default model. The choice is remembered by later runs (marker `~/.config/qwen38/opencode.off`); `./install.sh --with-opencode` turns it back on. Your own `~/.config/opencode/opencode.json` is never rewritten in either mode: when the integration is on, the installer only merges into it the served lane's limits, its compaction block, the provider of a lane installed since, the default model when it is unset or already one of this box's (a default you pointed at another provider is yours, and stays) and, with the version pinned, `"autoupdate": false`, each by a targeted edit that keeps your comments (in every form opencode accepts: `//`, `/* */`, trailing commas), your other providers and your line endings, with a dated backup first (the ten newest of each file are kept) and in one step, so a full disk leaves the file as it was.
 
 What the shipped config gets right for you:
 

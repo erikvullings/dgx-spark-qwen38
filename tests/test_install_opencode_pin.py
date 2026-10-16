@@ -214,23 +214,48 @@ class TheOpencodePin(unittest.TestCase):
 
 
 class TheConfigStopsSelfUpdating(unittest.TestCase):
-    def test_the_generated_config_and_the_users_get_notify(self):
-        text = INSTALL.read_text()
-        self.assertIn('doc["autoupdate"] = "notify"', text)
-        self.assertIn('oc-merge-limits.py" "$OC_USER_CFG" --autoupdate notify', text)
+    """autoupdate false: with any other value opencode 1.19 offers OpenCode 2 on its TUI's
+    home screen once it is on the newest 1.x (1.18.35, as soon as GitHub's latest release is
+    a 2.x), and OpenCode 2's server is not the `opencode serve` the Agent tab relays."""
 
-    def test_the_merge_keeps_a_stricter_false_and_the_users_comments(self):
+    def merge(self, cfg, value="false"):
+        return subprocess.run(["python3", str(REPO / "oc-merge-limits.py"), str(cfg), "--autoupdate", value],
+                              capture_output=True, text=True)
+
+    def config(self, text):
         t = pathlib.Path(tempfile.mkdtemp(prefix="oc-au-"))
-        cfg = t / "opencode.json"
-        cfg.write_text('{\n  // mine\n  "model": "x"\n}\n')
-        run = lambda: subprocess.run(["python3", str(REPO / "oc-merge-limits.py"), str(cfg), "--autoupdate", "notify"],
-                                     capture_output=True, text=True)
-        self.assertEqual(run().returncode, 0)
-        self.assertIn('"autoupdate": "notify"', cfg.read_text())
-        self.assertIn("// mine", cfg.read_text())
-        self.assertIn("unchanged", run().stdout)
-        cfg.write_text('{"autoupdate": false}\n')
-        self.assertEqual(run().returncode, 0)
+        self.addCleanup(shutil.rmtree, t, True)
+        (t / "opencode.json").write_text(text)
+        return t / "opencode.json"
+
+    def test_the_generated_config_and_the_users_get_false(self):
+        text = INSTALL.read_text()
+        self.assertIn('doc["autoupdate"] = False', text)
+        self.assertIn('oc-merge-limits.py" "$OC_USER_CFG" --autoupdate false', text)
+        self.assertNotIn("--autoupdate notify", text)
+
+    def test_a_box_on_notify_gets_the_boolean_and_keeps_the_users_comments(self):
+        cfg = self.config('{\n  // mine\n  "model": "x",\n  "autoupdate": "notify"\n}\n')
+        r = self.merge(cfg)
+        self.assertEqual(r.returncode, 0, r.stdout)
+        text = cfg.read_text()
+        self.assertIn("// mine", text)
+        doc = json.loads("".join(ln for ln in text.splitlines(True) if "//" not in ln))
+        self.assertIs(doc["autoupdate"], False, 'the string "false" is a config opencode refuses')
+        self.assertIn("unchanged", self.merge(cfg).stdout)
+
+    def test_a_value_opencode_does_not_take_is_refused_and_nothing_written(self):
+        cfg = self.config('{"autoupdate": "notify"}\n')
+        for bad in ("False", "true", "0", ""):
+            r = self.merge(cfg, bad)
+            self.assertEqual(r.returncode, 2, (bad, r.stdout))
+            self.assertEqual(cfg.read_text(), '{"autoupdate": "notify"}\n', bad)
+        self.assertEqual([p.name for p in cfg.parent.iterdir()], ["opencode.json"], "no backup either")
+
+    def test_notify_still_keeps_a_users_false(self):
+        cfg = self.config('{"autoupdate": false}\n')
+        r = self.merge(cfg, "notify")
+        self.assertEqual(r.returncode, 0, r.stdout)
         self.assertEqual(cfg.read_text(), '{"autoupdate": false}\n')
 
 

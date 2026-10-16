@@ -4,7 +4,7 @@
 Usage: oc-merge-limits.py <target opencode.json> <provider> <model id> <context> <output> [--keep-lower]
        oc-merge-limits.py <target opencode.json> --compaction <preserve_recent_tokens>
        oc-merge-limits.py <target opencode.json> <provider> <model id> --add-variant <level>
-       oc-merge-limits.py <target opencode.json> --autoupdate notify
+       oc-merge-limits.py <target opencode.json> --autoupdate false|notify
        oc-merge-limits.py <target opencode.json> --add-providers <generated opencode.json>
        oc-merge-limits.py <target opencode.json> --remove-providers <API key file>
        oc-merge-limits.py <target opencode.json> --remove-provider <provider id>
@@ -36,11 +36,15 @@ recomputes everything after the first cleared output. Seen 2026-10-13 on a
 output in place keeps the cached prefix whole; room is made by compaction
 instead.
 
---autoupdate writes the top-level "autoupdate" key. Left unset, opencode installs its
-own patch releases (read out of its 1.18.27 binary: only `false`, `"notify"` or a
-minor/major release stop it), so the version install.sh pins drifts on its own.
-"notify" keeps the announcement and drops the self-install. A user's explicit
-`false` is stricter and is kept.
+--autoupdate writes the top-level "autoupdate" key: false, the JSON boolean (opencode's
+schema takes a boolean or "notify", not the string "false"), or "notify". install.sh
+writes false, so opencode looks for no update at all. Up to 1.18, left unset, opencode
+installed its own patch releases (read out of its 1.18.27 binary) and "notify" only
+dropped the self-install; but 1.18.35 announces 2.x as soon as GitHub's latest release
+is one, and 1.19, which installs nothing itself, offers OpenCode 2 on its TUI's home
+screen once it is on the newest 1.x, whatever the value but false (cli/upgrade.ts,
+1.19.3). OpenCode 2's server is another one than the 1.x `opencode serve` the cockpit's
+Agent tab relays. "notify" keeps a user's own false.
 
 The file is read the way opencode reads it: jsonc-parser with allowTrailingComma (read in
 the 1.18.32 binary), so // and /* */ comments anywhere outside a string and a comma before
@@ -442,15 +446,22 @@ def merge_compaction(path: str, keep: int) -> int:
     return 0
 
 
-def merge_autoupdate(path: str, value: str) -> int:
-    """Write the top-level autoupdate key, keeping everything else byte for byte."""
+# What --autoupdate takes, and the JSON value it writes for it: opencode's schema takes a
+# boolean or "notify" (packages/core/src/v1/config/config.ts), not the string "false".
+AUTOUPDATE = {"false": False, "notify": "notify"}
+
+
+def merge_autoupdate(path: str, value) -> int:
+    """Write the top-level autoupdate key (False or "notify"), keeping everything else byte
+    for byte."""
     opened = _open(path)
     if opened is None:
         return 1
     text, doc = opened
     cur = doc.get("autoupdate", None)
-    if cur == value:
-        print(f"autoupdate already {value!r}: unchanged")
+    same = lambda v: type(v) is type(value) and v == value   # a 0 or a "false" is not false
+    if same(cur):
+        print(f"autoupdate already {json.dumps(value)}: unchanged")
         return 0
     if cur is False:
         print("autoupdate is false (no update at all), which already holds the pin: unchanged")
@@ -464,9 +475,9 @@ def merge_autoupdate(path: str, value: str) -> int:
         got = _reread(path).get("autoupdate")
     except ValueError as e:
         got = e
-    if not _landed(path, saved, "" if got == value else f"it reads {got!r}", "autoupdate"):
+    if not _landed(path, saved, "" if same(got) else f"it reads {got!r}", "autoupdate"):
         return 1
-    print(f"autoupdate: {value!r}, was {cur!r} (backup {saved})")
+    print(f"autoupdate: {json.dumps(value)}, was {json.dumps(cur)} (backup {saved})")
     return 0
 
 
@@ -708,7 +719,10 @@ def main(argv: list[str]) -> int:
     if len(argv) == 4 and argv[2] == "--compaction":
         return merge_compaction(argv[1], int(argv[3]))
     if len(argv) == 4 and argv[2] == "--autoupdate":
-        return merge_autoupdate(argv[1], argv[3])
+        if argv[3] not in AUTOUPDATE:
+            print(f"--autoupdate takes false or notify, not {argv[3]!r}: {argv[1]} unchanged")
+            return 2
+        return merge_autoupdate(argv[1], AUTOUPDATE[argv[3]])
     if len(argv) == 4 and argv[2] == "--add-providers":
         return add_providers(argv[1], argv[3])
     if len(argv) == 4 and argv[2] == "--remove-providers":

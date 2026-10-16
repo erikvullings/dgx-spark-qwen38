@@ -2129,10 +2129,15 @@ if os.environ.get("OC_NEMOTRON_SUPER_BOOT") == "1" and "nemotron-super" in provi
 doc = {"$schema": "https://opencode.ai/config.json", "provider": providers,
        "compaction": {"preserve_recent_tokens": int(os.environ["OC_KEEP"]), "prune": False},
        "model": default, "small_model": default}
-# With the version pinned, opencode announces a release instead of installing it itself
-# (unset, it installs its own patch releases; see the OPENCODE_VERSION pin).
+# With the version pinned, opencode looks for no update at all: false, the JSON boolean
+# (its schema takes a boolean or "notify", not the string "false"). With any other value
+# 1.19's TUI checks every 10 minutes and, once it is on the newest 1.x, shows "/update to
+# upgrade to OpenCode 2.0" on its home screen (1.18.35 announces 2.x as soon as GitHub's
+# latest release is one), and OpenCode 2's server is not the 1.x `opencode serve` the
+# Agent tab's relay is written for. Up to 1.18, unset meant opencode installed its own
+# patch releases (see the OPENCODE_VERSION pin).
 if os.environ.get("OC_PIN") == "1":
-    doc["autoupdate"] = "notify"
+    doc["autoupdate"] = False
 # written only when it changes, so its date says when it last did: opencode-web is
 # restarted below only for a config newer than it
 text = json.dumps(doc, indent=2) + "\n"
@@ -2174,7 +2179,11 @@ fi
 # THIS lane must follow the served engine (v1.5.2: a flash conversation allowed
 # to grow to 226000 tokens outgrew the 159k KV pool and wedged the scheduler).
 if [ -f "$OC_USER_CFG" ] && [ "$OPENCODE_PIN" = "1" ]; then
-  python3 "$REPO_DIR/oc-merge-limits.py" "$OC_USER_CFG" --autoupdate notify || true
+  # false, not "notify": with any other value opencode offers OpenCode 2, which the Agent
+  # tab's relay is not written for (see the generated config above). This file is the one
+  # that check reads (opencode's global config); a box an earlier run set to "notify"
+  # moves to false here.
+  python3 "$REPO_DIR/oc-merge-limits.py" "$OC_USER_CFG" --autoupdate false || true
 fi
 if [ -f "$OC_USER_CFG" ]; then
   if [ "${LANE:-27b}" = "flash" ]; then
