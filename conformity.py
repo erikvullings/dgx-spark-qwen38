@@ -15,11 +15,19 @@ cannot drift from it, and the four old defaults with the instant their release m
 Standard library only: install.sh runs it with the system python3, and the cockpit loads it
 the way it loads engine-inputs.py.
 """
+import json
 import re
 from collections import namedtuple
+from datetime import datetime, timezone
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parent
+UNITS = "/etc/systemd/system"
+# What a completed install.sh run writes in the config folder (~/.config/qwen38), and the first
+# release that writes it: a box without one was last installed by an older release.
+FILE = "installed.json"
+SCHEMA = 1
+FIRST_RELEASE = "v1.36.0"
 
 # Every setting this module compares, by the name an operator passes to set it, so that the way
 # to keep a value is always NAME=value ./install.sh. A lane's target is not a variable of its
@@ -127,3 +135,223 @@ def recommended(repo_dir=REPO, home=None):
         "SPEC_TOKEN_MAP_SIZE": val("SPEC_TOKEN_MAP_SIZE"),
         "FLASH_REPLAYSSM_SPEC": val("FLASH_REPLAYSSM_SPEC"),
     }
+
+
+# ── What the box serves ──────────────────────────────────────────────────────────────────────
+# Read from its units the way install.sh reads them back when it converges (install.sh, the
+# block "Converge on the operator's installed choices"), so that what is classed here is what
+# the next update would keep.
+def _read(path):
+    try:
+        return Path(path).read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return None
+
+
+def _first(pattern, text):
+    m = re.search(pattern, text)
+    return m.group(1) if m else None
+
+
+def _engine_place(text, out):
+    """The bind, port and cache of the lane that serves: both text lanes carry them, and
+    install.sh reads them from the one it serves (the other gets them from that run)."""
+    for knob, pattern in (("ENGINE_BIND", r"--host ([0-9.]+)"), ("PORT", r"--port ([0-9]+)"),
+                          ("HF_CACHE", r"-v ([^ :]+):/root/\.cache/huggingface")):
+        v = _first(pattern, text)
+        if v:
+            out[knob] = v
+
+
+def observe(units_dir=UNITS, config_dir=None, lane="27b", repo_dir=REPO):
+    """{knob: value} the installed units serve; a lane that is not installed says nothing.
+    lane: the text lane that serves (27b or flash), whose unit gives the bind, port and cache."""
+    config_dir = Path(config_dir or Path.home() / ".config/qwen38")
+    by_repo = {repo: name for name, repo in targets(repo_dir).items()}
+    out = {}
+    sgl = _read(Path(units_dir) / "qwen38-sglang.service")
+    if sgl is not None:
+        model = _first(r"--model-path ([^ ]+)", sgl)
+        if model:
+            out["target.27b"] = by_repo.get(model, model)
+        draft = _first(r"--speculative-draft-model-path ([^ ]+)", sgl)
+        if draft:
+            out["DRAFT2"] = drafter(draft, _first(r"--speculative-draft-model-quantization ([^ ]+)", sgl) or "",
+                                    _first(r"--speculative-num-draft-tokens ([0-9]+)", sgl) or "")
+        out["CONTEXT_MODE"] = "1m" if "--context-length 1010000" in sgl else "native"
+        if lane == "27b":
+            _engine_place(sgl, out)
+    launch = _read(config_dir / "launch-flash.sh") if (Path(units_dir) / "qwen38-flash.service").exists() else None
+    if launch is not None:
+        model = _first(r"--model-path ([^ ]+)", launch)
+        if model:
+            out["target.flash"] = by_repo.get(model, model)
+        # the last tier whose concurrency the launcher names, as install.sh's loop decides it
+        for tier, mrr in (("context", "4"), ("concurrency", "8"), ("throughput", "24")):
+            if f"--max-running-requests {mrr}" in launch:
+                out["FLASH_TIER"] = tier
+        # the two speculative-path knobs mean something only on a tier that speculates, and
+        # only on a launcher rendered after each existed (the markers are template comments)
+        if "--speculative-algorithm" in launch:
+            if "Engine since v1.8" in launch:
+                out["SPEC_TOKEN_MAP_SIZE"] = _first(r"--speculative-token-map /out/token-map-([0-9]+)\.pt", launch) or "0"
+            if "No --allow-auto-truncate" in launch:
+                out["FLASH_REPLAYSSM_SPEC"] = "1" if "--enable-linear-replayssm-spec" in launch else "0"
+        ple = _first(r"-v ([^ :]+):/ple", launch)
+        if ple:
+            out["PLE_DIR"] = ple
+        if lane == "flash" and "sglang.launch_server" in launch:
+            _engine_place(launch, out)
+    proxy = _read(Path(units_dir) / "qwen38-keepalive.service")
+    if proxy is not None:
+        for knob, pattern in (("PROXY_BIND", r"PROXY_BIND=([0-9.]+)"), ("PROXY_PORT", r"keepalive-proxy\.py ([0-9]+)")):
+            v = _first(pattern, proxy)
+            if v:
+                out[knob] = v
+    return out
+
+
+# ── What the box recorded ────────────────────────────────────────────────────────────────────
+def load_record(config_dir):
+    """(record, note): installed.json as the last run wrote it, or None with a note saying why
+    it is not used. A file that is cut short, edited into another shape, or written by a newer
+    schema is no record at all (never a partial one): the box is then classed by its age, which
+    keeps more rather than less."""
+    path = Path(config_dir) / FILE
+    raw = _read(path)
+    if raw is None:
+        return None, None
+    try:
+        rec = json.loads(raw)
+        ok = (isinstance(rec, dict) and rec.get("schema") == SCHEMA and isinstance(rec.get("choices"), dict)
+              and all(isinstance(e, dict) and isinstance(e.get("value"), str) for e in rec["choices"].values()))
+    except ValueError:
+        ok = False
+    if not ok:
+        return None, (f"NOTE: {path} is unreadable (cut short or edited by hand); this run treats the box as "
+                      f"one no run of {FIRST_RELEASE} or later recorded, and writes it again at its end.")
+    return rec, None
+
+
+def _instant(text):
+    try:
+        t = datetime.fromisoformat(text)
+    except (TypeError, ValueError):
+        return None
+    return t if t.tzinfo else None
+
+
+def box_since(config_dir, record):
+    """(when, where from): when this box was first installed. A record carries it; without one,
+    the API key's mtime says it, since install.sh writes the key once, at the first install
+    that reaches step 6 (it is stat()ed here, never read). (None, "unknown") when neither can."""
+    if record and _instant(record.get("box_since")):
+        return record["box_since"], "record"
+    try:
+        t = (Path(config_dir) / "api-key").stat().st_mtime
+    except OSError:
+        return None, "unknown"
+    return datetime.fromtimestamp(int(t), timezone.utc).isoformat(timespec="seconds"), "api-key"
+
+
+Verdict = namedtuple("Verdict", "cls why old")
+
+
+def classify(knob, value, rec_value, record, since):
+    """Whether a value that is not the recommended one is a choice (kept, and said) or an old
+    default (moved to the recommended value by the next update), and why:
+      site          a setting of the site (port, cache, folders): always the operator's
+      recorded      installed.json records this very value as a choice
+      never-default no release ever installed it by default, so somebody chose it
+      not-recorded  an old default that no run since installed.json exists has recorded
+      box-before    no installed.json, and the box is older than the release that moved it
+      box-after     no installed.json, and the box is younger: it was chosen
+      box-unknown   no installed.json and no age: kept, since what cannot be classed is not moved
+    `record` is a loaded installed.json or None, `since` box_since()'s date."""
+    if value == rec_value:
+        return Verdict("conform", "recommended", None)
+    if knob in SITE:
+        return Verdict("choice", "site", None)
+    entry = (record or {}).get("choices", {}).get(knob)
+    if entry and entry.get("value") == value:
+        return Verdict("choice", "recorded", None)
+    old = old_default(knob, value)
+    if old is None:
+        return Verdict("choice", "never-default", None)
+    if record is not None:
+        return Verdict("old-default", "not-recorded", old)
+    born = _instant(since)
+    if born is None:
+        return Verdict("choice", "box-unknown", old)
+    if born < _instant(old.instant):
+        return Verdict("old-default", "box-before", old)
+    return Verdict("choice", "box-after", old)
+
+
+def _recommended_beside(rec, seen):
+    """The recommended values for this box: its proxy port is recommended at PORT+1 of the port
+    it serves on, as install.sh derives it."""
+    rec = dict(rec)
+    if seen.get("PORT"):
+        rec["PROXY_PORT"] = str(int(seen["PORT"]) + 1)
+    return rec
+
+
+def deviations(units_dir=UNITS, config_dir=None, lane="27b", home=None, repo_dir=REPO):
+    """[{knob, value, recommended, class, why, old}] for each value the box serves that is not
+    the recommended one, in the order of KNOBS. `old` is the release that moved an old default."""
+    config_dir = config_dir or Path(home or Path.home()) / ".config/qwen38"
+    record, _ = load_record(config_dir)
+    since, _ = box_since(config_dir, record)
+    seen = observe(units_dir, config_dir, lane=lane, repo_dir=repo_dir)
+    rec = _recommended_beside(recommended(repo_dir, home), seen)
+    out = []
+    for knob in KNOBS:
+        if knob not in seen or seen[knob] == rec[knob]:
+            continue
+        v = classify(knob, seen[knob], rec[knob], record, since)
+        out.append({"knob": knob, "value": seen[knob], "recommended": rec[knob], "class": v.cls,
+                    "why": v.why, "old": v.old.tag if v.old else None})
+    return out
+
+
+def next_choices(record, seen, rec, chose, since, now):
+    """The choices a run records: {knob: {value, since, how}}.
+    chose: {knob: value} the operator passed explicitly on this run (how=env). Passing the
+    recommended value erases the entry, so the box follows the defaults again, future ones
+    included. An entry is kept only while the unit still serves its value: a switch or an edit
+    since makes it say nothing, and what is served is classed afresh. A value classed as a
+    choice that no entry names yet is recorded (how=kept: the first run of a box that predates
+    installed.json, or a value no release ever installed); an old default never is."""
+    rec = _recommended_beside(rec, seen)
+    current = dict((record or {}).get("choices", {}))
+    out = {}
+    for knob, value in chose.items():
+        if value == rec.get(knob) or seen.get(knob) != value:
+            continue                       # erased, or it landed in no unit this run rendered
+        prev = current.get(knob)
+        out[knob] = {"value": value, "since": prev["since"] if prev and prev.get("value") == value
+                     and prev.get("since") else now, "how": "env"}
+    for knob, entry in current.items():
+        if knob not in out and knob not in chose and seen.get(knob) == entry["value"] != rec.get(knob):
+            out[knob] = entry
+    for knob in KNOBS:
+        if knob in out or knob in chose or knob not in seen or seen[knob] == rec[knob]:
+            continue
+        if classify(knob, seen[knob], rec[knob], record, since).cls == "choice":
+            out[knob] = {"value": seen[knob], "since": now, "how": "kept"}
+    return out
+
+
+def release_lag(record, clone_commit):
+    """Why the services run older code than their own clone, or None when they do not:
+    no-record  no run of FIRST_RELEASE or later finished on this box
+    commit     the clone moved on since the last run (a git pull with no ./install.sh)
+    no-start   the last run stopped at --no-start (no side lane, proxy or cockpit updated)"""
+    if record is None:
+        return "no-record"
+    if clone_commit and record.get("commit") and record["commit"] != clone_commit:
+        return "commit"
+    if record.get("path") == "no-start":
+        return "no-start"
+    return None
