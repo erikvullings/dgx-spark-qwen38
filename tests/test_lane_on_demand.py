@@ -63,8 +63,13 @@ class Box:
         repo.mkdir()
         text = (REPO / installer).read_text()
         old = '"/etc/systemd/system/$UNIT"'
-        assert old in text, f"{installer} no longer names its unit that way"
-        (repo / installer).write_text(text.replace(old, f'"{self.units}/$UNIT"'))
+        # the vLLM lanes' installers name their unit where lanes.sh reads every other one (LANES_UNIT_DIR,
+        # which run() points at this box's units, for every installer: none reads the real ones)
+        if '"${LANES_UNIT_DIR:-/etc/systemd/system}/$UNIT"' in text:
+            (repo / installer).write_text(text)
+        else:
+            assert old in text, f"{installer} no longer names its unit that way"
+            (repo / installer).write_text(text.replace(old, f'"{self.units}/$UNIT"'))
         for f in REPO.iterdir():
             if f.is_file() and f.name != installer and (f.suffix in (".sh", ".py", ".template") or f.name.endswith(".service.template")):
                 (repo / f.name).write_text(f.read_text())
@@ -90,7 +95,8 @@ class Box:
 
     def run(self, *args):
         env = {"PATH": f"{self.bin}:/usr/bin:/bin", "HOME": str(self.home), "CALLS": str(self.calls),
-               "FAKE_STATE": str(self.state), "FAKE_PIN": self.pin, "HF_CACHE": str(self.t / "hf")}
+               "FAKE_STATE": str(self.state), "FAKE_PIN": self.pin, "HF_CACHE": str(self.t / "hf"),
+               "LANES_UNIT_DIR": str(self.units)}
         if self.root_ok:
             env["ROOT_OK"] = "1"
         r = subprocess.run(["bash", str(self.script), *args], capture_output=True, text=True, env=env, timeout=120)
@@ -197,12 +203,14 @@ class TheVideoLaneTurboAdapter(unittest.TestCase):
         self.assertIn("python - larryvrh/MiniMax-H3-Turbo-Lora", "\n".join(calls))
 
 
-# The two vLLM lanes, Kolibri and Nemotron: one test each, with a subTest per lane (as above).
-VLLM_LANES = (("install-kolibri.sh", "qwen38-kolibri.service"), ("install-nemotron.sh", "qwen38-nemotron.service"))
+# The three vLLM lanes, Kolibri and the two Nemotron lanes: one test each, with a subTest per lane (as
+# above). Super VL's preparation is the Nemotron lane's, through install-nemotron.sh --prepare.
+VLLM_LANES = (("install-kolibri.sh", "qwen38-kolibri.service"), ("install-nemotron.sh", "qwen38-nemotron.service"),
+              ("install-nemotron-super.sh", "qwen38-nemotron-super.service"))
 
 
 class TheVllmLanesInTwoHalves(unittest.TestCase):
-    """Kolibri's and Nemotron's runtime is an image built on the box: --prepare builds it as the
+    """The vLLM lanes' runtime is an image built on the box: --prepare builds it as the
     user (docker, no sudo). Here the image is already built, as the fake docker says; the build
     itself is the step's own lines, which call no sudo."""
 
@@ -236,11 +244,25 @@ class TheVllmLanesInTwoHalves(unittest.TestCase):
                 self.assertRegex(out, r"checkpoints? left to the Load's switch")
                 self.assertNotIn("already cached", out)
 
+    def test_the_engine_port_comes_from_the_proxy_unit_of_this_box(self):
+        # every unit is read where LANES_UNIT_DIR says, its own and the others alike: the box's
+        # proxy says 31234 here, and the real one of the machine running this, 30000, is never read
+        # (the vLLM installers read the real proxy unit and the real units for their image's prune
+        # while their own unit was this test's: found in review, 2026-10-16)
+        for installer, unit in VLLM_LANES:
+            with self.subTest(installer=installer):
+                box = self.box(installer, unit, root_ok=True)
+                (box.units / "qwen38-keepalive.service").write_text(
+                    "[Service]\nEnvironment=UPSTREAM=http://127.0.0.1:31234\n")
+                rc, out, _ = box.run("--units-only")
+                self.assertEqual(rc, 0, out)
+                self.assertIn("--port 31234", (box.units / unit).read_text())
+
     def test_the_build_step_calls_no_sudo(self):
         for installer, _ in VLLM_LANES:
             with self.subTest(installer=installer):
                 text = (REPO / installer).read_text()
-                build = text[text.index('step "2/5 Image ($LOCAL_IMAGE)"'):text.index('step "3/5 Checkpoint')]
+                build = text[text.index('step "2/5 Image ($LOCAL_IMAGE'):text.index('step "3/5 Checkpoint')]
                 self.assertNotRegex(build, r"(^|[;&|(]\s*)sudo\b")
 
 
@@ -250,25 +272,25 @@ class TheDispatcher(unittest.TestCase):
     own (the cockpit never builds one argument out of a parameter), mapped to its installer's
     --prepare, and nothing else is taken."""
 
-    def run_it(self, *args, units=("image", "video", "kolibri", "nemotron")):
+    def run_it(self, *args, units=("image", "video", "kolibri", "nemotron", "nemotron-super")):
         d = pathlib.Path(tempfile.mkdtemp(prefix="prepare-lane-"))
         (d / "units").mkdir()
         for lane in units:
             (d / "units" / f"qwen38-{lane}.service").write_text("[Unit]\n")
         (d / "prepare-lane.sh").write_text((REPO / "prepare-lane.sh").read_text().replace("/etc/systemd/system/", f"{d}/units/"))
-        for lane in ("image", "video", "kolibri", "nemotron"):
+        for lane in ("image", "video", "kolibri", "nemotron", "nemotron-super"):
             (d / f"install-{lane}.sh").write_text(f'echo "install-{lane}.sh $*"\n')
         r = subprocess.run(["bash", str(d / "prepare-lane.sh"), *args], capture_output=True, text=True, timeout=30)
         return r.returncode, (r.stdout + r.stderr).strip()
 
     def test_each_lane_runs_its_installers_prepare(self):
-        for lane in ("image", "video", "kolibri", "nemotron"):
+        for lane in ("image", "video", "kolibri", "nemotron", "nemotron-super"):
             with self.subTest(lane=lane):
                 self.assertEqual(self.run_it(lane), (0, f"install-{lane}.sh --prepare"))
 
     def test_a_lane_with_no_unit_is_not_prepared(self):
         # its units come with ./install.sh; a preparation alone would build what nothing runs
-        for lane in ("image", "video", "kolibri", "nemotron"):
+        for lane in ("image", "video", "kolibri", "nemotron", "nemotron-super"):
             with self.subTest(lane=lane):
                 rc, out = self.run_it(lane, units=())
                 self.assertEqual(rc, 1, out)
@@ -292,9 +314,12 @@ class TheSwitchSendsALaneNotBuiltToItsPreparation(unittest.TestCase):
 
     def test_each_side_lane_names_prepare_lane(self):
         text = (REPO / "switch-model.sh").read_text()
-        for lane in ("image", "video", "kolibri", "nemotron"):
+        for lane in ("image", "video", "kolibri"):
             with self.subTest(lane=lane):
                 self.assertIn(f"./prepare-lane.sh {lane} builds it (no sudo; its first Load from the cockpit runs it), then switch again", text)
+        # the two Nemotron lanes' one block, entered for their two targets, which are their lanes' names
+        self.assertIn('./prepare-lane.sh $CHOICE builds it (no sudo; its first Load from the cockpit runs it), then switch again', text)
+        self.assertIn('if [ "$CHOICE" = "nemotron" ] || [ "$CHOICE" = "nemotron-super" ]; then', text)
         self.assertNotIn("runtime is missing ($IMG_PY): re-run", text)
         self.assertNotIn("runtime is missing ($VID_PY): re-run", text)
 

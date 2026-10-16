@@ -43,12 +43,13 @@ class Box:
         repo.mkdir()
         (repo / "install.sh").write_text((REPO / "install.sh").read_text())
         text = SWITCH
-        for unit in ("qwen38-sglang.service", "qwen38-flash.service", "qwen38-nemotron.service"):
+        for unit in ("qwen38-sglang.service", "qwen38-flash.service", "qwen38-nemotron.service",
+                     "qwen38-nemotron-super.service"):
             old = f'"/etc/systemd/system/{unit}"'
             assert old in text, f"switch-model.sh no longer names {unit} that way"
             text = text.replace(old, f'"{units}/{unit}"')
         (repo / "switch-model.sh").write_text(text)
-        for f in ("lanes.sh", "ckpt-fetch.py", "install-nemotron.sh"):
+        for f in ("lanes.sh", "ckpt-fetch.py", "install-nemotron.sh", "install-nemotron-super.sh"):
             (repo / f).write_text((REPO / f).read_text())
         # the Nemotron lane's unit, as install-nemotron.sh writes it: its image, its cache, the
         # checkpoint and the memory share on lines of their own
@@ -62,6 +63,18 @@ class Box:
             "  qwen38-nemotron:test \\\n"
             f"  {self.nemotron_pins['NEMOTRON_BOLT_REPO']} --revision {self.nemotron_pins['NEMOTRON_BOLT_REV']} \\\n"
             f"  --gpu-memory-utilization {self.nemotron_pins['NEMOTRON_BOLT_GMU']} \\\n"
+            "  --port 30000\n")
+        # the Nemotron Super lane's unit, the same way (the image is the Bolt lane's)
+        spins = dict(line.split("=", 1) for line in (REPO / "install-nemotron-super.sh").read_text().splitlines()
+                     if line.startswith("NEMOTRON_SUPER_") and "=" in line)
+        self.super_pins = {k: v.strip('"') for k, v in spins.items()}
+        self.super_unit = units / "qwen38-nemotron-super.service"
+        self.super_unit.write_text(
+            "[Service]\nExecStart=/usr/bin/docker run --rm --name qwen38-nemotron-super \\\n"
+            f"  -v {self.home}/.cache/huggingface:/root/.cache/huggingface \\\n"
+            "  qwen38-nemotron:test \\\n"
+            f"  {self.super_pins['NEMOTRON_SUPER_REPO']} --revision {self.super_pins['NEMOTRON_SUPER_REV']} \\\n"
+            f"  --gpu-memory-utilization {self.super_pins['NEMOTRON_SUPER_GMU']} \\\n"
             "  --port 30000\n")
         (repo / "switch-model.sh").chmod(0o755)
         self.bin = self.t / "bin"
@@ -114,6 +127,21 @@ class FetchOnly(unittest.TestCase):
         self.assertEqual(box.nemotron_unit.read_bytes(), unit_before)
         self.assertFalse([c for c in calls if re.search(r"\b(enable|disable|daemon-reload|restart|start|stop)\b", c)], calls)
         self.assertFalse((box.home / ".config/qwen38/text-lane").exists(), "--fetch wrote the text-lane record")
+
+    def test_the_nemotron_super_lane_fetches_its_drafter_before_it_stops(self):
+        box = Box()
+        unit_before = box.super_unit.read_bytes()
+        rc, out, runs, calls = box.run("nemotron-super", "--fetch")
+        self.assertEqual(rc, 0, out)
+        self.assertIn("with its drafter, is in the cache; nothing else was changed", out)
+        pins = box.super_pins
+        self.assertEqual(len(runs), 2, runs)
+        self.assertIn(f"/opt/qwen38/ckpt-fetch.py {pins['NEMOTRON_SUPER_REPO']} {pins['NEMOTRON_SUPER_REV']} ", runs[0])
+        self.assertIn(f"/opt/qwen38/ckpt-fetch.py {pins['NEMOTRON_SUPER_DRAFT_REPO']} {pins['NEMOTRON_SUPER_DRAFT_REV']} ", runs[1])
+        self.assertIn(f"--need-gb {pins['NEMOTRON_SUPER_GB']} ", runs[0])
+        self.assertIn(" qwen38-nemotron:test ", runs[0], "in the image the two Nemotron lanes run")
+        self.assertEqual(box.super_unit.read_bytes(), unit_before)
+        self.assertFalse([c for c in calls if re.search(r"\b(enable|disable|daemon-reload|restart|start|stop)\b", c)], calls)
 
     def test_without_it_the_switch_goes_on_past_the_download(self):
         rc, out, runs, _ = Box().run("stock")

@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
 # The heavy half of a lane installed on demand, as the user, with no sudo: what the cockpit's
 # first Load of the lane runs before its switch. The image and video lanes' runtime (a venv and
-# SGLang Diffusion, the video lane's Turbo adapter) and the Kolibri and Nemotron lanes' images, each by its own
-# installer's --prepare; their checkpoint comes with the Load's switch, as for any Load. The
+# SGLang Diffusion, the video lane's Turbo adapter) and the Kolibri and Nemotron lanes' images
+# (one image for the two Nemotron lanes), each by its own installer's --prepare; their
+# checkpoint comes with the Load's switch, as for any Load. The
 # other text lane, beside the lane that serves: the image its launcher (flash) or unit (27B)
 # runs, the checkpoint of the target it serves (the switch's own fetch, ./switch-model.sh
 # <target> --fetch), and what that lane builds or keeps beside it: the flash lane's reduced
@@ -10,7 +11,7 @@
 # draft, its config set for the window the unit serves. Each download is refused before its
 # first byte when its room is not there.
 #
-#   ./prepare-lane.sh image|video|kolibri|nemotron
+#   ./prepare-lane.sh image|video|kolibri|nemotron|nemotron-super
 #   ./prepare-lane.sh flash|27b [<target>]
 #
 # The target is the one the Load loads, for the two lanes whose preparation fetches a
@@ -22,11 +23,11 @@
 # to that).
 set -euo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-usage(){ echo "usage: ./prepare-lane.sh <image|video|kolibri|nemotron> | <flash|27b> [<target>]" >&2; exit 2; }
+usage(){ echo "usage: ./prepare-lane.sh <image|video|kolibri|nemotron|nemotron-super> | <flash|27b> [<target>]" >&2; exit 2; }
 die(){ printf '\n\033[1;31mERROR:\033[0m %s\n' "$*" >&2; exit 1; }
 section(){ printf '\n\033[1;36m── %s\033[0m\n' "$*"; }
 case "${1:-}" in
-  image|video|kolibri|nemotron) [ "$#" -eq 1 ] || usage ;;
+  image|video|kolibri|nemotron|nemotron-super) [ "$#" -eq 1 ] || usage ;;
   flash|27b) [ "$#" -le 2 ] || usage ;;
   *) usage ;;
 esac
@@ -167,7 +168,7 @@ prepare_27b(){
 }
 
 case "$1" in
-  image|video|kolibri|nemotron)
+  image|video|kolibri|nemotron|nemotron-super)
     # its checkpoint comes with its switch, as for any Load: no target here
     [ -f "/etc/systemd/system/qwen38-$1.service" ] || die "the $1 lane is not installed on this box (no unit): ./install.sh installs its units"
     exec bash "$HERE/install-$1.sh" --prepare ;;
