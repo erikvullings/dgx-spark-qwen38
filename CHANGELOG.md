@@ -1,6 +1,6 @@
 # Changelog
 
-## v1.35.0 (2026-10-16): Nemotron 3.5 Super VL, NVIDIA's 120B with vision and a 1M-token window, as a seventh lane
+## v1.35.0 (2026-10-17): Nemotron 3.5 Super VL, NVIDIA's 120B with vision and a 1M-token window, as a seventh lane
 
 **What it is.** [Nemotron 3.5 Super VL](https://huggingface.co/nvidia/NVIDIA-Nemotron-3.5-Super-VL-120B-A12B-NVFP4)
 is NVIDIA's open vision-language model, released 2026-10-15, the model Bolt (v1.34.0) was compressed
