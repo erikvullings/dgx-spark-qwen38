@@ -1132,8 +1132,10 @@ def _sampling_prealert(body, route):
     if b"\\u" in body:
         return True, True
     needs_vocab = any(b'"' + f.encode() + b'"' in body for f in TOKEN_ID_FIELDS)
-    has_prompt_ids = (route == "/v1/completions"
-                      and re.search(rb'"prompt"\s*:\s*\[', body) is not None)
+    has_prompt_ids = ((route == "/v1/completions"
+                       and re.search(rb'"prompt"\s*:\s*\[', body) is not None)
+                      or (route == "/v1/score"
+                          and re.search(rb'"(?:query|items)"\s*:\s*\[', body) is not None))
     might = (needs_vocab or has_prompt_ids or b'"n"' in body
              or (route in TOKEN_IDS_LOGPROB_ROUTES and b'"token_ids_logprob"' in body))
     return might, (needs_vocab or has_prompt_ids)
@@ -1187,6 +1189,22 @@ def sampling_field_refusal(body, path, vocab):
             if iv is None:
                 continue
             bad = _id_violation("prompt", iv, vocab)
+            if bad:
+                return bad
+    # /v1/score (2026-10-16): its query (Union[str, List[int]]) and its items (Union[str,
+    # List[str], List[List[int]]]) are token ids when they are lists of ints, and they index
+    # the embedding as input_ids do: the engine bounds label_token_ids there, not these. An item
+    # that is a string is text, whatever its characters.
+    if route == "/v1/score":
+        query, items = j.get("query"), j.get("items")
+        ids = [("query", t) for t in query] if isinstance(query, list) else []
+        if isinstance(items, list):
+            ids += [("items", t) for item in items if isinstance(item, list) for t in item]
+        for field, tok in ids:
+            iv = _engine_int(tok)
+            if iv is None:
+                continue
+            bad = _id_violation(field, iv, vocab)
             if bad:
                 return bad
     return None
@@ -1752,9 +1770,11 @@ TOKEN_ID_FIELDS = ("stop_token_ids", "input_ids")
 MAX_PARALLEL_SAMPLES = int(os.environ.get("MAX_PARALLEL_SAMPLES", "128") or 128)
 # Routes that hand a body to the sampler. S5: /v1/responses, /invocations and
 # /vertex_generate reach the same sampler under aliases the old list missed.
+# 2026-10-16: /v1/score too, whose query and items take token ids (sampling_field_refusal); it
+# was relayed with none of them read (found in review, 2026-10-16).
 SAMPLE_GUARD_ROUTES = frozenset({
     "/v1/chat/completions", "/v1/completions", "/generate",
-    "/v1/responses", "/invocations", "/vertex_generate"})
+    "/v1/responses", "/invocations", "/vertex_generate", "/v1/score"})
 # token_ids_logprob (v6.34): a field of the engine's native request only (GenerateReqInput),
 # read at the top of a /generate body and from the `parameters` that /vertex_generate spreads
 # into one; the OpenAI routes, /invocations included, have no such field and ignore it
