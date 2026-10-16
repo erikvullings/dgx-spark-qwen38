@@ -1515,9 +1515,17 @@ COUNT_ONLY_PATHS = frozenset({"/v1/messages/count_tokens"})
 # review, 2026-10-16). 16 MiB is over four million tokens of prose, four times the largest window
 # a lane serves; the proxy's own counts go to the engine directly, not through this port.
 # /v1/messages/count_tokens, which an Anthropic client sends its whole conversation to, images
-# included, keeps MAX_BODY_BYTES.
-COUNT_ROUTES = frozenset({"/tokenize", "/detokenize"})
+# included, keeps MAX_BODY_BYTES. SGLang v0.5.21 serves the same two handlers at /v1/tokenize and
+# /v1/detokenize, which this list missed (found in review, 2026-10-17).
+COUNT_ROUTES = frozenset({"/tokenize", "/detokenize", "/v1/tokenize", "/v1/detokenize"})
 COUNT_BODY_MAX_BYTES = int(os.environ.get("COUNT_BODY_MAX_BYTES", str(16 * 1024 * 1024)) or 0)
+
+
+class TooLongToCount(Exception):
+    """A prompt whose text alone is past COUNT_BODY_MAX_BYTES (2026-10-17): the size guard handed
+    a nominated prompt to the engine's /tokenize whole, up to MAX_BODY_BYTES, the very load that
+    ceiling keeps from it (found in review, 2026-10-17). Past it, the prompt is over four times
+    the largest window a lane serves, and it is refused as too long, uncounted."""
 
 
 def warmup_hold(est, pool):
@@ -1570,6 +1578,8 @@ def tokenize_count(body, path):
         key = _api_key()
     except Exception:
         return None
+    if COUNT_BODY_MAX_BYTES > 0 and len(payload) > COUNT_BODY_MAX_BYTES:
+        raise TooLongToCount(len(payload))
     try:
         r = urllib.request.Request(UPSTREAM + route, data=payload,
                                    headers={"Authorization": f"Bearer {key}",
@@ -2814,8 +2824,14 @@ def systemone_guard(plan):
     if est <= limit:
         return
     probe = json.dumps(systemone_engine_body("default", longest, 1)).encode()
-    count = tokenize_count(probe, "/v1/chat/completions")     # may raise EngineUnreachable
-    if count is None:
+    try:
+        count = tokenize_count(probe, "/v1/chat/completions")     # may raise EngineUnreachable
+        uncounted = None
+    except TooLongToCount as e:                                   # 2026-10-17, see the relay path
+        count, uncounted = None, e.args[0]
+    if uncounted is not None:
+        reason = f"{uncounted} bytes of prompt text, past the {COUNT_BODY_MAX_BYTES} this proxy has the engine count"
+    elif count is None:
         guess = body_len / NOCOUNT_CHARS_PER_TOKEN                # as before v6.34, see the relay path
         if guess <= limit:
             return
@@ -4355,12 +4371,18 @@ class H(BaseHTTPRequestHandler):
                 # (a 140k-token English prompt is 479 KB, which the 2.5 chars/token
                 # estimate called 192k tokens and refused although the pool served it).
                 limit = prompt_limit(pool)
+                uncounted = None
                 try:
                     count = tokenize_count(body, self.path)
                 except EngineUnreachable as e:
                     invalidate_pool()   # this engine is restarting; its pool is not ours
                     return ("unreachable", str(e), None)
-                if count is None:
+                except TooLongToCount as e:
+                    count, uncounted = None, e.args[0]
+                if uncounted is not None:
+                    reason = (f"{uncounted} bytes of prompt text, past the {COUNT_BODY_MAX_BYTES} "
+                              f"this proxy has the engine count (COUNT_BODY_MAX_BYTES)")
+                elif count is None:
                     # No count for this shape: the pre-v6.34 average decides, as it did past
                     # the old 200 kB line (on every lane whose limit is over 80k tokens, the
                     # same bodies; below that, a small pool is no longer skipped under it).
