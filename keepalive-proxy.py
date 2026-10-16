@@ -336,7 +336,7 @@ before relaying them at once: measured 2026-08-23, median inter-event gap 0 ms
 / max 1307 ms through the proxy vs a steady 118 ms direct. read1() returns as
 soon as bytes are available, so the stream stays token by token.
 """
-import base64, collections, concurrent.futures, hashlib, hmac, http.client, ipaddress, json, math, os, queue, re, select, socket, ssl, string, subprocess, sys, threading, time, urllib.parse, urllib.request, urllib.error, uuid
+import base64, collections, concurrent.futures, hashlib, hmac, http.client, io, ipaddress, json, math, os, queue, re, select, socket, ssl, string, subprocess, sys, threading, time, urllib.parse, urllib.request, urllib.error, uuid
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 
@@ -3170,6 +3170,13 @@ def sse_error(msg):
 # the port whatever the network does. 0 turns a ceiling off.
 MAX_CONN_PER_ADDRESS = int(os.environ.get("PROXY_MAX_CONN_PER_ADDRESS", "64") or 0)
 MAX_REMOTE_CONN = int(os.environ.get("PROXY_MAX_REMOTE_CONN", "256") or 0)
+# And the time such a connection has, in all, to send its request's line and headers
+# (2026-10-17; 0 = none). No key is asked before they are in, and CLIENT_IO_S bounds each read,
+# not the whole: connections that sent nothing, or a byte now and then, kept their slots for
+# 900 s, so four addresses at their ceiling shut the port to every other peer on the network,
+# with no key (found in review, 2026-10-17). Once the headers are in, CLIENT_IO_S again: a body
+# and an answer take the time they take. Loopback, not counted, keeps CLIENT_IO_S throughout.
+CLIENT_HEADER_S = float(os.environ.get("CLIENT_HEADER_S", "30") or 0)
 
 
 def _counted_peer(addr):
@@ -3178,6 +3185,34 @@ def _counted_peer(addr):
         return not ipaddress.ip_address(addr).is_loopback
     except ValueError:
         return True
+
+
+class _HeaderClock(io.RawIOBase):
+    """A connection's reads under its handler's deadline while a request's line and headers
+    come in (CLIENT_HEADER_S): each read gets the time left, so a byte at a time does not
+    stretch it."""
+
+    def __init__(self, raw, handler):
+        super().__init__()
+        self._raw, self._handler = raw, handler
+
+    def readable(self):
+        return True
+
+    def readinto(self, b):
+        until = self._handler._headers_until
+        if until is not None:
+            left = until - time.monotonic()
+            if left <= 0:
+                raise socket.timeout("no request line and headers within CLIENT_HEADER_S")
+            self._handler.connection.settimeout(left)
+        return self._raw.readinto(b)
+
+    def close(self):
+        try:
+            self._raw.close()
+        finally:
+            super().close()
 
 
 class Server(ThreadingHTTPServer):
@@ -3252,12 +3287,23 @@ class H(BaseHTTPRequestHandler):
     def log_message(self, *a): pass
 
     def handle_one_request(self):
+        if getattr(self, "_header_clock", False):
+            self._headers_until = time.monotonic() + min(CLIENT_HEADER_S, CLIENT_IO_S)
         try:
             BaseHTTPRequestHandler.handle_one_request(self)
         except (ConnectionResetError, BrokenPipeError, socket.timeout, TimeoutError):
             self.close_connection = True
 
+    def parse_request(self):
+        try:
+            return BaseHTTPRequestHandler.parse_request(self)
+        finally:
+            if self._headers_until is not None:       # the headers are in: CLIENT_IO_S again
+                self._headers_until = None
+                self.connection.settimeout(CLIENT_IO_S)
+
     def setup(self):
+        self._headers_until = None
         BaseHTTPRequestHandler.setup(self)
         if isinstance(self.connection, ssl.SSLSocket):
             # S6: the listening socket is wrapped with do_handshake_on_connect=False, so
@@ -3277,6 +3323,10 @@ class H(BaseHTTPRequestHandler):
         # a write blocked for CLIENT_IO_S (frozen client, laptop asleep) raises
         # socket.timeout instead of parking the thread forever
         self.connection.settimeout(CLIENT_IO_S)
+        # a peer on the network has CLIENT_HEADER_S in all for its request's headers (2026-10-17)
+        self._header_clock = CLIENT_HEADER_S > 0 and _counted_peer(str(self.client_address[0]))
+        if self._header_clock:
+            self.rfile = io.BufferedReader(_HeaderClock(self.rfile.detach(), self))
         # small frequent SSE events: without NODELAY, Nagle batches them (Tailscale)
         try: self.connection.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
         except OSError: pass

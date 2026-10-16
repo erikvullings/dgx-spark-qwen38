@@ -7,6 +7,12 @@ and the local agents' included (found in review, 2026-10-16). A connection from 
 machine now counts against a ceiling per address and one for the whole network, and past
 either it is closed before a thread starts for it. Loopback is not counted.
 
+No key is asked before a request's headers are in, and a connection that sent none held its
+slot for CLIENT_IO_S: four addresses at their ceiling of silent connections shut the port to
+every other peer on the network, with no key, for 900 s (found in review, 2026-10-17). A peer on
+the network now has CLIENT_HEADER_S, in all, for a request's line and headers, a byte at a time
+or not; the normal delay applies once they are in.
+
 The harness reaches the proxy from 127.0.0.1 only, so the scenarios that need a peer on the
 network count loopback in its stead (_counted_peer is swapped for the scenario); what loopback
 is, and that it is never counted, is checked on its own.
@@ -50,6 +56,10 @@ class Engine(http.server.BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(b"OK")
 
+    def do_POST(self):
+        self.rfile.read(int(self.headers.get("Content-Length") or 0))
+        self.do_GET()
+
 
 class ConnectionCeiling(unittest.TestCase):
     @classmethod
@@ -68,6 +78,7 @@ class ConnectionCeiling(unittest.TestCase):
         cls.mod._api_key = _no_key
         # in a tuple: a function kept as a class attribute would come back as a bound method
         cls.real = (getattr(cls.mod, "_counted_peer", None),)
+        cls.header_s = getattr(cls.mod, "CLIENT_HEADER_S", None)
         cls.proxy = cls.mod.Server(("127.0.0.1", 0), cls.mod.H)
         threading.Thread(target=cls.proxy.serve_forever, daemon=True).start()
         cls.port = cls.proxy.server_address[1]
@@ -96,6 +107,7 @@ class ConnectionCeiling(unittest.TestCase):
             except OSError:
                 pass
         self.mod._counted_peer = self.real[0]
+        self.mod.CLIENT_HEADER_S = self.header_s
 
     def silent(self):
         """A connection that says nothing, the shape that held a thread for CLIENT_IO_S."""
@@ -168,6 +180,52 @@ class ConnectionCeiling(unittest.TestCase):
         for _ in range(5):
             self.silent()
         self.assertTrue(self.closed_at_once(self.silent()), "a 6th connection from the network was kept")
+
+    def test_a_silent_peer_on_the_network_is_let_go_at_the_header_deadline(self):
+        self.mod._counted_peer = lambda addr: True
+        self.mod.CLIENT_HEADER_S = 1.0
+        t0 = time.time()
+        self.assertTrue(self.closed_at_once(self.silent(), within=6.0),
+                        "a silent connection from the network outlived the header deadline")
+        self.assertLess(time.time() - t0, 5.0)
+
+    def test_a_trickle_does_not_stretch_the_header_deadline(self):
+        """The deadline is for the line and the headers in all, not for each byte of them."""
+        self.mod._counted_peer = lambda addr: True
+        self.mod.CLIENT_HEADER_S = 1.0
+        s = self.silent()
+        s.sendall(b"GET /health HTTP/1.1\r\nHost: p\r\nX-Slow: ")
+        t0, closed = time.time(), False
+        while not closed and time.time() - t0 < 6:
+            try:
+                s.sendall(b"a")
+                closed = self.closed_at_once(s, within=0.25)
+            except OSError:
+                closed = True
+        self.assertTrue(closed, "a header sent a byte at a time held the connection past the deadline")
+        self.assertLess(time.time() - t0, 5.0)
+
+    def test_once_its_headers_are_in_a_request_has_the_normal_delay(self):
+        self.mod._counted_peer = lambda addr: True
+        self.mod.CLIENT_HEADER_S = 1.0
+        s = self.silent()
+        s.sendall(b"POST /x HTTP/1.1\r\nHost: p\r\nContent-Type: application/json\r\n"
+                  b"Content-Length: 2\r\nConnection: close\r\n\r\n")
+        time.sleep(2.0)                   # past the header deadline, far under CLIENT_IO_S
+        s.sendall(b"{}")
+        s.settimeout(10)
+        got = b""
+        while True:
+            c = s.recv(4096)
+            if not c:
+                break
+            got += c
+        self.assertTrue(got.startswith(b"HTTP/1.1 200"), got[:200])
+
+    def test_loopback_keeps_the_normal_delay_before_its_headers(self):
+        self.mod.CLIENT_HEADER_S = 1.0
+        self.assertFalse(self.closed_at_once(self.silent(), within=2.5),
+                         "a client on the box was held to the network's header deadline")
 
     def test_local_clients_keep_the_port_past_any_ceiling(self):
         """The ceilings are the network's: clients on the box are not counted."""
