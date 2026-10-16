@@ -517,8 +517,20 @@ MAX_BODY_BYTES = int(os.environ.get("MAX_BODY_BYTES", str(256 * 1024 * 1024)) or
 # body is not read: 503 with Retry-After, which the SDKs and the agents retry. A body arriving
 # when none is in flight is always read, so a budget under the cap never refuses one forever.
 BODY_BUDGET_BYTES = int(os.environ.get("BODY_BUDGET_BYTES", str(384 * 1024 * 1024)) or 0)
-_BODY_BUDGET = {"used": 0}
+# A body at or under BODY_SMALL_BYTES is always read and holds none of the budget; a larger one
+# takes its bytes from it as they arrive, BODY_SMALL_BYTES at a time (2026-10-17). The budget was
+# taken whole on the Content-Length before a byte was read, and kept to the end: a key holder
+# announcing large bodies and sending nothing held all of it, and every other body, the box's own
+# clients' included, got a 503 (found in review, 2026-10-17). A larger body that finds no room on
+# its way is refused then, except the oldest one being read, which waits up to BODY_WAIT_S for
+# the room the others give back: two bodies read at once could otherwise each keep the other out
+# until both were refused.
+BODY_SMALL_BYTES = int(os.environ.get("BODY_SMALL_BYTES", str(1024 * 1024)) or 0)
+BODY_WAIT_S = float(os.environ.get("BODY_WAIT_S", "30") or 0)
+_BODY_BUDGET = {"used": 0, "seq": 0}
+_BODY_READERS = set()           # the admission numbers of the larger bodies being read now
 _BODY_BUDGET_LOCK = threading.Lock()
+_BODY_ROOM = threading.Condition(_BODY_BUDGET_LOCK)
 # Time to first response byte from the upstream on GETs (models, health, load:
 # always fast or dead). Generations keep no deadline: a cold 690k-token
 # prefill legitimately takes tens of minutes to answer, streaming or not, and
@@ -4123,16 +4135,13 @@ class H(BaseHTTPRequestHandler):
                         json.dumps({"error": {"type": "body_too_large",
                                               "message": f"keepalive-proxy: request body {n}b exceeds the {cap}b cap"}}).encode())
             self._done("413 body over cap"); return
-        if with_body and n and not self._reserve_body(n):
-            log(f"{self._peer} REFUSED body {n}b: {_BODY_BUDGET['used']}b of bodies already in flight, "
-                f"budget {BODY_BUDGET_BYTES}b (BODY_BUDGET_BYTES)")
-            self._plain(503, {"Content-Type": "application/json", "Retry-After": "5"},
-                        json.dumps({"error": {"type": "overloaded", "message":
-                                              f"keepalive-proxy: {_BODY_BUDGET['used']} bytes of request bodies "
-                                              f"are in flight on this proxy, and this one ({n} bytes) would pass "
-                                              f"its {BODY_BUDGET_BYTES}-byte budget; retry it unchanged"}}).encode())
-            self._done("503 bodies over budget"); return
-        body = self.rfile.read(n) if (with_body and n) else None
+        if with_body and n and not self._body_admitted(n):
+            self._over_budget(n); return
+        body = None
+        if with_body and n:
+            body = self._read_body(n)
+            if body is None:
+                self._over_budget(n); return
         self._body_read = True
         if body is not None and len(body) < n:
             # The caller closed before its body arrived whole: what came is no request, and
@@ -4544,22 +4553,78 @@ class H(BaseHTTPRequestHandler):
         self._plain(status, headers, out)
         self._done("ok systemone")
 
-    def _reserve_body(self, n):
-        """Take n bytes of BODY_BUDGET_BYTES for this request's body, or say there are none."""
-        if BODY_BUDGET_BYTES <= 0:
+    def _body_admitted(self, n):
+        """Whether a body of n announced bytes may start: a small one always, a larger one when
+        the bodies in flight, by the bytes they hold, leave it room, or when there are none."""
+        if BODY_BUDGET_BYTES <= 0 or n <= BODY_SMALL_BYTES:
             return True
-        with _BODY_BUDGET_LOCK:
-            if _BODY_BUDGET["used"] and _BODY_BUDGET["used"] + n > BODY_BUDGET_BYTES:
-                return False
-            _BODY_BUDGET["used"] += n
-        self._body_reserved = n
-        return True
+        with _BODY_ROOM:
+            used = _BODY_BUDGET["used"]
+        return not used or used + n <= BODY_BUDGET_BYTES
+
+    def _read_body(self, n):
+        """The body of n announced bytes, or None when the budget had no room for it on the way
+        (see BODY_SMALL_BYTES): a larger body takes its room as it arrives, so bytes announced and
+        never sent hold none of it. A body cut short by its caller comes back short."""
+        if BODY_BUDGET_BYTES <= 0 or n <= BODY_SMALL_BYTES:
+            return self.rfile.read(n)
+        step = max(BODY_SMALL_BYTES, 64 * 1024)
+        out = io.BytesIO()
+        with _BODY_ROOM:
+            _BODY_BUDGET["seq"] += 1
+            me = _BODY_BUDGET["seq"]
+            _BODY_READERS.add(me)
+        try:
+            while out.tell() < n:
+                want = min(step, n - out.tell())
+                if not self._take_room(want, me):
+                    return None
+                chunk = self.rfile.read(want)
+                out.write(chunk)
+                if len(chunk) < want:
+                    break
+        finally:
+            with _BODY_ROOM:
+                _BODY_READERS.discard(me)
+                _BODY_ROOM.notify_all()         # the oldest body being read may be another now
+        return out.getvalue()
+
+    def _take_room(self, n, me):
+        """Take n more bytes of the budget for the body being read: at once when there is room
+        or no other body holds any; else False, unless it is the oldest body being read, which
+        waits up to BODY_WAIT_S for the room the others give back."""
+        deadline = time.monotonic() + BODY_WAIT_S
+        with _BODY_ROOM:
+            while True:
+                mine = getattr(self, "_body_reserved", 0)
+                used = _BODY_BUDGET["used"]
+                if used == mine or used + n <= BODY_BUDGET_BYTES:
+                    _BODY_BUDGET["used"] = used + n
+                    self._body_reserved = mine + n
+                    return True
+                left = deadline - time.monotonic()
+                if me != min(_BODY_READERS) or left <= 0:
+                    return False
+                _BODY_ROOM.wait(left)
+
+    def _over_budget(self, n):
+        used = _BODY_BUDGET["used"] - getattr(self, "_body_reserved", 0)
+        self._release_body()                    # its room goes back before the answer
+        log(f"{self._peer} REFUSED body {n}b: {used}b of bodies already in flight, "
+            f"budget {BODY_BUDGET_BYTES}b (BODY_BUDGET_BYTES)")
+        self._plain(503, {"Content-Type": "application/json", "Retry-After": "5"},
+                    json.dumps({"error": {"type": "overloaded", "message":
+                                          f"keepalive-proxy: {used} bytes of request bodies "
+                                          f"are in flight on this proxy, and this one ({n} bytes) would pass "
+                                          f"its {BODY_BUDGET_BYTES}-byte budget; retry it unchanged"}}).encode())
+        self._done("503 bodies over budget")
 
     def _release_body(self):
         n, self._body_reserved = getattr(self, "_body_reserved", 0), 0
         if n:
-            with _BODY_BUDGET_LOCK:
+            with _BODY_ROOM:
                 _BODY_BUDGET["used"] -= n
+                _BODY_ROOM.notify_all()
 
     def _handle(self, with_body):
         """Every request leaves exactly one end line in the journal, even when the

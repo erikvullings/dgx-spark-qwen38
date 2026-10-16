@@ -6,11 +6,18 @@ MemoryMax=1G at once, where the kernel kills the proxy and every stream in fligh
 in review, 2026-10-16). Past BODY_BUDGET_BYTES a body is not read: 503 with Retry-After.
 
 This harness sets the budget to 1 MiB and holds a first body of 700 kB in the fake engine.
+
+The budget was taken whole on the Content-Length, before a byte was read, and kept to the end: a
+key holder announcing large bodies and sending nothing held it all, and every other body, the
+box's own clients' included, got a 503 (found in review, 2026-10-17). A body at or under
+BODY_SMALL_BYTES (64 KiB in this harness) is now always read and holds none of it, and a larger
+one takes its bytes as they arrive.
 """
 import http.server
 import importlib.util
 import json
 import os
+import socket
 import sys
 import threading
 import time
@@ -84,6 +91,8 @@ class BodyBudget(unittest.TestCase):
         threading.Thread(target=cls.engine.serve_forever, daemon=True).start()
         os.environ["UPSTREAM"] = f"http://127.0.0.1:{cls.engine.server_port}"
         os.environ["BODY_BUDGET_BYTES"] = str(1024 * 1024)
+        os.environ["BODY_SMALL_BYTES"] = str(64 * 1024)
+        os.environ["BODY_WAIT_S"] = "5"
         for k in ("QWEN38_CLIENT_KEYS_FILE", "QWEN38_UPSTREAM_API_KEY", "PROXY_HOLD_UNITS"):
             os.environ.pop(k, None)
         cls.mod = importlib.util.module_from_spec(SPEC)
@@ -150,6 +159,83 @@ class BodyBudget(unittest.TestCase):
         self.assertTrue(self.released(), "a finished request kept its share of the budget")
         status, _, body = self.post(body_of(700_000))         # and the budget comes back
         self.assertEqual(status, 200, body[:200])
+        self.assertTrue(self.released())
+
+
+    def announce(self, length):
+        """The head of a request whose body does not come (yet)."""
+        s = socket.create_connection(("127.0.0.1", self.port), timeout=10)
+        s.sendall(f"POST /v1/chat/completions HTTP/1.1\r\nHost: p\r\nContent-Type: application/json\r\n"
+                  f"Content-Length: {length}\r\n\r\n".encode())
+        self.addCleanup(s.close)
+        return s
+
+    def answer(self, s):
+        s.settimeout(20)
+        got = b""
+        try:
+            while True:
+                c = s.recv(65536)
+                if not c:
+                    break
+                got += c
+        except ConnectionResetError:
+            pass
+        return got.split(b"\r\n", 1)[0]
+
+    def test_bytes_announced_and_never_sent_keep_no_body_out(self):
+        s = self.announce(1_040_000)
+        deadline = time.time() + 5
+        while not self.mod._BODY_BUDGET["used"] and time.time() < deadline:
+            time.sleep(0.02)
+        self.assertTrue(self.mod._BODY_BUDGET["used"], "the proxy never took the announced body in")
+        status, _, body = self.post(body_of(300_000))
+        self.assertEqual(status, 200, body[:200])
+        status, _, body = self.post(body_of(30_000))
+        self.assertEqual(status, 200, body[:200])
+        s.close()
+        self.assertTrue(self.released(), "a body that never came kept its share of the budget")
+
+    def test_a_small_body_is_always_read(self):
+        first = []
+        Engine.hold_next = True
+        t = threading.Thread(target=self.post, args=(body_of(1_030_000), first), daemon=True)
+        t.start()
+        self.assertTrue(Engine.holding.wait(15), "the first body never reached the engine")
+        try:
+            status, _, body = self.post(body_of(30_000))
+            self.assertEqual(status, 200, body[:200])
+            status, _, body = self.post(body_of(100_000))     # a larger one still waits its turn
+            self.assertEqual(status, 503, body[:200])
+        finally:
+            Engine.release.set()
+            t.join(20)
+        self.assertEqual(first[0][0], 200)
+        self.assertTrue(self.released())
+
+    def test_of_two_bodies_read_at_once_past_the_budget_the_older_goes(self):
+        """Taken as they arrive, two bodies can fill the budget together, and then each needs
+        more: the newer one is refused and gives its room back, the older waits for it, and
+        never are both refused. The harness feeds them so that they meet exactly there."""
+        step, data = 64 * 1024, body_of(700_000)
+
+        def held(n):
+            deadline = time.time() + 5
+            while self.mod._BODY_BUDGET["used"] != n and time.time() < deadline:
+                time.sleep(0.02)
+            return self.mod._BODY_BUDGET["used"]
+
+        a = self.announce(len(data))
+        self.assertEqual(held(step), step)              # the older is the one read first
+        b = self.announce(len(data))
+        a.sendall(data[:7 * step])
+        b.sendall(data[:7 * step])
+        self.assertEqual(held(16 * step), 16 * step)    # the budget, full, and both want more
+        a.sendall(data[7 * step:8 * step])
+        b.sendall(data[7 * step:8 * step])
+        a.sendall(data[8 * step:])
+        self.assertTrue(self.answer(a).startswith(b"HTTP/1.1 200"))
+        self.assertTrue(self.answer(b).startswith(b"HTTP/1.1 503"))
         self.assertTrue(self.released())
 
 
