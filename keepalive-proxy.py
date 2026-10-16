@@ -2707,6 +2707,7 @@ def forget_engine_rules():
     global _rid_override_honoured
     _VOCAB.update(size=0, ts=0.0)
     _rid_override_honoured = None
+    _UNIT_OVERRIDE.update(ts=-1e9, set=None)
 
 
 def note_engine(names, owner):
@@ -3110,6 +3111,48 @@ ABORT_TIMEOUT_S = float(os.environ.get("ABORT_TIMEOUT_S", "5"))
 # was deleted logs one line per output batch.
 DRAIN_MAX_S = float(os.environ.get("DRAIN_MAX_S", "900"))
 _rid_override_honoured = None       # None = never observed, True/False = what the engine did
+# Until an answer has shown it, the unit that serves now is the proof (2026-10-17): only a chat
+# or /generate stream shows it, and a box served by Claude Code alone never streams them, so every
+# abandoned /v1/messages answer was drained, after each engine restart too (found in review,
+# 2026-10-17). The installed SGLang lanes start their engine with
+# SGLANG_ENABLE_REQUEST_HEADER_OVERRIDES=1, on the unit's command line (the 27B) or in the
+# launcher it runs (the flash's launch-flash.sh); vLLM's lanes do not, and keep the drain. An
+# answer that shows the header ignored still wins. systemd is asked at most every 10 s.
+_UNIT_OVERRIDE = {"ts": -1e9, "set": None}
+_OVERRIDE_ON = re.compile(r"(?<![\w-])SGLANG_ENABLE_REQUEST_HEADER_OVERRIDES=1(?![\w])")
+
+
+def unit_sets_rid_override():
+    """True when the unit named in PROXY_HOLD_UNITS that is active starts its engine with
+    SGLANG_ENABLE_REQUEST_HEADER_OVERRIDES=1, False when it does not, None when systemd does
+    not say (no unit named, as for a proxy run by hand or by a test)."""
+    if not HOLD_UNITS:
+        return None
+    now = time.monotonic()
+    if now - _UNIT_OVERRIDE["ts"] <= 10:
+        return _UNIT_OVERRIDE["set"]
+    found = None
+    try:
+        out = subprocess.run(["systemctl", "show", *HOLD_UNITS, "-p", "ActiveState", "-p", "ExecStart"],
+                             capture_output=True, text=True, timeout=3)
+        for block in (out.stdout.split("\n\n") if out.returncode == 0 else ()):
+            props = dict(ln.split("=", 1) for ln in block.splitlines() if "=" in ln)
+            if props.get("ActiveState") != "active":
+                continue
+            texts = [props.get("ExecStart", "")]
+            for script in re.findall(r"(/\S+\.sh)\b", texts[0]):
+                try:
+                    with open(script, encoding="utf-8") as f:
+                        texts.append("\n".join(ln for ln in f.read().splitlines()
+                                               if not ln.lstrip().startswith("#")))
+                except OSError:
+                    pass
+            found = any(_OVERRIDE_ON.search(x) for x in texts)
+            break
+    except Exception:
+        found = None
+    _UNIT_OVERRIDE.update(ts=now, set=found)
+    return found
 
 # Every character a reader of the journal takes for the end of a line, and every other
 # control. A client's own text reaches some messages (a tool schema's pattern, whole), and a
@@ -3573,13 +3616,17 @@ class H(BaseHTTPRequestHandler):
 
         A rid this proxy invented is only worth sending once an answer has PROVED the
         engine takes it (SGLANG_ENABLE_REQUEST_HEADER_OVERRIDES is off by default, and an
-        engine that ignores the header answers with its own rid). Sending an unproven one
+        engine that ignores the header answers with its own rid), or, until an answer says,
+        once the unit serving now is seen to set it (unit_sets_rid_override, 2026-10-17). Sending an unproven one
         reads like a successful abort in the log and aborts nothing, which is the failure
         this version exists to remove: unproven means "no rid", and no rid means drain."""
         forced = self._forced_rid()
         observed = getattr(self, "_rid", None)
         if forced and _rid_override_honoured is True:
             return forced
+        if (forced and _rid_override_honoured is None and unit_sets_rid_override()
+                and (getattr(self, "_upstream_engine", "") or _SERVED["engine"]) != "vllm"):
+            return forced           # the serving unit sets the override (2026-10-17)
         if observed and self.path.split("?")[0] in RID_PROOF_ROUTES:
             return observed         # engine ignored the override: its own id is the rid
         return None                 # Anthropic dialect: msg_<uuid> is not a rid

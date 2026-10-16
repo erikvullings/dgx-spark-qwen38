@@ -24,7 +24,9 @@ import json
 import os
 import socket
 import struct
+import subprocess
 import sys
+import tempfile
 import threading
 import time
 import unittest
@@ -161,6 +163,27 @@ class FakeEngine(http.server.BaseHTTPRequestHandler):
         self._write_events(rid, rid, prefill=prefill)
 
 
+class _Systemd:
+    """The proxy's subprocess, answering `systemctl show` as a box serving one unit does."""
+
+    def __init__(self, exec_start):
+        self.exec_start = exec_start
+
+    def __getattr__(self, name):
+        return getattr(subprocess, name)
+
+    def run(self, args, **kw):
+        if list(args[:2]) != ["systemctl", "show"]:
+            return subprocess.run(args, **kw)
+        if "ExecStart" in args:
+            out = f"ActiveState=active\nExecStart={self.exec_start}\n"
+        elif "InvocationID" in args:
+            out = "0123456789abcdef0123456789abcdef\n"
+        else:
+            out = "active\n"
+        return subprocess.CompletedProcess(args, 0, out, "")
+
+
 class Abort(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
@@ -211,6 +234,27 @@ class Abort(unittest.TestCase):
         with FakeEngine.lock:
             FakeEngine.live.clear(); FakeEngine.aborted.clear(); FakeEngine.ignored.clear()
             FakeEngine.seen_rid_header.clear(); FakeEngine.drained.clear(); FakeEngine.conns.clear()
+
+    def _serving_unit(self, argv):
+        """The lane's unit, active, its ExecStart running argv (no answer from the engine yet)."""
+        real = (self.mod.subprocess, self.mod.HOLD_UNITS)
+        self.mod.subprocess = _Systemd(f"{{ path=/bin/bash ; argv[]={argv} ; ignore_errors=no ; "
+                                       f"start_time=[n/a] ; stop_time=[n/a] ; pid=0 ; code=(null) ; status=0/0 }}")
+        self.mod.HOLD_UNITS = ("qwen38-sglang.service",)
+        cache = getattr(self.mod, "_UNIT_OVERRIDE", None)
+        if cache is not None:
+            cache.update(ts=-1e9, set=None)
+
+        def back():
+            self.mod.subprocess, self.mod.HOLD_UNITS = real
+            if cache is not None:
+                cache.update(ts=-1e9, set=None)
+        self.addCleanup(back)
+
+    def _abandon_anthropic(self):
+        self._send("/v1/messages", {"messages": [{"role": "user", "content": "hi"}]}, read_bytes=1)
+        self.assertTrue(self._wait(lambda: FakeEngine.aborted or FakeEngine.ignored or FakeEngine.drained))
+        return [rid for path, rid in FakeEngine.seen_rid_header if path == "/v1/messages"]
 
     # ---- helpers ---------------------------------------------------------------
     def _send(self, path, body, read_bytes=0, hard_close=True):
@@ -297,6 +341,37 @@ class Abort(unittest.TestCase):
         self.assertTrue(sent and sent[0] and len(sent[0]) == 32, f"no rid imposed: {sent!r}")
         self.assertEqual(FakeEngine.aborted, sent, f"drained={FakeEngine.drained}")
         self.assertEqual(FakeEngine.ignored, [])
+
+    def test_an_abandoned_anthropic_stream_is_aborted_when_the_serving_unit_sets_the_override(self):
+        """A box served by Claude Code alone never streams the chat route, so the proof never came
+        and every abandoned answer was drained, after each engine restart too (found in review,
+        2026-10-17). The unit serving now, starting its engine with
+        SGLANG_ENABLE_REQUEST_HEADER_OVERRIDES=1, is that proof."""
+        self._serving_unit("/bin/bash -c exec /usr/bin/docker run --rm --name qwen38-sglang "
+                           "-e SGLANG_ENABLE_REQUEST_HEADER_OVERRIDES=1 lmsysorg/sglang python3 -m sglang.launch_server")
+        sent = self._abandon_anthropic()
+        self.assertTrue(sent and sent[0] and len(sent[0]) == 32, f"no rid imposed: {sent!r}")
+        self.assertEqual(FakeEngine.aborted, sent, f"drained={FakeEngine.drained}")
+        self.assertEqual(FakeEngine.ignored, [])
+
+    def test_a_launcher_script_that_sets_the_override_is_read(self):
+        """The flash lane's unit runs launch-flash.sh, which holds the engine's flags."""
+        with tempfile.NamedTemporaryFile("w", suffix=".sh", delete=False) as f:
+            f.write("#!/bin/bash\n# -e SGLANG_ENABLE_REQUEST_HEADER_OVERRIDES=0 is not ours\n"
+                    "exec /usr/bin/docker run --rm --name qwen38-flash \\\n"
+                    "  -e SGLANG_ENABLE_REQUEST_HEADER_OVERRIDES=1 \\\n  lmsysorg/sglang\n")
+        self.addCleanup(os.unlink, f.name)
+        self._serving_unit(f"/bin/bash {f.name}")
+        sent = self._abandon_anthropic()
+        self.assertEqual(FakeEngine.aborted, sent, f"drained={FakeEngine.drained}")
+
+    def test_a_unit_without_the_override_is_still_drained(self):
+        """vLLM's lanes, and an engine started without it: nothing changes for them."""
+        self._serving_unit("/bin/bash -c exec /usr/bin/docker run --rm --name qwen38-kolibri vllm/vllm-openai")
+        self._abandon_anthropic()
+        self.assertEqual(FakeEngine.aborted, [])
+        self.assertEqual(FakeEngine.ignored, [])
+        self.assertEqual(len(FakeEngine.drained), 1)
 
     def test_an_anthropic_stream_never_decides_whether_the_override_is_honoured(self):
         """Its first event carries msg_<uuid>, never the rid: read as a proof, it would say
