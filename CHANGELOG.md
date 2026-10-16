@@ -1,5 +1,108 @@
 # Changelog
 
+## v1.35.1 (2026-10-17): the proxy bounds what the network can hold, and the image and video lanes see no secret of the box
+
+A security review of the repository, in three passes by separate analyses, each finding checked
+against the code before anything was changed, found the proxy's guards open in places and the
+image and video lanes able to read the serving key. Everything it confirmed is fixed here, each
+fix with a test that fails on the old code and passes on the new. The proxy is v6.41.
+
+**The network's share of the port.**
+- A machine on the network could open connections until the proxy had no descriptor left, with
+  no key: each one held a thread for up to 900 s before its first byte was read. Another machine
+  now holds at most 64 connections open (`PROXY_MAX_CONN_PER_ADDRESS`) and the network 256 in all
+  (`PROXY_MAX_REMOTE_CONN`), past which a connection is closed before it is read, and such a
+  connection has 30 s in all for its request line and headers (`CLIENT_HEADER_S`). The clients on
+  the box (127.0.0.1) are not counted: they keep the port whatever the network does.
+- The request bodies in flight share a budget of 384 MiB (`BODY_BUDGET_BYTES`), taken as their
+  bytes arrive, so bytes announced and never sent hold none of it. A body that finds no room gets
+  a 503 with `Retry-After`, and one of 1 MiB or less always comes in.
+- A compressed body (`Content-Encoding`) gets a 415: it read as no JSON to every guard, and an
+  engine that decoded it took what none of them saw.
+
+Checked on the reference box, its proxy serving Bolt: from the box's own network address, a 65th
+connection was closed before it was read and one that sent nothing was closed after 30.0 s; a
+compressed body was refused with a 415 (without the key, the key's own 401 comes first); the clients
+on the box were never counted. On v1.35.0's proxy the same run kept the 65th connection and the
+silent one open.
+
+docs/clients.md says all of it, and how to raise a ceiling for a gateway that relays many users
+from one machine.
+
+**What a key reaches.**
+- Behind the identity wall (`QWEN38_CLIENT_KEYS_FILE`), a listed client key reached every route
+  the engine serves, its operator's included (reloading the weights, the profiler, pausing the
+  generation, flushing the cache), since the proxy signs what it relays with the engine's own key.
+  A client key now reaches the routes that generate, count and read, the other dialects' reading
+  routes included (`/api/tags`, `/api/show`, `/ping`); the cockpit's calls go to the engine on
+  127.0.0.1, as before.
+- A redirect from the engine is relayed, never followed: `/server_info/` came back 307, was
+  followed with the engine's key, and its answer went out unmasked. A trailing slash is masked
+  too now.
+
+**The fields and prompts that can take an engine down.**
+- `/v1/score`: its query and its items take token ids, bounded now by the vocabulary like
+  `input_ids`, and its `label_token_ids`, which the engine turns into `token_ids_logprob`, are
+  refused as that field is (sglang#34719).
+- A video was charged 4,096 tokens where SGLang's own sizing makes one up to about 88,000. Where a
+  prompt can wedge the engine, a video costs that ceiling, read from `VIDEO_MAX_PIXELS` as the
+  engine reads it.
+- A body the engine's count cannot take (`/v1/responses`, `/generate`) has its media priced as
+  media and the rest judged by the bound where a wedge is possible, not by an average.
+- A token id at or past 128,000, the smallest vocabulary a lane serves (Kolibri-1's), waits for a
+  retry (503) while the served vocabulary is not known, instead of going through unchecked.
+- `/tokenize` and `/detokenize`, and their `/v1/` spellings, take bodies up to 16 MiB, and no
+  prompt past that is handed to the engine's count.
+- A request held while its engine restarts is judged again for the engine that comes back.
+
+**An abandoned Claude Code answer stops.** The proxy drained an answer on `/v1/messages` whose
+client had gone, for up to `DRAIN_MAX_S`, taking it for one the engine could not abort: the
+Anthropic route applies the request id override as the chat route does (read in the sources of
+v0.5.21 and of the flash lane's image). On an SGLang lane whose engine starts with the override,
+the answer is aborted; the vLLM lanes keep the drain.
+
+**The image and video lanes see no secret of the box.** They take paths and media sources from
+whoever reaches them, with the box user's rights, and could read the serving key in
+~/.config/qwen38, and in the engine-secrets.yaml the text lanes write there at every start. Their
+units now see that folder as an empty read-only tmpfs that holds engine-preflight.sh alone, and
+/etc/qwen38 (where docs/clients.md installs the client keys) not at all. Proved with a transient
+unit on the reference box (systemd 255): the preflight runs, the key and the secrets file are not
+there, nothing can be written, and a key renamed into the folder on the host after the start stays
+out of sight. Then with the lanes themselves, once installed: each started from the cockpit on its
+new unit, its running process saw the folder as a read-only tmpfs with engine-preflight.sh alone
+in it, and each served, an image of 1024x1024 in 34.6 s and a 4.5 s video with its sound in 170 s.
+
+**Disk sizes, in one unit.** Every size the docs, the installers' messages and the cockpit give is
+in GB of 10^9 bytes, measured on the reference box and rounded up, a total being the sum of its
+parts: the 27B lane 58, flash 223, image 46, video 174, Kolibri 102, Nemotron 51, Super VL 77
+beside the Nemotron lane (102 alone); the whole box 731 GB of disk and 573 GB of downloads. Some
+were GiB written as GB (video 160 and 165, flash 206, image 40, the PLE file 48). The vLLM lanes'
+room check held the checkpoints' download in GB against free space in GiB and asked for five GiB
+too many (111 for a Kolibri-1 install that 106 hold); it counts in GiB like every other check.
+
+**Housekeeping.** The phantom qwen38-llamacpp.service, which no script creates, leaves every
+unit's Conflicts= line, the cockpit's sudoers list and switch-model.sh; only dependency lines
+change, so no lane restarts. Dead cockpit files and comments that no longer matched the code are
+gone. The pin watch now covers the speech lane's pins, holds each image to a linux/arm64 manifest,
+checks the Kolibri and b12x wheels by their sums, and watches cuda-tile where the image and video
+lanes get it. An uninstall kept the video lane's folder for the empty outputs/ that every install
+makes, a lane never loaded included, with a line that called it someone else's files (found by the
+install matrix): the empty folder goes, and the videos in it stay and are said to.
+
+**Bolt's memory at its peak, measured with its prefix cache's settings.** docs/nemotron-lane.md gave
+the lane's lowest MemAvailable as 25.3 GiB, measured before them: with them, 26.4 GiB during a
+254,091-token prompt's prefill (199.7 s, the answer right), the cockpit, opencode's web server and a
+test suite running beside it, and 26 GiB at rest as before.
+
+**Tests.** Each fix has a test that fails on the old code: the connection ceilings and the
+headers' deadline, the body budget, the compressed body, the routes behind the wall, the redirect
+and the masked spellings, `/v1/score`, the video ceiling, the uncountable shapes, the unknown
+vocabulary, the counting routes, a held request judged again, the abort on `/v1/messages`, the
+side lanes' sandbox, the vLLM room check and the video lane's outputs/ at an uninstall.
+
+**What an update does.** An update restarts the proxy and the cockpit; the image and video lanes
+take their new units at their next start; the engines keep running.
+
 ## v1.35.0 (2026-10-17): Nemotron 3.5 Super VL, NVIDIA's 120B with vision and a 1M-token window, as a seventh lane
 
 **What it is.** [Nemotron 3.5 Super VL](https://huggingface.co/nvidia/NVIDIA-Nemotron-3.5-Super-VL-120B-A12B-NVFP4)
