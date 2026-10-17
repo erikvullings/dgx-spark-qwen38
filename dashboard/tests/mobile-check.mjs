@@ -9,6 +9,9 @@
 //   * form controls under 16px, because iOS Safari zooms the whole page when one
 //     of those takes focus and never zooms back out
 //   * touch targets under 44x44 CSS px, the size Apple's HIG asks for
+//   * a text block in a pill: text over two lines or more inside a radius of half the
+//     height runs against the curves (the engine actions menu was five such pills)
+//   * a row of choices that wraps and leaves its last choice alone on a second line
 //   * on the Agent tab, whether the embedded opencode frame fits the visual
 //     viewport instead of pushing the page past it (100vh on iOS includes the
 //     browser chrome, so calc(100vh - x) overflows by the toolbar's height)
@@ -134,6 +137,35 @@ const AUDIT = `(() => {
     .filter(el => !(el.tagName === 'A' && getComputedStyle(el).display === 'inline'))
     .map(el => ({ sel: sel(el), ...target(el) }))
     .filter(x => x.w < ${TAP_MIN} || x.h < ${TAP_MIN});
+  // A pill is a radius of half the height or more. Around one line it is a chip; around text
+  // that runs over two lines or more it puts that text against the curves (2026-10-17: the
+  // engine actions menu). Under 52 px a pill holds two short lines beside its lamp, as the
+  // header's serving pill does, and stays out of this.
+  // Lines are the text boxes' tops, a few pixels apart counting as one; the defect is text that
+  // comes nearer an end of the pill than 60 % of its radius, where the curve is.
+  const textBoxes = el => { const out = []; const w = document.createTreeWalker(el, NodeFilter.SHOW_TEXT);
+    while (w.nextNode()) { if (!w.currentNode.textContent.trim()) continue; const rg = document.createRange(); rg.selectNodeContents(w.currentNode);
+      out.push(...[...rg.getClientRects()].filter(q => q.width > 1)); }
+    return out; };
+  const linesOf = qs => { const tops = qs.map(q => q.top).sort((x, y) => x - y); let n = 0, last = -1e9;
+    for (const t of tops) { if (t - last > 4) n++; last = t; } return n; };
+  const pills = all.map(el => {
+    const r = el.getBoundingClientRect(); if (r.height < 52 || !(el.innerText || '').trim()) return null;
+    const rad = Math.min(parseFloat(getComputedStyle(el).borderTopLeftRadius) || 0, r.height / 2);
+    if (rad < r.height / 2 - 1) return null;
+    const qs = textBoxes(el); if (linesOf(qs) < 2) return null;
+    const gap = Math.min(Math.min(...qs.map(q => q.left)) - r.left, r.right - Math.max(...qs.map(q => q.right)));
+    return gap < 0.6 * rad ? { sel: sel(el), h: Math.round(r.height), gap: Math.round(gap), text: (el.innerText || '').trim().replace(/\\s+/g, ' ').slice(0, 40) } : null;
+  }).filter(Boolean);
+  // A row of choices that wraps must not leave its last choice alone on a second line,
+  // squeezed to one side (2026-10-17: the 27B lane's four versions on a phone).
+  const lone = [...document.querySelectorAll('[role=radiogroup]')].filter(visible).filter(g => {
+    const opts = [...g.children].filter(visible); if (opts.length < 2) return false;
+    const rows = new Map(); for (const o of opts) { const t = Math.round(o.getBoundingClientRect().top); rows.set(t, [...(rows.get(t) || []), o]); }
+    if (rows.size < 2) return false;
+    const last = [...rows.entries()].sort((x, y) => x[0] - y[0]).pop()[1];
+    return last.length === 1 && last[0].getBoundingClientRect().width < g.getBoundingClientRect().width * 0.6;
+  }).map(g => ({ sel: sel(g), label: g.getAttribute('aria-label') || '' }));
   const frame = document.querySelector('.agentframe');
   const fr = frame ? frame.getBoundingClientRect() : null;
   const agentmax = document.body.classList.contains('agentmax');
@@ -146,6 +178,8 @@ const AUDIT = `(() => {
     wide: wide.slice(0, 12), wideCount: wide.length,
     smallFonts: smallFonts.slice(0, 12), smallFontCount: smallFonts.length,
     taps: taps.slice(0, 12), tapCount: taps.length,
+    pills: pills.slice(0, 12), pillCount: pills.length,
+    lone: lone.slice(0, 12), loneCount: lone.length,
     frame: fr ? { top: Math.round(fr.top), h: Math.round(fr.height), bottom: Math.round(fr.bottom) } : null,
     agentmax, agentnote,
   });
@@ -186,6 +220,10 @@ for (const d of DEVICES) {
       a.smallFonts.map(x => `${x.sel} ${x.px}px`).join(' | '));
     ok(`${d.name} ${tab}: touch targets at least ${TAP_MIN}x${TAP_MIN}`, a.tapCount === 0,
       `${a.tapCount} small: ` + a.taps.map(x => `${x.sel} ${x.w}x${x.h}`).join(' | '));
+    ok(`${d.name} ${tab}: no text block in a pill`, a.pillCount === 0,
+      a.pills.map(x => `${x.sel} h=${x.h} gap=${x.gap} « ${x.text} »`).join(' | '));
+    ok(`${d.name} ${tab}: no choice left alone on a wrapped row`, a.loneCount === 0,
+      a.lone.map(x => `${x.sel} ${x.label}`).join(' | '));
     if (tab === 'agent') {
       const pct = a.frame ? `${a.frame.h}px of ${a.vh}px (${Math.round(100 * a.frame.h / a.vh)}%)` : 'no frame';
       if (a.agentnote) {
@@ -208,6 +246,17 @@ for (const d of DEVICES) {
       }
     }
   }
+  // The engine actions menu, opened the way a thumb does: five actions told in two or three
+  // lines each, which were pills (2026-10-17).
+  await evalJs("(() => { if (document.body.classList.contains('agentmax')) setAgentMax(false, false); showView('now'); return 1; })()");
+  await sleep(300);
+  const ab = await aim('#actbtn');
+  if (ab) { await tapXY(ab.x, ab.y); await sleep(700); }
+  const mn = JSON.parse(await evalJs(AUDIT));
+  ok(`${d.name} engine actions: the menu opens`, ab && await evalJs("!document.getElementById('menu').hidden"), ab ? 'still hidden' : 'no #actbtn');
+  ok(`${d.name} engine actions: no text block in a pill`, mn.pillCount === 0,
+    mn.pills.map(x => `${x.sel} h=${x.h} gap=${x.gap} « ${x.text} »`).join(' | '));
+  const mc = await aim('#menu-close'); if (mc) { await tapXY(mc.x, mc.y); await sleep(400); }
   // The inline frame, as a person who left fullscreen gets it on this phone: it was sized
   // on a guess of 150 px above it, and its composer sat below the fold (2026-09-30).
   await evalJs("(() => { if (document.body.classList.contains('agentmax')) setAgentMax(false, false); showView('now'); try { localStorage.setItem('cockpit.agent.max', '0'); } catch {} agentMaxChoice = null; return 1; })()");
