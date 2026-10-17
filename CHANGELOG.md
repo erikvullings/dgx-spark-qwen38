@@ -1,5 +1,35 @@
 # Changelog
 
+## v1.36.1 (2026-10-17): the cockpit's engine actions as tiles, and the README opens on the box at work
+
+**Engine actions, away from the curves.** The engine actions menu built each action as a pill,
+its geometry written in script (a 999 px radius, 14 px of padding) around two or three lines of
+text, and on a phone as on a desktop that text ran against the curves. Each action is now a
+tile: the class `act`, a 14 px radius, 12 by 18 px of padding, in the stylesheet.
+
+**Versions share their row.** A row of versions that wraps (the 27B lane's four on a phone, the
+flash lane's three) left its last choice alone on a second line. The choices of a row now share
+its width, and four stand two by two.
+
+**The phone check measures both.** `dashboard/tests/mobile-check.mjs` now also measures text over
+two lines or more that comes nearer an end of a pill than 60 % of its radius and a row of choices
+that wraps and leaves its last one alone, and it opens the engine actions menu on each phone.
+Against the cockpit of v1.36.0 it reports the seven defects (325 of 332 checks); with this
+release's stylesheet and script, 332 of 332.
+
+**The README opens on the box at work.** A ten-second animation of the cockpit loops at its top
+(`docs/img/tour.webp`, 5.0 MiB): a laptop and a phone driving the box, the live memory, a coding
+agent whose test passes, an image and a video made on it, the seven lanes. The 49-second tour with
+its sound sits under "See it in 49 seconds", and the full-quality video (1080x1920, 60 frames a
+second) is attached to this release. Everything in it ran on one DGX Spark and was filmed from its
+own cockpit.
+
+**Tests.** A new page test opens the engine actions menu and fails on the old code (0 of 5
+actions are tiles, no tile rule in the stylesheet).
+
+**What an update does.** An update restarts the cockpit, which serves the new page; the engines
+keep running.
+
 ## v1.36.0 (2026-10-17): nobody runs behind in silence: what an update keeps and moves, said before it starts and in the cockpit
 
 An update kept, as if the operator had chosen them, values that were nothing but the default of
