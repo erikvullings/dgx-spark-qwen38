@@ -223,10 +223,18 @@ if [ -d "$IMAGE_LANE_DIR" ] && { [ "$PRIV" -eq 0 ] || [ "$PRIV_DONE" -eq 1 ]; };
   rmdir "$IMAGE_LANE_DIR" 2>/dev/null || echo "kept $IMAGE_LANE_DIR: it holds files the image lane did not put there"
 fi
 # The video lane's runtime, under the same rule: only venv/, sglang/ and the notes of the wheel
-# and the commit they hold, and the directory itself only once it is empty.
+# and the commit they hold, and the directory itself only once it is empty. Its outputs/ folder
+# goes when it is empty: every install makes it, a lane installed on demand and never loaded
+# included, and it kept the directory with a line that called it someone else's (found by the
+# install matrix, 2026-10-17). The videos in it stay, as they always did, and are said to.
 if [ -d "$VIDEO_LANE_DIR" ] && { [ "$PRIV" -eq 0 ] || [ "$PRIV_DONE" -eq 1 ]; }; then
   rm -rf "$VIDEO_LANE_DIR/venv" "$VIDEO_LANE_DIR/sglang" "$VIDEO_LANE_DIR/sglang-wheel" "$VIDEO_LANE_DIR/sglang-source"
-  rmdir "$VIDEO_LANE_DIR" 2>/dev/null || echo "kept $VIDEO_LANE_DIR: it holds files the video lane did not put there"
+  rmdir "$VIDEO_LANE_DIR/outputs" 2>/dev/null || true
+  if [ -d "$VIDEO_LANE_DIR/outputs" ]; then
+    echo "kept $VIDEO_LANE_DIR/outputs: the videos the lane generated (delete them by hand: rm -r $VIDEO_LANE_DIR/outputs)"
+  fi
+  rmdir "$VIDEO_LANE_DIR" 2>/dev/null || [ -d "$VIDEO_LANE_DIR/outputs" ] \
+    || echo "kept $VIDEO_LANE_DIR: it holds files the video lane did not put there"
 fi
 # The speech lane's runtime, under the same rule: venv/, llama.cpp/ and the routes' script.
 # Its models/ stay, with a reclaim command below, as every other checkpoint does.
