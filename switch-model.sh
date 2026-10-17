@@ -199,6 +199,10 @@ if [ "$CHOICE" = "kolibri" ] || [ "$CHOICE" = "kolibri-nvfp4" ]; then
     systemctl is-active --quiet "$u" 2>/dev/null && RUNNING="$u"
   done
   printf '\n\033[1;32mSwitch queued: %s (%s)\033[0m\n' "$KOL_MODEL" "$KOLIBRI_UNIT_NAME"
+  # The checkpoint is the operator's choice from here, as a text lane's target (2026-10-17):
+  # recorded in an installed.json that exists, erased when it is the recommended one.
+  python3 "$REPO_DIR/conformity.py" choose --config-dir "$CONFIG_DIR" --repo-dir "$REPO_DIR" \
+    KOLIBRI_VARIANT "$([ "$KOL_MODEL" = "$KOLIBRI_NVFP4_REPO" ] && echo nvfp4 || echo fp8)" || true
   if [ -n "$RUNNING" ]; then
     echo "Effective after:  sudo systemctl stop $RUNNING && sudo systemctl start $KOLIBRI_UNIT_NAME   (or next reboot)"
   elif systemctl is-active --quiet "$KOLIBRI_UNIT_NAME" 2>/dev/null; then
@@ -572,6 +576,9 @@ if [ "$CHOICE" = "image" ] || [ "$CHOICE" = "image-turbo" ]; then
     systemctl is-active --quiet "$u" 2>/dev/null && RUNNING="$u"
   done
   printf '\n\033[1;32mSwitch queued: %s (%s)\033[0m\n' "$IMG_MODEL" "$IMAGE_UNIT_NAME"
+  # Its checkpoint is the operator's choice from here, as Kolibri's (2026-10-17).
+  python3 "$REPO_DIR/conformity.py" choose --config-dir "$CONFIG_DIR" --repo-dir "$REPO_DIR" \
+    IMAGE_MODEL "$IMG_MODEL" || true
   if [ -n "$RUNNING" ]; then
     echo "Effective after:  sudo systemctl stop $RUNNING && sudo systemctl start $IMAGE_UNIT_NAME   (or next reboot)"
   elif systemctl is-active --quiet "$IMAGE_UNIT_NAME" 2>/dev/null; then

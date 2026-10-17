@@ -108,6 +108,20 @@ class TheUpdateTierCarriesIt(unittest.TestCase):
         self.assertEqual(len(calls), 2)
         self.assertEqual([i["knob"] for i in got["items"]], ["ENGINE_BIND"])
 
+    def test_a_side_lanes_switch_is_read_again(self):
+        # ./switch-model.sh kolibri-nvfp4 rewrites the Kolibri unit: its checkpoint is listed
+        # since 2026-10-17, so its unit is one of the files the cache follows
+        cp, units, cfg = self.box("cockpit_conform_side", key_at=OLD_BOX)
+        self.assertEqual(cp.conformity_state()["items"], [])
+        unit = units / "qwen38-kolibri.service"
+        unit.write_text(unit.read_text().replace("Aleph-Alpha/Kolibri-1 --revision",
+                                                 "Quantinine/Kolibri-1-NVFP4A16-FP8 --revision"))
+        later = time.time() + 5
+        os.utime(unit, (later, later))
+        got = cp.conformity_state()
+        self.assertEqual([(i["knob"], i["value"], i["group"]) for i in got["items"]],
+                         [("KOLIBRI_VARIANT", "nvfp4", "yours")])
+
     def test_what_cannot_be_read_is_not_said(self):
         cp, _, _ = self.box("cockpit_conform_e", key_at=OLD_BOX)
         mod = cp._conformity()

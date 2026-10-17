@@ -72,6 +72,8 @@ _ENV_PLE_DIR="${PLE_DIR:-}"; FLASH_TIER_ENV="${FLASH_TIER:-}"
 _ENV_SPEC_TOKEN_MAP_SIZE="${SPEC_TOKEN_MAP_SIZE:-}"; _ENV_FLASH_REPLAYSSM_SPEC="${FLASH_REPLAYSSM_SPEC:-}"
 _ENV_DRAFT2_REPO="${DRAFT2_REPO:-}"; _ENV_DRAFT2_REV="${DRAFT2_REV:-}"
 _ENV_DRAFT2_QUANT="${DRAFT2_QUANT:-}"; _ENV_DRAFT2_TOKENS="${DRAFT2_TOKENS:-}"
+# the side lanes' checkpoints, which their installers read from the environment (2026-10-17)
+_ENV_KOLIBRI_VARIANT="${KOLIBRI_VARIANT:-}"; _ENV_IMAGE_MODEL="${IMAGE_MODEL:-}"; _ENV_VIDEO_VARIANT="${VIDEO_VARIANT:-}"
 # A run installs the text lane that does not serve as well, beside the one it serves: it
 # starts this script again for that lane, with QWEN38_SECONDARY naming it (27b or flash).
 # That run converges on that lane's own installed choices, installs its unit without
@@ -1345,6 +1347,9 @@ collect_choices() {
   if [ -n "$FLASH_TIER_ENV" ]; then CHOSE+=(--chose "FLASH_TIER=$FLASH_TIER"); fi
   if [ -n "$_ENV_SPEC_TOKEN_MAP_SIZE" ]; then CHOSE+=(--chose "SPEC_TOKEN_MAP_SIZE=$SPEC_TOKEN_MAP_SIZE"); fi
   if [ -n "$_ENV_FLASH_REPLAYSSM_SPEC" ]; then CHOSE+=(--chose "FLASH_REPLAYSSM_SPEC=$FLASH_REPLAYSSM_SPEC"); fi
+  if [ -n "$_ENV_KOLIBRI_VARIANT" ]; then CHOSE+=(--chose "KOLIBRI_VARIANT=$_ENV_KOLIBRI_VARIANT"); fi
+  if [ -n "$_ENV_IMAGE_MODEL" ]; then CHOSE+=(--chose "IMAGE_MODEL=$_ENV_IMAGE_MODEL"); fi
+  if [ -n "$_ENV_VIDEO_VARIANT" ]; then CHOSE+=(--chose "VIDEO_VARIANT=$_ENV_VIDEO_VARIANT"); fi
   return 0
 }
 # This box against what this release recommends, in one list before anything changes

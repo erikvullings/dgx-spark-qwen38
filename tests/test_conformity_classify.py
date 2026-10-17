@@ -57,10 +57,11 @@ def box(context="1m", host="127.0.0.1", port="30000", hf=None, target27="RadixAr
         draft=("maurienne-ai/Qwen3.8-27B-DFlash2-NVFP4-RTNcal", "bd7a934213c47a9e7ef69eef36bb3325f47fd1f1",
                "modelopt_fp4", "16"),
         flash=True, flash_target="RadixArk/Qwen3.8-Flash-Next-NVFP4", tier="concurrency", replay="1",
-        token_map="65536", ple=None, proxy_bind="0.0.0.0", proxy_port="30001", key_at=None, record=None):
+        token_map="65536", ple=None, proxy_bind="0.0.0.0", proxy_port="30001", key_at=None, record=None,
+        side=True, kolibri="Aleph-Alpha/Kolibri-1", image_model="Qwen/Qwen-Image-2.1", video_variant="fl2va"):
     """(units dir, config dir) of a box whose units are the templates rendered with these values
     (the recommended ones by default). key_at: the mtime of its API key (None: no key);
-    record: installed.json, as a dict or as raw text."""
+    record: installed.json, as a dict or as raw text; side: the Kolibri, image and video units."""
     units, cfg = wall._tmp("units-"), wall._tmp("cfg-")
     hf = hf or f"{HOME}/.cache/huggingface"
     common = {"HOME": HOME, "USER": "u", "GROUP": "u", "PORT": port, "ENGINE_BIND": host, "HF_CACHE": hf,
@@ -82,6 +83,17 @@ def box(context="1m", host="127.0.0.1", port="30000", hf=None, target27="RadixAr
     (units / "qwen38-keepalive.service").write_text(render("qwen38-keepalive.service.template", {
         **common, "PROXY_PORT": proxy_port, "PROXY_BIND": proxy_bind, "PROMPT_CEILING": "0",
         "FLASH_PROMPT_CEILING": "250000"}))
+    if side:
+        (units / "qwen38-kolibri.service").write_text(render("qwen38-kolibri.service.template", {
+            **common, "PORT": "30030", "GMU": "0.80", "IMAGE": "qwen38-kolibri:x", "MODEL": kolibri, "REV": "e" * 40}))
+        lanes = f"{HOME}/.local/share"
+        (units / "qwen38-image.service").write_text(render("qwen38-image.service.template", {
+            **common, "IMAGE_BIND": host, "IMAGE_PORT": "30010", "IMAGE_LANE_DIR": f"{lanes}/qwen38-image",
+            "IMAGE_VENV": f"{lanes}/qwen38-image/venv", "IMAGE_MODEL": image_model}))
+        (units / "qwen38-video.service").write_text(render("qwen38-video.service.template", {
+            **common, "VIDEO_BIND": host, "VIDEO_PORT": "30022", "VIDEO_LANE_DIR": f"{lanes}/qwen38-video",
+            "VIDEO_VENV": f"{lanes}/qwen38-video/venv", "VIDEO_MODEL": "MiniMaxAI/MiniMax-H3",
+            "VIDEO_VARIANT": video_variant}))
     if key_at is not None:
         (cfg / "api-key").write_text("not-a-key\n")
         t = datetime.datetime.fromisoformat(key_at).timestamp()

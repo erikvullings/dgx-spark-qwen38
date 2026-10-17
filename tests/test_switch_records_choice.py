@@ -124,5 +124,46 @@ class SwitchModelCallsIt(unittest.TestCase):
                 self.assertIn(f"target.{lane}", conformity.KNOBS)
 
 
+
+class TheSideLanesRecordTheirCheckpoint(unittest.TestCase):
+    """kolibri-nvfp4 and image-turbo are choices the box keeps across updates (2026-10-17): the
+    switch records them as it records a text lane's target, and the way back erases them."""
+    TEXT = (REPO / "switch-model.sh").read_text()
+
+    def test_kolibri_nvfp4_is_recorded_and_fp8_erases_it(self):
+        cfg = config(a_record())
+        rec, changed = conformity.choose(cfg, "KOLIBRI_VARIANT", "nvfp4", now=NOW)
+        self.assertEqual((changed, rec["choices"]["KOLIBRI_VARIANT"]["value"]), ("recorded", "nvfp4"))
+        rec, changed = conformity.choose(cfg, "KOLIBRI_VARIANT", "fp8", now=LATER)
+        self.assertEqual(changed, "erased")
+        self.assertNotIn("KOLIBRI_VARIANT", rec["choices"])
+
+    def test_the_image_turbo_is_recorded_and_the_base_erases_it(self):
+        cfg = config(a_record())
+        rec, changed = conformity.choose(cfg, "IMAGE_MODEL", "Qwen/Qwen-Image-2.1-Turbo", now=NOW)
+        self.assertEqual(changed, "recorded")
+        rec, changed = conformity.choose(cfg, "IMAGE_MODEL", "Qwen/Qwen-Image-2.1", now=LATER)
+        self.assertEqual(changed, "erased")
+
+    def test_each_side_switch_records_once_queued_and_never_fails_for_it(self):
+        for queued, call in (('"$KOL_MODEL" "$KOLIBRI_UNIT_NAME"',
+                              'KOLIBRI_VARIANT "$([ "$KOL_MODEL" = "$KOLIBRI_NVFP4_REPO" ] && echo nvfp4 || echo fp8)" || true\n'),
+                             ('"$IMG_MODEL" "$IMAGE_UNIT_NAME"', 'IMAGE_MODEL "$IMG_MODEL" || true\n')):
+            with self.subTest(call=call.split()[0]):
+                at = self.TEXT.index("Switch queued: %s (%s)\\033[0m\\n' " + queued)
+                tail = self.TEXT[at:at + 500]
+                self.assertIn('python3 "$REPO_DIR/conformity.py" choose --config-dir "$CONFIG_DIR" --repo-dir "$REPO_DIR" \\\n', tail)
+                self.assertIn(call, tail)
+
+    def test_the_kolibri_choice_names_the_checkpoint_the_switch_serves(self):
+        kol = (REPO / "install-kolibri.sh").read_text()
+        repos = dict(re.findall(r'^(KOLIBRI_(?:FP8|NVFP4)_REPO)="([^"]+)"', kol, re.M))
+        expr = '$([ "$KOL_MODEL" = "$KOLIBRI_NVFP4_REPO" ] && echo nvfp4 || echo fp8)'
+        for model, want in ((repos["KOLIBRI_NVFP4_REPO"], "nvfp4"), (repos["KOLIBRI_FP8_REPO"], "fp8")):
+            with self.subTest(want=want):
+                out = subprocess.run(["bash", "-c", f'KOLIBRI_NVFP4_REPO="{repos["KOLIBRI_NVFP4_REPO"]}"; '
+                                      f'KOL_MODEL="{model}"; echo "{expr}"'], capture_output=True, text=True, timeout=30)
+                self.assertEqual(out.stdout.strip(), want)
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

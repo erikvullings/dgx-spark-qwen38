@@ -1678,8 +1678,9 @@ def refresh_owed():
 # This box against what its clone recommends (v1.36.0, 2026-10-17): conformity.py's plan for the
 # text lane the box serves from, with nothing set on a command line, so the same list the next
 # ./install.sh prints before its first step. Read again only once a file it reads has changed:
-# the units of the two text lanes and of the proxy, the flash launcher, installed.json, the API
-# key (whose date is the age of a box with no record), the clone's install.sh and CHANGELOG.md.
+# the units of the two text lanes, of the proxy and of the Kolibri, image and video lanes, the
+# flash launcher, installed.json, the API key (whose date is the age of a box with no record),
+# the clone's install.sh, the installers of those three lanes (their defaults) and CHANGELOG.md.
 _CONFORM_CACHE: dict = {}
 
 
@@ -1703,9 +1704,11 @@ def conformity_state():
             except OSError:
                 noted = ""
             lane = "flash" if noted == "qwen38-flash.service" else "27b"
-        files = ([UNIT_DIR / n for n in ("qwen38-sglang.service", "qwen38-flash.service", "qwen38-keepalive.service")]
+        files = ([UNIT_DIR / n for n in ("qwen38-sglang.service", "qwen38-flash.service", "qwen38-keepalive.service",
+                                         "qwen38-kolibri.service", "qwen38-image.service", "qwen38-video.service")]
                  + [CONFIG_DIR / n for n in ("launch-flash.sh", "installed.json", "api-key", "text-lane")]
-                 + [REPO_DIR / "install.sh", REPO_DIR / "CHANGELOG.md"])
+                 + [REPO_DIR / n for n in ("install.sh", "install-kolibri.sh", "install-image.sh", "install-video.sh",
+                                           "CHANGELOG.md")])
         key = (lane,) + tuple(_mtime_ns(f) for f in files)
         if _CONFORM_CACHE.get("key") != key:
             items = mod.plan(CONFIG_DIR, lane, {}, repo_dir=REPO_DIR, units_dir=UNIT_DIR)

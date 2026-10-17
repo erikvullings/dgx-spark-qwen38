@@ -87,6 +87,10 @@ def walled(script="install.sh", at=None, after=False, units=None):
     # and conformity.py (since v1.36.0), which the convergence asks whether an installed value
     # is a default of an older release or a choice
     (d / "conformity.py").write_text((REPO / "conformity.py").read_text())
+    # and the side lanes' installers, whose defaults it recommends (since v1.36.0): read only,
+    # so written without the execute bit, and a run that reached one would stop on it
+    for side in ("install-kolibri.sh", "install-image.sh", "install-video.sh"):
+        (d / side).write_text((REPO / side).read_text())
     # and the head of the CHANGELOG, whose first heading names the release the list before
     # step 1 compares the box with (since v1.36.0)
     (d / "CHANGELOG.md").write_text("".join((REPO / "CHANGELOG.md").read_text().splitlines(keepends=True)[:3]))

@@ -909,7 +909,8 @@ function applyBusy(){
 // ── banners: what you did not go looking for ──────────────────────────────────
 // The settings conformity.py compares that are no variable of their own, as the page names them
 // (v1.36.0): the same names install.sh's list gives them.
-const CF_NAME = {'target.27b': '27B target', 'target.flash': 'flash target', DRAFT2: '27B drafter'};
+const CF_NAME = {'target.27b': '27B target', 'target.flash': 'flash target', DRAFT2: '27B drafter',
+  KOLIBRI_VARIANT: 'Kolibri checkpoint', IMAGE_MODEL: 'image model', VIDEO_VARIANT: 'video variant'};
 const cfName = i => CF_NAME[i.knob] || i.knob;
 function wedgeNext(){
   const c = F.config || {};

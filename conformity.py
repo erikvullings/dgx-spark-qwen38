@@ -38,10 +38,12 @@ FIRST_RELEASE = "v1.36.0"
 # to keep a value is always NAME=value ./install.sh. A lane's target is not a variable of its
 # own (MODEL_CHOICE picks the lane too), hence target.27b and target.flash; DRAFT2 is the 27B
 # drafter as a whole (repository, quantization, depth), because the old default is the three
-# together: the same repository at depth 16 was somebody's choice.
+# together: the same repository at depth 16 was somebody's choice. The side lanes' checkpoints
+# are compared too (2026-10-17): install.sh hands KOLIBRI_VARIANT, IMAGE_MODEL and VIDEO_VARIANT
+# to their installers, which keep the unit's otherwise.
 KNOBS = ("target.27b", "target.flash", "DRAFT2", "CONTEXT_MODE", "ENGINE_BIND", "PROXY_BIND",
          "PORT", "PROXY_PORT", "HF_CACHE", "PLE_DIR", "FLASH_TIER", "SPEC_TOKEN_MAP_SIZE",
-         "FLASH_REPLAYSSM_SPEC")
+         "FLASH_REPLAYSSM_SPEC", "KOLIBRI_VARIANT", "IMAGE_MODEL", "VIDEO_VARIANT")
 # Settings that belong to the site rather than to a release: where the checkpoints live, which
 # ports clients were given. Listed apart and never moved by an update (decided 2026-10-16).
 SITE = ("PORT", "PROXY_PORT", "HF_CACHE", "PLE_DIR")
@@ -107,6 +109,26 @@ def targets(repo_dir=REPO):
             re.findall(r'^ {2}([a-z0-9-]+)\)\s+MODEL_REPO="\$([A-Z][A-Z0-9_]*_REPO)"', text, re.M)}
 
 
+def _side(repo_dir, script, pattern):
+    """A value a side lane's installer writes (its default, a pinned repository), read from the
+    line that writes it: KeyError when the installer no longer writes it that way."""
+    m = re.search(pattern, _read(Path(repo_dir) / script) or "", re.M)
+    if not m:
+        raise KeyError(f"{script}: {pattern}")
+    return m.group(1)
+
+
+# The lines of the side lanes' installers that write their defaults and their two Kolibri
+# checkpoints (tests/test_conformity_side_lanes.py runs the installers' own lines against them).
+SIDE = {
+    "KOLIBRI_VARIANT": ("install-kolibri.sh", r'^\s*""\)\s*VARIANT=([a-z0-9]+);'),
+    "IMAGE_MODEL": ("install-image.sh", r'^IMAGE_MODEL_PIN="([^"]+)"'),
+    "VIDEO_VARIANT": ("install-video.sh", r'VARIANT="\$\{VARIANT:-([a-z0-9]+)\}"'),
+    "fp8": ("install-kolibri.sh", r'^KOLIBRI_FP8_REPO="([^"]+)"'),
+    "nvfp4": ("install-kolibri.sh", r'^KOLIBRI_NVFP4_REPO="([^"]+)"'),
+}
+
+
 def recommended(repo_dir=REPO, home=None):
     """{knob: value} a box installed today with no variable set ends up with. A default install.sh
     no longer writes the way this reads raises KeyError rather than recommend nothing."""
@@ -139,6 +161,7 @@ def recommended(repo_dir=REPO, home=None):
         "FLASH_TIER": val("FLASH_TIER"),
         "SPEC_TOKEN_MAP_SIZE": val("SPEC_TOKEN_MAP_SIZE"),
         "FLASH_REPLAYSSM_SPEC": val("FLASH_REPLAYSSM_SPEC"),
+        **{knob: _side(repo_dir, *SIDE[knob]) for knob in ("KOLIBRI_VARIANT", "IMAGE_MODEL", "VIDEO_VARIANT")},
     }
 
 
@@ -213,6 +236,20 @@ def observe(units_dir=UNITS, config_dir=None, lane="27b", repo_dir=REPO):
             v = _first(pattern, proxy)
             if v:
                 out[knob] = v
+    # The side lanes' checkpoints, read back as their installers read them: Kolibri's by the
+    # repository before its --revision, the image's by --model-path, the video's by
+    # --model-variant (fl2va, the installer's default, when the unit names none).
+    kolibri = _read(Path(units_dir) / "qwen38-kolibri.service")
+    if kolibri is not None:
+        for variant in ("fp8", "nvfp4"):
+            if f"{_side(repo_dir, *SIDE[variant])} --revision" in kolibri:
+                out["KOLIBRI_VARIANT"] = variant
+    image = _read(Path(units_dir) / "qwen38-image.service")
+    if image is not None and _first(r"--model-path ([^ ]+)", image):
+        out["IMAGE_MODEL"] = _first(r"--model-path ([^ ]+)", image)
+    video = _read(Path(units_dir) / "qwen38-video.service")
+    if video is not None:
+        out["VIDEO_VARIANT"] = _first(r"--model-variant ([a-z0-9]+)", video) or _side(repo_dir, *SIDE["VIDEO_VARIANT"])
     return out
 
 
@@ -375,7 +412,8 @@ def plan(config_dir, lane, chose=None, repo_dir=REPO, units_dir=UNITS, home=None
 
 
 # The settings that are no variable of their own, as the list names them.
-PLAN_NAMES = {"target.27b": "27B target", "target.flash": "flash target", "DRAFT2": "27B drafter"}
+PLAN_NAMES = {"target.27b": "27B target", "target.flash": "flash target", "DRAFT2": "27B drafter",
+              "KOLIBRI_VARIANT": "Kolibri checkpoint", "IMAGE_MODEL": "image model", "VIDEO_VARIANT": "video variant"}
 
 
 def plan_lines(items, release):
