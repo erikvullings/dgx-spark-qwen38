@@ -1,0 +1,19 @@
+cff-version: 1.2.0
+message: "If you use this software or its measurements, please cite it as below."
+title: "dgx-spark-qwen38"
+abstract: "One command turns a DGX Spark or ASUS Ascent GX10 into a private AI server: seven measured, pinned AI lanes (text up to 1M tokens, images, video with sound), run from a local cockpit on a laptop or a phone. Nothing leaves the box."
+type: software
+authors:
+  - family-names: "Basbunar"
+    given-names: "Hasan"
+license: MIT
+repository-code: "https://github.com/hasso5703/dgx-spark-qwen38"
+url: "https://github.com/hasso5703/dgx-spark-qwen38"
+keywords:
+  - dgx-spark
+  - gb10
+  - local-llm
+  - sglang
+  - vllm
+  - nvfp4
+  - speculative-decoding
