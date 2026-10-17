@@ -61,6 +61,12 @@ variable that keeps it. Services behind their own clone (a
 command that brings them up. The update banner no longer promises that an update keeps the
 context mode. `./uninstall.sh --list` names installed.json.
 
+**A banner's long command, on a phone.** A banner whose text carries a command kept that
+command's width in its column: 372 px in a 361 px box on an iPhone 15. The page zoomed by 3.7 %
+and its visual viewport moved 30 px, so every tap in the drawer landed on the item below the one
+under the finger (the touch check: 13 of 264 taps; the update banner of earlier releases,
+"Version ... is out" with its command, does the same). The text wraps now: 264 of 264.
+
 **Tests.** conformity.py against units rendered from the repo's own templates (a box rendered with
 the recommended values shows no difference, each moved value is read back the way install.sh reads
 it, and each ambiguous case of the classing: older or younger than the change, by the instant and
