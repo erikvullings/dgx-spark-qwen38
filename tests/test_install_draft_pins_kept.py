@@ -44,7 +44,7 @@ def config_dir(key_at=None, record=None):
 def pins(unit_text, config=None, **env):
     d = pathlib.Path(tempfile.mkdtemp(prefix="draft-pins-"))
     (d / "unit").write_text(unit_text)
-    script = ("set -euo pipefail\n" + ENVS + "\n" + DEFAULTS + f'\nUNIT_PATH="{d}/unit"\n'
+    script = ("set -euo pipefail\nRECOMMENDED=0\n" + ENVS + "\n" + DEFAULTS + f'\nUNIT_PATH="{d}/unit"\n'
               + f'REPO_DIR="{REPO}"; CONFIG_DIR="{config or config_dir()}"\n' + MOVES + BLOCK
               + '\necho "PINS $DRAFT2_REPO $DRAFT2_REV $DRAFT2_QUANT $DRAFT2_TOKENS"\n')
     r = subprocess.run(["bash", "-c", script], capture_output=True, text=True, timeout=30,

@@ -55,6 +55,9 @@ esac; done
 # What the installed unit says, so a re-run without variables changes nothing.
 installed(){ { grep -m1 -E "^$1=" "$INSTALLED" 2>/dev/null || true; } | cut -d= -f2-; }
 unit_flag(){ { grep -m1 -oE -- "$1 [^ \\\\]+" "$INSTALLED" 2>/dev/null || true; } | awk '{print $2}'; }
+# A checkpoint read back from the unit, unless ./install.sh --recommended asks for the default
+# one (v1.36.0); the port and the bind are read back either way.
+kept_flag(){ [ "${QWEN38_RECOMMENDED:-0}" = 1 ] || unit_flag "$1"; }
 
 CONFIG_DIR="$HOME/.config/qwen38"
 # the text lane the box comes back to, one record shared with switch-model.sh (lanes.sh)
@@ -78,7 +81,7 @@ IMAGE_MODEL_PIN_REV="790c92633540aa0cb11d9abf19eb46d861714758"
 # serves it keeps it, like any target of the unit.
 IMAGE_TURBO_PIN="Qwen/Qwen-Image-2.1-Turbo"
 IMAGE_TURBO_PIN_REV="d65dbc9a7e8f6b5479e33dee6030eaab2a906509"
-MODEL="${IMAGE_MODEL:-$(unit_flag --model-path)}"; MODEL="${MODEL:-Qwen/Qwen-Image-2.1}"   # = IMAGE_MODEL_PIN
+MODEL="${IMAGE_MODEL:-$(kept_flag --model-path)}"; MODEL="${MODEL:-Qwen/Qwen-Image-2.1}"   # = IMAGE_MODEL_PIN
 case "$MODEL" in
   "$IMAGE_MODEL_PIN") MODEL_REV="${IMAGE_MODEL_REV:-$IMAGE_MODEL_PIN_REV}" ;;
   "$IMAGE_TURBO_PIN") MODEL_REV="${IMAGE_MODEL_REV:-$IMAGE_TURBO_PIN_REV}" ;;

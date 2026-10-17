@@ -56,7 +56,7 @@ def run_block(launcher, config=None, **env):
     (d / "launch-flash.sh").write_text(launcher)
     # FLASH_TIER_ENV is taken before the defaults fill FLASH_TIER in, as install.sh takes it at
     # its top: taken after them, it was never empty here and the tier was never read back
-    script = ('set -euo pipefail\nFLASH_TIER_ENV="${FLASH_TIER:-}"\n' + DEFAULTS + "\n" + FUNC
+    script = ('set -euo pipefail\nRECOMMENDED=0\nFLASH_TIER_ENV="${FLASH_TIER:-}"\n' + DEFAULTS + "\n" + FUNC
               + "\nresolve_flash_tier_args\n"
               + f'REPO_DIR="{REPO}"; CONFIG_DIR="{config or config_dir()}"\n' + MOVES
               + f'_ENV_SPEC_TOKEN_MAP_SIZE="${{SPEC_TOKEN_MAP_SIZE_ENV:-}}"\n'

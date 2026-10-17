@@ -104,6 +104,8 @@ LOCAL_IMAGE="${LOCAL_IMAGE:0:52}"
 
 # The checkpoint: the installed unit's, or KOLIBRI_VARIANT (fp8, the default, or nvfp4).
 INSTALLED_MODEL="$(grep -m1 -oE -- "(${KOLIBRI_FP8_REPO}|${KOLIBRI_NVFP4_REPO}) --revision" "$INSTALLED" 2>/dev/null | awk '{print $1}' || true)"
+# ./install.sh --recommended installs the default checkpoint whatever the unit names (v1.36.0)
+if [ "${QWEN38_RECOMMENDED:-0}" = 1 ]; then INSTALLED_MODEL=""; fi
 case "${KOLIBRI_VARIANT:-}" in
   "") VARIANT=fp8; [ "$INSTALLED_MODEL" = "$KOLIBRI_NVFP4_REPO" ] && VARIANT=nvfp4 ;;
   fp8|nvfp4) VARIANT="$KOLIBRI_VARIANT" ;;

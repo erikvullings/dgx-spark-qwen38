@@ -50,8 +50,9 @@ class EachLaneIsWantedUnlessLeftOut(unittest.TestCase):
         if marker:
             cfg.mkdir(parents=True)
             (cfg / "image.off").write_text("left out\n")
-        # PLAN_ONLY=0 as install.sh sets it before its flags (--plan leaves the markers alone)
-        script = (f'set -euo pipefail\nCONFIG_DIR="{cfg}"\nPLAN_ONLY=0\n{self.FUNC}\n'
+        # PLAN_ONLY=0 and RECOMMENDED=0 as install.sh sets them before its flags (--plan leaves the
+        # markers alone, --recommended removes them)
+        script = (f'set -euo pipefail\nRECOMMENDED=0\nCONFIG_DIR="{cfg}"\nPLAN_ONLY=0\n{self.FUNC}\n'
                   f'lane_wanted image {no} {with_}\necho "WANT=$WANT"\n')
         r = subprocess.run(["bash", "-c", script], capture_output=True, text=True, timeout=30,
                            env={"PATH": "/usr/bin:/bin"})
@@ -290,7 +291,7 @@ def vllm_lane_disabled(case, lane, secondary, lane_boot):
     for f in ("sudo", "systemctl"):
         (d / f).chmod(0o755)
     boots = {"kolibri": 0, "nemotron": 0, "nemotron-super": 0, lane: lane_boot}
-    r = subprocess.run(["bash", "-c", f'set -euo pipefail\nSECONDARY="{secondary}"; KOLIBRI_BOOT={boots["kolibri"]}; '
+    r = subprocess.run(["bash", "-c", f'set -euo pipefail\nRECOMMENDED=0\nSECONDARY="{secondary}"; KOLIBRI_BOOT={boots["kolibri"]}; '
                         f'NEMOTRON_BOOT={boots["nemotron"]}; NEMOTRON_SUPER_BOOT={boots["nemotron-super"]}\n' + block],
                        capture_output=True, text=True, timeout=30,
                        env={"PATH": f"{d}:/usr/bin:/bin"})
@@ -438,7 +439,7 @@ class TheOtherTextLaneOnDemand(unittest.TestCase):
         block = between('UNITS_ONLY=0\n', '\nfi\n') + "\nfi\n"
         for secondary, rc in (("flash", 0), ("27b", 0), ("", 1)):
             with self.subTest(secondary=secondary):
-                r = subprocess.run(["bash", "-c", f"set -euo pipefail\nSECONDARY={secondary}\nUNITS_ONLY=0\n{block}echo UNITS_ONLY=$UNITS_ONLY"],
+                r = subprocess.run(["bash", "-c", f"set -euo pipefail\nRECOMMENDED=0\nSECONDARY={secondary}\nUNITS_ONLY=0\n{block}echo UNITS_ONLY=$UNITS_ONLY"],
                                    capture_output=True, text=True, timeout=30, env={"PATH": "/usr/bin:/bin", "QWEN38_UNITS_ONLY": "1"})
                 self.assertEqual(r.returncode, rc, r.stdout + r.stderr)
                 if rc == 0:
@@ -452,7 +453,7 @@ class TheOtherTextLaneOnDemand(unittest.TestCase):
         for units_only, patched in ((1, False), (0, True)):
             with self.subTest(units_only=units_only):
                 (t / "calls").unlink(missing_ok=True)
-                script = (f"set -euo pipefail\ndie(){{ echo DIE; exit 1; }}\nUNITS_ONLY={units_only}; LANE=27b; CONTEXT_MODE=1m; KEEP_MODEL_VERBATIM=0\n"
+                script = (f"set -euo pipefail\nRECOMMENDED=0\ndie(){{ echo DIE; exit 1; }}\nUNITS_ONLY={units_only}; LANE=27b; CONTEXT_MODE=1m; KEEP_MODEL_VERBATIM=0\n"
                           f'REPO_DIR=/r; HF_CACHE=/hf; MODEL_REPO=m; MODEL_REV=1; DRAFT2_REPO=d; DRAFT2_REV=2\n{fn}apply_context_configs\n')
                 r = subprocess.run(["bash", "-c", script], capture_output=True, text=True, timeout=30, env={"PATH": f"{t}:/usr/bin:/bin"})
                 self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
@@ -468,7 +469,7 @@ class TheOtherTextLaneOnDemand(unittest.TestCase):
         for lane in ("flash", "27b"):
             for units_only, rc in ((1, 0), (0, 1)):
                 with self.subTest(lane=lane, units_only=units_only):
-                    script = (f'set -euo pipefail\ndie(){{ echo "DIE $*"; exit 1; }}\nLANE={lane}; UNITS_ONLY={units_only}\n'
+                    script = (f'set -euo pipefail\nRECOMMENDED=0\ndie(){{ echo "DIE $*"; exit 1; }}\nLANE={lane}; UNITS_ONLY={units_only}\n'
                               f'HF_CACHE="{t}/hf"; PLE_DIR="{t}/ple"; MODEL_REPO=org/model; MODEL_REV=abc; IMAGE=img27; FLASH_IMAGE=imgflash\n'
                               f'. "{REPO}/lanes.sh"\n' + section + '\necho ROOM-OK\n')
                     r = subprocess.run(["bash", "-c", script], capture_output=True, text=True, timeout=60, env={"PATH": f"{t}:/usr/bin:/bin"})
@@ -480,7 +481,7 @@ class TheOtherTextLaneOnDemand(unittest.TestCase):
         cfg = tmp("map-line-")
         if built:
             (cfg / "token-map-65536.pt").write_text("map")
-        script = (f'set -euo pipefail\nCONFIG_DIR="{cfg}"; SPEC_TOKEN_MAP_SIZE={size}; TOKEN_MAP_NAME=token-map-65536.pt\n'
+        script = (f'set -euo pipefail\nRECOMMENDED=0\nCONFIG_DIR="{cfg}"; SPEC_TOKEN_MAP_SIZE={size}; TOKEN_MAP_NAME=token-map-65536.pt\n'
                   f'FLASH_TIER_ARGS="{tier}"\n' + block + 'printf "%s" "$SPEC_TOKEN_MAP_LINE"\n')
         r = subprocess.run(["bash", "-c", script], capture_output=True, text=True, timeout=30)
         self.assertEqual(r.returncode, 0, r.stderr)
@@ -493,7 +494,7 @@ class TheOtherTextLaneOnDemand(unittest.TestCase):
         for built, want in ((False, "A"), (True, "A --speculative-token-map /out/token-map-65536.pt")):
             if built:
                 (cfg / "token-map-65536.pt").write_text("map")
-            r = subprocess.run(["bash", "-c", f"set -euo pipefail\nTIER=(A)\n{line}\necho \"${{TIER[*]}}\""],
+            r = subprocess.run(["bash", "-c", f"set -euo pipefail\nRECOMMENDED=0\nTIER=(A)\n{line}\necho \"${{TIER[*]}}\""],
                                capture_output=True, text=True, timeout=30)
             self.assertEqual((r.returncode, r.stdout.strip()), (0, want), r.stderr)
 
@@ -581,7 +582,7 @@ class TheParentStartsIt(unittest.TestCase):
              'UNITS_ONLY=${QWEN38_UNITS_ONLY:-unset}"\n'
              f"exit {child_rc}")
         block = self.BLOCK.replace("/etc/systemd/system/", f"{units}/")
-        script = ("set -euo pipefail\nstep(){ echo \"STEP $*\"; }\n"
+        script = ("set -euo pipefail\nRECOMMENDED=0\nstep(){ echo \"STEP $*\"; }\n"
                   f'SECONDARY=""; NO_SERVICE={no_service}; LANE={lane}; REPO_DIR="{repo}"; CONFIG_DIR="{t}/cfg"\n'
                   f'SGL_UNIT_PATH="{units}/qwen38-sglang.service"\n'
                   f"WANT_FLASH={want}; WANT_27B={want}; ALL_WEIGHTS={all_weights}; WITH_FLASH={with_flash}; WITH_27B={with_27b}\n"
@@ -743,7 +744,7 @@ class TheOtherLanesAndTheirProofs(unittest.TestCase):
         block = self.BLOCK.replace("/etc/systemd/system/", f"{unit_dir}/")
         # lanes.sh first, as install.sh sources it (side_nemotron_begun reads a unit's cache through it),
         # then this test's own stale_since
-        script = ("set -euo pipefail\nstep(){ echo \"STEP $*\"; }\ndie(){ echo \"DIE $*\"; exit 1; }\n"
+        script = ("set -euo pipefail\nRECOMMENDED=0\nstep(){ echo \"STEP $*\"; }\ndie(){ echo \"DIE $*\"; exit 1; }\n"
                   + f'LANES_UNIT_DIR="{unit_dir}"; CONFIG_DIR="{t}"; . "{REPO}/lanes.sh"\n'
                   "stale_since(){ return 1; }\n" + f'HOME="{t}/home"; ALL_WEIGHTS={all_weights}\n'
                   + self.MODES.replace("/etc/systemd/system/", f"{unit_dir}/") +
@@ -974,7 +975,7 @@ class ProvingATextLane(unittest.TestCase):
         stub(bin_ / "curl", f'case "$*" in *"/health"*) exit {health} ;; *) cat "{t}/answer.json" ;; esac')
         stub(bin_ / "journalctl", "echo JOURNAL")
         stub(bin_ / "sleep", "exit 0")
-        script = ("set -euo pipefail\nPORT=30000; KEY=k\n" + self.FUNC +
+        script = ("set -euo pipefail\nRECOMMENDED=0\nPORT=30000; KEY=k\n" + self.FUNC +
                   f'\nif prove_text_lane qwen38-flash.service qwen3.8-flash-next {after}; then echo RC0; else echo RC1; fi\n')
         r = subprocess.run(["bash", "-c", script], capture_output=True, text=True, timeout=60,
                            env={"PATH": f"{bin_}:/usr/bin:/bin"})

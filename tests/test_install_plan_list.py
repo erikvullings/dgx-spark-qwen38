@@ -180,13 +180,15 @@ class TheRunPrintsIt(unittest.TestCase):
 
     def test_the_help_names_it(self):
         help_text = TEXT[TEXT.index("Usage: ./install.sh"):TEXT.index("HLP\n", TEXT.index("Usage: ./install.sh"))]
-        self.assertIn("[--plan]", help_text)
+        self.assertIn("[--plan] [--recommended]", help_text)
         self.assertIn("  --plan                list this box against what this release recommends", help_text)
 
     def test_the_block_is_the_main_runs_and_never_fatal(self):
         block = TEXT[TEXT.index("# This box against what this release recommends"):TEXT.index('step "1/10 Preflight checks"')]
         self.assertIn('if [ -z "$SECONDARY" ] && [ "$NO_SERVICE" -eq 0 ]; then', block)
-        self.assertRegex(block, r'--lane "\$LANE" \$\{CHOSE\[@\]\+"\$\{CHOSE\[@\]\}"\} \\\n    \|\| echo "NOTE: ')
+        self.assertRegex(block, r'--lane "\$LANE" \$\{CHOSE\[@\]\+"\$\{CHOSE\[@\]\}"\} '
+                                r'\$\{REC_FLAG\[@\]\+"\$\{REC_FLAG\[@\]\}"\} \\\n    \|\| echo "NOTE: ')
+        self.assertIn('REC_FLAG=(); [ "$RECOMMENDED" -eq 0 ] || REC_FLAG=(--recommended)', block)
         self.assertIn("--units /etc/systemd/system/", block, "the units the run reads, which the walled copies move")
 
     def test_record_install_and_the_list_take_the_same_choices(self):

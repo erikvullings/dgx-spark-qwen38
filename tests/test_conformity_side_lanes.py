@@ -1,12 +1,14 @@
 #!/usr/bin/env python3
-"""The side lanes' checkpoints in the list (v1.36.0, 2026-10-17).
+"""The side lanes' checkpoints in the list, and what --recommended moves (v1.36.0, 2026-10-17).
 
 The Kolibri, image and video lanes keep the checkpoint their unit names across updates (an
 operator switched to kolibri-nvfp4 or image-turbo, or installed another video variant), and
 the list said nothing of them (Hasan, 2026-10-17: record them from v1.36.0). They are compared
 like the text lanes' targets: read back from their units the way their installers read them,
 recommended as each installer installs a new box, and, since no release installed another one
-by default, a different one is always a choice.
+by default, a different one is always a choice. ./install.sh --recommended moves every setting
+but the site's to the recommended value, choices included (Hasan, 2026-10-17: "Tout comme une
+box neuve", the site's port, cache and folders kept); a value set on its command line stays.
 """
 import os
 import pathlib
@@ -16,7 +18,7 @@ import sys
 import unittest
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from test_conformity_classify import REC, box, classes  # noqa: E402
+from test_conformity_classify import HOME, REC, box, classes  # noqa: E402
 
 REPO = pathlib.Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO))
@@ -78,6 +80,42 @@ class EachOneIsReadBackFromItsUnit(unittest.TestCase):
         for knob in ("KOLIBRI_VARIANT", "IMAGE_MODEL", "VIDEO_VARIANT"):
             self.assertNotIn(knob, seen)
         self.assertEqual(classes(units, cfg), {})
+
+
+class RecommendedMovesEveryChoiceButTheSites(unittest.TestCase):
+    def setUp(self):
+        self.units, self.cfg = box(flash_target="nvidia/Qwen3.8-Flash-Next-NVFP4", kolibri=NVFP4,
+                                   host="0.0.0.0", port="30100", proxy_port="30101")
+
+    def groups(self, chose=None, recommended_run=True):
+        items = conformity.plan(self.cfg, "27b", chose or {}, units_dir=self.units, home=HOME,
+                                recommended_run=recommended_run)
+        return {i["knob"]: (i["group"], i["why"]) for i in items}, items
+
+    def test_a_plain_run_keeps_them_and_a_recommended_one_moves_them(self):
+        plain, _ = self.groups(recommended_run=False)
+        self.assertEqual(plain["target.flash"], ("yours", "never-default"))
+        self.assertEqual(plain["KOLIBRI_VARIANT"], ("yours", "never-default"))
+        rec, _ = self.groups()
+        for knob in ("target.flash", "KOLIBRI_VARIANT", "ENGINE_BIND"):
+            with self.subTest(knob=knob):
+                self.assertEqual(rec[knob], ("moves", "recommended"))
+        self.assertEqual(rec["PORT"], ("site", "site"))
+        self.assertNotIn("PROXY_PORT", rec)  # 30101 is what is recommended beside port 30100
+
+    def test_a_value_set_on_its_command_line_stays(self):
+        rec, _ = self.groups(chose={"KOLIBRI_VARIANT": "nvfp4"})
+        self.assertEqual(rec["KOLIBRI_VARIANT"], ("yours", "env"))
+        self.assertEqual(rec["target.flash"], ("moves", "recommended"))
+
+    def test_the_list_says_what_moves_and_why(self):
+        _, items = self.groups()
+        lines = conformity.plan_lines(items, "v1.36.0")
+        self.assertIn("  moves now    flash target flash-nvda, to flash: --recommended moves it, a choice of yours or not",
+                      lines)
+        self.assertIn("  moves now    Kolibri checkpoint nvfp4, to fp8: --recommended moves it, a choice of yours or not",
+                      lines)
+        self.assertTrue(any(ln.startswith("  site setting PORT 30100") for ln in lines), lines)
 
 
 if __name__ == "__main__":

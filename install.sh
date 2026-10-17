@@ -472,9 +472,16 @@ WITH_NEMOTRON_SUPER=0
 NO_NEMOTRON_SUPER=0
 ALL_WEIGHTS=0
 PLAN_ONLY=0
+# --recommended (v1.36.0): every setting the list before step 1 compares, but the site's (the
+# port, the HF cache, the PLE folder), moves to the recommended value, the operator's choices
+# too, and the lanes, opencode and the cockpit an earlier --no-* left out come back: what a new
+# box gets (Hasan, 2026-10-17). The run for the other text lane and the side lanes' installers
+# read it as QWEN38_RECOMMENDED.
+RECOMMENDED="${QWEN38_RECOMMENDED:-0}"
 for arg in "$@"; do
   case "$arg" in
     --plan) PLAN_ONLY=1 ;;
+    --recommended) RECOMMENDED=1 ;;
     --no-start) NO_START=1 ;;
     --no-service) NO_SERVICE=1 ;;
     --no-opencode) NO_OPENCODE=1 ;;
@@ -507,7 +514,7 @@ Usage: ./install.sh [--no-start] [--no-service] [--no-opencode | --with-opencode
                    [--no-27b | --with-27b] [--no-kolibri | --with-kolibri]
                    [--no-nemotron | --with-nemotron]
                    [--no-nemotron-super | --with-nemotron-super]
-                   [--all-weights] [--plan]
+                   [--all-weights] [--plan] [--recommended]
 
 Run it as yourself. Never with sudo in front: it calls sudo itself for the
 privileged steps, and under sudo every path it writes moves to /root (see the
@@ -575,12 +582,19 @@ without a terminal.
                         a run moves, what stays yours, the site's settings), then
                         stop before anything changes: run the same command
                         without --plan to apply it
+  --recommended         what a new box gets: every setting the list compares
+                        moves to the recommended value, your choices too (each
+                        lane's target, the drafter, the context mode, the binds,
+                        the flash tier, the side lanes' checkpoints), and the
+                        lanes, opencode and the cockpit an earlier --no-* left
+                        out come back; the port, the HF cache and the PLE folder
+                        stay (--plan --recommended lists what it moves)
 
 Re-running over an existing install keeps the operator's choices: the target
 model (any of the seven), the context mode (native/1m), the flash serving tier,
 the port, the HF cache location and the opencode on/off choice are read from
 the installed unit or launcher (or the marker file) unless the env var or flag
-is passed explicitly. A value only an older release's default put there, which
+is passed explicitly, or --recommended. A value only an older release's default put there, which
 nothing records as chosen, moves to today's default (since v1.36.0); the list
 printed before step 1 says which, and --plan prints it alone.
 
@@ -648,6 +662,8 @@ HLP
 done
 [ "$PLAN_ONLY" -eq 0 ] || [ "$NO_SERVICE" -eq 0 ] \
   || die "--plan lists what a run does to the box's services; --no-service writes none."
+case "$RECOMMENDED" in 0|1) ;; *) die "QWEN38_RECOMMENDED takes 0 or 1 (got: $RECOMMENDED)" ;; esac
+export QWEN38_RECOMMENDED="$RECOMMENDED"   # the side lanes' installers this run calls read it
 
 # ── Converge on the operator's installed choices ──
 # Re-running the installer (or the get.sh one-liner) must never silently reset
@@ -749,6 +765,8 @@ if [ -z "$SECONDARY" ] && systemctl is-enabled --quiet qwen38-image.service 2>/d
     # the boot below, where the text unit is enabled. Keeping the image lane here would
     # answer "install flash" with "flash updated, not served", and exit 0.
     echo "MODEL_CHOICE=$_ENV_MODEL_CHOICE given on a box booting the image lane: making that text lane the boot lane again."
+  elif [ "$RECOMMENDED" -eq 1 ]; then
+    echo "--recommended on a box booting the image lane: the 27B lane becomes the boot lane again, as on a new box."
   else
     IMAGE_BOOT=1
     echo "The image lane is this box's boot lane: this run brings the text lane up to date"
@@ -764,6 +782,8 @@ if [ -z "$SECONDARY" ] && systemctl is-enabled --quiet qwen38-video.service 2>/d
     # An explicit MODEL_CHOICE asks for a text lane: honour it, and the video lane
     # leaves the boot below, where the text unit is enabled.
     echo "MODEL_CHOICE=$_ENV_MODEL_CHOICE given on a box booting the video lane: making that text lane the boot lane again."
+  elif [ "$RECOMMENDED" -eq 1 ]; then
+    echo "--recommended on a box booting the video lane: the 27B lane becomes the boot lane again, as on a new box."
   else
     VIDEO_BOOT=1
     echo "The video lane is this box's boot lane: this run brings the text lane up to date"
@@ -777,6 +797,8 @@ if [ -z "$SECONDARY" ] && systemctl is-enabled --quiet qwen38-kolibri.service 2>
    && [ "$SGL_ENABLED" -eq 0 ] && [ "$FLASH_ENABLED" -eq 0 ]; then
   if [ -n "$_ENV_MODEL_CHOICE" ]; then
     echo "MODEL_CHOICE=$_ENV_MODEL_CHOICE given on a box booting the Kolibri lane: making that text lane the boot lane again."
+  elif [ "$RECOMMENDED" -eq 1 ]; then
+    echo "--recommended on a box booting the Kolibri lane: the 27B lane becomes the boot lane again, as on a new box."
   else
     KOLIBRI_BOOT=1
     echo "The Kolibri lane is this box's boot lane: this run brings the other lanes up to date"
@@ -789,6 +811,8 @@ if [ -z "$SECONDARY" ] && systemctl is-enabled --quiet qwen38-nemotron.service 2
    && [ "$SGL_ENABLED" -eq 0 ] && [ "$FLASH_ENABLED" -eq 0 ]; then
   if [ -n "$_ENV_MODEL_CHOICE" ]; then
     echo "MODEL_CHOICE=$_ENV_MODEL_CHOICE given on a box booting the Nemotron lane: making that text lane the boot lane again."
+  elif [ "$RECOMMENDED" -eq 1 ]; then
+    echo "--recommended on a box booting the Nemotron lane: the 27B lane becomes the boot lane again, as on a new box."
   else
     NEMOTRON_BOOT=1
     echo "The Nemotron lane is this box's boot lane: this run brings the other lanes up to date"
@@ -801,6 +825,8 @@ if [ -z "$SECONDARY" ] && systemctl is-enabled --quiet qwen38-nemotron-super.ser
    && [ "$SGL_ENABLED" -eq 0 ] && [ "$FLASH_ENABLED" -eq 0 ]; then
   if [ -n "$_ENV_MODEL_CHOICE" ]; then
     echo "MODEL_CHOICE=$_ENV_MODEL_CHOICE given on a box booting the Nemotron Super lane: making that text lane the boot lane again."
+  elif [ "$RECOMMENDED" -eq 1 ]; then
+    echo "--recommended on a box booting the Nemotron Super lane: the 27B lane becomes the boot lane again, as on a new box."
   else
     NEMOTRON_SUPER_BOOT=1
     echo "The Nemotron Super lane is this box's boot lane: this run brings the other lanes up to date"
@@ -862,7 +888,7 @@ if [ "$INSTALLED_CHOICE" = "flash" ]; then
     CUR_MODEL="$(grep -oE -- '--model-path [^ ]+' "$FLASH_LAUNCH" | head -1 | cut -d' ' -f2 || true)"
     # The tier lives in the launcher as the concurrency it pins, so a re-run
     # without FLASH_TIER keeps the tier the box is serving.
-    if [ -z "${FLASH_TIER_ENV:-}" ]; then
+    if [ -z "${FLASH_TIER_ENV:-}" ] && [ "$RECOMMENDED" -eq 0 ]; then
       for t in context concurrency throughput; do
         case "$t" in
           context)     mrr=4 ;;
@@ -887,14 +913,14 @@ if [ "$INSTALLED_CHOICE" = "flash" ]; then
     # rendered before a knob existed says nothing of it: those keep the defaults. The
     # markers are comments of the template, since v1.8 and since v1.10.2.
     if grep -q -- '--speculative-algorithm' "$FLASH_LAUNCH"; then
-      if [ -z "$_ENV_SPEC_TOKEN_MAP_SIZE" ] && grep -q 'Engine since v1.8' "$FLASH_LAUNCH"; then
+      if [ -z "$_ENV_SPEC_TOKEN_MAP_SIZE" ] && [ "$RECOMMENDED" -eq 0 ] && grep -q 'Engine since v1.8' "$FLASH_LAUNCH"; then
         CUR_MAP="$(grep -oE -- '--speculative-token-map /out/token-map-[0-9]+\.pt' "$FLASH_LAUNCH" | head -1 | sed -E 's/.*token-map-([0-9]+)\.pt/\1/' || true)"
         if [ "${CUR_MAP:-0}" != "$SPEC_TOKEN_MAP_SIZE" ]; then
           SPEC_TOKEN_MAP_SIZE="${CUR_MAP:-0}"; TOKEN_MAP_NAME="token-map-${SPEC_TOKEN_MAP_SIZE}.pt"
           echo "Keeping the installed reduced draft vocabulary: SPEC_TOKEN_MAP_SIZE=$SPEC_TOKEN_MAP_SIZE. Pass SPEC_TOKEN_MAP_SIZE= to change."
         fi
       fi
-      if [ -z "$_ENV_FLASH_REPLAYSSM_SPEC" ] && [ "$FLASH_REPLAYSSM_SPEC" = "1" ] \
+      if [ -z "$_ENV_FLASH_REPLAYSSM_SPEC" ] && [ "$RECOMMENDED" -eq 0 ] && [ "$FLASH_REPLAYSSM_SPEC" = "1" ] \
          && grep -q 'No --allow-auto-truncate' "$FLASH_LAUNCH" \
          && ! grep -q -- '--enable-linear-replayssm-spec' "$FLASH_LAUNCH"; then
         FLASH_REPLAYSSM_SPEC=0; resolve_flash_tier_args
@@ -906,15 +932,21 @@ if [ "$INSTALLED_CHOICE" = "flash" ]; then
       echo "Keeping the installed PLE table location: $PLE_DIR. Pass PLE_DIR= to change."
     fi
   fi
-  if [ -z "$_ENV_MODEL_CHOICE" ] && [ "$LANE" != "flash" ]; then
+  # Under --recommended the 27B lane serves, as on a new box, and the run for the flash lane
+  # beside it takes that lane's default target.
+  if [ -z "$_ENV_MODEL_CHOICE" ] && [ "$LANE" != "flash" ] && { [ "$RECOMMENDED" -eq 0 ] || [ -n "$SECONDARY" ]; }; then
     MODEL_CHOICE=flash; MODEL_REPO="$FLASH_REPO"; MODEL_REV="${_ENV_MODEL_REV:-$FLASH_REV}"
-    if [ -n "${CUR_MODEL:-}" ] && [ "$CUR_MODEL" = "$FLASH_NVDA_REPO" ]; then
+    if [ "$RECOMMENDED" -eq 0 ] && [ -n "${CUR_MODEL:-}" ] && [ "$CUR_MODEL" = "$FLASH_NVDA_REPO" ]; then
       MODEL_CHOICE=flash-nvda; MODEL_REPO="$FLASH_NVDA_REPO"; MODEL_REV="${_ENV_MODEL_REV:-$FLASH_NVDA_REV}"
-    elif [ -n "${CUR_MODEL:-}" ] && [ "$CUR_MODEL" = "$FLASH_UNC_REPO" ]; then
+    elif [ "$RECOMMENDED" -eq 0 ] && [ -n "${CUR_MODEL:-}" ] && [ "$CUR_MODEL" = "$FLASH_UNC_REPO" ]; then
       MODEL_CHOICE=flash-uncensored; MODEL_REPO="$FLASH_UNC_REPO"; MODEL_REV="${_ENV_MODEL_REV:-$FLASH_UNC_REV}"
     fi
     LANE=flash; UNIT_NAME="qwen38-flash.service"
-    echo "Keeping the installed target model: $MODEL_CHOICE ($MODEL_REPO). Pass MODEL_CHOICE= to change."
+    if [ "$RECOMMENDED" -eq 1 ]; then
+      echo "--recommended: the flash lane takes its default target, $MODEL_CHOICE ($MODEL_REPO)."
+    else
+      echo "Keeping the installed target model: $MODEL_CHOICE ($MODEL_REPO). Pass MODEL_CHOICE= to change."
+    fi
   fi
 elif [ "$INSTALLED_CHOICE" = "27b" ]; then
   UNIT_PATH="$SGL_UNIT_PATH"
@@ -924,7 +956,7 @@ elif [ "$INSTALLED_CHOICE" = "27b" ]; then
   CUR_REV="$(grep -oE -- '--revision [^ ]+' "$UNIT_PATH" | head -1 | cut -d' ' -f2 || true)"
   CUR_PORT="$(grep -oE -- '--port [0-9]+' "$UNIT_PATH" | head -1 | tr -dc '0-9' || true)"
   CUR_HF="$(unit_hf_cache "$UNIT_PATH")"
-  if [ -z "$_ENV_MODEL_CHOICE" ] && [ -n "$CUR_MODEL" ] && [ "$CUR_MODEL" != "$MODEL_REPO" ]; then
+  if [ -z "$_ENV_MODEL_CHOICE" ] && [ "$RECOMMENDED" -eq 0 ] && [ -n "$CUR_MODEL" ] && [ "$CUR_MODEL" != "$MODEL_REPO" ]; then
     case "$CUR_MODEL" in
       "$STOCK_REPO")  MODEL_CHOICE=stock;          MODEL_REPO="$STOCK_REPO";  MODEL_REV="${_ENV_MODEL_REV:-$STOCK_REV}" ;;
       "$UNC_REPO")    MODEL_CHOICE=uncensored;     MODEL_REPO="$UNC_REPO";    MODEL_REV="${_ENV_MODEL_REV:-$UNC_REV}" ;;
@@ -951,7 +983,7 @@ elif [ "$INSTALLED_CHOICE" = "27b" ]; then
   CUR_DRAFT_REV="$(grep -oE -- '--speculative-draft-model-revision [^ ]+' "$UNIT_PATH" | head -1 | cut -d' ' -f2 || true)"
   CUR_DRAFT_QUANT="$(grep -oE -- '--speculative-draft-model-quantization [^ ]+' "$UNIT_PATH" | head -1 | cut -d' ' -f2 || true)"
   CUR_DRAFT_TOKENS="$(grep -oE -- '--speculative-num-draft-tokens [0-9]+' "$UNIT_PATH" | head -1 | tr -dc '0-9' || true)"
-  if [ -z "$_ENV_DRAFT2_REPO" ] && [ -n "$CUR_DRAFT" ] && [ "$CUR_DRAFT" != "$DRAFT2_REPO" ]; then
+  if [ -z "$_ENV_DRAFT2_REPO" ] && [ "$RECOMMENDED" -eq 0 ] && [ -n "$CUR_DRAFT" ] && [ "$CUR_DRAFT" != "$DRAFT2_REPO" ]; then
     DEF_DRAFT2="DRAFT2_REPO=$DRAFT2_REPO DRAFT2_REV=$DRAFT2_REV DRAFT2_QUANT=$DRAFT2_QUANT DRAFT2_TOKENS=$DRAFT2_TOKENS"
     # The BF16 draft at depth 8 was the default of v1.2.3 to v1.8.6 and is the documented
     # rollback since; a box that only ever updated kept it and never got v1.9's draft (found
@@ -975,7 +1007,7 @@ elif [ "$INSTALLED_CHOICE" = "27b" ]; then
         echo "      $DEF_DRAFT2 ./install.sh"
       fi
     fi
-  elif [ -z "$_ENV_DRAFT2_TOKENS" ] && [ -n "$CUR_DRAFT_TOKENS" ] && [ "$CUR_DRAFT_TOKENS" != "$DRAFT2_TOKENS" ]; then
+  elif [ -z "$_ENV_DRAFT2_TOKENS" ] && [ "$RECOMMENDED" -eq 0 ] && [ -n "$CUR_DRAFT_TOKENS" ] && [ "$CUR_DRAFT_TOKENS" != "$DRAFT2_TOKENS" ]; then
     DRAFT2_TOKENS="$CUR_DRAFT_TOKENS"
     echo "Keeping the installed draft depth: D=$DRAFT2_TOKENS. Pass DRAFT2_TOKENS= to change."
   fi
@@ -994,7 +1026,9 @@ if [ -n "$INSTALLED_CHOICE" ]; then
   # default, both ways. The other promise, that a box running the engine on the network
   # keeps it across updates (v1.17.0), holds since v1.36.0 for a choice only: the 0.0.0.0
   # every install got before v1.17.0 moves to 127.0.0.1 (old_default_moves above).
-  if [ -z "${_ENV_ENGINE_BIND:-}" ]; then
+  if [ -z "${_ENV_ENGINE_BIND:-}" ] && [ "$RECOMMENDED" -eq 1 ]; then
+    export ENGINE_BIND   # the vLLM side lanes follow the text lane's bind (vllm-lane.sh), as when it moves
+  elif [ -z "${_ENV_ENGINE_BIND:-}" ]; then
     # Read where the engine's --host really is: the 27B unit, or the flash launcher (its
     # unit only points at the script). This read $UNIT_PATH, which only the 27B branch
     # sets, so every re-run of a flash box printed "UNIT_PATH: unbound variable" and put
@@ -1016,7 +1050,7 @@ if [ -n "$INSTALLED_CHOICE" ]; then
     fi
   fi
   # The unit name, not $KEEPALIVE_UNIT: that variable is set 700 lines below this block.
-  if [ -z "${_ENV_PROXY_BIND:-}" ] && [ -r "/etc/systemd/system/qwen38-keepalive.service" ]; then
+  if [ -z "${_ENV_PROXY_BIND:-}" ] && [ "$RECOMMENDED" -eq 0 ] && [ -r "/etc/systemd/system/qwen38-keepalive.service" ]; then
     CUR_PBIND="$(grep -oE -- 'PROXY_BIND=[0-9.]+' "/etc/systemd/system/qwen38-keepalive.service" | head -1 | cut -d= -f2 || true)"
     if [ -n "$CUR_PBIND" ] && [ "$CUR_PBIND" != "$PROXY_BIND" ]; then
       PROXY_BIND="$CUR_PBIND"
@@ -1024,7 +1058,7 @@ if [ -n "$INSTALLED_CHOICE" ]; then
     fi
   fi
   check_binds
-  if [ "$INSTALLED_CHOICE" = "27b" ] && [ "$LANE" != "flash" ] && [ -z "$_ENV_CONTEXT_MODE" ]; then
+  if [ "$INSTALLED_CHOICE" = "27b" ] && [ "$LANE" != "flash" ] && [ -z "$_ENV_CONTEXT_MODE" ] && [ "$RECOMMENDED" -eq 0 ]; then
     if grep -q -- '--context-length 1010000' "$SGL_UNIT_PATH"; then
       CONTEXT_MODE=1m
       echo "Keeping the installed context mode: 1m. Pass CONTEXT_MODE=native to change."
@@ -1078,6 +1112,8 @@ OC_OFF_MARK="$CONFIG_DIR/opencode.off"
 OPENCODE=1
 if [ "$NO_OPENCODE" -eq 1 ]; then
   OPENCODE=0
+elif [ "$RECOMMENDED" -eq 1 ] && [ -f "$OC_OFF_MARK" ]; then
+  echo "--recommended: the opencode integration comes back (your earlier --no-opencode), as on a new box."
 elif [ "$WITH_OPENCODE" -eq 0 ] && [ -f "$OC_OFF_MARK" ]; then
   OPENCODE=0
   echo "Keeping the opencode integration off (your earlier --no-opencode). Pass --with-opencode to re-enable."
@@ -1192,6 +1228,9 @@ if [ "$NO_COCKPIT" -eq 1 ]; then
   fi
 elif [ "$WITH_COCKPIT" -eq 1 ]; then
   [ "$PLAN_ONLY" -eq 1 ] || rm -f "$CK_OFF_MARK"
+elif [ "$RECOMMENDED" -eq 1 ] && [ -f "$CK_OFF_MARK" ]; then
+  [ "$PLAN_ONLY" -eq 1 ] || rm -f "$CK_OFF_MARK"
+  echo "--recommended: the cockpit comes back (your earlier --no-cockpit), as on a new box."
 elif [ -f "$CK_OFF_MARK" ]; then
   COCKPIT=0
   echo "Keeping the cockpit off (your earlier --no-cockpit). Pass --with-cockpit to re-enable."
@@ -1214,6 +1253,9 @@ lane_wanted(){  # $1 lane (image, video, flash, 27b), $2 --no-$1 given, $3 --wit
     fi
   elif [ "$3" -eq 1 ]; then
     [ "$PLAN_ONLY" -eq 1 ] || rm -f "$mark"
+  elif [ -f "$mark" ] && [ "$RECOMMENDED" -eq 1 ]; then
+    [ "$PLAN_ONLY" -eq 1 ] || rm -f "$mark"
+    echo "--recommended: the $1 lane comes back (your earlier --no-$1), as on a new box."
   elif [ -f "$mark" ]; then
     WANT=0
     echo "Leaving the $1 lane out (your earlier --no-$1). Pass --with-$1 to bring it back."
@@ -1362,8 +1404,9 @@ collect_choices() {
 if [ -z "$SECONDARY" ] && [ "$NO_SERVICE" -eq 0 ]; then
   collect_choices
   echo
+  REC_FLAG=(); [ "$RECOMMENDED" -eq 0 ] || REC_FLAG=(--recommended)
   python3 "$REPO_DIR/conformity.py" plan --config-dir "$CONFIG_DIR" --repo-dir "$REPO_DIR" \
-      --units /etc/systemd/system/ --lane "$LANE" ${CHOSE[@]+"${CHOSE[@]}"} \
+      --units /etc/systemd/system/ --lane "$LANE" ${CHOSE[@]+"${CHOSE[@]}"} ${REC_FLAG[@]+"${REC_FLAG[@]}"} \
     || echo "NOTE: could not list this box's settings against the recommended ones; the run goes on."
 fi
 # --plan ends here, before the first step: nothing above writes but the markers of --no-<lane>
@@ -1815,7 +1858,7 @@ if [ -z "$SECONDARY" ] && [ "$NO_SERVICE" -eq 0 ]; then
       SECOND_UNITS=1; SECOND_ENV+=(QWEN38_UNITS_ONLY=1)
     fi
     if env -u MODEL_CHOICE -u MODEL_REV -u CONTEXT_MODE -u RESTART_ENGINE \
-         QWEN38_SECONDARY="$SECOND_LANE" PORT="$PORT" HF_CACHE="$HF_CACHE" \
+         QWEN38_SECONDARY="$SECOND_LANE" QWEN38_RECOMMENDED="$RECOMMENDED" PORT="$PORT" HF_CACHE="$HF_CACHE" \
          ENGINE_BIND="$ENGINE_BIND" PROXY_BIND="$PROXY_BIND" PROXY_PORT="$PROXY_PORT" \
          ${SECOND_ENV[@]+"${SECOND_ENV[@]}"} bash "$REPO_DIR/install.sh"; then
       SECOND_STATE=installed; [ "$SECOND_UNITS" -eq 1 ] && SECOND_STATE=units

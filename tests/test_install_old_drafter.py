@@ -49,7 +49,7 @@ def run(unit_text, config=None):
     whose age cannot be told by default); the pins it goes on with are on the last line."""
     unit = pathlib.Path(tempfile.mkdtemp(prefix="old-drafter-")) / "unit"
     unit.write_text(unit_text)
-    script = ("set -euo pipefail\n_ENV_DRAFT2_REPO=; _ENV_DRAFT2_REV=; _ENV_DRAFT2_QUANT=; _ENV_DRAFT2_TOKENS=\n"
+    script = ("set -euo pipefail\nRECOMMENDED=0\n_ENV_DRAFT2_REPO=; _ENV_DRAFT2_REV=; _ENV_DRAFT2_QUANT=; _ENV_DRAFT2_TOKENS=\n"
               + DEFAULTS + f'\nUNIT_PATH="{unit}"; REPO_DIR="{REPO}"; CONFIG_DIR="{config or config_dir()}"\n'
               + MOVES + BLOCK + '\necho "PINS $DRAFT2_REPO $DRAFT2_REV $DRAFT2_QUANT $DRAFT2_TOKENS"\n')
     r = subprocess.run(["bash", "-c", script], capture_output=True, text=True, timeout=30)

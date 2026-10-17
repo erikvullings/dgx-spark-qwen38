@@ -381,13 +381,15 @@ PLAN_WHY = {
 }
 
 
-def plan(config_dir, lane, chose=None, repo_dir=REPO, units_dir=UNITS, home=None):
+def plan(config_dir, lane, chose=None, repo_dir=REPO, units_dir=UNITS, home=None, recommended_run=False):
     """[{group, knob, value, recommended, why, old}]: each setting that differs from the
     recommended one once this run is done, in the order of KNOBS (2026-10-17). group:
       moves  an old default this box never chose: the run moves it to the recommended value
       yours  kept: recorded, set on this command line, or never a default (why says which)
       site   a setting of the site, kept
     chose: {knob: value} set on this command line, which the run serves whatever the units say.
+    recommended_run: the run is ./install.sh --recommended, which moves every setting but the
+    site's to the recommended value, the operator's choices among them (why: recommended).
     The classing is classify()'s, the one install.sh's convergence asks verdict() for."""
     config_dir = Path(config_dir)
     record, _ = load_record(config_dir)
@@ -403,6 +405,10 @@ def plan(config_dir, lane, chose=None, repo_dir=REPO, units_dir=UNITS, home=None
                             "recommended": rec[knob], "why": "env", "old": None})
             continue
         if knob not in seen or seen[knob] == rec[knob]:
+            continue
+        if recommended_run and knob not in SITE:
+            out.append({"group": "moves", "knob": knob, "value": seen[knob], "recommended": rec[knob],
+                        "why": "recommended", "old": None})
             continue
         v = classify(knob, seen[knob], rec[knob], record, since)
         group = "moves" if v.cls == "old-default" else "site" if v.why == "site" else "yours"
@@ -424,7 +430,10 @@ def plan_lines(items, release):
     lines = [f"{head}:"]
     for group, label in (("moves", "moves now"), ("yours", "stays yours"), ("site", "site setting")):
         for it in (i for i in items if i["group"] == group):
-            if group == "moves":
+            if it["why"] == "recommended":
+                text = (f"{PLAN_NAMES.get(it['knob'], it['knob'])} {it['value']}, to {it['recommended']}: "
+                        "--recommended moves it, a choice of yours or not")
+            elif group == "moves":
                 keep = ("the line above gives the variables that keep it" if it["knob"] == "DRAFT2"
                         else f"to keep it: {it['knob']}={it['value']} ./install.sh")
                 text = (f"{PLAN_NAMES.get(it['knob'], it['knob'])} {it['value']}, to {it['recommended']}: the default "
@@ -604,6 +613,8 @@ def main(argv=None):
     pl.add_argument("--lane", required=True, choices=("27b", "flash"))
     pl.add_argument("--chose", action="append", default=[], metavar="KNOB=VALUE",
                     help="a value the operator set explicitly on this run")
+    pl.add_argument("--recommended", action="store_true",
+                    help="the run is ./install.sh --recommended: every setting but the site's moves")
     v = sub.add_parser("verdict", help="converge or keep: what an update does with a value an older release made the default")
     v.add_argument("--config-dir", required=True)
     v.add_argument("knob", choices=KNOBS)
@@ -642,8 +653,8 @@ def main(argv=None):
             ap.error(f"--chose {kv}: not one of {', '.join(KNOBS)}")
         chose[knob] = value
     if a.cmd == "plan":
-        print("\n".join(plan_lines(plan(a.config_dir, a.lane, chose, repo_dir=a.repo_dir, units_dir=a.units),
-                                    clone_release(a.repo_dir))))
+        print("\n".join(plan_lines(plan(a.config_dir, a.lane, chose, repo_dir=a.repo_dir, units_dir=a.units,
+                                         recommended_run=a.recommended), clone_release(a.repo_dir))))
         return 0
     new = record(a.config_dir, a.path, a.lane, chose, repo_dir=a.repo_dir, units_dir=a.units)
     mine = ", ".join(f"{k}={e['value']}" for k, e in new["choices"].items())

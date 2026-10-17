@@ -62,6 +62,9 @@ esac; done
 # What the installed unit says, so a re-run without variables changes nothing.
 installed(){ { grep -m1 -E "^$1=" "$INSTALLED" 2>/dev/null || true; } | cut -d= -f2-; }
 unit_flag(){ { grep -m1 -oE -- "$1 [^ \\\\]+" "$INSTALLED" 2>/dev/null || true; } | awk '{print $2}'; }
+# A checkpoint read back from the unit, unless ./install.sh --recommended asks for the default
+# one (v1.36.0); the port and the bind are read back either way.
+kept_flag(){ [ "${QWEN38_RECOMMENDED:-0}" = 1 ] || unit_flag "$1"; }
 
 CONFIG_DIR="$HOME/.config/qwen38"
 # the text lane the box comes back to, one record shared with switch-model.sh (lanes.sh)
@@ -80,7 +83,7 @@ PORT="${VIDEO_PORT:-$(unit_flag --port)}"; PORT="${PORT:-30022}"
 # at VIDEO_MODEL_REV, or main.
 VIDEO_MODEL_PIN="MiniMaxAI/MiniMax-H3"
 VIDEO_MODEL_PIN_REV="42ed227ee7df40d41602854ae760620d6eb651fe"
-MODEL="${VIDEO_MODEL:-$(unit_flag --model-path)}"; MODEL="${MODEL:-MiniMaxAI/MiniMax-H3}"   # = VIDEO_MODEL_PIN
+MODEL="${VIDEO_MODEL:-$(kept_flag --model-path)}"; MODEL="${MODEL:-MiniMaxAI/MiniMax-H3}"   # = VIDEO_MODEL_PIN
 if [ "$MODEL" = "$VIDEO_MODEL_PIN" ]; then MODEL_REV="${VIDEO_MODEL_REV:-$VIDEO_MODEL_PIN_REV}"; else MODEL_REV="${VIDEO_MODEL_REV:-main}"; fi
 # The Turbo adapter (the Video view's Turbo switch): the cookbook's recommended
 # speed/quality recipe for the FL2VA weights, larryvrh's eight-evaluation LoRA: one file of
@@ -92,7 +95,7 @@ VIDEO_TURBO_FILE="minimax_h3_turbo_v4_step600_ema.safetensors"
 # fl2va serves text-only plus first/last-frame conditioning; ref2va serves reference
 # image/audio/video conditioning instead. They are checkpoint partitions: the variant
 # must match the weights fetched. VIDEO_VARIANT overrides it.
-VARIANT="${VIDEO_VARIANT:-$(unit_flag --model-variant)}"; VARIANT="${VARIANT:-fl2va}"
+VARIANT="${VIDEO_VARIANT:-$(kept_flag --model-variant)}"; VARIANT="${VARIANT:-fl2va}"
 case "$VARIANT" in fl2va|ref2va) ;; *) die "VIDEO_VARIANT takes fl2va or ref2va, got: $VARIANT" ;; esac
 # The installed unit's cache, then the one the text lane mounts, then the default: an
 # update that ignored the unit downloaded into ~/.cache and rewrote HF_HOME on a box
