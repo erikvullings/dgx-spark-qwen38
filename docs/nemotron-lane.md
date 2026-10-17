@@ -65,7 +65,7 @@ no JSON goes through systemd and bash. What differs from the card, and why:
   The drafter costs the cache dearly (at 0.45: 2.0 million tokens with it, 5.2 million without), so
   0.70 holds 6.5 million tokens with the prefix cache's settings below (6,523,301 and 6,536,475
   over two boots; 4,712,014 before them), 24 requests at the full window, and leaves the box 26 GiB
-  at rest (25.3 at its least, during a 252,000-token prompt's prefill, measured before them).
+  at rest, and 26.4 at its least during a 254,091-token prompt's prefill (25.3 before them).
 - **The prefix cache's fine settings**, which NVIDIA's own Super VL recipe sets and Bolt's card does
   not: `--block-size 64 --prefix-match-unit 64 --enable-mamba-shared-prefix-checkpoint`. With the
   card's, the drafter's sliding window made vLLM land every prefix-cache hit on a 17,984-token
@@ -115,7 +115,7 @@ Kolibri lane (`docs/kolibri-lane.md`).
 | KV cache at 0.70 | 6,523,301 and 6,536,475 tokens over two boots, 24 requests at the full window (4,712,014 and 18 before the prefix cache's fine settings) |
 | an agent's next turn, 40,000 tokens | 31,808 from the prefix cache, 8,231 recomputed, 5.0 s before the first token (17,984, 22,055 and 13.4 s before) |
 | boot from the USB SSD | 7 min 26 s to 7 min 36 s (weights 124 to 132 s, CUDA graphs for 16 requests 128 s) |
-| MemAvailable, lowest seen | 25.3 GiB, a 252,000-token prompt's prefill, measured before the prefix cache's fine settings (the measurement scripts on the box beside it); 26 GiB at rest with them |
+| MemAvailable, lowest seen | 26.4 GiB, a 254,091-token prompt's prefill (199.7 s), with the cockpit, opencode's web server and a test suite beside it (25.3 before the prefix cache's fine settings); 26 GiB at rest |
 | GPU, hottest | 88 °C, up to 95 W, long prefills back to back |
 
 **Speed, one request**, real work and the reasoning off, median of 3 (the drafter's mean acceptance
