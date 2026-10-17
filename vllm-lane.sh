@@ -23,12 +23,20 @@ vlane_text_flag(){  # $1 the flag (--port, --host)
   # shellcheck disable=SC2086  # a list of paths
   { grep -hoE -- "$1 [^ \\\\']+" $INSTALLED $TEXT_UNITS 2>/dev/null || true; } | head -1 | awk '{print $2}'
 }
+# The bind the text lanes use, theirs first and this lane's own unit only on a box with no text
+# lane installed (2026-10-17). Read the other way round, a vLLM lane kept the 0.0.0.0 an older
+# release's default had given the text lane it copied, after an update moved that text lane to
+# 127.0.0.1 (v1.36.0): a lane left out that day, brought back later, read its own unit first.
+vlane_bind(){
+  # shellcheck disable=SC2086  # a list of paths
+  { grep -hoE -- "--host [^ \\']+" $TEXT_UNITS $INSTALLED 2>/dev/null || true; } | head -1 | awk '{print $2}'
+}
 vlane_engine_env(){  # $1 the lane's own port (KOLIBRI_PORT and the like), empty when not set
   TEXT_UNITS="${TEXT_UNITS:-$LANES_UNIT_DIR/qwen38-sglang.service $CONFIG_DIR/launch-flash.sh}"
   HF_CACHE="${HF_CACHE:-$(vlane_text_cache)}"; HF_CACHE="${HF_CACHE:-$HOME/.cache/huggingface}"
   UPSTREAM_PORT="$({ grep -m1 -oE 'UPSTREAM=http://[^:]+:[0-9]+' "$LANES_UNIT_DIR/qwen38-keepalive.service" 2>/dev/null || true; } | awk -F: '{print $NF}')"
   PORT="${1:-${UPSTREAM_PORT:-$(vlane_text_flag --port)}}"; PORT="${PORT:-30000}"
-  ENGINE_BIND="${ENGINE_BIND:-$(vlane_text_flag --host)}"; ENGINE_BIND="${ENGINE_BIND:-127.0.0.1}"
+  ENGINE_BIND="${ENGINE_BIND:-$(vlane_bind)}"; ENGINE_BIND="${ENGINE_BIND:-127.0.0.1}"
   case "$PORT" in ''|*[!0-9]*) die "the engine port must be a number, got: $PORT" ;; esac
 }
 
