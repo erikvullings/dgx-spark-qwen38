@@ -36,11 +36,27 @@ command line, never a default), and the site's own settings apart (port, cache, 
 line when nothing differs. `./install.sh --plan` prints that list and stops, leaving even the
 markers of `--no-<lane>` as they are.
 
+**The side lanes' checkpoints, compared too.** The Kolibri lane's checkpoint (fp8, or nvfp4), the
+image lane's model and the video lane's variant are in the list like a text lane's target: read
+back from their units, recommended as their installers install a new box, recorded by a switch
+to `kolibri-nvfp4` or `image-turbo` (and erased by the way back), and kept by an update as the
+operator's choice, since no release installed another one by default.
+
+**Back to the recommended state, in one command.** `./install.sh --recommended` gives a box what
+a new one gets: every setting the list compares, but the site's (the port, the HF cache, the PLE
+folder), moves to the recommended value, the operator's choices too, and the lanes, opencode and
+the cockpit an earlier `--no-*` left out come back; a box that booted a side lane gets the 27B
+lane back as its boot lane. A value set on the same command line still wins, and
+`./install.sh --plan --recommended` lists what it would move. The cockpit's Settings gives it,
+through the same one command as the update (`curl ... get.sh | bash -s -- --recommended`), while a
+setting differs that is not the site's.
+
 **Said in the cockpit.** The release the services run is the one installed.json records ("before
 v1.36.0" on a box no run of it recorded). When the next update moves something on the box, the
 banner strip says so in orange (a token of its own), with what it moves; the operator's own
-choices make no banner, since a box that keeps one would wear it for good. Settings lists each
-difference, why it stays or the variable that keeps it. Services behind their own clone (a
+choices make no banner, since a box that keeps one would wear it for good, and Settings caps them
+in plain, keeping orange for what moves. Settings lists each difference, why it stays or the
+variable that keeps it. Services behind their own clone (a
 `git pull` with no install, a run stopped at `--no-start`) are said in orange too, with the
 command that brings them up. The update banner no longer promises that an update keeps the
 context mode. `./uninstall.sh --list` names installed.json.
@@ -50,8 +66,13 @@ the recommended values shows no difference, each moved value is read back the wa
 it, and each ambiguous case of the classing: older or younger than the change, by the instant and
 not the day, recorded or not, an unreadable record, a key restored from a backup); install.sh's
 four blocks that converge, its record at every end of a run that ends well, the list and
-`--plan` on walled copies of it; the switch's record; the cockpit's tier and its page, banners and
-Settings. Each fails on the old code and passes on the new.
+`--plan` on walled copies of it; `--recommended` on walled runs of a box that holds a choice in
+every setting (a plain run keeps each one, `--recommended` none but the site's, a value on its
+command line still wins, `--plan` changes nothing), the other text lane's run and the side lanes'
+installers taking their default checkpoint under it; the side lanes' checkpoints read back from
+units rendered from their own templates, against their installers' own default lines; the
+switch's record, the side lanes' too; the cockpit's tier and its page, banners and Settings. Each
+fails on the old code and passes on the new.
 
 **What an update does.** On a box whose units carry an old default nothing records as chosen,
 this update moves it, and the engine that reads it restarts on its new unit: the 27B lane on the

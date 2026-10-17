@@ -129,6 +129,10 @@ the release recommends (`./install.sh --plan` prints the list alone and changes 
 writes down in `~/.config/qwen38/installed.json` the release it installed and the choices it
 recorded. A value that only an older release's default put on the box, and that nothing records
 as chosen, moves to today's default; the list gives the variable that keeps it.
+`./install.sh --recommended` gives the box what a new one gets: every setting of the list but the
+port, the HF cache and the PLE folder moves to the recommended value, your choices too, and the
+lanes, opencode and the cockpit an earlier `--no-*` left out come back (`--plan --recommended`
+lists what it moves and changes nothing).
 
 Your choices survive the upgrade: the API key, the patched template, your own systemd drop-ins
 under `/etc/systemd/system/qwen38-sglang.service.d/`, the opencode on/off choice (v1.5.9), and (since v1.3) the installed target

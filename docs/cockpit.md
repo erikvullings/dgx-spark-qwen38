@@ -259,7 +259,10 @@ list every run prints before its first step (`./install.sh --plan` prints it alo
 nothing), and when the next update moves something the strip says so in orange, with what it
 moves. Settings lists each difference, why it stays (recorded as a choice, never a default, a
 setting of the site) or the variable that keeps it. Neither a box as recommended nor one that
-differs by its operator's choices alone gets a banner: a choice is not a delay.
+differs by its operator's choices alone gets a banner: a choice is not a delay, and Settings caps
+it in plain. While a setting differs that is not the site's, Settings also gives the command that
+brings the box to the recommended state, choices included: the update's one command with
+`-s -- --recommended`.
 
 `COCKPIT_UPDATE_CHECK=0` turns the outbound check off. SECURITY.md names it as the one
 request this stack makes that the operator did not type.
