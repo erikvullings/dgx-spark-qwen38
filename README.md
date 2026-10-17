@@ -1,5 +1,10 @@
 # One command turns a DGX Spark into a private AI server
 
+<p align="center">
+  <img src="docs/img/tour.webp" width="270" alt="The Spark cockpit in ten seconds: a laptop and a phone driving the box, the live memory, a coding agent whose test passes, an image and a video made on the box, the seven lanes">
+</p>
+<p align="center"><a href="#see-it-in-49-seconds">Watch the 49-second tour, with sound</a></p>
+
 **Qwen3.8-27B at 71.4 tok/s with a 1M context, Qwen3.8-Flash-Next 176B on a single box, images,
 video, Kolibri-1, Nemotron 3.5 Bolt and Nemotron 3.5 Super VL: installed and pinned by one command**, the lane that serves proved before it ends and every other built at its first Load, on a DGX Spark or another
 GB10 box such as the ASUS Ascent GX10. No prompt, image or video leaves the box.
@@ -50,6 +55,14 @@ takes its measurements as its DGX Spark reference, and it is listed in
 ![The Spark cockpit's Now view: one pool of unified memory and what holds it, the lanes in their rack with their makers' marks and the serving one edged in green, and below them the requests and the timeline](docs/img/cockpit-now.png)
 
 *The cockpit, installed by default: one pool of unified memory, lanes that take turns in it, and the whole box run from a browser, on a laptop or a phone.*
+
+## See it in 49 seconds
+
+https://github.com/user-attachments/assets/dce6294e-4fbd-4337-a0e6-360d552eaf29
+
+Everything in it ran on one DGX Spark and was filmed from its own cockpit: the agent wrote its service and ran
+its test on the 27B, Qwen-Image 2.1 made the image in 40 steps and MiniMax-H3 the video with its sound in
+25 min 51 s, sped up where the pill says so.
 
 ## In detail
 
