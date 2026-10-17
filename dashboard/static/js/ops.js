@@ -498,7 +498,8 @@ function renderConformity(d){
   if (!c){ cap('cf-cap', 'unknown', ''); setText('cf-head', 'The cockpit could not compare this box with its release (its journal says why).'); return; }
   const items = c.items || [], rel = c.release || 'this release';
   if (!items.length){ cap('cf-cap', 'as recommended', 'ok'); setText('cf-head', `Every setting this box serves is what ${rel} recommends.`); return; }
-  cap('cf-cap', items.length === 1 ? 'one differs' : `${items.length} differ`, 'orange');
+  // orange only for what the next update moves: a choice among the options is no alert (Hasan, 2026-10-17)
+  cap('cf-cap', items.length === 1 ? 'one differs' : `${items.length} differ`, items.some(i => i.group === 'moves') ? 'orange' : '');
   setText('cf-head', `What this box serves, the ${c.lane === 'flash' ? 'flash' : '27B'} lane's units read, against what ${rel} recommends:`);
   ['moves', 'yours', 'site'].forEach(g => items.filter(i => i.group === g).forEach(i => {
     const why = g === 'moves' ? `the default until ${i.old}` : (CF_WHY[i.why] || (() => i.why))(i.old);

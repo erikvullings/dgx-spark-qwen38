@@ -58,6 +58,7 @@ class TheBannerSaysWhatTheNextUpdateMoves(unittest.TestCase):
         r = page(self, js([YOURS, SITE]))
         self.assertEqual([b for b in r["banners"] if "orange" in b["cls"]], [], r["banners"])
         self.assertEqual(r["cap"], "2 differ")
+        self.assertEqual(r["capCls"], "cap")  # no orange in Settings either: a choice is no alert
         self.assertEqual([li["cls"] for li in r["list"]], ["cf yours", "cf site"])
 
     def test_a_box_as_recommended_gets_no_banner(self):
