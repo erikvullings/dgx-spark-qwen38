@@ -256,10 +256,10 @@ v1.12.1, the flash lane's context tier before v1.19.0, the BF16 drafter before v
 there for good, said once in an update's output; the next update moves it to today's default,
 unless the operator chose it. The cockpit reads the box against what its clone recommends, the
 list every run prints before its first step (`./install.sh --plan` prints it alone and changes
-nothing), and while anything differs the strip says so in orange: what the next update moves
-first, or that the box differs by the operator's choice alone. Settings lists each difference,
-why it stays (recorded as a choice, never a default, a setting of the site) or the variable that
-keeps it. A box as recommended gets no banner.
+nothing), and when the next update moves something the strip says so in orange, with what it
+moves. Settings lists each difference, why it stays (recorded as a choice, never a default, a
+setting of the site) or the variable that keeps it. Neither a box as recommended nor one that
+differs by its operator's choices alone gets a banner: a choice is not a delay.
 
 `COCKPIT_UPDATE_CHECK=0` turns the outbound check off. SECURITY.md names it as the one
 request this stack makes that the operator did not type.

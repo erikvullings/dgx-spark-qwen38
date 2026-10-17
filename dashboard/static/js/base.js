@@ -971,16 +971,17 @@ function renderBanners(state, errors){
     else add('orange', `No install of v1.36.0 or later recorded what this box runs.`,
       `The services run a release before it, or one an install that did not end well left. Run the installer once: ${updateCmd(F.config)}.`);
   }
-  // This box against what its clone recommends (v1.36.0, 2026-10-17): one orange banner while
-  // anything differs, so that nobody runs behind in silence; Settings lists each difference.
+  // This box against what its clone recommends (v1.36.0, 2026-10-17): an orange banner when the
+  // next update moves something, so that nobody runs behind in silence. The operator's own
+  // choices make none (Hasan, 2026-10-17: a choice is not a delay, and a box that keeps one wore
+  // the banner for good); Settings lists each difference.
   const cf = (upd.conformity || {}).items || [];
-  if (cf.length){
-    const rel = upd.conformity.release || 'this release', moves = cf.filter(i => i.group === 'moves'), kept = cf.length - moves.length;
-    if (moves.length) add('orange', `This box runs ${moves.length === 1 ? 'a default' : moves.length + ' defaults'} of an older release.`,
+  const moves = cf.filter(i => i.group === 'moves');
+  if (moves.length){
+    const rel = upd.conformity.release || 'this release', kept = cf.length - moves.length;
+    add('orange', `This box runs ${moves.length === 1 ? 'a default' : moves.length + ' defaults'} of an older release.`,
       `${moves.map(i => `${cfName(i)} ${i.value}`).join(', ')}: the next update moves ${moves.length === 1 ? 'it' : 'them'} to what ${rel} recommends`
       + (kept ? `, and keeps ${kept === 1 ? 'one setting' : kept + ' settings'} of yours` : '') + '. Settings lists each difference, and the variable that keeps it.');
-    else add('orange', `This box differs from what ${rel} recommends in ${cf.length === 1 ? 'one setting' : cf.length + ' settings'}, all yours.`,
-      `${cf.map(i => `${cfName(i)} ${i.value}`).join(', ')}: updates keep ${cf.length === 1 ? 'it' : 'them'}. Settings lists why each one stays.`);
   }
   if ((upd.stale_code || []).length) add('warn', 'This cockpit runs older code than the files on disk.', `${upd.stale_code.join(', ')} changed under it. Restart it: sudo systemctl restart qwen38-dashboard.service`);
   const ocf = F.ocfit;

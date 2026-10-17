@@ -37,13 +37,13 @@ line when nothing differs. `./install.sh --plan` prints that list and stops, lea
 markers of `--no-<lane>` as they are.
 
 **Said in the cockpit.** The release the services run is the one installed.json records ("before
-v1.36.0" on a box no run of it recorded). While the box differs from what its clone recommends,
-the banner strip says so in orange (a token of its own): what the next update moves first, or
-that the box differs by the operator's choice alone; Settings lists each difference, why it stays
-or the variable that keeps it. Services behind their own clone (a `git pull` with no install, a
-run stopped at `--no-start`) are said in orange too, with the command that brings them up. The
-update banner no longer promises that an update keeps the context mode. `./uninstall.sh --list`
-names installed.json.
+v1.36.0" on a box no run of it recorded). When the next update moves something on the box, the
+banner strip says so in orange (a token of its own), with what it moves; the operator's own
+choices make no banner, since a box that keeps one would wear it for good. Settings lists each
+difference, why it stays or the variable that keeps it. Services behind their own clone (a
+`git pull` with no install, a run stopped at `--no-start`) are said in orange too, with the
+command that brings them up. The update banner no longer promises that an update keeps the
+context mode. `./uninstall.sh --list` names installed.json.
 
 **Tests.** conformity.py against units rendered from the repo's own templates (a box rendered with
 the recommended values shows no difference, each moved value is read back the way install.sh reads

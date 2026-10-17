@@ -1,12 +1,13 @@
-"""The page says, in orange, while this box differs from what its release recommends (v1.36.0).
+"""The page says, in orange, what the next update moves on this box (v1.36.0).
 
 "Nobody behind in silence" (2026-10-16): a value an older release installed by default stayed on
 a box for good, said once in an update's output, and the cockpit, the one place an operator
 looks, said nothing. The update tier carries the list install.sh prints before its first step;
-the banner strip says it in orange while anything differs (what the next update moves first),
-Settings lists each difference with why it stays or the variable that keeps it, and a box as
-recommended gets no banner at all. The update banner no longer promises that an update keeps
-the context mode: an old default moves.
+the banner strip says in orange what the next update moves, Settings lists each difference with
+why it stays or the variable that keeps it, and neither a box as recommended nor one that
+differs by its operator's choices alone gets a banner (Hasan, 2026-10-17: a choice is not a
+delay, and a box that keeps one wore the banner for good). The update banner no longer promises
+that an update keeps the context mode: an old default moves.
 """
 import pathlib
 import sys
@@ -42,7 +43,7 @@ def js(items):
     return json.dumps(items)
 
 
-class TheBannerIsOrangeWhileTheBoxDiffers(unittest.TestCase):
+class TheBannerSaysWhatTheNextUpdateMoves(unittest.TestCase):
     def test_an_old_default_is_said_first_with_what_the_next_update_does(self):
         r = page(self, js([MOVES, YOURS]))
         mine = [b for b in r["banners"] if "older release" in b["text"]]
@@ -53,12 +54,11 @@ class TheBannerIsOrangeWhileTheBoxDiffers(unittest.TestCase):
         self.assertIn("ENGINE_BIND 0.0.0.0: the next update moves it to what v1.36.0 recommends, and keeps one "
                       "setting of yours. Settings lists each difference, and the variable that keeps it.", mine[0]["text"])
 
-    def test_choices_alone_are_said_as_choices(self):
+    def test_choices_alone_make_no_banner_and_settings_lists_them(self):
         r = page(self, js([YOURS, SITE]))
-        mine = [b for b in r["banners"] if "recommends" in b["text"]]
-        self.assertEqual(len(mine), 1, r["banners"])
-        self.assertIn("This box differs from what v1.36.0 recommends in 2 settings, all yours.", mine[0]["text"])
-        self.assertIn("flash target flash-nvda, HF_CACHE /mnt/ssd/huggingface: updates keep them.", mine[0]["text"])
+        self.assertEqual([b for b in r["banners"] if "orange" in b["cls"]], [], r["banners"])
+        self.assertEqual(r["cap"], "2 differ")
+        self.assertEqual([li["cls"] for li in r["list"]], ["cf yours", "cf site"])
 
     def test_a_box_as_recommended_gets_no_banner(self):
         r = page(self, js([]))
