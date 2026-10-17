@@ -133,7 +133,7 @@ class BodyBudget(unittest.TestCase):
     def released(self):
         """Whether every body's budget is back: a request gives it back after its answer is
         written, so the client can read the answer first."""
-        deadline = time.time() + 5
+        deadline = time.time() + 30    # a wait for a state, not a pace: a slow runner gets there too
         while getattr(self.mod, "_BODY_BUDGET", {"used": 0})["used"] and time.time() < deadline:
             time.sleep(0.02)
         return getattr(self.mod, "_BODY_BUDGET", {"used": 0})["used"] == 0
@@ -185,7 +185,7 @@ class BodyBudget(unittest.TestCase):
 
     def test_bytes_announced_and_never_sent_keep_no_body_out(self):
         s = self.announce(1_040_000)
-        deadline = time.time() + 5
+        deadline = time.time() + 30    # a wait for a state, not a pace: a slow runner gets there too
         while not self.mod._BODY_BUDGET["used"] and time.time() < deadline:
             time.sleep(0.02)
         self.assertTrue(self.mod._BODY_BUDGET["used"], "the proxy never took the announced body in")
@@ -220,7 +220,7 @@ class BodyBudget(unittest.TestCase):
         step, data = 64 * 1024, body_of(700_000)
 
         def held(n):
-            deadline = time.time() + 5
+            deadline = time.time() + 30    # a wait for a state, not a pace: a slow runner gets there too
             while self.mod._BODY_BUDGET["used"] != n and time.time() < deadline:
                 time.sleep(0.02)
             return self.mod._BODY_BUDGET["used"]
@@ -228,6 +228,9 @@ class BodyBudget(unittest.TestCase):
         a = self.announce(len(data))
         self.assertEqual(held(step), step)              # the older is the one read first
         b = self.announce(len(data))
+        # b admitted and reading before a's bytes come: else a holds 8 steps when b's handler
+        # starts, and b is refused at its admission, by a race of the test and not the budget
+        self.assertEqual(held(2 * step), 2 * step)
         a.sendall(data[:7 * step])
         b.sendall(data[:7 * step])
         self.assertEqual(held(16 * step), 16 * step)    # the budget, full, and both want more
