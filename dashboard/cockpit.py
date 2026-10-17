@@ -2576,6 +2576,11 @@ STATE["config"] = {"data": {"usable_frac": USABLE_FRAC, "version": VERSION, "dry
                             "terminal_only": {"update_stack": f"cd {REPO_DIR} && ./install.sh",
                                               "update": f"cd {REPO_DIR} && curl -fsSL https://raw."
                                                         "githubusercontent.com/hasso5703/dgx-spark-qwen38/main/get.sh | bash",
+                                              # every setting but the site's to the recommended one,
+                                              # the operator's choices too (v1.36.0, 2026-10-17)
+                                              "recommended": f"cd {REPO_DIR} && curl -fsSL https://raw."
+                                                             "githubusercontent.com/hasso5703/dgx-spark-qwen38/main/get.sh"
+                                                             " | bash -s -- --recommended",
                                               "install_agent": f"cd {REPO_DIR} && dashboard/install-agent.sh"}},
                    "ts": time.time()}
 

@@ -132,6 +132,10 @@ class TheUpdateCommand(Base):
         self.assertEqual(t["update"], f"cd {REPO} && {one}")
         # the Agent view's hint stays the installer again, which is what it asks for
         self.assertEqual(t["update_stack"], f"cd {REPO} && ./install.sh")
+        # and the way to the recommended state (v1.36.0) is the same command, which hands
+        # install.sh what follows -s -- (get.sh's own header says so)
+        self.assertEqual(t["recommended"], f"cd {REPO} && {one} -s -- --recommended")
+        self.assertIn("bash -s --", (REPO / "get.sh").read_text())
 
 
 class TheRegistryReadsEveryCache(Base):

@@ -34,7 +34,8 @@ def page(test, items, extra="{}"):
     showView('settings');
     const banner = [...$('banners').children].map(b => ({cls: b.className, lamp: b.querySelector('.lamp').className, text: b.textContent}));
     report({banners: banner, cap: txt('cf-cap'), capCls: $('cf-cap').className, head: txt('cf-head'),
-            list: [...$('cf-list').children].map(li => ({cls: li.className, text: li.textContent}))});
+            list: [...$('cf-list').children].map(li => ({cls: li.className, text: li.textContent})),
+            rec: {hidden: $('cf-rec').hidden, cmd: txt('cf-rec-cmd')}});
     """ % (conf, conf, extra))
 
 
@@ -127,6 +128,24 @@ class SettingsListsEachDifference(unittest.TestCase):
         r = page(self, js([drafter]))
         self.assertTrue(r["list"][0]["text"].startswith("27B drafter z-lab/Qwen3.8-27B-DFlash2 (unquant, D=8): moves"))
         self.assertTrue(r["list"][0]["text"].endswith("The update prints the variables that keep it."))
+
+
+class SettingsGivesTheWayToTheRecommendedState(unittest.TestCase):
+    """./install.sh --recommended (2026-10-17): every setting but the site's to the recommended
+    one, choices included, through the README's one command; offered while one differs."""
+
+    def test_offered_while_a_choice_or_an_old_default_differs(self):
+        for items in ([YOURS], [MOVES], [YOURS, SITE]):
+            with self.subTest(items=[i["knob"] for i in items]):
+                r = page(self, js(items))
+                self.assertFalse(r["rec"]["hidden"])
+                self.assertTrue(r["rec"]["cmd"].endswith("/get.sh | bash -s -- --recommended"), r["rec"]["cmd"])
+
+    def test_not_offered_as_recommended_nor_for_the_sites_settings_alone(self):
+        for items in ([], [SITE]):
+            with self.subTest(items=[i["knob"] for i in items]):
+                self.assertTrue(page(self, js(items))["rec"]["hidden"])
+        self.assertTrue(page(self, None)["rec"]["hidden"])
 
 
 class TheOrangeIsItsOwn(unittest.TestCase):

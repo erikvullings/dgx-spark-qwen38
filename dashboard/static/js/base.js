@@ -390,6 +390,12 @@ function updateCmd(cfg){
   return (c.terminal_only || {}).update
     || `cd ${c.repo_dir || '~/dgx-spark-qwen38'} && curl -fsSL https://raw.githubusercontent.com/hasso5703/dgx-spark-qwen38/main/get.sh | bash`;
 }
+// ./install.sh --recommended through the same one command (get.sh hands install.sh what follows -s --)
+function recommendedCmd(cfg){
+  const c = cfg || {};
+  return (c.terminal_only || {}).recommended
+    || `cd ${c.repo_dir || '~/dgx-spark-qwen38'} && curl -fsSL https://raw.githubusercontent.com/hasso5703/dgx-spark-qwen38/main/get.sh | bash -s -- --recommended`;
+}
 async function copyText(txt){
   try { await navigator.clipboard.writeText(txt); toast('Copied.', 'ok', 1800); }
   catch { toast('The browser refused the clipboard; select the text instead.', 'warn'); }

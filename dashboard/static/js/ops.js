@@ -495,6 +495,9 @@ function renderConformity(d){
   const list = $('cf-list'); if (!list) return;
   clear(list);
   const c = d.conformity;
+  // the way to the recommended state, while a setting differs that is not the site's
+  const rec = $('cf-rec');
+  if (rec){ rec.hidden = !((c || {}).items || []).some(i => i.group !== 'site'); setText('cf-rec-cmd', recommendedCmd(F.config)); }
   if (!c){ cap('cf-cap', 'unknown', ''); setText('cf-head', 'The cockpit could not compare this box with its release (its journal says why).'); return; }
   const items = c.items || [], rel = c.release || 'this release';
   if (!items.length){ cap('cf-cap', 'as recommended', 'ok'); setText('cf-head', `Every setting this box serves is what ${rel} recommends.`); return; }
@@ -527,10 +530,12 @@ on('config', d => {
   setText('ck-periods', pv.length ? `${pv.length} collectors, every ${Math.min(...pv)} to ${Math.max(...pv)} s` : '…');
   setTitle('ck-periods', Object.entries(per).map(([k, v]) => `${k} ${v} s`).join(', '));
   setText('st-update', updateCmd(d));
+  setText('cf-rec-cmd', recommendedCmd(d));
 });
 afterApply(() => { setText('ck-ceiling', !textReady() ? 'set when a text lane serves' : F.ceiling > 0 ? fmtN(F.ceiling) + ' tokens (proxy)' : 'none: the pool share only'); });
 function wireOps(){
   $('st-copy').addEventListener('click', () => copyText($('st-update').textContent));
+  $('cf-rec-copy').addEventListener('click', () => copyText($('cf-rec-cmd').textContent));
   $('rcp-btn').addEventListener('click', loadRecipes);
   $('reg-btn').addEventListener('click', () => scanRegistry(true));
   $('reg-del').addEventListener('click', () => askAction('delete_strays', {}, [], {danger: true}));
