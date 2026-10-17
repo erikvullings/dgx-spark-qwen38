@@ -322,6 +322,11 @@ img,svg,video,canvas{display:block; max-width:100%}
 .btn.sm{min-height:32px; padding:0 var(--s-3); font-size:var(--t-13); border-radius:9px}
 .btn.lg{min-height:48px; padding:0 var(--s-5); font-size:var(--t-15); border-radius:12px}
 .btn.block{width:100%}
+/* an action told in two lines (the engine actions menu): a tile, not a pill, so that a text of two or
+   three lines keeps clear of the curves (Hasan, 2026-10-17) */
+.btn.act{flex-direction:column; align-items:flex-start; justify-content:center; gap:3px; min-height:62px;
+  padding:12px 18px; border-radius:14px; white-space:normal; text-align:left}
+.btn.act .faint{font-weight:450; font-size:var(--t-13); line-height:1.4}
 .btn-row{display:flex; gap:var(--s-2); flex-wrap:wrap; align-items:center}
 .why-off{font-size:var(--t-13); color:var(--fg-2); display:flex; gap:var(--s-2); align-items:flex-start}
 .why-off::before{content:''; flex:none; width:6px; height:6px; margin-top:7px; border-radius:50%; background:var(--warn)}
@@ -528,12 +533,15 @@ button.bay:hover{border-color:rgba(255,255,255,.22); background:linear-gradient(
 .lane-panel .mark img{width:24px; height:24px}
 
 /* a lane's versions, all in sight: one segmented pill, the chosen segment white, its line under it */
-.pickbox{display:flex; flex-direction:column; gap:8px; max-width:640px}
+.pickbox{display:flex; flex-direction:column; gap:8px; max-width:640px; container-type:inline-size}
 .pick-label{font-size:var(--t-12); font-weight:640; color:var(--fg-2); text-transform:uppercase; letter-spacing:.06em}
 .pick{display:flex; flex-wrap:wrap; gap:4px; padding:4px; border-radius:24px; background:rgba(8,4,28,.40); border:1px solid rgba(255,255,255,.14);
   width:fit-content; max-width:100%}
 .pick .opt{min-height:40px; padding:0 16px; border-radius:20px; border:0; background:transparent; color:var(--fg-2);
-  font:600 var(--t-14) var(--f-ui); white-space:nowrap; cursor:pointer; transition:background .15s, color .15s}
+  font:600 var(--t-14) var(--f-ui); white-space:nowrap; cursor:pointer; transition:background .15s, color .15s; flex:1 1 auto}
+/* a row of versions that wraps (four of them on a phone) no longer leaves its last choice alone on a
+   second line: the choices of a row share its width, and four stand two by two (2026-10-17) */
+@container (max-width: 460px){ .pick:has(> .opt:nth-child(4)){display:grid; grid-template-columns:1fr 1fr; width:100%} }
 .pick .opt:hover{color:var(--fg-1); background:rgba(255,255,255,.08)}
 .pick .opt[aria-checked="true"]{color:var(--brand-ink); background:#fff}
 /* the version that serves now carries a small green dot */

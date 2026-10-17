@@ -1174,11 +1174,11 @@ const MENU_ITEMS = [
 function openMenu(){
   const box = $('menu-list'); clear(box);
   MENU_ITEMS.forEach(([act, t, d]) => {
-    const b = el('button', 'btn block'); b.style.cssText = 'justify-content:flex-start; flex-direction:column; align-items:flex-start; min-height:58px; padding:10px 14px; gap:2px';
+    const b = el('button', 'btn block act');
     const no = cannotWhy(act);
     b.dataset.act = act; b.dataset.title = no || d;
     if (no) b.setAttribute('aria-disabled', 'true');
-    b.append(el('span', null, t)); const s = el('span', 'faint', no || d); s.style.cssText = 'font-weight:450; font-size:13px; white-space:normal; text-align:left'; b.append(s);
+    b.append(el('span', null, t), el('span', 'faint', no || d));
     b.addEventListener('click', () => { closeMenu(); askAction(act, {}, []); });
     box.append(b);
   });

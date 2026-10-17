@@ -61,6 +61,35 @@ class EveryActionButtonIsWired(unittest.TestCase):
         self.assertIn("$('oc-fitbtn').addEventListener('click'", JS["ops.js"])
 
 
+class TheEngineActionsAreTilesNotPills(unittest.TestCase):
+    """Each engine action is told in two or three lines. They were built as pills with their
+    geometry written in script (a radius of 999 px and 14 px of padding), and their text ran
+    against the curves on a phone and on a desktop (Hasan, 2026-10-17, from a screenshot). They
+    are tiles now, the class `act` with a radius of a control, its geometry in the stylesheet.
+    The look itself is measured in a real browser by mobile-check.mjs ("no text block in a pill")."""
+
+    def test_each_action_is_a_tile_with_no_geometry_of_its_own(self):
+        r = run(self, r"""
+        feed({config: CONFIG, units: UNITS, lifecycle: life({'qwen38-sglang.service': eng('ready')}),
+              engine_fast: {load: [{num_reqs: 0}], healthy: true}});
+        openMenu();
+        const bs = [...document.querySelectorAll('#menu-list button')];
+        report({n: bs.length, act: bs.filter(b => b.classList.contains('act')).length,
+                styled: bs.filter(b => b.getAttribute('style') || [...b.children].some(c => c.getAttribute('style'))).length});
+        """)
+        self.assertGreaterEqual(r["n"], 5, r)
+        self.assertEqual(r["act"], r["n"], "every action is a tile")
+        self.assertEqual(r["styled"], 0, "no geometry written in script")
+
+    def test_the_tile_has_the_radius_of_a_control_not_of_a_pill(self):
+        css = (DASH / "static" / "css" / "cockpit.css").read_text()
+        rule = re.search(r"\.btn\.act\{([^}]*)\}", css)
+        self.assertIsNotNone(rule, "the tile has its rule in the stylesheet")
+        radius = re.search(r"border-radius:\s*(\d+)px", rule.group(1))
+        self.assertIsNotNone(radius, rule.group(1))
+        self.assertLessEqual(int(radius.group(1)), 16, "a control's radius, not a pill's")
+
+
 class TheOldProxyWarningIsNotAFloatComparison(unittest.TestCase):
     """The guard panel warned below v6.14 with parseFloat(v) < 6.14, and as a float "6.9" is
     above "6.14": v6.2 to v6.9 read as proxies that abort (found in review, 2026-09-24). The
