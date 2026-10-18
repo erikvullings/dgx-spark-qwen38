@@ -14,9 +14,10 @@ Run everything the way CI does:
 ./ci-local.sh Coverage              # one gate by name fragment
 ```
 
-A full run took 61 minutes on the reference box on 2026-10-18, against 78 to 81 before v1.36.2,
-when each test file ran three times (on GitHub, 81 minutes for v1.36.0). While working, run the
-gate you care about by name fragment; run the whole thing before pushing.
+A full run took 45 minutes on the reference box on 2026-10-18 (v1.36.3, its offline step running
+four test files at a time), against 61 for v1.36.2 and 78 to 81 before, when each test file ran
+three times (on GitHub, 81 minutes for v1.36.0 and 60 for v1.36.2). While working, run the gate
+you care about by name fragment; run the whole thing before pushing.
 
 The runtime is **stdlib only** and stays that way. Three measuring gates need pip
 packages (`coverage`, `hypothesis`); they ask `tests/testpy.sh` for an
@@ -476,4 +477,9 @@ the hole, a conditional is both branches.
   persists an HMAC secret (so a service restart does not log every browser out)
   and that suite had not redirected `COCKPIT_CONFIG_DIR`.
   `test_cockpit_collectors.py` adds the other half by recording every argv its
-  stub was asked for.
+  stub was asked for. The step runs the files up to four at a time, except the
+  ones that call `getsockname()[1]`: they take a port number out of a socket
+  they close, to start a server on it later or to have a port where nothing
+  listens, and a file running beside them could be handed that port meanwhile,
+  so they run alone once the others are over. A test that frees a port it
+  still relies on takes the number that way to be found.
