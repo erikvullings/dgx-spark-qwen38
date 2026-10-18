@@ -14,8 +14,8 @@ Run everything the way CI does:
 ./ci-local.sh Coverage              # one gate by name fragment
 ```
 
-A full run took 18.5 minutes on the reference box in October 2026, and 33 while the box was
-busy with other work. While working, run the
+A full run took 61 minutes on the reference box on 2026-10-18, against 78 to 81 before v1.36.2,
+when each test file ran three times (on GitHub, 81 minutes for v1.36.0). While working, run the
 gate you care about by name fragment; run the whole thing before pushing.
 
 The runtime is **stdlib only** and stays that way. Three measuring gates need pip
