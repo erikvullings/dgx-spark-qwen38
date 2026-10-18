@@ -13,8 +13,12 @@ three runs each: 3.99 times a 24 MiB body and 4.01 times a 250 MiB one, the prox
 to 1033 MiB for the larger, the same for the proxy of v1.36.2.
 
 This measures that rate on the machine that runs it, on the real proxy as a process, with a
-24 MiB body of the costliest shape measured (an image as base64, ASCII), and holds the unit to
-it: the idle proxy plus the budget at that rate fits under MemoryMax, with a tenth to spare.
+24 MiB body in the shape of the largest legitimate bodies (an image as base64, ASCII), and holds
+the unit to it: the idle proxy plus the budget at that rate fits under MemoryMax, with a tenth to
+spare. Text in several bytes per character costs the proxy more, as its rewrite escapes every
+such character: 6.73 times for Chinese and 9.98 for emoji on the reference box (2026-10-18), so
+384 MiB of it would not fit. No context window takes that much text, and only a holder of the
+key can send it; the rewrite is to stop escaping, and the ceiling to follow the costliest shape.
 """
 import http.client
 import http.server
