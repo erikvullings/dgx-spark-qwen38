@@ -103,7 +103,7 @@ class TheOfflineStep(unittest.TestCase):
         together = [span for p, span in ran.items() if p not in alone]
         most = max(sum(s <= t < e for s, e in together) for t, _ in together)
         self.assertLessEqual(most, 4)
-        if (os.cpu_count() or 1) >= 2:
+        if len(os.sched_getaffinity(0)) >= 2:     # the CPUs nproc counts, which the step sizes from
             self.assertGreaterEqual(most, 2, "the files ran one after the other")
         first_four = sorted(together)[:4]
         for path in LONGEST:
