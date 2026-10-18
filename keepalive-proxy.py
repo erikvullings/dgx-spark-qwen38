@@ -523,8 +523,9 @@ FLASH_SERVED_NAMES = frozenset({"qwen3.8-flash-next"})
 MAX_BODY_BYTES = int(os.environ.get("MAX_BODY_BYTES", str(256 * 1024 * 1024)) or 0)
 # Every body in flight at once, in bytes (2026-10-16; 0 = none). MAX_BODY_BYTES caps one body
 # and nothing capped them together: each is read whole and parsed again by the guards, and four
-# legitimate bodies near the cap reach the unit's MemoryMax=1G at once, where the kernel kills
-# the proxy and every stream in flight with it (found in review, 2026-10-16). Past this budget a
+# legitimate bodies near the cap reached the unit's MemoryMax of 1G at once, where the kernel kills
+# the proxy and every stream in flight with it (found in review, 2026-10-16; the unit holds 2G
+# since 2026-10-18, as a body costs the proxy about four times its bytes). Past this budget a
 # body is not read: 503 with Retry-After, which the SDKs and the agents retry. A body arriving
 # when none is in flight is always read, so a budget under the cap never refuses one forever.
 BODY_BUDGET_BYTES = int(os.environ.get("BODY_BUDGET_BYTES", str(384 * 1024 * 1024)) or 0)
