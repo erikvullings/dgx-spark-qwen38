@@ -268,15 +268,61 @@ jobs:
           # 0 having run nothing. The cockpit's files run together in the cockpit
           # step and tests/' in "No test file in tests/ is left unrun"; each file also
           # ran on its own in those two steps until 2026-10-18, three runs in all.
-          for f in dashboard/tests/test_*.py tests/test_*.py; do
+          #
+          # Up to four files run at a time, the longest first: one after the other, they
+          # took 20 minutes on the reference box (2026-10-18). Not a file that takes a port
+          # number out of a socket it then closes (getsockname()[1]), to start a server
+          # on that port later or to have one where nothing listens: a file running
+          # beside it can be handed the same port meanwhile. Those run one at a time once
+          # the others are over; the last lines of this step count both and name the longest.
+          res="$(mktemp -d)"
+          trap 'rm -rf "$res"' EXIT
+          one() {   # one file on its own; its verdict is left in $res, read below
+            local f=$1 key dir rel out d r t0
+            key=$(printf '%s' "$f" | tr / _); t0=$(date +%s)
             case "$f" in dashboard/*) dir=dashboard; rel="tests/${f##*/}" ;; *) dir=.; rel="$f" ;; esac
-            out="$(cd "$dir" && python3 "$rel" 2>&1)" || { echo "$f failed, the end of its output:"; printf '%s\n' "$out" | tail -60; exit 1; }
-            grep -q 'def test_' "$f" || continue
-            d=$(grep -c 'def test_' "$f")
-            r=$(printf '%s\n' "$out" | grep -oE 'Ran [0-9]+' | grep -oE '[0-9]+' || echo 0)
-            [ "$r" = "$d" ] || { echo "$f ran $r of its $d declared tests when invoked directly"; exit 1; }
+            if out="$(cd "$dir" && python3 "$rel" 2>&1 </dev/null)"; then
+              if grep -q 'def test_' "$f"; then
+                d=$(grep -c 'def test_' "$f")
+                r=$(printf '%s\n' "$out" | grep -oE 'Ran [0-9]+' | grep -oE '[0-9]+' || echo 0)
+                [ "$r" = "$d" ] || echo "$f ran $r of its $d declared tests when invoked directly" > "$res/$key.fail"
+              fi
+            else
+              { echo "$f failed, the end of its output:"; printf '%s\n' "$out" | tail -60; } > "$res/$key.fail"
+            fi
+            echo "$(( $(date +%s) - t0 )) $f" > "$res/$key.done"
+          }
+          all=$(printf '%s ' dashboard/tests/test_*.py tests/test_*.py)
+          alone=" $(grep -lF 'getsockname()[1]' $all | tr '\n' ' ')"
+          # the longest of the others, which the last line of this step names again
+          first="tests/test_suite_isolation.py tests/test_text_lane.py tests/test_check_pins.py"
+          together=""
+          for f in $first $all; do
+            [ -f "$f" ] || { echo "$f, named as one of the longest, is gone: name them again"; exit 1; }
+            case "$alone $together " in *" $f "*) continue ;; esac
+            together="$together $f"
           done
-          echo "every test file ran its declared tests on its own"
+          jobs=$(nproc); [ "$jobs" -le 4 ] || jobs=4
+          t0=$(date +%s); n=0
+          for f in $together; do
+            one "$f" &
+            n=$((n + 1))
+            [ "$n" -lt "$jobs" ] || { wait -n || true; n=$((n - 1)); }
+          done
+          wait
+          t1=$(date +%s)
+          for f in $alone; do one "$f"; done
+          t2=$(date +%s)
+          # A file with no verdict is a failure too: its runner stopped before writing it.
+          failed=0
+          for f in $together $alone; do
+            key=$(printf '%s' "$f" | tr / _)
+            if [ ! -f "$res/$key.done" ]; then echo "$f gave no verdict"; failed=1
+            elif [ -f "$res/$key.fail" ]; then cat "$res/$key.fail"; failed=1; fi
+          done
+          [ "$failed" = 0 ] || exit 1
+          echo "every test file ran its declared tests on its own: $(echo "$together" | wc -w) of them $jobs at a time in $((t1 - t0)) s, then $(echo "$alone" | wc -w) one at a time in $((t2 - t1)) s"
+          echo "  the longest: $(sort -rn "$res"/*.done | head -3 | awk '{printf "%s%s %d s", (NR > 1 ? ", " : ""), $2, $1}')"
           SH
           python3 tests/suite_reaper.py bash -e "$probe/suite.sh"
           after="$(find "$witness" -type f -exec sha256sum {} + | sort)"
