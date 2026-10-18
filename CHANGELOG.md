@@ -1,5 +1,35 @@
 # Changelog
 
+## v1.36.2 (2026-10-18): the CI runs each test file twice instead of three times, and the repository says how to take part
+
+**A CI twenty minutes shorter.** Every file of `dashboard/tests` and `tests/` ran three times in a
+CI run: all together, then each on its own, in the cockpit step and in "No test file in tests/ is
+left unrun", and each on its own again in the offline step. Measured on the reference box on
+2026-10-18, each step run alone by `./ci-local.sh`: those three steps took 62 of the 78 minutes,
+the same share as on GitHub (64 of 81 minutes for v1.36.0). A file now runs together with the
+others once and on its own once, in the offline step, under its witness HOME, which now also checks
+that a unittest file ran the tests it declares. A full `./ci-local.sh` run of this release took 61
+minutes, against 78 to 81 for v1.36.0 and v1.36.1. Nothing it checked is lost: a file without a
+`__main__` block, a failing test and a failing script still fail the step (checked on a fixture
+tree), and the count of declared against run tests, the allowed skip reasons and the check of
+unnamed scripts stay where they were. CONTRIBUTING.md said a run took about twelve minutes, three
+quarters of them in the mutation gate, and TESTING.md 18.5 minutes: both now give the measured time
+(the mutation gate takes under 3 minutes).
+
+**A test that says why it waited.** In the first CI run of v1.36.1, on a GitHub runner, a held
+stream in `tests/test_proxy_hold.py` waited more than 10 s for its 200 and the test ended on a
+bare "timed out"; a rerun passed. It never failed on the reference box (40 runs of its class, and
+the whole tests/ suite in one process on 4 cores). It now fails with the proxy's and the engine's
+ports and the end of the proxy's journal, so the next one says where the wait went.
+
+**How to take part.** GitHub's community standards listed a code of conduct and a pull request
+template as missing. The code of conduct is adapted from the Contributor Covenant 2.1, reports
+going to the address SECURITY.md gives for private reports; the pull request template asks for
+what CONTRIBUTING.md checks. `CITATION.cff` gives the repository its "Cite this repository" entry.
+
+**What an update does.** An update restarts the cockpit, which then shows v1.36.2; the engines keep
+running.
+
 ## v1.36.1 (2026-10-17): the cockpit's engine actions as tiles, and the README opens on the box at work
 
 **Engine actions, away from the curves.** The engine actions menu built each action as a pill,
