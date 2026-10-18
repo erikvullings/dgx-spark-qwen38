@@ -424,7 +424,16 @@ class AHoldEnds(unittest.TestCase):
                 sk.sendall(b"POST /v1/chat/completions HTTP/1.1\r\nHost: x\r\nContent-Type: application/json\r\n"
                            b"Authorization: Bearer test-key\r\nContent-Length: %d\r\n\r\n" % len(body) + body)
                 if stream:
-                    self.assertIn(b"200", sk.recv(4096), "the held stream's 200 came first")
+                    try:
+                        first = sk.recv(4096)
+                    except TimeoutError:
+                        # On a GitHub runner (v1.36.1's first CI run, 2026-10-18) the 200 did not come
+                        # in 10 s; never on the reference box (40 runs of this class and the whole suite
+                        # in one process on 4 cores): the next one says what the proxy did. This file had
+                        # failed once before on a runner (2026-10-03), without saying which test or why.
+                        self.fail(f"no answer in 10 s (proxy on {box.port}, engine on {box.engine_port}); "
+                                  f"the proxy's journal:\n{box.journal()[-4000:]}")
+                    self.assertIn(b"200", first, "the held stream's 200 came first")
                 time.sleep(1.5)
                 sk.close()                                   # the caller gives up
                 self.assertIn("CLIENT GONE during hold", box.journal_with("CLIENT GONE during hold"))
