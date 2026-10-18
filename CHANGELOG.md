@@ -1,5 +1,89 @@
 # Changelog
 
+## v1.36.3 (2026-10-18): a cloud review's findings, proved on the box; the offline step runs four test files at a time
+
+A Claude Code session in the cloud reviewed v1.36.1 without the box (pull request #52). What it found
+was read again here, proved or measured on the reference box, and is in this release under the
+repository's own name; where its reading did not hold, what the box showed is said instead.
+
+**The proxy runs with no more of the machine than it uses.** It is what a client's bytes reach first,
+on every address the box has, and its unit ran it with all of the user's rights: the docker group,
+with docker's socket one connect away, and the cockpit's sudo commands. Its unit now gives it no new
+privileges, the system and the homes read-only, a private /tmp and /dev, no capability, the system
+calls of a service, four address families, and docker's socket out of reach. It needs no more: it
+reads its code, its key and what the operator names, runs systemctl to read the lanes' state, and
+writes nothing on disk, which `tests/test_proxy_unit_sandbox.py` checks in its code. On the reference
+box: `systemd-analyze security` rates the unit 1.8 OK (9.0 UNSAFE before); Claude Code, opencode,
+Hermes, pi, both SDKs, fetch under Node and Bun and LiteLLM all answered through it; a request sent
+while the flash lane restarted was held 758 s, then answered; and a test proxy carrying the same lines
+read a TLS pair and a client keys file (200 for the listed key, 401 for another).
+
+**The proxy holds the bodies it accepts.** Its unit capped it at 1G, and its body budget let 384 MiB
+of bodies in at once; but a body costs the proxy about four times its bytes while the guards work on
+it (the reasoning_effort route parses it and writes it again). Measured on the reference box, three
+runs each: 3.99 times a 24 MiB body, 4.01 times a 250 MiB one, which took the proxy from 31 to
+1033 MiB, past the 1G at which the kernel kills it with every stream in flight. The unit holds 2G now;
+`tests/test_proxy_memory_ceiling.py` measures the rate on the machine it runs on and fails when the
+budget at that rate no longer fits. That holds for media, the shape of the largest legitimate bodies.
+Text in several bytes per character costs more, as the rewrite escapes every such character: 6.73
+times for Chinese and 9.98 for emoji on the reference box (a code review of this release found it),
+so 384 MiB of it would not fit. No context window takes that much text, and only a holder of the key
+can send it; writing the body as UTF-8 and sizing the ceiling on the costliest shape come next.
+
+**The engines read the config directory, and cannot write it.** Every docker engine of the text lanes
+mounted ~/.config/qwen38 read-write, as root in its container, a directory that also holds what
+systemd runs as the box's user before or as a lane starts. It is mounted read-only now (the draft
+vocabulary job, which writes the flash draft's map there, keeps its access), and the cockpit's check
+of a lane's chat template reads the read-only mount. On the reference box, each text lane started on
+its new unit, Kolibri, Bolt, Super VL, the 27B and the flash with its token map: the mount showed
+read-only, each answered, the vLLM lanes still answered 401 without the key, and no journal said
+"Read-only file system".
+
+**The 27B lane runs no checkpoint code.** It passed `--trust-remote-code`, which lets the engine import
+the Python a checkpoint names; none of its four targets nor its drafters has any (read in the box's
+own cache: no auto_map, no .py). The flag is gone; the Nemotron lanes keep theirs, which their
+checkpoints need. On the reference box, in its 1M mode, each target loaded from the cockpit, answered
+1000 tokens with DFLASH speculative decoding (accept length 12.6 to 14.4) and logged no error but the
+four inductor autotune failures every NVFP4 boot of this lane logs, with the flag or without. A
+custom 27B checkpoint that ships its own code (`MODEL_CHOICE=custom`) needs the flag back, in a
+drop-in of `qwen38-sglang.service`.
+
+**The speech lane reads an upload as a sound file.** ffmpeg chose how to read an upload from its bytes,
+and some of its readers take a file as a playlist naming other files: an ffconcat upload made it read
+another file next to it. The input is now held to the sound containers and to the file and pipe
+protocols. On the reference box, a phrase the lane spoke came back word for word from m4a, webm, ogg,
+mp3, flac and wav, and an ffconcat list and a DASH manifest were refused. The box's own ffmpeg
+already refused the manifest's http fetch, which the review saw made with its build of ffmpeg
+6.1.1; the list now refuses the manifest before it is read.
+
+**And four smaller ones.** The identity wall reads the Bearer scheme in any case, as the engine does;
+a caller's `x-override-*` headers stay at the proxy, `x-override-rid` aside (on the reference box they
+do nothing a client could use: no priority scheduling, one rank, no disaggregation); the relay's pump
+no longer returns from a finally block, which Python 3.14 warns of (`tests/test_no_jump_in_finally.py`
+holds every file to it); and three test files no longer read the caller's GITHUB_TOKEN, the machine's
+free disk or its `ss`. The proxy is v6.42.
+
+**The offline step runs four test files at a time.** It ran every file of `dashboard/tests` and `tests/`
+one after the other: 1273 s on the reference box, 1332 s on GitHub for v1.36.2. They now run up to four
+at a time, the longest first, each still on its own with its count of declared against run tests: a
+median of 511 s on the reference box over ten green runs (509 to 593). The files that take a port
+number out of a socket they close (`getsockname()[1]`) run one at a time after the others, as a file
+beside them could be handed that port; they are found by that call, not listed. A red run names every
+file that failed, and a file whose run stopped before its verdict fails too. `tests/test_offline_step.py`
+runs the step's own script over a tree of fake files: three of its four tests fail on the old step. A
+full `./ci-local.sh` run took 45 minutes, against 61 for v1.36.2.
+
+**A correction.** v1.36.2 said each test file runs twice in a CI run. The files of `tests/` run twice
+more, inside `tests/test_suite_isolation.py`, which runs every one of them, four at a time, to check that
+none leaves the environment changed: once in the offline step, once in "No test file in tests/ is left
+unrun". At about 330 s it is the longest file of the offline step. CONTRIBUTING.md says so now.
+
+**What an update does.** An update restarts the proxy, in its sandbox, and the cockpit. A box serving
+the 27B or the flash lane restarts that engine once, as its unit changed (about 8 minutes for the 27B,
+12 to 15 for the flash); a box serving Kolibri, Bolt or Super VL keeps it serving, and the update says
+that it runs the read-only mount after its next start. The speech lane takes its fix when
+`./install-speech.sh` runs again, as for every update.
+
 ## v1.36.2 (2026-10-18): the CI runs each test file twice instead of three times, and the repository says how to take part
 
 **A CI twenty minutes shorter.** Every file of `dashboard/tests` and `tests/` ran three times in a
