@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Keepalive proxy in front of SGLang or vLLM (v6.41). No content logging, and the only
+"""Keepalive proxy in front of SGLang or vLLM (v6.42). No content logging, and the only
 rewriting is the tool-schema guard (role 4); one route, POST /v1/systemone, is answered
 here instead of relayed (role 5).
 
@@ -40,6 +40,13 @@ Six roles, nothing else:
    PROXY_HOLD_MAX_S, instead of failing at once. A streamed one hears from the proxy at
    once (200, then the keepalives of role 1); see "Holding a request" below.
 
+v6.42: what a cloud review of the repository found open, closed (2026-10-18). The identity wall
+reads the Bearer scheme in any case, as the engine and the door do; a caller's x-override-*
+headers stay at the door, the rid aside, as the SGLang lanes start their engine with the header
+overrides on; the relay's pump no longer returns from a finally, which Python 3.14 warns of. Its
+unit gives it no more of the machine than it uses (no new privileges, the system and the homes
+read-only, no capability, the system calls of a service, docker's socket out of reach) and holds
+2G, as a body costs it about four times its bytes while the guards work on it.
 v6.41: what a review of the repository found open, closed (2026-10-17). The network's share of the
 port is bounded: another machine holds at most PROXY_MAX_CONN_PER_ADDRESS connections open, the
 network PROXY_MAX_REMOTE_CONN, and such a connection has CLIENT_HEADER_S in all for its request's
@@ -4957,7 +4964,7 @@ if __name__ == "__main__":
     holds = (f"holds requests up to {HOLD_MAX_S:.0f}s while {' or '.join(HOLD_UNITS)} comes back"
              if HOLD_UNITS and HOLD_MAX_S > 0 else "holds nothing")
     # one f-string: the cockpit's tests render this line from the source
-    log(f"v6.41 on {BIND}:{port} -> {UPSTREAM} (keepalive {KEEPALIVE_S:.0f}s, max silence {MAX_SILENCE_S:.0f}s, {holds})")
+    log(f"v6.42 on {BIND}:{port} -> {UPSTREAM} (keepalive {KEEPALIVE_S:.0f}s, max silence {MAX_SILENCE_S:.0f}s, {holds})")
     if FLASH_PROMPT_CEILING_TOKENS > 0:
         log(f"one-prompt ceiling {FLASH_PROMPT_CEILING_TOKENS} tokens while the flash lane serves"
             + (f", {PROMPT_CEILING_TOKENS} on any lane" if PROMPT_CEILING_TOKENS > 0 else ""))

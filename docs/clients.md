@@ -86,7 +86,10 @@ absent, passes. `top_logprobs` is still relayed.
 Authentication on every path except `/health`: `Authorization: Bearer
 <key>`, the key in `~/.config/qwen38/api-key` (0600). The Anthropic
 dialect is Bearer-only: an `x-api-key` header is not read. The engine
-enforces the key; the proxy forwards it verbatim.
+enforces the key; the proxy forwards it verbatim. A client's `x-override-*`
+headers stay at the proxy, `x-override-rid` aside: the SGLang lanes start their
+engine with the header overrides on, for the request id the proxy names, and the
+others set fields of its scheduler no client of this port has to set (proxy v6.42).
 
 Served model names: `qwen3.8-27b` (27B lane, both context modes),
 `qwen3.8-flash-next` (flash lane), `kolibri-1` (Kolibri lane), `nemotron-3.5-bolt`
@@ -265,8 +268,9 @@ also put the engine key on an `Environment=` line, which `systemctl show` prints
 local user; an `EnvironmentFile=` is read by systemd as root and is not printed.
 
 `keys.json` is `{"<bearer-token>": "<label>", ...}`; each client sends its
-own token as the Bearer value. Identity is two keys, not one, and the two
-halves live in different places on purpose: the client's bearer names them
+own token as the Bearer value, the scheme in any case, as the engine reads it
+(proxy v6.42). Identity is two keys, not one, and the two halves live in
+different places on purpose: the client's bearer names them
 (the guard checks the map and labels the journal line), and
 `QWEN38_UPSTREAM_API_KEY` admits them (the proxy sends the engine's key
 upstream on relays and abort calls alike). Without the upstream key the
