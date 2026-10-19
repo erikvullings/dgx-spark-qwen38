@@ -16,7 +16,7 @@ curl -fsSL https://raw.githubusercontent.com/hasso5703/dgx-spark-qwen38/main/get
 Prefer to read it before it runs? Clone the repo and run `./install.sh`: that is all the
 one-liner does ([Quickstart](#quickstart)).
 
-| Model | Measured on a real DGX Spark |
+| Model | Measured on the reference box, an ASUS Ascent GX10 |
 |---|---|
 | Qwen3.8-27B, NVFP4 + DFlash2 | **71.4 tok/s** greedy median, 1M context, 135-148 tok/s at 8 streams (v1.2 battery) |
 | Qwen3.8-Flash-Next 176B, on **one** box | **47.9 tok/s** on code (`FLASH_TIER=context`), 262K context |
