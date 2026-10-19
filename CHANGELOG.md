@@ -1,5 +1,80 @@
 # Changelog
 
+## v1.36.4 (2026-10-19): the flash lane says it cannot start on a GPU outside its ATS mode, and fetches nothing for it (issue #54)
+
+The flash lane serves its 47.7 GiB N-gram table from a file on NVMe, which the GPU reads through the
+host page tables: a GB10 does that in its ATS addressing mode. Issue #54 reported a GX10 where the lane
+never started. SGLang refused the file backend when it loaded the weights ("needs a device whose
+pageable host memory accesses go through the host page tables"), after the first Load had fetched the
+image and 126 GiB of checkpoint, and systemd started the lane again every 15 s. The 27B lane, which has
+no such table, served on the same box. Its GPU reports the addressing mode None, against ATS on the
+reference box, where the same image loads. Both boot with `iommu.passthrough=0` and the same
+`nvidia_uvm` settings, and on both the kernel turns ATS and PASID on for the GPU. That box loads
+NVIDIA's proprietary kernel module (`modinfo -F license nvidia` reads `NVIDIA` there, `Dual MIT/GPL`
+here), where DGX OS ships the open one, which NVIDIA requires on DGX Spark: the likely cause. The
+issue has the steps back to the open module, replayed with `apt-get -s` on a copy of that box's
+package list.
+
+**The lane asks first.** `flash-ats-check.sh` reads the mode with `nvidia-smi --query-gpu=addressing_mode`.
+HMM or None refuse the lane, with the reason, and only that answer does. ATS, anything nvidia-smi does
+not name (a driver without the field, `[N/A]`, no answer within 10 s), and a check that cannot run leave
+the engine to decide, as before.
+
+- The launcher asks before the table is written or the image runs. It ends a start it cannot make
+  with the line `preflight: qwen38-flash.service cannot start: <reason>` and exit code 78, which the
+  unit does not restart on (`RestartPreventExitStatus=78`).
+- A new flash install stops before its first download, with the reason and the 27B lane as the way
+  out (a plain `./install.sh` on a box that has it, which keeps its target). An update gives the
+  flash lane its units only, beside the 27B lane or as the box's own text lane, prepared or not:
+  nothing downloads, nothing starts it, its new launcher reaches the box, and the rest of the box
+  (the 27B lane, the side lanes, the proxy, the cockpit) is updated as usual. It ends on why, and on
+  what the 27B lane beside it can do now.
+- Its first Load (`prepare-lane.sh`), a Load of another flash checkpoint and the Library's Download
+  (`switch-model.sh`) refuse it before the first byte. A Load that points the boot at the flash lane
+  fails on that first step, so the serving lane is not stopped.
+- The question is no input to the engine: a new wording of it restarts no healthy lane.
+  `docs/flash-lane.md` says how to read the mode.
+
+**The cockpit says it as it is.** A lane its GPU cannot start reads **cannot start on this GPU**, its
+banner gives the reason and the way out (load another lane), and its card no longer says to read the
+journal and start it again. The banner goes once another lane is up: a unit that exited 78 stays
+failed until a reboot (systemd 255, measured on the reference box), and it stayed red over the lane
+that serves. Two faults kept it from the page, both found on the reference box. The
+cockpit read the start guards' lines with `journalctl -n 20 -g`, which on systemd 255 prints the lines
+it finds newest first, so the guard's first word was taken for its last: a start `engine-preflight.sh`
+refused after a wait read as a crash loop again, and this lane read "failed". It reads them without `-n`
+now, in the order they were written (25 ms for a run of 841 lines). And the collector handed the page
+the guard's flags one by one, and left the new one out: they come from one list now. One case is
+left for a later release: while the flash lane is still the boot lane, the cockpit's Load of it stops
+the lane that serves before the launcher refuses, as the cockpit does not ask the GPU itself yet.
+
+**Proved on the reference box** (2026-10-19, an ASUS GX10 on the open module 580.178.04, kernel
+6.17.0-1032). The update from v1.36.3, on the box serving the flash lane in ATS, restarted the lane
+once, as its launcher changed, and later runs kept it (`nothing it reads changed since it started`).
+Through the proxy, the OpenAI and Anthropic SDKs, fetch from Node and Bun, LiteLLM, a client asking for
+the effort none, Claude Code, opencode, Hermes and pi all answered, and the engine refused every route
+without the key except /health and /metrics. The cockpit showed no banner on its five views, and its
+mobile check passed 332 of 332. Then `nvidia_uvm` was loaded with `uvm_ats_mode=0`, which reads None
+on this box (and stops CUDA there, unlike the box of the issue: it shows the guard, it does not
+reproduce that box). The update gave the flash lane its units only, fetched and pulled nothing,
+started nothing and ended on why, rc 0. A Load of another flash checkpoint from the cockpit and a
+`--fetch` were refused before any byte, a Start from the cockpit ended on exit code 78 and was not
+tried again, and the cockpit read "cannot start on this GPU" with its banner on every view. v1.36.3
+then went back on: its flash lane started again in 13.5 minutes, the clients above all answered, and
+the box matched its record from before, units and configuration, but for three files that record
+time (`installed.json`, the cockpit's boot history, the box watcher's state).
+
+**Tests.** 32 new cases and one extended. On v1.36.3 with only the new script added, 25 of the new
+cases and the extended one fail. The 7 others pass there by design: 5 run the script on its own, and 2
+check that the launcher goes on when the GPU is in ATS, when it does not say, or when the check cannot
+run. Eight cases of the image and video lanes find the boot lanes' path by its new condition. Each of
+the five commits passes its own tests alone.
+
+**What an update does.** An update restarts the cockpit. A box serving the flash lane restarts it once,
+as its launcher changed (12 to 15 minutes, the update says `why: this run changed what it reads`), and
+the proxy with it. A box serving another lane keeps its engine and its proxy. On a GPU outside ATS, the
+flash lane gets its units only, and the update starts nothing for it.
+
 ## v1.36.3 (2026-10-18): a cloud review's findings, proved on the box; the offline step runs four test files at a time
 
 A Claude Code session in the cloud reviewed v1.36.1 without the box (pull request #52). What it found
