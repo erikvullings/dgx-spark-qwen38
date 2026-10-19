@@ -1898,10 +1898,11 @@ FIRST_HEALTH_WAIT_S = 10.0
 
 
 def preflight_said(unit: str, invocation: str):
-    """What engine-preflight.sh last wrote in this run of the unit (its journal, not the
-    container's log: while it waits there is no container), or None. Read without -n:
-    journalctl 255 prints the lines -g finds newest first once -n is given too, and the
-    guard's first word was taken for its last (measured on the reference box, 2026-10-19)."""
+    """What the start guards last wrote in this run of the unit (engine-preflight.sh, and the
+    flash launcher's question to the GPU): its journal, not the container's log, as while the
+    guard waits there is no container. None when they said nothing. Read without -n: journalctl
+    255 prints the lines -g finds newest first once -n is given too, and the guard's first word
+    was taken for its last (a flash lane that cannot start read "failed", 2026-10-19)."""
     if not invocation:
         return None
     return lc.parse_preflight(run(["journalctl", "-u", unit, f"_SYSTEMD_INVOCATION_ID={invocation}",
@@ -2261,8 +2262,9 @@ def collect_lifecycle():
                          "result": d.get("Result", ""),
                          # a crash loop reads failed between attempts; the page says so
                          "restarting": bool(st.get("restarting")),
-                         # the start guard's reason while it holds the start, or once it refused
-                         "held": st.get("held"), "refused": st.get("refused"),
+                         # the start guards' reason while one holds the start, once it refused it,
+                         # or why the GPU cannot start the flash lane (issue #54)
+                         **{k: st.get(k) for k in lc.GUARD_FLAGS},
                          # a server alive without its scheduler, and when the cockpit restarts it
                          "zombie": bool(st.get("zombie")), "zombie_in": st.get("zombie_in"),
                          # down between two attempts after it stopped while serving, not at boot

@@ -71,9 +71,10 @@ const STATE_LABEL = {
   degraded: 'ready but not answering', stopping: 'stopping', wedged: 'wedged: no generation',
   orphan: 'running outside systemd'};
 // the word for a lane, with what the start guard or a lost scheduler adds to its state: a lane
-// held by the guard read "starting", one it refused "failed" (engine-preflight.sh, issue #26)
+// held by the guard read "starting", one it refused "failed" (engine-preflight.sh, issue #26),
+// and a flash lane on a GPU outside its ATS mode is no matter of memory (issue #54)
 const stateLabel = e => !e ? '' : e.held ? 'waiting for GPU memory' : e.refused ? 'not starting: GPU memory held'
-  : e.zombie ? 'lost its scheduler' : e.state === 'failed' && e.crashed_serving ? 'restarting after a crash'
+  : e.cannot ? 'cannot start on this GPU' : e.zombie ? 'lost its scheduler' : e.state === 'failed' && e.crashed_serving ? 'restarting after a crash'
   : (STATE_LABEL[e.state] || e.state);
 const sentence = s => s ? s.charAt(0).toUpperCase() + s.slice(1) : '';
 const STATE_KIND = {ready: 'ok', degraded: 'warn', failed: 'err', stopped: '', stopping: 'warn', wedged: 'err', orphan: 'err'};
@@ -927,6 +928,7 @@ function renderBanners(state, errors){
   const box = $('banners'); if (!box) return;
   const want = [];
   const add = (kind, strong, text) => want.push([kind, strong, text]);
+  const otherUp = n => Object.entries(engines()).some(([m, x]) => m !== n && (!UNIT_DOWN.has(x.state) || x.restarting));
   if (offline) add('err', 'Connection lost.', `No data from the cockpit for ${fmtDur((Date.now() - lastMsgAt) / 1000)}: what is on screen is frozen and actions wait.`);
   if (F.config && F.config.dry_run) add('info', 'Dry run.', 'Every action is confirmed, logged and audited as usual, but nothing is executed. This instance exists for tests.');
   Object.entries(engines()).forEach(([n, e]) => {
@@ -935,7 +937,11 @@ function renderBanners(state, errors){
     // the start guard holds a start while the last engine's GPU memory is not back, and refuses
     // it if it stays held: that is no crash, and saying "keeps crashing" sent people after one
     if (e.held) add('warn', `${name} waits for GPU memory.`, `${sentence(e.held)}. It starts by itself once that memory is back: starting on memory the driver kept is how sglang#40948 froze a DGX Spark until a power cycle.`);
-    if (e.state === 'failed' && e.refused) add('err', `${name} is not starting.`, `${sentence(e.refused)}. ` + (e.restarting ? 'systemd checks again every 15 s and starts it once that memory is back; if nothing holds it, a reboot frees it.' : 'Start it again from Lanes once that memory is back; if nothing holds it, a reboot frees it.'));
+    // the GPU itself: no wait, memory or reboot changes it, and systemd does not start it again.
+    // Said while no other lane is up, whose Load is the way out it names: a unit that exited 78
+    // stays failed until a reboot, and the banner stayed red over the lane that serves.
+    if (e.state === 'failed' && e.cannot) { if (!otherUp(n)) add('err', `${name} cannot start on this box.`, `${sentence(e.cannot)}. Load another lane from Lanes.`); }
+    else if (e.state === 'failed' && e.refused) add('err', `${name} is not starting.`, `${sentence(e.refused)}. ` + (e.restarting ? 'systemd checks again every 15 s and starts it once that memory is back; if nothing holds it, a reboot frees it.' : 'Start it again from Lanes once that memory is back; if nothing holds it, a reboot frees it.'));
     else if (e.state === 'failed' && e.restarting && e.crashed_serving) add('warn', `${name} stopped while it was serving and is starting again.`, 'systemd starts it again 15 s after it stops, and the lane comes back by itself. Its journal in Logs says why it stopped.');
     else if (e.state === 'failed' && e.restarting) add('err', `${name} keeps crashing.`, `It dies during startup and systemd relaunches it every 15 s${e.restarts ? ` (${e.restarts} so far)` : ''}. Stop it from Lanes to end the loop; its journal is in Logs.`);
     else if (e.state === 'failed' && e.result === 'timeout') add('warn', `${name} was killed while stopping.`, 'It did not exit within its stop timeout. Nothing broke while it served: start it again when you need it.');

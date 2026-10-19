@@ -2175,6 +2175,17 @@ class TheStartGuardsWords(unittest.TestCase):
         line = "2026-10-01T14:47:50+02:00 gx10-eff9 bash[1757029]: " + self.W
         self.assertEqual(lc.parse_preflight([line])["verdict"], "waits")
 
+    def test_a_gpu_that_cannot_start_the_lane_is_a_word_of_its_own(self):
+        """The flash launcher's line on a GPU outside its ATS mode (issue #54): no wait or reboot
+        changes it, so it is no refusal over memory."""
+        c = ("preflight: qwen38-flash.service cannot start: the GPU's addressing mode is None (nvidia-smi "
+             "--query-gpu=addressing_mode) and the flash lane needs ATS: it reads its 47.7 GiB N-gram table "
+             "from a file on NVMe through the host page tables (docs/flash-lane.md)")
+        said = lc.parse_preflight(["2026-10-19T13:00:00+02:00 gx10-eff9 bash[1]: " + c])
+        self.assertEqual(said["verdict"], "cannot start")
+        self.assertTrue(said["reason"].startswith("the GPU's addressing mode is None"), said)
+        self.assertTrue(said["reason"].endswith("(docs/flash-lane.md)"), said)
+
 
 class TheGuardsFlags(unittest.TestCase):
     W = {"verdict": "waits", "reason": "the GPU driver does not answer nvidia-smi"}
@@ -2193,6 +2204,23 @@ class TheGuardsFlags(unittest.TestCase):
         self.assertEqual((out["refused"], out["restarting"]), (self.R["reason"], True))
         self.assertNotIn("refused", lc.preflight_flags({"state": "starting"}, unit_sub="start-pre", preflight=self.R))
         self.assertNotIn("held", lc.preflight_flags(st, unit_sub="auto-restart", preflight=self.W))
+
+    def test_every_flag_it_can_add_is_one_the_cockpit_hands_the_page(self):
+        """The cockpit hands the page lc.GUARD_FLAGS: a flag missing there never reached it, as
+        "cannot" did not (found on the reference box, 2026-10-19)."""
+        added = set()
+        for verdict, st, sub in (("waits", "starting", "start-pre"), ("refused", "failed", "failed"),
+                                 ("cannot start", "failed", "failed")):
+            out = lc.preflight_flags({"state": st}, unit_sub=sub, preflight={"verdict": verdict, "reason": "r"})
+            added |= set(out) - {"state"}
+        self.assertEqual(added, set(lc.GUARD_FLAGS))
+
+    def test_cannot_only_on_a_failed_unit_and_never_as_memory_held(self):
+        c = {"verdict": "cannot start", "reason": "the GPU's addressing mode is None"}
+        out = lc.preflight_flags({"state": "failed"}, unit_sub="failed", preflight=c)
+        self.assertEqual(out["cannot"], c["reason"])
+        self.assertNotIn("refused", out)
+        self.assertNotIn("cannot", lc.preflight_flags({"state": "starting"}, unit_sub="start", preflight=c))
 
     def test_a_guard_that_let_it_start_or_said_nothing_adds_nothing(self):
         st = {"state": "starting"}

@@ -988,6 +988,50 @@ class TheStartGuardAndALostSchedulerAreSaidAsTheyAre(unittest.TestCase):
         self.assertNotIn("keeps crashing", r["banner"])
         self.assertEqual(r["card"], "not starting: GPU memory held")
 
+    def test_a_gpu_that_cannot_start_it_is_no_matter_of_memory(self):
+        """Issue #54: a flash lane on a GPU outside its ATS mode read "not starting: GPU memory
+        held", sent after memory and a reboot that change nothing (review, 2026-10-19)."""
+        r = self.page("eng('failed', {restarting: false, cannot: \"the GPU's addressing mode is None "
+                      "(nvidia-smi --query-gpu=addressing_mode) and the flash lane needs ATS\"})")
+        self.assertIn("cannot start on this box.", r["banner"])
+        self.assertIn("The GPU's addressing mode is None", r["banner"])
+        self.assertIn("Load another lane from Lanes.", r["banner"])
+        for wrong in ("GPU memory", "reboot", "keeps crashing", "memory is back"):
+            self.assertNotIn(wrong, r["banner"])
+        self.assertEqual(r["card"], "cannot start on this GPU")
+
+    def test_its_banner_goes_once_another_lane_serves(self):
+        """The banner says to load another lane, and a unit that exited 78 stays failed until a
+        reboot (systemd 255 on the reference box, 2026-10-19: a Conflicts= start and a stop leave
+        it so), so the banner stayed red over the lane that serves (found in review, 2026-10-19).
+        Its card still says why."""
+        r = run(self, r"""
+        const units = {units: Object.assign({}, UNITS.units, {'qwen38-flash.service': {active: 'failed', enabled: 'disabled'},
+                                                              'qwen38-sglang.service': {active: 'active', enabled: 'enabled'}})};
+        const cannot = eng('failed', {cannot: "the GPU's addressing mode is None"});
+        feed({config: CONFIG, units, lifecycle: life({'qwen38-flash.service': cannot})});
+        const alone = txt('banners');
+        feed({config: CONFIG, units, lifecycle: life({'qwen38-flash.service': cannot, 'qwen38-sglang.service': eng('ready')})});
+        report({alone, served: txt('banners'), why: laneCard('qwen38-flash.service').why.textContent});
+        """)
+        self.assertIn("flash 176B cannot start on this box.", r["alone"])
+        self.assertNotIn("cannot start on this box.", r["served"])
+        self.assertNotIn("flash 176B failed.", r["served"])
+        self.assertIn("This GPU cannot start it", r["why"])
+
+    def test_the_card_of_a_lane_its_gpu_cannot_start_says_so_too(self):
+        """The banner said the GPU cannot start it, and the card still said to read the journal
+        and start it again (found in review, 2026-10-19)."""
+        r = run(self, r"""
+        const units = {units: Object.assign({}, UNITS.units, {'qwen38-sglang.service': {active: 'failed', enabled: 'enabled'}})};
+        feed({config: CONFIG, units, lifecycle: life({'qwen38-sglang.service': eng('failed', {cannot: "the GPU's addressing mode is None"})})});
+        report({why: laneCard('qwen38-sglang.service').why.textContent, hidden: laneCard('qwen38-sglang.service').why.hidden});
+        """)
+        self.assertFalse(r["hidden"])
+        self.assertIn("This GPU cannot start it: its addressing mode is not ATS", r["why"])
+        self.assertIn("Load another lane.", r["why"])
+        self.assertNotIn("read its journal", r["why"])
+
     def test_a_crash_while_serving_is_no_crash_loop(self):
         r = self.page("eng('failed', {restarting: true, restarts: 1, crashed_serving: true})")
         self.assertIn("stopped while it was serving and is starting again.", r["banner"])

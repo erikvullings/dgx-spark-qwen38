@@ -726,6 +726,20 @@ class TheLaneSaysWhyTheStartGuardHoldsIt(Base):
         for flag in ("-n", "--lines", "-r", "--reverse"):
             self.assertNotIn(flag, read)
 
+    def test_a_gpu_that_cannot_start_the_lane_reaches_the_page_as_such(self):
+        """The flash launcher's line on a GPU outside its ATS mode, after the guard's own: the page
+        is told "cannot", the last word, never the guard's "starts" (issue #54). The collector
+        handed the page its fields one by one and left this one out (found on the reference box,
+        2026-10-19)."""
+        s = "preflight: qwen38-sglang.service starts: no GPU memory held from before, 116.6 GiB available (1 s)\n"
+        c = ("preflight: qwen38-sglang.service cannot start: the GPU's addressing mode is None "
+             "(nvidia-smi --query-gpu=addressing_mode) and the flash lane needs ATS\n")
+        e, _ = self.tick("failed", "failed", s + c)
+        self.assertEqual(e["state"], "failed")
+        self.assertEqual(e["cannot"], "the GPU's addressing mode is None (nvidia-smi "
+                                      "--query-gpu=addressing_mode) and the flash lane needs ATS")
+        self.assertIsNone(e["refused"])
+
     def test_a_serving_lane_never_reads_it(self):
         _, fake = self.tick("active", "running", self.W, container="c0ffee\n")
         self.assertFalse([c for c in fake.calls if c[:1] == ["journalctl"] and self.U in c and "-g" in c])

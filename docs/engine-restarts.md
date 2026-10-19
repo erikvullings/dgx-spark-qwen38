@@ -59,6 +59,16 @@ reason, one it refused **not starting: GPU memory held**, never "starting" or "k
 crashing". If nothing holds the memory and the driver still keeps it, only a reboot frees it.
 A new version of the guard never restarts a running engine (it is no input of the engine).
 
+The flash launcher asks one more question first (`flash-ats-check.sh`, issue #54): a GPU
+outside its ATS addressing mode cannot serve the lane's N-gram table, and no wait, memory or
+reboot changes that ([flash-lane.md](flash-lane.md)). Its line ends the start with an exit
+code systemd does not start the lane again on, and the cockpit shows **cannot start on this
+GPU** with the reason:
+
+```
+preflight: qwen38-flash.service cannot start: the GPU's addressing mode is None (nvidia-smi --query-gpu=addressing_mode) and the flash lane needs ATS: ...
+```
+
 Settings, for a test or a box that needs them: `QWEN38_PREFLIGHT_WAIT_S` (60),
 `QWEN38_PREFLIGHT_HELD_MIB` (2048), `QWEN38_PREFLIGHT_ORPHAN_GIB` (16), set in a drop-in.
 

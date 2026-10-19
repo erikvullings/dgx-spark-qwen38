@@ -127,7 +127,9 @@ function renderLanes(){
     [c.load, c.start, c.stop].forEach(b => { b.disabled = !!why || st === 'stopping'; b.title = why; });
     c.start.disabled = c.start.disabled || !!blocked;
     c.why.hidden = !(blocked && !c.start.hidden) && !(st === 'failed' || st === 'orphan');
+    // a lane its GPU cannot start (issue #54): no journal to read or start to try again
     setText(c.why, st === 'orphan' ? 'Its container runs outside systemd: Start replaces it with the unit’s own.'
+      : st === 'failed' && e.cannot ? 'This GPU cannot start it: its addressing mode is not ATS (docs/flash-lane.md). Load another lane.'
       : st === 'failed' ? 'The unit failed: read its journal, then start it again.' : blocked ? blocked[0] : '');
     c.logs.hidden = !has;
     // boot or stop in progress

@@ -8,9 +8,10 @@ States (a strict superset of what the UI shows):
   stopped, failed, starting, loading-weights, loading-draft, allocating-kv,
   capturing-graphs, warming-up, ready, degraded, stopping
 Flags: restarting (a crash loop between two attempts); held and refused (engine-preflight.sh
-waits for, or would not start on, GPU memory the last engine has not given back); zombie (a
-server process alive with no scheduler, which nothing restarts). The cockpit adds overdue (a
-stage that took more than twice the ETA).
+waits for, or would not start on, GPU memory the last engine has not given back); cannot (the
+flash launcher's GPU is outside its ATS addressing mode, issue #54); zombie (a server process
+alive with no scheduler, which nothing restarts). The cockpit adds overdue (a stage that took
+more than twice the ETA).
 """
 from __future__ import annotations
 
@@ -628,12 +629,14 @@ def wedge_plan(*, decided: bool, prev_state: str | None, wedged_since: float | N
 # without them the lane read "starting" while it was held, and "keeps crashing" when it was
 # refused, which sends the operator after the wrong thing.
 PREFLIGHT_RE = re.compile(r"preflight: (?:NOT starting (\S+): (.+?), still after \d+ s\."
-                          r"|(\S+) (waits|starts): (.+))")
+                          r"|(\S+) (waits|starts|cannot start): (.+))")
 
 
 def parse_preflight(lines: list[str]) -> dict | None:
     """The guard's last word among these journal lines: {"verdict": "waits" | "refused" |
-    "starts", "reason": str}, or None when it said nothing."""
+    "starts" | "cannot start", "reason": str}, or None when it said nothing. "cannot start" is the
+    flash launcher's: a GPU outside its ATS addressing mode, which no wait or reboot changes
+    (flash-ats-check.sh, issue #54)."""
     last = None
     for ln in lines:
         m = PREFLIGHT_RE.search(ln)
@@ -646,10 +649,16 @@ def parse_preflight(lines: list[str]) -> dict | None:
     return last
 
 
+# The flags preflight_flags may add, which the cockpit hands the page: one list, as the collector
+# copied them by hand and left "cannot" out (found on the reference box, 2026-10-19).
+GUARD_FLAGS = ("held", "refused", "cannot")
+
+
 def preflight_flags(state: dict, *, unit_sub: str, preflight: dict | None) -> dict:
     """The state with what the guard said, when it is why the lane is not up: held while it
     waits (the unit runs its start step and nothing else), refused once it would not start
-    (the unit failed, or waits for its next attempt)."""
+    (the unit failed, or waits for its next attempt), cannot when this GPU cannot start it
+    (the unit failed and systemd does not start it again)."""
     if not preflight:
         return state
     out = dict(state)
@@ -657,6 +666,8 @@ def preflight_flags(state: dict, *, unit_sub: str, preflight: dict | None) -> di
         out["held"] = preflight["reason"]
     elif preflight["verdict"] == "refused" and state.get("state") == "failed":
         out["refused"] = preflight["reason"]
+    elif preflight["verdict"] == "cannot start" and state.get("state") == "failed":
+        out["cannot"] = preflight["reason"]
     return out
 
 
