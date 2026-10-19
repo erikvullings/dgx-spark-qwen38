@@ -1,8 +1,24 @@
 # Benchmarks: methodology, full results, and how to reproduce them
 
-Everything here was measured on one ASUS Ascent GX10 (GB10, 128 GB unified, stock DGX OS) between 2026-08-14 and 2026-09-21, each section under its own date and version (2026-08-14/15 for the v1.0-v1.1 sections, 2026-08-19/20 for v1.2's boot-lottery campaign), plus independent reproductions by other GB10 owners. Speeds are **batch-1 decode**; quality was verified identical to a Q8 reference on a deterministic battery (code, logic, language, instruction following); speculative decoding is lossless by construction (the verify step only ever accepts tokens the target model would have emitted).
+## Every lane today, on the reference box
 
-## Headline numbers (same box, same day)
+Each lane's headline, measured on the reference box, an ASUS Ascent GX10 (GB10, 128 GB unified,
+stock DGX OS), with the page that measured it and gives its date, version and method:
+
+| Lane | Headline | Measured in |
+|---|---|---|
+| Qwen3.8-27B, NVFP4 + DFlash2 | **71.4 tok/s** greedy median (`./bench.sh`, the v1.14.0 campaign), 135-148 tok/s at 8 streams (v1.2 battery), 1M context; GSM8K 94.0% (200 problems, v1.2.1) | [README](README.md#what-speed-and-quality-to-expect), [the boot lottery](#the-boot-lottery-and-how-we-killed-it-2026-08-20) |
+| Qwen3.8-Flash-Next 176B, NVFP4 + NEXTN, on one box | **47.9 tok/s** on code at the `context` tier; GSM8K 97.41% (1,319), MMLU 90.8% (500), HumanEval 95.73% (164) | [docs/flash-lane.md](docs/flash-lane.md), [RadixArk against NVIDIA](#radixark-against-nvidia-head-to-head-2026-09-18) |
+| Flash FP4-Local, NVIDIA's FP4 build of the flash model on vLLM | **55.4 tok/s** greedy median (`./bench.sh`, at its default effort, `xhigh`); at the `lean` effort, 47.4 tok/s alone and 106.6 in all at 8 streams on real text, GSM8K 97.64% (1,314), HumanEval 98.17% (164) | [docs/flash-local-lane.md](docs/flash-local-lane.md) |
+| Kolibri-1, Aleph Alpha's FP8 on vLLM | **48.0 / 121.9 / 165.8 / 202.0 tok/s** at 1 / 4 / 8 / 16 streams | [docs/kolibri-lane.md](docs/kolibri-lane.md) |
+| Nemotron 3.5 Bolt 74B on vLLM, with its drafter | **140 tok/s** rewriting code, one request, reasoning off; 74.8 / 113.4 / 163.6 / 201.2 tok/s at 1 / 4 / 8 / 16 streams | [docs/nemotron-lane.md](docs/nemotron-lane.md) |
+| Nemotron 3.5 Super VL 120B on vLLM, with its drafter | **69.5 tok/s** rewriting code, one request, reasoning off; 81.7 tok/s in all at 4 streams | [docs/nemotron-super-lane.md](docs/nemotron-super-lane.md) |
+| Qwen-Image 2.1 | 1024x1024 at 40 steps in **34.3 s**, **7.5 s** with its Turbo | [docs/image-lane.md](docs/image-lane.md) |
+| MiniMax-H3, video with sound | 4 s at 480P in **622.8 to 632.5 s** at 50 steps, **126.2 to 127.9 s** with the Turbo adapter | [docs/video-lane.md](docs/video-lane.md) |
+
+The sections below were measured on the same box between 2026-08-14 and 2026-09-21, each section under its own date and version (2026-08-14/15 for the v1.0-v1.1 sections, 2026-08-19/20 for v1.2's boot-lottery campaign), plus independent reproductions by other GB10 owners. Speeds are **batch-1 decode**; quality was verified identical to a Q8 reference on a deterministic battery (code, logic, language, instruction following); speculative decoding is lossless by construction (the verify step only ever accepts tokens the target model would have emitted).
+
+## The first headline, August 2026 (v1.0-v1.1, same box, same day), kept as history
 
 | Engine / config | Code & math reasoning, French prompts (official sampling, temp 1.0) | Eval-style workloads (EN, temp 0.6) |
 |---|---|---|
