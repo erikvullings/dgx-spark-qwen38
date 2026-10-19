@@ -715,6 +715,17 @@ class TheLaneSaysWhyTheStartGuardHoldsIt(Base):
         self.assertEqual(e["state"], "starting")
         self.assertIsNone(e["held"])
 
+    def test_the_guards_lines_are_read_in_the_order_they_were_written(self):
+        """journalctl 255 prints the lines -g finds newest first once -n is given too (measured on
+        the reference box, 2026-10-19), and the last word read was the guard's first: a start it
+        refused after a wait read as one it still held, and failed read "keeps crashing"."""
+        e, fake = self.tick("activating", "auto-restart", self.W + self.R)
+        self.assertEqual(e["refused"], "the GPU driver holds 50.9 GiB that no process accounts for")
+        read = [c for c in fake.calls if c[:1] == ["journalctl"] and self.U in c][0]
+        self.assertIn("-g", read)
+        for flag in ("-n", "--lines", "-r", "--reverse"):
+            self.assertNotIn(flag, read)
+
     def test_a_serving_lane_never_reads_it(self):
         _, fake = self.tick("active", "running", self.W, container="c0ffee\n")
         self.assertFalse([c for c in fake.calls if c[:1] == ["journalctl"] and self.U in c and "-g" in c])

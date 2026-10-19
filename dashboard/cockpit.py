@@ -1899,11 +1899,13 @@ FIRST_HEALTH_WAIT_S = 10.0
 
 def preflight_said(unit: str, invocation: str):
     """What engine-preflight.sh last wrote in this run of the unit (its journal, not the
-    container's log: while it waits there is no container), or None."""
+    container's log: while it waits there is no container), or None. Read without -n:
+    journalctl 255 prints the lines -g finds newest first once -n is given too, and the
+    guard's first word was taken for its last (measured on the reference box, 2026-10-19)."""
     if not invocation:
         return None
     return lc.parse_preflight(run(["journalctl", "-u", unit, f"_SYSTEMD_INVOCATION_ID={invocation}",
-                                   "-o", "cat", "--no-pager", "-n", "20", "-g", "preflight: "],
+                                   "-o", "cat", "--no-pager", "-g", "preflight: "],
                                   timeout=5).splitlines())
 
 
