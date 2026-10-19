@@ -11,14 +11,27 @@ have a reason they are not yet planned, stated here or in an issue).
   flash model on vLLM, with the flash lane's quality in about half its disk
   and twice its KV cache, its n-gram table kept on the internal disk.
 
-## Shipped, v1.35
+## Shipped, v1.36
+
+- **Nobody runs behind in silence** (v1.36.0): what an update keeps and
+  moves, said before it starts and in the cockpit.
+- **The cockpit's engine actions as tiles** (v1.36.1), and the README opens
+  on the box at work.
+- **A CI twenty minutes shorter** (v1.36.2), and the repository says how to
+  take part.
+- **A cloud review's findings, proved on the box** (v1.36.3): the proxy in a
+  systemd sandbox, the engines reading their config directory read-only, the
+  27B lane without checkpoint code, the speech lane reading an upload as a
+  sound file; the CI's offline step runs four test files at a time.
+- **The flash lane says when its GPU cannot start it** (v1.36.4): outside its
+  ATS addressing mode it says so, and fetches nothing for it (issue #54).
+
+## Shipped, v1.26 to v1.35
 
 - **Nemotron 3.5 Super VL, a seventh lane** (v1.35.0): NVIDIA's 120B with
   vision and a 1M-token window, on vLLM in the Nemotron lane's image,
-  installed on demand like the others.
-
-## Shipped, v1.26 to v1.34
-
+  installed on demand like the others; the proxy bounds what the network
+  can hold, and the image and video lanes see no secret of the box (v1.35.1).
 - **Nemotron 3.5 Bolt, a sixth lane** (v1.34.0): NVIDIA's 74B that reads
   images and video, in 24 GB.
 - **Every lane but the one that serves installed on demand** (v1.33.0), and
