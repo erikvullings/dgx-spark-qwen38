@@ -102,6 +102,12 @@ launcher in `~/.local/bin`, and the two weight trees (HF cache, PLE dir).
     the script in place first (run on its own, the image installer would otherwise leave a
     lane that never starts), one attempt fits in the unit's start timeout, and the script
     is no input of the engine, so a new one never restarts a healthy engine.
+14. The flash lane does not start on a GPU nvidia-smi reports outside its ATS addressing
+    mode (`flash-ats-check.sh`, issue #54; a mode it does not name leaves the engine to
+    decide): its launcher asks before the table or the image and ends a start it cannot make
+    with an exit code its unit does not restart on, nothing downloads for it there (an update
+    gives it its units only and starts nothing for it, prepare-lane.sh and switch-model.sh
+    refuse it), and the script is no input of the engine.
 
 ## How a change moves through the repo
 

@@ -521,13 +521,13 @@ class TheWholeBoxNeedsTheFullInstall(unittest.TestCase):
 class TheParentStartsIt(unittest.TestCase):
     """The block before step 7 that starts the run for the other lane, against a stub
     install.sh that prints what it was given."""
-    BLOCK = between('SECOND_LANE=""; SECOND_UNIT=""; SECOND_FRESH=0; SECOND_NEW=0; SECOND_STATE=""; SECOND_UNITS=0\n',
+    BLOCK = between('SECOND_LANE=""; SECOND_UNIT=""; SECOND_FRESH=0; SECOND_NEW=0; SECOND_STATE=""; SECOND_UNITS=0; SECOND_CANNOT=""\n',
                     '\nif [ -n "$SECONDARY" ]; then\n  step "7/10')
     PREPARED = between("text_lane_prepared(){", "\n}\n") + "\n}\n"
     IMG_FLASH, IMG_27B = "lmsysorg/sglang@sha256:" + "a" * 64, "lmsysorg/sglang:v0.5.21"
 
     def parent(self, lane, want, unit_there, child_rc=0, no_service=0, flash_ready=False, all_weights=0, with_flash=0,
-               ready_27b=False, image_27b=False, with_27b=0, map_waits=False, map_built=False, served=None):
+               ready_27b=False, image_27b=False, with_27b=0, map_waits=False, map_built=False, served=None, gpu="ATS"):
         """flash_ready: the image the flash launcher runs is on the box. ready_27b: the image the
         27B unit runs (a tag here, as an operator may pass) and its DFlash2 draft are; image_27b:
         the image alone. served: the checkpoint the launcher or the unit serves is whole in the
@@ -575,6 +575,10 @@ class TheParentStartsIt(unittest.TestCase):
             (units / "qwen38-flash.service").write_text("[Unit]\n")
         repo = t / "repo"
         repo.mkdir()
+        # the question the flash lane asks its GPU (issue #54), on the reference box's GPU unless
+        # the test says otherwise: the copy's own check, never the host's GPU
+        (repo / "flash-ats-check.sh").write_text((REPO / "flash-ats-check.sh").read_text())
+        stub(t / "bin" / "nvidia-smi", f'echo "{gpu}"')
         stub(repo / "install.sh",
              'echo "CHILD SECONDARY=${QWEN38_SECONDARY:-} MODEL_CHOICE=${MODEL_CHOICE:-unset} '
              'MODEL_REV=${MODEL_REV:-unset} CONTEXT_MODE=${CONTEXT_MODE:-unset} PORT=${PORT:-} '
@@ -594,6 +598,18 @@ class TheParentStartsIt(unittest.TestCase):
         r = subprocess.run(["bash", "-c", script], capture_output=True, text=True, timeout=30, env=env)
         self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
         return r.stdout
+
+    def test_a_gpu_outside_ats_gives_the_flash_lane_its_units_only_however_it_was_asked_for(self):
+        # issue #54: prepared, named or with every weight, run whole it stopped at the question
+        # before it wrote its new launcher (found in review, 2026-10-19)
+        for kw in ({"flash_ready": True, "map_waits": True, "map_built": True}, {"with_flash": 1}, {"all_weights": 1}):
+            with self.subTest(**kw):
+                out = self.parent("27b", 1, unit_there=True, gpu="None", **kw)
+                self.assertIn("UNITS_ONLY=1", out)
+                self.assertIn("AFTER FRESH=0 STATE=cannot", out)
+                out = self.parent("27b", 1, unit_there=True, **kw)
+                self.assertIn("UNITS_ONLY=unset", out)
+                self.assertNotIn("STATE=cannot", out)
 
     def test_a_new_flash_lane_gets_its_default_target_and_the_shared_settings_only(self):
         # on demand: its units only, its first Load from the cockpit prepares it (2026-10-15)

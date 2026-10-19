@@ -1448,6 +1448,25 @@ docker info >/dev/null 2>&1 || die "Cannot talk to the docker daemon. Fix: sudo 
 # /proc/meminfo, not `free`: free(1) localizes its row labels (issue #3)
 TOTAL_GB=$(awk '/^MemTotal/{print int($2/1048576)}' /proc/meminfo)
 [ "$TOTAL_GB" -ge 110 ] || die "This config needs a ~121 GB unified-memory machine; found ${TOTAL_GB} GB."
+# A GPU outside its ATS addressing mode cannot start the flash lane (issue #54), and a flash install
+# fetches its image and its checkpoint (223 GB in all). A new flash install stops here, before the
+# first byte. A run for a box whose flash lane is installed gives it its units only, which say why at
+# every start, starts nothing, and goes on with the rest of the box: stopped here, it kept the
+# launcher that started again every 15 s, and a box booting a side lane was never updated again
+# (found in review, 2026-10-19). Beside the 27B lane it gets its units only too (step 6).
+ATS_CANNOT=""
+if [ "$LANE" = "flash" ] && ATS_CANNOT="$(flash_cannot_start)"; then
+  if [ "$UNITS_ONLY" -eq 0 ] && [ "$INSTALLED_CHOICE" != flash ]; then
+    # a box serving the 27B keeps its target with a plain run: MODEL_CHOICE=stock moved one serving
+    # fp8 or an abliterated target to stock, 22 GB to fetch (found in review, 2026-10-19)
+    if [ "$INSTALLED_CHOICE" = 27b ]; then
+      die "The flash lane cannot start on this box: $ATS_CANNOT. Its 27B lane can: ./install.sh updates it and keeps its target"
+    fi
+    die "The flash lane cannot start on this box: $ATS_CANNOT. The 27B lane can: MODEL_CHOICE=stock ./install.sh"
+  fi
+  [ -n "$SECONDARY" ] || echo "NOTE: the flash lane cannot start on this box: $ATS_CANNOT. Its units only, none of its downloads, and this run starts nothing."
+  UNITS_ONLY=1
+fi
 # Measured where the weights actually land: HF_CACHE may live on another disk,
 # and then free space under $HOME says nothing (the error message used to send
 # people there while measuring here).
@@ -1578,7 +1597,8 @@ fi
 echo "OK (aarch64, ${TOTAL_GB} GB RAM, ${FREE_DISK_GB} GB free)"
 
 if [ "$UNITS_ONLY" -eq 1 ]; then
-  if [ "$LANE" = "flash" ]; then step "2/10 The Flash-Next image: pulled at the lane's first Load (~16 GB to download, 35 GB on disk)"
+  if [ -n "$ATS_CANNOT" ]; then step "2/10 The Flash-Next image: not pulled, as this GPU cannot start the flash lane"
+  elif [ "$LANE" = "flash" ]; then step "2/10 The Flash-Next image: pulled at the lane's first Load (~16 GB to download, 35 GB on disk)"
   else step "2/10 The SGLang image: pulled at the lane's first Load (~15 GB to download)"; fi
   PULLED_IMAGE="$PULL_TARGET"
 elif [ "$LANE" = "flash" ]; then
@@ -1615,7 +1635,9 @@ if [ "$LANE" = "flash" ]; then pin_tag 27b "$IMAGE"; else pin_tag flash "$FLASH_
 unpin_stale "$LANE" "$PULLED_IMAGE" || true
 if [ "$LANE" = "flash" ]; then unpin_stale 27b "$IMAGE" || true; else unpin_stale flash "$FLASH_IMAGE" || true; fi
 
-if [ "$UNITS_ONLY" -eq 1 ]; then
+if [ -n "$ATS_CANNOT" ]; then
+  step "3/10 The GPU from a container: not asked, as this GPU cannot start the flash lane"
+elif [ "$UNITS_ONLY" -eq 1 ]; then
   step "3/10 The GPU from a container: seen by the run that serves (this lane's image comes later)"
 else
   step "3/10 Verifying the container can see the GPU"
@@ -1629,7 +1651,8 @@ else
 fi
 
 if [ "$UNITS_ONLY" -eq 1 ]; then
-  if [ "$LANE" = "flash" ]; then step "4/10 The Flash-Next checkpoint: fetched at the lane's first Load (~136 GB)"
+  if [ -n "$ATS_CANNOT" ]; then step "4/10 The Flash-Next checkpoint: not fetched, as this GPU cannot start the flash lane"
+  elif [ "$LANE" = "flash" ]; then step "4/10 The Flash-Next checkpoint: fetched at the lane's first Load (~136 GB)"
   else step "4/10 The checkpoints (the target and its DFlash2 draft): fetched at the lane's first Load (~24 GB, ~33 for an FP8 target)"; fi
 elif [ "$LANE" = "flash" ]; then
   step "4/10 Downloading the Flash-Next checkpoint (~136 GB, one-time, reuses/resumes any local copy)"
@@ -1680,7 +1703,7 @@ dl_fetch(){  # $1 repo, $2 revision; an empty repo is a kept custom model (alrea
     || die "Checkpoint download failed. Causes: no internet, HuggingFace throttling of unauthenticated downloads (set HF_TOKEN=<your token>, or re-run: downloads resume), a pinned revision removed (try MODEL_REV=main DRAFT2_REV=main ./install.sh), or a permission error: if your $HF_CACHE contains root-owned files from other tools, fix with: sudo chown -R \$(id -u):\$(id -g) $HF_CACHE"
 }
 if [ "$UNITS_ONLY" -eq 1 ]; then
-  echo "no checkpoint now: the lane's first Load fetches it"
+  [ -n "$ATS_CANNOT" ] || echo "no checkpoint now: the lane's first Load fetches it"
 else
   dl_fetch "$DL_MODEL_REPO" "$MODEL_REV"
   dl_fetch "$DL_DRAFT2_REPO" "$DRAFT2_REV"
@@ -1749,6 +1772,11 @@ bash "$CONFIG_DIR/engine-secrets.sh" || die "could not write the engine's key fi
 # see engine-preflight.sh), so it is in place before any unit that names it can start.
 cmp -s "$REPO_DIR/engine-preflight.sh" "$CONFIG_DIR/engine-preflight.sh" \
   || install -m 755 "$REPO_DIR/engine-preflight.sh" "$CONFIG_DIR/engine-preflight.sh"
+# The flash launcher asks it before every start (a GB10 outside its ATS addressing mode cannot
+# serve the lane's N-gram table from a file, issue #54); every box gets it, as a flash lane
+# installed on demand starts from its first Load.
+cmp -s "$REPO_DIR/flash-ats-check.sh" "$CONFIG_DIR/flash-ats-check.sh" \
+  || install -m 755 "$REPO_DIR/flash-ats-check.sh" "$CONFIG_DIR/flash-ats-check.sh"
 # One patched template per engine file name: the served template always follows
 # the served model (both fixes: reasoning_effort normalization + mid-conversation
 # system messages as <system-reminder> blocks; see patch-template.py).
@@ -1759,7 +1787,7 @@ if [ "$KEEP_MODEL_VERBATIM" -eq 1 ]; then
     || die "custom model kept, but no patched template at $TEMPLATE_OUT. Pass MODEL_CHOICE=stock, uncensored, fp8 or uncensored-fp8 to regenerate it."
   echo "custom target model kept: existing patched template left untouched"
 elif [ "$UNITS_ONLY" -eq 1 ]; then
-  echo "the chat template comes from the checkpoint: the lane's first Load writes it (its switch)"
+  [ -n "$ATS_CANNOT" ] || echo "the chat template comes from the checkpoint: the lane's first Load writes it (its switch)"
 else
   python3 "$REPO_DIR/patch-template.py" "$HF_CACHE" "$TEMPLATE_OUT" "$MODEL_REV" "$MODEL_REPO" \
     || die "Template patch failed (see message above). If the upstream template changed, please open an issue on this repo."
@@ -1834,7 +1862,7 @@ apply_context_configs(){
 # cache, the binds) goes over explicitly; what belongs to one lane (its target, revision
 # and context mode) does not: a MODEL_CHOICE given for this lane must not pick the other
 # one's. A lane not installed yet gets its default target; one installed keeps its own.
-SECOND_LANE=""; SECOND_UNIT=""; SECOND_FRESH=0; SECOND_NEW=0; SECOND_STATE=""; SECOND_UNITS=0
+SECOND_LANE=""; SECOND_UNIT=""; SECOND_FRESH=0; SECOND_NEW=0; SECOND_STATE=""; SECOND_UNITS=0; SECOND_CANNOT=""
 if [ -z "$SECONDARY" ] && [ "$NO_SERVICE" -eq 0 ]; then
   if [ "$LANE" = "27b" ]; then
     SECOND_LANE=flash; SECOND_UNIT=qwen38-flash.service; SECOND_WANT="$WANT_FLASH"; SECOND_TARGET=flash
@@ -1847,7 +1875,18 @@ if [ -z "$SECONDARY" ] && [ "$NO_SERVICE" -eq 0 ]; then
     # which a run that builds it whole proves (--all-weights proved none of them, 2026-10-15)
     SECOND_PREPARED=0; text_lane_prepared "$SECOND_LANE" && SECOND_PREPARED=1
     SECOND_NEW="$SECOND_FRESH"; [ "$SECOND_PREPARED" -eq 1 ] || SECOND_NEW=1
-    step "The ${SECOND_LANE/27b/27B} lane, installed beside the ${LANE/27b/27B} lane (it serves when it is loaded)"
+    # A GPU outside its ATS addressing mode cannot start the flash lane (issue #54): its units only,
+    # whose launcher says why at every start, and none of its downloads, prepared or named alike.
+    # Installed whole, its run stopped before it wrote them, and kept the launcher before (found in
+    # review, 2026-10-19).
+    SECOND_CANNOT=""
+    if [ "$SECOND_LANE" = flash ] && why="$(flash_cannot_start)"; then SECOND_CANNOT="$why"; fi
+    if [ -n "$SECOND_CANNOT" ]; then
+      step "The flash lane, installed beside the 27B lane: its units only, as this GPU cannot start it"
+      echo "why: $SECOND_CANNOT"
+    else
+      step "The ${SECOND_LANE/27b/27B} lane, installed beside the ${LANE/27b/27B} lane (it serves when it is loaded)"
+    fi
     SECOND_ENV=()
     [ "$SECOND_FRESH" -eq 1 ] && SECOND_ENV=(MODEL_CHOICE="$SECOND_TARGET")
     # The other text lane on demand: its units only, unless it is prepared, asked for by name
@@ -1857,11 +1896,15 @@ if [ -z "$SECONDARY" ] && [ "$NO_SERVICE" -eq 0 ]; then
     if [ "$ALL_WEIGHTS" -eq 0 ] && [ "$SECOND_NAMED" -eq 0 ] && [ "$SECOND_PREPARED" -eq 0 ]; then
       SECOND_UNITS=1; SECOND_ENV+=(QWEN38_UNITS_ONLY=1)
     fi
+    if [ -n "$SECOND_CANNOT" ] && [ "$SECOND_UNITS" -eq 0 ]; then
+      SECOND_UNITS=1; SECOND_ENV+=(QWEN38_UNITS_ONLY=1)
+    fi
     if env -u MODEL_CHOICE -u MODEL_REV -u CONTEXT_MODE -u RESTART_ENGINE \
          QWEN38_SECONDARY="$SECOND_LANE" QWEN38_RECOMMENDED="$RECOMMENDED" PORT="$PORT" HF_CACHE="$HF_CACHE" \
          ENGINE_BIND="$ENGINE_BIND" PROXY_BIND="$PROXY_BIND" PROXY_PORT="$PROXY_PORT" \
          ${SECOND_ENV[@]+"${SECOND_ENV[@]}"} bash "$REPO_DIR/install.sh"; then
       SECOND_STATE=installed; [ "$SECOND_UNITS" -eq 1 ] && SECOND_STATE=units
+      [ -z "$SECOND_CANNOT" ] || SECOND_STATE=cannot
     else
       SECOND_STATE=failed
       echo "NOTE: the ${SECOND_LANE/27b/27B} lane did not install (the lines above say why); the ${LANE/27b/27B} lane goes on."
@@ -2772,21 +2815,24 @@ rm -f "$CONFIG_DIR/warmup-claude-code.sh"
 sudo systemctl daemon-reload
 if [ -n "$SECONDARY" ]; then
   # Installed, not enabled and not started: the serving run proves it once it is new.
-  if [ "$UNITS_ONLY" -eq 1 ]; then
+  if [ -n "$ATS_CANNOT" ]; then
+    step "Done: installed as $UNIT_NAME ($MODEL_CHOICE), not enabled at boot: this GPU cannot start it"
+  elif [ "$UNITS_ONLY" -eq 1 ]; then
     step "Done: installed as $UNIT_NAME ($MODEL_CHOICE), not enabled at boot, not prepared yet"
   else
     step "Done: installed as $UNIT_NAME ($MODEL_CHOICE), not enabled at boot"
   fi
   exit 0
 fi
-if [ "$IMAGE_BOOT" -eq 0 ] && [ "$VIDEO_BOOT" -eq 0 ] && [ "$KOLIBRI_BOOT" -eq 0 ] && [ "$NEMOTRON_BOOT" -eq 0 ] && [ "$NEMOTRON_SUPER_BOOT" -eq 0 ]; then
+if [ -z "$ATS_CANNOT" ] && [ "$IMAGE_BOOT" -eq 0 ] && [ "$VIDEO_BOOT" -eq 0 ] && [ "$KOLIBRI_BOOT" -eq 0 ] && [ "$NEMOTRON_BOOT" -eq 0 ] && [ "$NEMOTRON_SUPER_BOOT" -eq 0 ]; then
   sudo systemctl enable "$UNIT_NAME"
   text_lane_note "$UNIT_NAME"
 else
   # Updated, not switched to. Starting it would stop the lane that is serving, and
   # the cockpit and the side-lane steps below only run once a text engine has proved
   # itself, so this path finishes here, on its own, instead of waiting for a boot it
-  # must not do.
+  # must not do. A flash lane on a GPU outside its ATS mode takes it too: its start would
+  # end at once (issue #54), and its boot stays as it was.
   # The proxy's code and unit were just rewritten above; on the text path it is restarted
   # once the engine behind it answers, which this path never waits for. Without this it
   # kept the old keepalive-proxy.py in memory until someone restarted it by hand.
@@ -2821,26 +2867,45 @@ else
     "$REPO_DIR/install-nemotron-super.sh" "$(side_mode nemotron-super "$WITH_NEMOTRON_SUPER")" \
       || echo "NOTE: the Nemotron Super lane did not install or update; retry with ./install-nemotron-super.sh --no-smoke"
   fi
-  SERVING_LANE="image"
+  SERVING_LANE=""
+  [ "$IMAGE_BOOT" -eq 1 ] && SERVING_LANE="image"
   [ "$VIDEO_BOOT" -eq 1 ] && SERVING_LANE="video"
   [ "$KOLIBRI_BOOT" -eq 1 ] && SERVING_LANE="Kolibri"
   [ "$NEMOTRON_BOOT" -eq 1 ] && SERVING_LANE="Nemotron"
   [ "$NEMOTRON_SUPER_BOOT" -eq 1 ] && SERVING_LANE="Nemotron Super"
-  step "Done: the text lane is up to date; the $SERVING_LANE lane stays this box's serving lane"
-  echo "  text lane : installed as $UNIT_NAME, not enabled at boot"
-  # The first target the hint names is the standard one: the project advises the standard
-  # checkpoints. The abliterated one a lane was installed with comes after it; this line
-  # named only that one.
-  case "$MODEL_CHOICE" in
-    custom)
-      # a kept custom model has no switch target of its own; the installer is the way back
-      echo "  back to it: MODEL_CHOICE=<target> ./install.sh (this box serves a custom model)" ;;
-    uncensored)       echo "  back to it: ./switch-model.sh stock, the standard checkpoint of that lane (a first switch downloads about 22 GB), or ./switch-model.sh uncensored, the abliterated one it was installed with" ;;
-    uncensored-fp8)   echo "  back to it: ./switch-model.sh fp8, the standard checkpoint of that lane (a first switch downloads about 31 GB), or ./switch-model.sh uncensored-fp8, the abliterated one it was installed with" ;;
-    flash-uncensored) echo "  back to it: ./switch-model.sh flash, the standard checkpoint of that lane (a first switch downloads about 136 GB), or ./switch-model.sh flash-uncensored, the abliterated one it was installed with" ;;
-    *)
-      echo "  back to it: Load on that lane in the cockpit's Lanes view, or ./switch-model.sh $MODEL_CHOICE" ;;
-  esac
+  if [ -n "$ATS_CANNOT" ]; then
+    step "Done: this box is up to date, and its flash lane, which this GPU cannot start, was not started"
+    echo "  why       : $ATS_CANNOT"
+    [ -z "$SERVING_LANE" ] || echo "  the $SERVING_LANE lane stays this box's serving lane"
+    # The 27B lane beside it, in the summary's words (lane_line, which this path never reaches):
+    # one with its units only, whose switch refuses, one that did not install, and a box without
+    # it or without a cockpit were all told to Load it or to switch to it (found in review, 2026-10-19).
+    case "$SECOND_STATE" in
+      installed) if [ "$COCKPIT" -eq 1 ]; then echo "  the 27B lane can serve on this GPU: Load it from the cockpit's Lanes view (or ./switch-model.sh stock)"
+                 else echo "  the 27B lane can serve on this GPU: ./switch-model.sh stock switches to it"; fi ;;
+      units)     if [ "$COCKPIT" -eq 1 ]; then echo "  the 27B lane can serve on this GPU: its first Load from the cockpit's Lanes view builds it and fetches its weights (58 GB)"
+                 else echo "  the 27B lane can serve on this GPU: ./prepare-lane.sh 27b builds it (58 GB in all), then ./switch-model.sh stock switches to it"; fi ;;
+      failed)    echo "  the 27B lane can serve on this GPU, but it did not install (see its NOTE above): ./install.sh --with-27b installs it whole" ;;
+      off)       if [ -f "$SGL_UNIT_PATH" ]; then echo "  the 27B lane can serve on this GPU: left out by --no-27b, so not updated; ./install.sh --with-27b brings it back"
+                 else echo "  the 27B lane can serve on this GPU: ./install.sh --with-27b adds it (58 GB)"; fi ;;
+    esac
+  else
+    step "Done: the text lane is up to date; the $SERVING_LANE lane stays this box's serving lane"
+    echo "  text lane : installed as $UNIT_NAME, not enabled at boot"
+    # The first target the hint names is the standard one: the project advises the standard
+    # checkpoints. The abliterated one a lane was installed with comes after it; this line
+    # named only that one.
+    case "$MODEL_CHOICE" in
+      custom)
+        # a kept custom model has no switch target of its own; the installer is the way back
+        echo "  back to it: MODEL_CHOICE=<target> ./install.sh (this box serves a custom model)" ;;
+      uncensored)       echo "  back to it: ./switch-model.sh stock, the standard checkpoint of that lane (a first switch downloads about 22 GB), or ./switch-model.sh uncensored, the abliterated one it was installed with" ;;
+      uncensored-fp8)   echo "  back to it: ./switch-model.sh fp8, the standard checkpoint of that lane (a first switch downloads about 31 GB), or ./switch-model.sh uncensored-fp8, the abliterated one it was installed with" ;;
+      flash-uncensored) echo "  back to it: ./switch-model.sh flash, the standard checkpoint of that lane (a first switch downloads about 136 GB), or ./switch-model.sh flash-uncensored, the abliterated one it was installed with" ;;
+      *)
+        echo "  back to it: Load on that lane in the cockpit's Lanes view, or ./switch-model.sh $MODEL_CHOICE" ;;
+    esac
+  fi
   record_install side-boot
   exit 0
 fi
@@ -3256,6 +3321,8 @@ except Exception as e:
       case "$2" in
         proved)    echo "  $1: installed and proved it serves; Load it from the cockpit's Lanes view (or ./switch-model.sh $4)" ;;
         installed) echo "  $1: installed and up to date; Load it from the cockpit's Lanes view (or ./switch-model.sh $4)" ;;
+        # a GPU outside its ATS mode (issue #54): its units only, whose launcher says why at a start
+        cannot)    echo "  $1: installed, and it cannot start on this box: $SECOND_CANNOT" ;;
         units)     if [ "$COCKPIT" -eq 1 ]; then
                      echo "  $1: installed, ready to load: its first Load from the cockpit's Lanes view builds it and fetches its weights ($5)"
                    else
@@ -3267,7 +3334,12 @@ except Exception as e:
         # it did not install (its room, a download): a lane installed on demand is given its
         # units only by a plain run, which tried nothing again, and one already there read as
         # unproved (found in review, 2026-10-15); a run that names it installs it whole
-        failed)    echo "  $1: NOT ready, see its NOTE above (it did not install): ./install.sh --with-$3 installs it whole" ;;
+        # on a GPU outside its ATS mode a run that names it gives it its units only (issue #54)
+        failed)    if [ "$3" = flash ] && [ -n "$SECOND_CANNOT" ]; then
+                     echo "  $1: NOT ready, see its NOTE above (it did not install), and this GPU cannot start it: $SECOND_CANNOT"
+                   else
+                     echo "  $1: NOT ready, see its NOTE above (it did not install): ./install.sh --with-$3 installs it whole"
+                   fi ;;
         off)       if [ -f "$6" ]; then
                      echo "  $1: left out by --no-$3, so not updated; ./install.sh --with-$3 brings it back"
                    else

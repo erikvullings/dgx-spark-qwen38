@@ -66,7 +66,9 @@ class TheSwitchBackLine(unittest.TestCase):
 
 
 class TheInstallersLineOnABoxThatBootsImagesOrVideo(unittest.TestCase):
-    LINES = block(INSTALL, '  case "$MODEL_CHOICE" in\n    custom)', "  esac")
+    # the hint ends the run of a box booting a side lane, inside its "else" since a flash lane
+    # its GPU cannot start ends that run too (issue #54)
+    LINES = block(INSTALL, '    case "$MODEL_CHOICE" in\n      custom)', "    esac")
 
     def test_an_abliterated_lane_names_its_standard_target_first(self):
         for choice, standard in (("uncensored", "stock"), ("uncensored-fp8", "fp8"),

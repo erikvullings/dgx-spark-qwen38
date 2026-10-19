@@ -742,6 +742,14 @@ esac
 [ -n "${TARGET_REPO:-}" ] && [ -n "${TARGET_REV:-}" ] \
   || die "target '$CHOICE' resolved to an empty checkpoint or revision; install.sh is missing its pin"
 
+# A GPU outside its ATS addressing mode cannot start the flash lane (issue #54): no checkpoint is
+# fetched for it and the boot is not pointed at it. A cockpit Load that points the boot at it runs
+# this before it stops the serving lane (a failed step ends the journey), and so does the Library's
+# Download (--fetch).
+if [ "$TARGET_LANE" = flash ] && ATS_WHY="$(flash_cannot_start)"; then
+  die "the flash lane cannot start on this box: $ATS_WHY"
+fi
+
 if [ "$TARGET_LANE" = "27b" ]; then
   [ -f "$SGL_UNIT" ] || die "the 27B stack is not installed on this box (no $SGL_UNIT). Install it once first: MODEL_CHOICE=$CHOICE ./install.sh"
   TARGET_UNIT="$SGL_UNIT"; TARGET_UNIT_NAME="qwen38-sglang.service"

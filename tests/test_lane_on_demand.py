@@ -340,7 +340,7 @@ class TextBox:
         self.t = t = pathlib.Path(tempfile.mkdtemp(prefix="prepare-text-"))
         self.d = d = t / "repo"
         d.mkdir()
-        for f in ("lanes.sh", "install.sh"):
+        for f in ("lanes.sh", "install.sh", "flash-ats-check.sh"):
             (d / f).write_text((REPO / f).read_text())
         self.units = t / "units"
         self.units.mkdir()
@@ -366,6 +366,9 @@ class TextBox:
                   f'  "pull "*) touch "{t}/pulled" ;;\n'
                   'esac\nexit 0\n')
         self.stub("df", f'printf "Avail\\n{free_gb}G\\n"')
+        # the reference box's GPU: the flash lane's first Load asks its addressing mode
+        # (flash-ats-check.sh), and every case here asked the host's own GPU (review, 2026-10-19)
+        self.stub("nvidia-smi", 'echo ATS')
         if free_at:
             # df answers for the disk of the folder it is given, a link followed
             self.stub("df", 'p="$(readlink -f "${@: -1}")"\ncase "$p" in\n'
@@ -459,6 +462,20 @@ class TheFlashPreparation(unittest.TestCase):
         rc, out, calls = self.box().run("flash")
         self.assertEqual(rc, 0, out)
         self.assertTrue(calls[-1].startswith("docker run --rm --init "), calls[-1])
+
+    def test_a_gpu_outside_its_ats_mode_is_refused_before_anything(self):
+        # issue #54: on a GB10 outside its ATS mode the engine refused the table at load, after the image
+        # and 126 GiB of checkpoint had come
+        b = self.box()
+        b.stub("nvidia-smi", 'echo None')
+        rc, out, calls = b.run("flash")
+        self.assertEqual(rc, 1, out)
+        self.assertIn("the flash lane cannot start on this box: the GPU's addressing mode is None", out)
+        self.assertEqual(calls, [])
+        b.stub("nvidia-smi", 'echo ATS')
+        rc, out, calls = b.run("flash")
+        self.assertEqual(rc, 0, out)
+        self.assertIn("docker pull", heads(calls))
 
     def test_a_target_of_another_lane_is_refused_before_anything(self):
         for target in ("stock", "image", "flash-turbo"):

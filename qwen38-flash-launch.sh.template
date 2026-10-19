@@ -12,6 +12,18 @@
 # upstream PR replaced.
 set -euo pipefail
 
+# The GPU reads that table through the host page tables, which a GB10 does in its ATS addressing
+# mode only: outside it the engine refuses it when it loads the weights (issue #54). The start
+# stops here instead, before the table is written or the image runs, and says why in the line
+# the cockpit reads (dashboard/lifecycle.py). 78 is the unit's RestartPreventExitStatus: no new
+# start every 15 s. Only the check's status 1 says so: any other (the check not there, say)
+# leaves the engine to decide, as before.
+ats_rc=0; why="$(bash __HOME__/.config/qwen38/flash-ats-check.sh)" || ats_rc=$?
+if [ "$ats_rc" -eq 1 ] && [ -n "$why" ]; then
+  echo "preflight: qwen38-flash.service cannot start: $why"
+  exit 78
+fi
+
 # The 47.7 GiB FP8 N-gram (PLE) table lives in a sparse file on the local NVMe
 # and the gather kernel reads its rows through the host page tables
 # (--ple-offload-backend file, sglang#37068). GB10 is the hardware that makes

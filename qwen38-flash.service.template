@@ -21,6 +21,9 @@ ExecStartPre=/bin/bash __HOME__/.config/qwen38/engine-preflight.sh qwen38-flash.
 ExecStart=/bin/bash __HOME__/.config/qwen38/launch-flash.sh
 ExecStop=-/usr/bin/docker stop -t 20 qwen38-flash
 Restart=always
+# 78: the launcher found a GPU outside its ATS addressing mode, which no new start changes
+# (flash-ats-check.sh, issue #54); the unit stays failed with the reason in its journal
+RestartPreventExitStatus=78
 # docker kills SGLang with SIGKILL (137) or SIGTERM (143) on a plain stop; that is
 # a clean stop, not a failure (v1.5.5: the cockpit showed 'failed' after every stop)
 SuccessExitStatus=137 143

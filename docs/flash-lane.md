@@ -29,6 +29,33 @@ file on the local NVMe and the gather kernel reads its rows through GB10's host
 page tables, which works because this part reports
 `cudaDevAttrPageableMemoryAccessUsesHostPageTables`.
 
+That attribute holds in the GPU's ATS addressing mode only. Outside it SGLang
+refuses the file backend when it loads the weights ("needs a device whose
+pageable host memory accesses go through the host page tables"), as on the GB10
+of [issue #54](https://github.com/hasso5703/dgx-spark-qwen38/issues/54), whose
+mode reads None. `nvidia-smi --query-gpu=addressing_mode --format=csv,noheader`
+names the mode: ATS, HMM or None. The reference box runs in ATS. The box of
+issue #54 boots with the same `iommu.passthrough=0` and the same `nvidia_uvm`
+settings, so those alone do not decide it.
+
+Since v1.36.4 the lane asks before it starts (`flash-ats-check.sh`), and a box
+in another mode fetches nothing for it:
+
+- A new flash install stops before its first download, with the reason. An
+  update gives the flash lane its units only, beside the 27B lane or as the
+  box's own text lane, starts nothing for it, updates the rest of the box, and
+  says the lane cannot start here.
+- Its first Load, a Load of another flash checkpoint and the Library's Download
+  (`prepare-lane.sh`, `switch-model.sh`) refuse it before the first byte, and
+  before the serving lane is stopped.
+- The launcher stops its start with the reason, which the cockpit shows as
+  **cannot start on this GPU**, instead of a new start every 15 s.
+
+A mode nvidia-smi does not name (an older driver, `[N/A]`), or a check that
+cannot run, leaves the engine to decide, as before. Serving the table on a GPU without ATS would take a
+host-staging path in SGLang, which
+[sglang#40235](https://github.com/sgl-project/sglang/pull/40235) proposes.
+
 Until v1.7 that was a patch this repo vendored and built into a local image.
 Since v1.8 it is upstream and the image is official:
 

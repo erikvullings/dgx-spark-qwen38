@@ -202,6 +202,17 @@ pin_tag() {   # $1 lane, $2 image: a digest reference present on this box gets i
   fi
 }
 
+flash_cannot_start(){
+  # Prints why this GPU cannot start the flash lane and returns 0, or returns 1. Only the check's
+  # status 1 says so (HMM or None, issue #54): any other, a check that is not there or cannot
+  # run included, is no answer, and the engine decides as before. Read as "cannot", a missing
+  # check stopped the lane for good, with no reason given (found in review, 2026-10-19).
+  local why rc=0
+  why="$(bash "$REPO_DIR/flash-ats-check.sh" 2>/dev/null)" || rc=$?
+  [ "$rc" -eq 1 ] && [ -n "$why" ] || return 1
+  printf '%s\n' "$why"
+}
+
 # The image a text lane's launcher (flash) or unit (27B) runs: the word on the line before its
 # server command, whatever its form (a digest pin, a tag an operator passed, a local build).
 engine_image(){  # $1 the launcher or the unit
