@@ -201,6 +201,21 @@ pin_tag() {   # $1 lane, $2 image: a digest reference present on this box gets i
     echo "NOTE: could not tag $2; a docker image prune would delete it"
   fi
 }
+# A lane's own local tags, and only its own: qwen38-pinned:<lane>-<12 hex>. A glob on the lane's
+# name and a dash also takes the tags of every lane whose name starts with it: the flash lane's
+# install would have untagged the Flash FP4-Local lane's image, whose tag starts with flash-
+# (found in review, 2026-10-19).
+pin_tags_of() {   # $1 lane: its tags, one per line, each with its image id
+  docker images --no-trunc --format '{{.Repository}}:{{.Tag}} {{.ID}}' qwen38-pinned 2>/dev/null \
+    | grep -E "^qwen38-pinned:$1-[0-9a-f]{12} " || true
+}
+pin_untag() {   # $1 lane: its tags go (its uninstall); the image is then merely dangling
+  local tag id
+  pin_tags_of "$1" | while read -r tag id; do
+    docker rmi "$tag" >/dev/null 2>&1 && echo "untagged $tag: a docker image prune can reclaim it"
+  done
+  return 0
+}
 
 flash_cannot_start(){
   # Prints why this GPU cannot start the flash lane and returns 0, or returns 1. Only the check's

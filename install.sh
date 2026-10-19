@@ -1619,9 +1619,9 @@ fi
 unpin_stale() {   # $1 lane, $2 the image the lane is pinned to now
   local cur tag id
   cur="$(docker image inspect "$2" --format '{{.Id}}' 2>/dev/null)" || return 0
-  docker images --no-trunc --format '{{.Repository}}:{{.Tag}} {{.ID}}' qwen38-pinned 2>/dev/null \
+  # the lane's own tags only (lanes.sh): flash- is how the Flash FP4-Local lane's tags begin too
+  pin_tags_of "$1" \
     | while read -r tag id; do
-        case "$tag" in "qwen38-pinned:$1-"*) ;; *) continue ;; esac
         if [ "$id" = "$cur" ] || [ -n "$(docker ps -aq --filter "ancestor=$id" 2>/dev/null)" ]; then
           continue
         fi

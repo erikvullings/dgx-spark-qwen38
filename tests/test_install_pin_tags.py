@@ -13,7 +13,19 @@ import unittest
 
 REPO = pathlib.Path(__file__).resolve().parents[1]
 TEXT = (REPO / "install.sh").read_text()
-FUNC = TEXT[TEXT.index("unpin_stale() {"):TEXT.index("\n}\n", TEXT.index("unpin_stale() {")) + 3]
+LANES = (REPO / "lanes.sh").read_text()
+
+
+def func(text, name):
+    start = text.index(name + "() {")
+    return text[start:text.index("\n}\n", start) + 3]
+
+
+# unpin_stale reads a lane's tags with lanes.sh's pin_tags_of, which install.sh sources
+FUNC = func(LANES, "pin_tags_of") + func(TEXT, "unpin_stale")
+UNTAG = func(LANES, "pin_tags_of") + func(LANES, "pin_untag")
+# tags as pin_tag names them: the lane, a dash, the digest's first 12 hex digits
+NEW, OLD, FL, FLL = "27b-0123456789ab", "27b-ba9876543210", "flash-aaaaaaaaaaaa", "flash-local-03a956544e9f"
 
 DOCKER = r'''#!/bin/bash
 D="$(dirname "$0")"
@@ -27,7 +39,7 @@ esac
 '''
 
 
-def run(tags, used=(), current="lmsysorg/sglang@sha256:new"):
+def run(tags, used=(), current="lmsysorg/sglang@sha256:new", lane="27b", script_of=None):
     d = pathlib.Path(tempfile.mkdtemp(prefix="pin-tags-"))
     try:
         (d / "docker").write_text(DOCKER)
@@ -35,7 +47,7 @@ def run(tags, used=(), current="lmsysorg/sglang@sha256:new"):
         (d / "refs").write_text("lmsysorg/sglang@sha256:new sha256:NEW\n")
         (d / "tags").write_text("".join(f"{t} {i}\n" for t, i in tags))
         (d / "used").write_text("".join(f"{u}\n" for u in used))
-        script = f"set -euo pipefail\n{FUNC}\nunpin_stale 27b '{current}' || true\necho END\n"
+        script = script_of or f"set -euo pipefail\n{FUNC}\nunpin_stale {lane} '{current}' || true\necho END\n"
         r = subprocess.run(["bash", "-c", script], capture_output=True, text=True, timeout=30,
                            env={"PATH": f"{d}:/usr/bin:/bin"})
         removed = (d / "removed").read_text().split() if (d / "removed").exists() else []
@@ -52,19 +64,37 @@ class RetiredPinsAreUntagged(unittest.TestCase):
         self.assertIn('unpin_stale flash "$FLASH_IMAGE" || true', TEXT)
 
     def test_a_retired_pin_of_the_lane_goes(self):
-        out, removed = run([("qwen38-pinned:27b-new", "sha256:NEW"), ("qwen38-pinned:27b-old", "sha256:OLD")])
-        self.assertEqual(removed, ["qwen38-pinned:27b-old"], out)
+        out, removed = run([(f"qwen38-pinned:{NEW}", "sha256:NEW"), (f"qwen38-pinned:{OLD}", "sha256:OLD")])
+        self.assertEqual(removed, [f"qwen38-pinned:{OLD}"], out)
         self.assertIn("END", out)
 
     def test_the_other_lane_and_images_in_use_stay(self):
-        _, removed = run([("qwen38-pinned:27b-new", "sha256:NEW"), ("qwen38-pinned:flash-x", "sha256:FL"),
-                          ("qwen38-pinned:27b-old", "sha256:OLD")], used=["sha256:OLD"])
+        _, removed = run([(f"qwen38-pinned:{NEW}", "sha256:NEW"), (f"qwen38-pinned:{FL}", "sha256:FL"),
+                          (f"qwen38-pinned:{OLD}", "sha256:OLD")], used=["sha256:OLD"])
         self.assertEqual(removed, [])
 
+    def test_a_lane_whose_name_starts_with_this_ones_keeps_its_tag(self):
+        # the flash lane's pins move; the Flash FP4-Local lane's tag begins with flash- too, and
+        # a glob on "flash-" untagged it, its 18 GB image then deleted by the next prune
+        out, removed = run([(f"qwen38-pinned:{FL}", "sha256:NEW"), (f"qwen38-pinned:{FLL}", "sha256:FLL"),
+                            ("qwen38-pinned:flash-old", "sha256:ODD")], lane="flash")
+        self.assertEqual(removed, [], out)
+
     def test_nothing_is_touched_when_the_current_pin_is_absent(self):
-        _, removed = run([("qwen38-pinned:27b-old", "sha256:OLD")], current="lmsysorg/sglang@sha256:missing")
+        _, removed = run([(f"qwen38-pinned:{OLD}", "sha256:OLD")], current="lmsysorg/sglang@sha256:missing")
         # the stub knows only the new ref, so an absent current pin cannot be inspected
         self.assertEqual(removed, [])
+
+
+class TheUninstallUntagsItsOwnTagOnly(unittest.TestCase):
+    def test_pin_untag_takes_the_lanes_tags_and_no_other(self):
+        script = f"set -euo pipefail\n{UNTAG}\npin_untag flash-local\npin_untag flash\necho END\n"
+        tags = [(f"qwen38-pinned:{FLL}", "sha256:FLL"), (f"qwen38-pinned:{FL}", "sha256:FL"),
+                (f"qwen38-pinned:{NEW}", "sha256:NEW")]
+        out, removed = run(tags, script_of=script)
+        # flash-local's own tag, then flash's own: the 27B's stays, and neither call took the other's
+        self.assertEqual(removed, [f"qwen38-pinned:{FLL}", f"qwen38-pinned:{FL}"], out)
+        self.assertIn("END", out)
 
 
 if __name__ == "__main__":
