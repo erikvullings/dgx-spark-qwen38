@@ -124,6 +124,18 @@ class WhatTheEngineReads(unittest.TestCase):
                 os.utime(guard, (later, later))
                 self.assertTrue(box.run("running").startswith("yes"), box.run("running"))
 
+    def test_the_ats_question_the_flash_launcher_asks_first_is_no_input(self):
+        """The flash launcher asks flash-ats-check.sh before it runs the image (issue #54), which
+        the engine never reads: a new wording of it must not restart a healthy flash lane."""
+        box = Box(flash=True)
+        check = box.cfg / "flash-ats-check.sh"
+        check.write_text("#!/usr/bin/env bash\necho addressing mode ATS\n")
+        launcher = box.cfg / "launch-flash.sh"
+        launcher.write_text(f'why="$(bash {check})" || exit 78\n' + launcher.read_text())
+        fp = box.run("fingerprint")
+        check.write_text("#!/usr/bin/env bash\necho addressing mode ATS, said otherwise\n")
+        self.assertEqual(box.run("fingerprint"), fp)
+
     def test_the_flash_unit_brings_in_its_launcher_and_what_it_names(self):
         box = Box(flash=True)
         fp = box.run("fingerprint")
