@@ -1,11 +1,11 @@
 # shellcheck shell=bash
-# vllm-lane.sh: what the three vLLM lanes' installers share (install-kolibri.sh, install-nemotron.sh,
-# install-nemotron-super.sh). Sourced after lanes.sh, never run. Each installer keeps what is its
+# vllm-lane.sh: what the four vLLM lanes' installers share (install-kolibri.sh, install-nemotron.sh,
+# install-nemotron-super.sh, install-flash-local.sh). Sourced after lanes.sh, never run. Each installer keeps what is its
 # own (its pins, its image, its unit's placeholders, its words) and names itself first:
 #
-#   VLANE        the lane (kolibri, nemotron, nemotron-super): its opencode provider, the record of
+#   VLANE        the lane (kolibri, nemotron, nemotron-super, flash-local): its opencode provider, the record of
 #                the text lane it took the boot from (lanes.sh), its --no-<lane>, its cache folder
-#   VLANE_SHORT  the lane in a sentence (Kolibri, Nemotron, Super VL)
+#   VLANE_SHORT  the lane in a sentence (Kolibri, Nemotron, Super VL, Flash FP4-Local)
 #   UNIT, INSTALLED, CONTAINER, CONFIG_DIR, HERE; and, for each part below, what it says it reads.
 #
 # Until v1.35 each installer carried its own copy of all of it, one renamed from the other: a fix
@@ -135,7 +135,7 @@ vlane_uninstall_runtime(){  # $1 the image's repository, $2 the base image, $3..
   rm -rf "$CONFIG_DIR/$VLANE-cache" 2>/dev/null || sudo rm -rf --one-file-system "$CONFIG_DIR/$VLANE-cache"
   # The key's middleware is every vLLM lane's (the unit mounts it, read-only, at every start): it
   # stays while another one is installed. Removed by either, it left the other's engine without it.
-  for u in qwen38-kolibri.service qwen38-nemotron.service qwen38-nemotron-super.service; do
+  for u in qwen38-kolibri.service qwen38-nemotron.service qwen38-nemotron-super.service qwen38-flash-local.service; do
     [ "$u" != "$UNIT" ] && [ -f "$LANES_UNIT_DIR/$u" ] && keep=1
   done
   if [ -n "$keep" ]; then
@@ -277,7 +277,7 @@ vlane_prove(){
   { [ -n "${LANE_FILES+x}" ] && [ "${#LANE_FILES[@]}" -gt 0 ]; } \
     || die "the proof runs before the service step (repo bug: please open an issue)"
   VLANE_WAS=""
-  for u in qwen38-sglang.service qwen38-flash.service qwen38-image.service qwen38-video.service qwen38-kolibri.service qwen38-nemotron.service qwen38-nemotron-super.service; do
+  for u in qwen38-sglang.service qwen38-flash.service qwen38-image.service qwen38-video.service qwen38-kolibri.service qwen38-nemotron.service qwen38-nemotron-super.service qwen38-flash-local.service; do
     [ "$u" = "$UNIT" ] && continue
     systemctl is-active --quiet "$u" 2>/dev/null && VLANE_WAS="$u"
   done

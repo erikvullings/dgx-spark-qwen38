@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Point an opencode.json at the served lane: default model + picker name.
 
-Usage: oc-point-default.py <config.json> <lane: 27b|flash|kolibri|nemotron|nemotron-super> <choice> <window>
+Usage: oc-point-default.py <config.json> <lane: 27b|flash|kolibri|nemotron|nemotron-super|flash-local> <choice> <window>
 <window> is the served context window in tokens (1010000 or 262144, empty if
 unknown): it sets the "(local, 1M|262K)" suffix on the served entry's name.
 
@@ -58,7 +58,9 @@ LABEL = {"stock": "Qwen3.8-27B NVFP4 + DFlash2",
          "kolibri-nvfp4": "Kolibri-1 NVFP4 experts",
          # The Nemotron lanes, one checkpoint each, served as nemotron-3.5-bolt and nemotron-3.5-super-vl.
          "nemotron": "Nemotron 3.5 Bolt",
-         "nemotron-super": "Nemotron 3.5 Super VL"}
+         "nemotron-super": "Nemotron 3.5 Super VL",
+         # NVIDIA's own FP4-Local build of the flash model, a lane of its own on vLLM.
+         "flash-local": "Qwen3.8-Flash-Next FP4-Local NVIDIA + MTP"}
 
 
 def label_for(choice: str, window: str) -> str | None:
@@ -88,7 +90,8 @@ def main() -> None:
     path, lane, choice, window = sys.argv[1:5]
     want = {"flash": "flashnext/qwen3.8-flash-next", "kolibri": "kolibri/kolibri-1",
             "nemotron": "nemotron/nemotron-3.5-bolt",
-            "nemotron-super": "nemotron-super/nemotron-3.5-super-vl"}.get(lane, "qwen38/qwen3.8-27b")
+            "nemotron-super": "nemotron-super/nemotron-3.5-super-vl",
+            "flash-local": "flash-local/qwen3.8-flash-next-fp4"}.get(lane, "qwen38/qwen3.8-27b")
     prov, mid = want.split("/")
     try:
         text = ocm.read(path)

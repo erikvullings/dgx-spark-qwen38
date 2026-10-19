@@ -65,6 +65,9 @@ eval "$nline"
 # The Nemotron Super lane's: the model and its drafter (its image is the Nemotron lane's, checked above).
 sline="$(grep -E '^NEMOTRON_SUPER_(REPO|REV|DRAFT_REPO|DRAFT_REV)=' "$REPO_DIR/install-nemotron-super.sh")"
 eval "$sline"
+# The Flash FP4-Local lane's: NVIDIA's checkpoint and the image its model card names, pulled as is.
+fline="$(grep -E '^FLASH_LOCAL_(REPO|REV|IMAGE)=' "$REPO_DIR/install-flash-local.sh")"
+eval "$fline"
 # The speech lane's: llama.cpp's commit, each recognizer's two GGUF at its revision with the
 # sha256 the install checks, and Kokoro's two files, which nothing checked either (found in the
 # audit of 2026-10-16). Each recognizer size is a branch of install-speech.sh's case on
@@ -408,6 +411,8 @@ check_wheel  nemotron-b12x  b12x "$NEMOTRON_B12X_VERSION" "$NEMOTRON_B12X_URL" "
 echo "Nemotron Super lane"
 check_model  nemotron-super "$NEMOTRON_SUPER_REPO" "$NEMOTRON_SUPER_REV"
 check_model  super-draft    "$NEMOTRON_SUPER_DRAFT_REPO" "$NEMOTRON_SUPER_DRAFT_REV"
+echo "Flash FP4-Local lane"
+check_model  flash-local    "$FLASH_LOCAL_REPO" "$FLASH_LOCAL_REV"
 echo "Speech lane"
 check_commit speech-llama-cpp ggml-org/llama.cpp "$LLAMA_CPP_PIN"
 for size in $ASR_SIZES; do
@@ -427,6 +432,7 @@ check_image 27b-base       "$IMAGE"
 check_image flash-base     "$FLASH_IMAGE"
 check_image kolibri-base   "$KOLIBRI_BASE_IMAGE"
 check_image nemotron-base  "$NEMOTRON_BASE_IMAGE"
+check_image flash-local    "$FLASH_LOCAL_IMAGE"
 
 echo
 if [ "$FAIL" -eq 0 ]; then

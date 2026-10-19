@@ -1,0 +1,252 @@
+#!/usr/bin/env bash
+# Install the Flash FP4-Local lane: NVIDIA's own build of Qwen3.8-Flash-Next for a local GPU
+# (nvidia/Qwen3.8-Flash-Next-FP4-Local: its experts in NVFP4 and its other layers in MXFP8, by
+# NVIDIA's quantization-aware distillation, its n-gram embedding table in NVFP4 too), served by
+# the community b12x vLLM image its model card names for a DGX Spark, on the text lanes' port
+# behind the proxy and its key. Idempotent, and safe to run alone.
+#
+#   ./install-flash-local.sh                 first install, or update in place
+#   ./install-flash-local.sh --no-smoke      skip the proof at the end
+#   ./install-flash-local.sh --uninstall     remove the unit (the checkpoint and the image kept, said)
+#   ./install-flash-local.sh --units-only    the unit alone: no image, no checkpoint (install.sh, on demand)
+#   ./install-flash-local.sh --prepare       its image, pulled with no sudo: the cockpit's first Load
+#                                            runs it (./prepare-lane.sh flash-local)
+#   ./install-flash-local.sh --stage FILE    the unit for the checkpoint in the cache, written to FILE
+#                                            with no sudo, its chat template and its table made ready
+#                                            first: switch-model.sh flash-local installs FILE
+#
+# THE N-GRAM TABLE is read at every token, from the checkpoint's files: a cache on another disk than
+# the home directory's (an external SSD) gets copies of the table's files beside the home directory,
+# in ~/flash-local-ple, which the unit mounts over the cache's own (ple-table.py says why and how);
+# FLASH_LOCAL_PLE_DIR=<folder> puts them elsewhere, FLASH_LOCAL_PLE_DIR=none reads the table where
+# the cache is.
+#
+# install.sh puts this lane's unit in on every plain install, like the other lanes, and its first
+# Load from the cockpit pulls its image and fetches its checkpoint; ./install.sh --no-flash-local
+# leaves it out for good (a marker file remembers it). It takes a checkpoint of 103 GB and an image
+# of 18 GB (10 to download): when the disk does not have the room, this refuses before downloading
+# anything.
+#
+# WHY A LANE OF ITS OWN. The flash lane serves Qwen3.8-Flash-Next on SGLang, from checkpoints whose
+# n-gram table is FP8 (51 GB, written again beside the cache at every boot). NVIDIA's FP4-Local
+# build packs the table in NVFP4 (29 GB) inside the checkpoint's own files, read in place over
+# io_uring at every token, in a format only this image reads (vLLM with b12x): 33 GB less on disk,
+# 10 GiB less of weights in memory, and a KV cache of 921,090 tokens at the card's memory share
+# (measured on the reference box, 2026-10-19; docs/flash-local-lane.md).
+#
+# ONE ENGINE AT A TIME. The unit says so with Conflicts=: starting it stops whichever lane
+# serves, and starting another lane stops it.
+set -euo pipefail
+HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+UNIT=qwen38-flash-local.service
+# where systemd reads the units, the one variable lanes.sh and vllm-lane.sh read the other units by
+INSTALLED="${LANES_UNIT_DIR:-/etc/systemd/system}/$UNIT"
+CONTAINER=qwen38-flash-local
+die(){ printf '\n\033[1;31mERROR:\033[0m %s\n' "$*" >&2; exit 1; }
+step(){ printf '\n\033[1;36m── %s\033[0m\n' "$*"; }
+
+# Under sudo every path below moves to /root: the cache, the config and the key the unit
+# reads. install.sh refuses the same way, for the same reason.
+if [ "$(id -u)" = "0" ] && [ "${ALLOW_ROOT:-0}" != "1" ]; then
+  die "run this as the user who will use the box, not as root (everything it installs is addressed from \$HOME)."
+fi
+
+SMOKE=1; ACTION=install; MODE=full
+for a in "$@"; do case "$a" in
+  --no-smoke) SMOKE=0 ;;
+  --uninstall) ACTION=uninstall ;;
+  # The two halves of a lane installed on demand, as for the other lanes: --units-only puts in
+  # what needs root (the unit, its start scripts) and nothing heavy, and --prepare pulls the
+  # lane's image as the user, with no sudo, when the cockpit first loads the lane. The checkpoint
+  # comes with that Load's switch, as for any Load.
+  --units-only) [ "$MODE" = full ] || die "--units-only and --prepare are the two halves of an install: one at a time"; MODE=units ;;
+  --prepare) [ "$MODE" = full ] || die "--units-only and --prepare are the two halves of an install: one at a time"; MODE=prepare ;;
+  --stage) [ "$MODE" = full ] || die "--stage is a mode of its own"; MODE=stage ;;
+  -h|--help) awk 'NR > 1 && !/^#/ { exit } NR > 1' "$0"; exit 0 ;;
+  *) if [ "$MODE" = stage ] && [ -z "${STAGE_OUT:-}" ]; then STAGE_OUT="$a"; else die "unknown option: $a"; fi ;;
+esac; done
+if [ "$MODE" = stage ] && [ -z "${STAGE_OUT:-}" ]; then die "--stage takes the file to write the unit to"; fi
+
+CONFIG_DIR="$HOME/.config/qwen38"
+# the text lane the box comes back to, one record shared with switch-model.sh (lanes.sh)
+# shellcheck source=lanes.sh
+. "$HERE/lanes.sh"
+# what the vLLM lanes' installers share: the engine's cache and port, the uninstall, the service,
+# the preflight and the room, the fetch, the proof
+# shellcheck source=vllm-lane.sh
+. "$HERE/vllm-lane.sh"
+VLANE=flash-local; VLANE_SHORT="Flash FP4-Local"
+
+# The pins, at column 0 like install.sh's: the checkpoint at its revision of 2026-10-15 19:45 UTC,
+# the last one (checked on 2026-10-20: every revision since the weights came, on 2026-10-08, changes
+# its model card only, file by file), and the image its model card names for a DGX Spark, by the
+# digest measured (arm64, built 2026-10-15). The memory share and the requests at a time are the
+# card's, the download in GB. switch-model.sh reads them here.
+FLASH_LOCAL_REPO="nvidia/Qwen3.8-Flash-Next-FP4-Local"
+FLASH_LOCAL_REV="b9ce18a6887e18c089fdea8509a33e63429a3300"
+FLASH_LOCAL_IMAGE="eugr/spark-vllm-b12x@sha256:03a956544e9f9b4b7ba91690469fbe7848bdbef29a7d2e0f5788368467bb3595"
+FLASH_LOCAL_GMU="0.8"
+FLASH_LOCAL_GB="103"
+FLASH_LOCAL_SEQS="8"
+MODEL="$FLASH_LOCAL_REPO"; MODEL_REV="$FLASH_LOCAL_REV"
+GMU="$FLASH_LOCAL_GMU"; WEIGHTS_GB="$FLASH_LOCAL_GB"; SEQS="$FLASH_LOCAL_SEQS"
+# The image is pulled as published, by digest: nothing is built on the box. vlane_fetch fetches
+# the checkpoint in it, as the other vLLM lanes fetch theirs in their own image.
+LOCAL_IMAGE="$FLASH_LOCAL_IMAGE"
+# Its pull at its peak: 18.2 GB unpacked and 9.7 GB to download, which the containerd image store
+# (Docker 29's default on a new install) keeps beside it, 26.0 GiB; ceil(x 1.02) + 1 as df -BG
+# rounds up (install-kolibri.sh counts its image so).
+IMAGE_GB=28
+
+# The text lanes' cache and port: FP4-Local is one of them for the proxy (vllm-lane.sh).
+vlane_engine_env "${FLASH_LOCAL_PORT:-}"
+
+if [ "$ACTION" = uninstall ]; then
+  step "Removing the Flash FP4-Local lane"
+  # the copies of the n-gram table the unit mounts, read before the unit goes (Hasan's choice,
+  # 2026-10-20: they go with the lane; the checkpoint they were copied from stays)
+  TABLE_COPIES="$({ grep -hoE -- "-v [^ :]+:/root/\.cache/huggingface/hub/[^ :]+/blobs/[0-9a-f]{64}:ro" "$INSTALLED" 2>/dev/null || true; } \
+                  | sed -e 's/^-v //' -e 's|:.*$||')"
+  vlane_uninstall_unit
+  vlane_uninstall_clients
+  # The image is pulled, not built: no build of it to prune (qwen38-flash-local names none), and
+  # its local tag goes alone (lanes.sh). Pruning the repository the tags live in, qwen38-pinned,
+  # would have untagged every lane's pin, none of which a unit names by that tag.
+  vlane_uninstall_runtime qwen38-flash-local "$FLASH_LOCAL_IMAGE" "$FLASH_LOCAL_REPO"
+  pin_untag flash-local
+  rm -f "$CONFIG_DIR/chat-template-flash-local.jinja" "$CONFIG_DIR/seccomp-io-uring.json"
+  if [ -n "$TABLE_COPIES" ]; then
+    # the copies by name (blobs named by their sha256), then their folder if nothing else is in it
+    while IFS= read -r f; do rm -f "$f" "$f.part"; done <<< "$TABLE_COPIES"
+    rmdir "$(dirname "$(head -1 <<< "$TABLE_COPIES")")" 2>/dev/null || true
+    echo "the n-gram table's copies removed ($(wc -l <<< "$TABLE_COPIES") files)"
+  fi
+  exit 0
+fi
+
+# The checkpoint's own chat template, with this box's fixes (patch-template.py) and the default its
+# model card ships, xhigh: Hasan's choice for this lane (2026-10-19), the lean level offered beside
+# it. Written again at every install and every switch; left as it is, mtime included, when nothing
+# changed.
+TEMPLATE="$CONFIG_DIR/chat-template-flash-local.jinja"
+lane_template(){
+  LEAN_DEFAULT=0 python3 "$HERE/patch-template.py" "$HF_CACHE" "$TEMPLATE" "$MODEL_REV" "$MODEL" \
+    || die "the chat template could not be patched (the lines above say why)"
+}
+
+# The n-gram table: where the engine reads it, copied first when the cache is on another disk than
+# the home directory's (ple-table.py). TABLE_MOUNTS is the unit's -v arguments for the copies, empty
+# when the table is read where the cache is. Without a checkpoint in the cache (--units-only on a
+# new box) the unit names no copy; the Load's switch makes them.
+TABLE_DIR_ARG=(--dir "${FLASH_LOCAL_PLE_DIR:-}")
+TABLE_MOUNTS=""
+lane_table(){  # $1 copy: make the copies whole first; mounts: only name the copies already there
+  local rc=0
+  if [ "$1" = copy ]; then
+    python3 "$HERE/ple-table.py" "$HF_CACHE" "$MODEL" "$MODEL_REV" --home "$HOME" "${TABLE_DIR_ARG[@]}" copy \
+      || die "the n-gram table could not be put on the home directory's disk (the lines above say why)"
+  fi
+  TABLE_MOUNTS="$(python3 "$HERE/ple-table.py" "$HF_CACHE" "$MODEL" "$MODEL_REV" --home "$HOME" "${TABLE_DIR_ARG[@]}" mounts 2>/dev/null)" || rc=$?
+  case "$rc" in
+    0) ;;
+    2) TABLE_MOUNTS="" ;;   # no checkpoint in the cache yet
+    *) TABLE_MOUNTS=""
+       echo "NOTE: the n-gram table's copies are not all there: the lane reads the table from the cache's disk until its next Load (or ./switch-model.sh flash-local) makes them" ;;
+  esac
+}
+
+# The unit, rendered for this box: written to $1.
+render_unit(){
+  sed -e "s|__USER__|$(id -un)|g" -e "s|__GROUP__|$(id -gn)|g" -e "s|__HOME__|$HOME|g" \
+      -e "s|__IMAGE__|$LOCAL_IMAGE|g" -e "s|__MODEL__|$MODEL|g" -e "s|__REV__|$MODEL_REV|g" \
+      -e "s|__GMU__|$GMU|g" -e "s|__SEQS__|$SEQS|g" -e "s|__HF_CACHE__|$HF_CACHE|g" \
+      -e "s|__ENGINE_BIND__|$ENGINE_BIND|g" -e "s|__PORT__|$PORT|g" \
+      -e "s|__TABLE_MOUNTS__|$TABLE_MOUNTS|g" -e '/^ *\\$/d' \
+      "$HERE/$UNIT.template" > "$1"
+}
+
+# Step 4, the one part that needs root: the unit and its start scripts. A function, since a lane
+# installed on demand (--units-only) takes it straight after the preflight.
+install_service(){
+  step "4/5 Service"
+  # vLLM's compile cache, FlashInfer's and Triton's kernels and b12x's kernel choices, built at
+  # the first boot (17 min on the reference box, 5 min 37 s once they are there)
+  vlane_service_files "$CONFIG_DIR/flash-local-cache/vllm" "$CONFIG_DIR/flash-local-cache/flashinfer" \
+                      "$CONFIG_DIR/flash-local-cache/b12x" "$CONFIG_DIR/flash-local-cache/triton"
+  # Docker's default seccomp profile and the three io_uring calls the n-gram table is read with
+  # (the unit says why); the docker client reads it at every start, as the user
+  cmp -s "$HERE/seccomp-io-uring.json" "$CONFIG_DIR/seccomp-io-uring.json" \
+    || install -m 644 "$HERE/seccomp-io-uring.json" "$CONFIG_DIR/seccomp-io-uring.json"
+  RENDER="$(mktemp)"; trap 'rm -f "$RENDER"' EXIT
+  render_unit "$RENDER"
+  vlane_put_unit "$RENDER"
+  # what the engine reads at its start besides the unit: a lane started before they changed
+  # serves the old ones (vllm-lane.sh)
+  LANE_FILES+=("$CONFIG_DIR/seccomp-io-uring.json" "$TEMPLATE")
+  # Installed, not switched to: the lane this box serves stays the lane it serves.
+  echo "installed as a lane of its own. Switch to it like any lane:"
+  echo "  the cockpit: Load on Flash FP4-Local (NVIDIA) in the Lanes view"
+  echo "  a terminal : ./switch-model.sh flash-local, then the commands it prints"
+}
+
+# --stage: the unit for the checkpoint in the cache, for switch-model.sh, with no sudo: its template
+# and its table first, as the unit names them. The checkpoint must be whole (the switch fetched it).
+if [ "$MODE" = stage ]; then
+  lane_template >&2
+  lane_table copy >&2
+  vlane_service_files "$CONFIG_DIR/flash-local-cache/vllm" "$CONFIG_DIR/flash-local-cache/flashinfer" \
+                      "$CONFIG_DIR/flash-local-cache/b12x" "$CONFIG_DIR/flash-local-cache/triton"
+  cmp -s "$HERE/seccomp-io-uring.json" "$CONFIG_DIR/seccomp-io-uring.json" \
+    || install -m 644 "$HERE/seccomp-io-uring.json" "$CONFIG_DIR/seccomp-io-uring.json"
+  render_unit "$STAGE_OUT"
+  grep -q '__[A-Z][A-Z0-9_]*__' "$STAGE_OUT" && die "the unit template still holds an unsubstituted placeholder"
+  exit 0
+fi
+
+step "1/5 Preflight (FP4-Local: $MODEL @ ${MODEL_REV:0:12})"
+vlane_preflight engine-preflight.sh engine-secrets.sh vllm_engine_auth.py ckpt-fetch.py patch-template.py seccomp-io-uring.json
+vlane_room "$FLASH_LOCAL_IMAGE" "$MODEL"
+if [ "$MODE" = units ]; then
+  echo "OK: $(uname -m), key present; the image and the checkpoint come with the lane's first Load"
+  # a checkpoint already in the cache (an install.sh run after a Load) keeps the table's mounts
+  lane_table mounts
+  install_service
+  step "Done: the Flash FP4-Local lane is installed; its first Load prepares it"
+  echo "  the cockpit: Load on Flash FP4-Local (NVIDIA) in the Lanes view pulls its image (about 18 GB, 10 to"
+  echo "               download), fetches its checkpoint (about $WEIGHTS_GB GB), then starts it"
+  echo "  a terminal : ./install-flash-local.sh --prepare, then ./switch-model.sh flash-local and the commands it prints"
+  exit 0
+fi
+
+step "2/5 Image (${FLASH_LOCAL_IMAGE:0:40}...)"
+if docker image inspect "$FLASH_LOCAL_IMAGE" >/dev/null 2>&1; then
+  echo "already here"
+else
+  docker pull "$FLASH_LOCAL_IMAGE" \
+    || die "docker pull of $FLASH_LOCAL_IMAGE failed. Causes: no internet, a Docker Hub rate limit (retry in a few minutes, or docker login), or the digest removed upstream."
+fi
+# its local tag, so that a docker image prune leaves it alone (lanes.sh)
+pin_tag flash-local "$FLASH_LOCAL_IMAGE"
+
+if [ "$MODE" = prepare ]; then
+  step "Done: the Flash FP4-Local lane's image is ready; its Load fetches the checkpoint and starts it"
+  exit 0
+fi
+
+step "3/5 Checkpoint ($MODEL @ ${MODEL_REV:0:12}, resumable), its chat template and its n-gram table"
+vlane_fetch "$MODEL" "$MODEL_REV"
+lane_template
+lane_table copy
+
+install_service
+
+if [ "$SMOKE" -eq 0 ]; then step "Done (proof skipped)"; exit 0; fi
+
+step "5/5 Proving it serves (a reply and a tool call, then the box goes back to the lane it was serving)"
+VLANE_SERVED=qwen3.8-flash-next-fp4; VLANE_KWARGS='{"enable_thinking":false}'
+VLANE_PARSERS="the qwen3_xml parser is"; VLANE_BOOT="about 6 min, 17 at its first boot"; VLANE_WAIT_MIN=40
+vlane_prove
+
+step "Done: the Flash FP4-Local lane is installed and proved it serves on $ENGINE_BIND:$PORT"
+echo "  switch to it : Load on Flash FP4-Local (NVIDIA) in the cockpit, or ./switch-model.sh flash-local"
+echo "  clients      : the proxy on :30001 with the box's key, model qwen3.8-flash-next-fp4 (OpenAI and Anthropic APIs)"

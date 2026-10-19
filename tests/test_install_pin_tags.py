@@ -96,6 +96,11 @@ class TheUninstallUntagsItsOwnTagOnly(unittest.TestCase):
         self.assertEqual(removed, [f"qwen38-pinned:{FLL}", f"qwen38-pinned:{FL}"], out)
         self.assertIn("END", out)
 
+    def test_the_flash_local_uninstall_calls_it_and_prunes_no_shared_repository(self):
+        text = (REPO / "install-flash-local.sh").read_text()
+        self.assertIn("pin_untag flash-local", text)
+        # pruning qwen38-pinned (the repository every lane's tag lives in) untags every pin
+        self.assertNotIn("vlane_uninstall_runtime qwen38-pinned", text)
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)
