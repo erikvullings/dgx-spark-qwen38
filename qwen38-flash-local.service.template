@@ -26,8 +26,8 @@ ExecStartPre=/bin/bash __HOME__/.config/qwen38/engine-preflight.sh qwen38-flash-
 # PYTORCH_CUDA_ALLOC_CONF: vLLM loads the weights with PyTorch's allocator splitting no block above
 # 20 MiB, so the blocks b12x frees while it lays out the experts' NVFP4 scales are not used again,
 # and the allocator's cache grows until the GPU's driver refuses it memory, then drops it at once.
-# On this box the GPU's memory is the machine's: at each of twelve boots, four minutes in, the
-# driver refused 44 to 149 allocations and MemAvailable fell to between 0.5 and 3.5 GiB. PyTorch
+# On this box the GPU's memory is the machine's: at each of twelve boots, four to six and a half
+# minutes in, the driver refused 44 to 149 allocations and MemAvailable fell to between 0.5 and 3.5 GiB. PyTorch
 # collects its cached blocks only under a ceiling below the whole GPU: 0.95 of it, which nothing
 # reaches, and the collection past 0.8 of that, about 92 GiB, above the 90 the engine holds in
 # service. A boot with it kept 19 GiB free at its lowest (1.05 without it), met no refusal, and

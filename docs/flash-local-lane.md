@@ -164,8 +164,8 @@ Its boot did not, until one setting of PyTorch's allocator. vLLM loads the weigh
 splitting no block above 20 MiB, then b12x lays out the experts' NVFP4 scales, layer by layer: the
 blocks it frees on the way are not used again, and the allocator's cache grows until the GPU's driver
 refuses it memory, then drops it at once and asks again. On a discrete GPU that cache sits in the GPU's
-own memory. On a GB10 it is the machine's. About four minutes into each of the twelve boots this build
-had on the reference box (2026-10-19 and 20), the driver refused 44 to 149 allocations
+own memory. On a GB10 it is the machine's. Four to six and a half minutes into each of the twelve
+boots this build had on the reference box (2026-10-19 and 20), the driver refused 44 to 149 allocations
 (`NV_ERR_NO_MEMORY` in the kernel log) and MemAvailable fell to between 0.5 and 3.5 GiB, around and
 under the cockpit's floor of 3 GiB, where this box has met crashed engines and livelocks before
 ([gb10-memory.md](gb10-memory.md)). Read every 0.2 s at the last of them, it fell from 37 to 1.05 GiB in 8 seconds and

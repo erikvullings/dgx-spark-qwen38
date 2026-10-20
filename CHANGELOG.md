@@ -101,8 +101,8 @@ the copies of its table that its unit mounts and its template are there.
 **Its boot leaves the box its memory.** vLLM loads the weights with PyTorch's allocator splitting no
 block above 20 MiB, then b12x lays out the experts' NVFP4 scales: the blocks it frees on the way are
 not used again, and the allocator's cache grows until the GPU's driver refuses it memory, which on a
-GB10 is the machine's. About four minutes into each of the twelve boots this build had on the
-reference box, the driver refused 44 to 149 allocations and MemAvailable fell to between 0.5 and 3.5
+GB10 is the machine's. Four to six and a half minutes into each of the twelve boots this build had on
+the reference box, the driver refused 44 to 149 allocations and MemAvailable fell to between 0.5 and 3.5
 GiB, where this box has met crashed engines and livelocks before. PyTorch collects the blocks it
 keeps only under a ceiling below the whole GPU: the unit gives it one, 0.95 of the GPU's memory,
 which nothing reaches, and the collection past 0.8 of that, 92.4 GiB, above the 90.4 the engine holds
