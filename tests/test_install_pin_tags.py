@@ -21,8 +21,9 @@ def func(text, name):
     return text[start:text.index("\n}\n", start) + 3]
 
 
-# unpin_stale reads a lane's tags with lanes.sh's pin_tags_of, which install.sh sources
-FUNC = func(LANES, "pin_tags_of") + func(TEXT, "unpin_stale")
+# unpin_stale reads a lane's tags with pin_tags_of, both in lanes.sh, which install.sh and the lanes'
+# own installers source
+FUNC = func(LANES, "pin_tags_of") + func(LANES, "unpin_stale")
 UNTAG = func(LANES, "pin_tags_of") + func(LANES, "pin_untag")
 # tags as pin_tag names them: the lane, a dash, the digest's first 12 hex digits
 NEW, OLD, FL, FLL = "27b-0123456789ab", "27b-ba9876543210", "flash-aaaaaaaaaaaa", "flash-local-03a956544e9f"
@@ -95,6 +96,14 @@ class TheUninstallUntagsItsOwnTagOnly(unittest.TestCase):
         # flash-local's own tag, then flash's own: the 27B's stays, and neither call took the other's
         self.assertEqual(removed, [f"qwen38-pinned:{FLL}", f"qwen38-pinned:{FL}"], out)
         self.assertIn("END", out)
+
+    def test_the_flash_local_install_takes_its_retired_pins_with_it(self):
+        # it tagged its image at every run and never untagged one it no longer pins: each bump of
+        # the pin would have left 18 GB no prune reclaims (found in review, 2026-10-20)
+        text = (REPO / "install-flash-local.sh").read_text()
+        tag = text.index('pin_tag flash-local "$FLASH_LOCAL_IMAGE"')
+        self.assertIn('unpin_stale flash-local "$FLASH_LOCAL_IMAGE" || true', text[tag:tag + 200])
+        self.assertNotIn("unpin_stale() {", TEXT, "one definition, in lanes.sh")
 
     def test_the_flash_local_uninstall_calls_it_and_prunes_no_shared_repository(self):
         text = (REPO / "install-flash-local.sh").read_text()

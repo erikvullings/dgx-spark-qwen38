@@ -255,8 +255,11 @@ else
   docker pull "$FLASH_LOCAL_IMAGE" \
     || die "docker pull of $FLASH_LOCAL_IMAGE failed. Causes: no internet, a Docker Hub rate limit (retry in a few minutes, or docker login), or the digest removed upstream."
 fi
-# its local tag, so that a docker image prune leaves it alone (lanes.sh)
+# its local tag, so that a docker image prune leaves it alone, and the tags of the images it was
+# pinned to before go (lanes.sh): kept, each bump of the pin left 18 GB that no prune reclaimed
+# (found in review, 2026-10-20)
 pin_tag flash-local "$FLASH_LOCAL_IMAGE"
+unpin_stale flash-local "$FLASH_LOCAL_IMAGE" || true
 
 if [ "$MODE" = prepare ]; then
   step "Done: the Flash FP4-Local lane's image is ready; its Load fetches the checkpoint and starts it"

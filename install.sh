@@ -1662,24 +1662,8 @@ else
 fi
 # pin_tag, the local tag a digest pull needs to survive a docker image prune: in lanes.sh
 # (sourced above), which prepare-lane.sh shares for a lane prepared at its first Load.
-# A pin that moves leaves its tag behind, and the tag keeps the retired image out of every
-# prune: 30 to 39 GB per release that bumps a pin (found in review, 2026-09-24). Once the
-# lane's current pin is here and tagged, the lane's other tags go, unless a container still
-# uses their image; the image is then merely dangling, and the usual prune reclaims it.
-unpin_stale() {   # $1 lane, $2 the image the lane is pinned to now
-  local cur tag id
-  cur="$(docker image inspect "$2" --format '{{.Id}}' 2>/dev/null)" || return 0
-  # the lane's own tags only (lanes.sh): flash- is how the Flash FP4-Local lane's tags begin too
-  pin_tags_of "$1" \
-    | while read -r tag id; do
-        if [ "$id" = "$cur" ] || [ -n "$(docker ps -aq --filter "ancestor=$id" 2>/dev/null)" ]; then
-          continue
-        fi
-        if docker rmi "$tag" >/dev/null 2>&1; then
-          echo "untagged $tag, a pin this release no longer uses: a docker image prune can reclaim it"
-        fi
-      done
-}
+# A pin that moves takes its tag with it: unpin_stale, in lanes.sh too, which the lanes' own
+# installers share (the Flash FP4-Local lane's pulls its image by digest as this does).
 pin_tag "$LANE" "$PULLED_IMAGE"
 if [ "$LANE" = "flash" ]; then pin_tag 27b "$IMAGE"; else pin_tag flash "$FLASH_IMAGE"; fi
 unpin_stale "$LANE" "$PULLED_IMAGE" || true
