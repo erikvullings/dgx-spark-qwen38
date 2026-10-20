@@ -26,7 +26,7 @@
 #
 # install.sh puts this lane's unit in on every plain install, like the other lanes, and its first
 # Load from the cockpit pulls its image and fetches its checkpoint; ./install.sh --no-flash-local
-# leaves it out for good (a marker file remembers it). It takes a checkpoint of 103 GB and an image
+# leaves it out for good (a marker file remembers it). It takes a checkpoint of 102 GB and an image
 # of 18 GB (10 to download): when the disk does not have the room, this refuses before downloading
 # anything.
 #
@@ -225,7 +225,7 @@ install_service(){
 }
 
 # The room the table's copies need on their folder's disk, said before anything is downloaded: the
-# copy refused only after the 103 GB of the checkpoint were fetched, and the Load failed then (found
+# copy refused only after the 102 GB of the checkpoint were fetched, and the Load failed then (found
 # in review, 2026-10-20). --room is that alone, for switch-model.sh before its fetch.
 lane_table_room(){
   python3 "$HERE/ple-table.py" "$HF_CACHE" "$MODEL" "$MODEL_REV" --home "$HOME" "${TABLE_DIR_ARG[@]}" \

@@ -208,7 +208,7 @@ class TableFiles(unittest.TestCase):
             mod.main()
 
     def test_room_is_said_before_any_download(self):
-        # the copy refused only after the checkpoint's 103 GB were fetched (found in review, 2026-10-20)
+        # the copy refused only after the checkpoint's 102 GB were fetched (found in review, 2026-10-20)
         folder = self.d / "copies"
         # with the checkpoint there, what is missing of the copies: a few KB here
         self.room(folder, free=2 * 2 ** 30)

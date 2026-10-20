@@ -118,7 +118,7 @@ def existing(path: pathlib.Path) -> pathlib.Path:
 
 def room(args, repo_dir: pathlib.Path) -> None:
     """The room the copies need on their folder's disk, said before anything is downloaded: the copy
-    refused only after the checkpoint's 103 GB were fetched (found in review, 2026-10-20). With the
+    refused only after the checkpoint's 102 GB were fetched (found in review, 2026-10-20). With the
     checkpoint in the cache, the copies missing; before it, --need-gb, the table's size."""
     folder = where(args, existing(repo_dir / "blobs"))
     if folder is None:
