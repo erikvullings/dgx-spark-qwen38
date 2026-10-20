@@ -451,6 +451,104 @@ class NemotronBootLog(unittest.TestCase):
         self.assertEqual((b["stage"], b["fired_up"], b["done"], b["detail"]), (None, False, [], ""))
 
 
+class FlashLocalBootLog(unittest.TestCase):
+    """Two real boots of the Flash FP4-Local lane, its container log on the reference box (vLLM with
+    b12x, 2026-10-19): a later one, b12x's kernel choices read back, and the first, b12x tuning its
+    kernels for this GPU for 12 minutes. The model's 21 shards as b12x routes them, then the MTP
+    head's 3, "Model loading took" for the two, b12x's kernels, the KV cache, the CUDA graphs and the
+    API. The served name and the template's path in them are the lane's (the capture ran PR #55's
+    setup)."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.later = (HERE.parent / "fixtures" / "flash-local-boot.log").read_text().splitlines()
+        cls.first = (HERE.parent / "fixtures" / "flash-local-first-boot.log").read_text().splitlines()
+
+    def at(self, lines, needle, nth=1):
+        seen = 0
+        for i, ln in enumerate(lines):
+            if needle in ln:
+                seen += 1
+                if seen == nth:
+                    return lc.parse_flash_local_boot_log(lines[:i + 1])
+        self.fail(f"the fixture has no line {nth} with {needle!r}")
+
+    def test_a_complete_boot_is_fired_up_with_every_stage_done(self):
+        for lines in (self.later, self.first):
+            b = lc.parse_flash_local_boot_log(lines)
+            self.assertTrue(b["fired_up"])
+            self.assertEqual(b["done"], list(lc.FLASH_LOCAL_STAGES))
+            self.assertEqual((b["stage"], b["detail"]), ("warming-up", "ready"))
+
+    def test_a_later_boot_the_models_shards_the_heads_then_the_kernels_it_kept(self):
+        for needle, nth, stage, detail in (
+                ("Initializing a V1 LLM engine", 1, "init", "starting vLLM"),
+                ("0/21 shards routed", 1, "loading-weights", "shard 0 of 21 (0.00 GB)"),
+                ("10/21 shards routed", 1, "loading-weights", "shard 10 of 21 (48.58 GB)"),
+                ("Loading weights took", 1, "loading-weights", "shard 21 of 21 (71.74 GB)"),
+                ("0/3 shards routed", 1, "loading-weights", "the MTP head, shard 0 of 3 (0.00 GB)"),
+                ("3/3 shards routed", 1, "loading-weights", "the MTP head, shard 3 of 3 (4.14 GB)"),
+                ("Model loading took", 1, "allocating-kv", "preparing b12x's kernels for this GPU"),
+                ("b12x planning gemm.blockscaled_precision", 1, "allocating-kv",
+                 "loading b12x's kernel choices (gemm.blockscaled_precision: 0 of 241)"),
+                ("b12x priming moe.decode", 1, "allocating-kv", "loading b12x's kernel choices (moe.decode: 120 of 241)"),
+                ("GPU KV cache size:", 1, "capturing-graphs", "capturing the CUDA graphs"),
+                ("b12x planning attention.qsa", 1, "capturing-graphs",
+                 "loading b12x's kernel choices (attention.qsa: 0 of 209)"),
+                ("init engine (profile, create kv cache, warmup model) took", 1, "warming-up", "starting the API")):
+            with self.subTest(line=needle, nth=nth):
+                b = self.at(self.later, needle, nth)
+                self.assertEqual((b["stage"], b["detail"]), (stage, detail))
+                self.assertFalse(b["fired_up"])
+                self.assertEqual(b["done"], list(lc.FLASH_LOCAL_STAGES[:lc.FLASH_LOCAL_STAGES.index(stage)]))
+
+    def test_its_first_boot_says_it_tunes_and_keeps_saying_it(self):
+        for needle, nth, detail in (
+                ("b12x compiling gemm.blockscaled_precision", 1,
+                 "tuning b12x's kernels for this GPU, at its first boot only (gemm.blockscaled_precision: 0 of 241 ready)"),
+                ("b12x ready gemm.blockscaled_precision", 2,
+                 "tuning b12x's kernels for this GPU, at its first boot only (gemm.blockscaled_precision: 209 of 209 ready)")):
+            with self.subTest(line=needle, nth=nth):
+                self.assertEqual(self.at(self.first, needle, nth)["detail"], detail)
+
+    def test_a_kernel_measured_is_a_tuning_and_none_is_read_while_the_weights_load(self):
+        head = ["(EngineCore pid=9) INFO 10-19 22:13:57 [core.py:124] Initializing a V1 LLM engine (v0.1) with config: x",
+                "b12x routing checkpoint shards: 1/21 shards routed, 5.00 GB selected on rank 0, 0:09"]
+        b = lc.parse_flash_local_boot_log(head + ["b12x compiling gemm.x: 0/9 ready, 0 measured, 0 cached, 1 compilations, 0:01"])
+        self.assertEqual((b["stage"], b["detail"]), ("loading-weights", "shard 1 of 21 (5.00 GB)"))
+        loaded = head + ["(EngineCore pid=9) INFO 10-19 22:17:50 [model_runner.py:456] Model loading took 70.32 GiB memory"]
+        # one kernel measured is enough to say a tuning
+        for line, detail in (("b12x priming moe.decode: 5/241 ready, 1 measured, 0 cached, 0 compilations, 0:01",
+                              "tuning b12x's kernels for this GPU, at its first boot only (moe.decode: 5 of 241 ready)"),
+                             ("b12x priming moe.decode: 5/241 ready, 0 measured, 9 cached, 0 compilations, 0:01",
+                              "loading b12x's kernel choices (moe.decode: 5 of 241)")):
+            with self.subTest(line=line):
+                self.assertEqual(lc.parse_flash_local_boot_log(loaded + [line])["detail"], detail)
+
+    def test_its_stage_never_goes_back(self):
+        for lines in (self.later, self.first):
+            start = next(i for i, ln in enumerate(lines) if "Initializing a V1 LLM engine" in ln)
+            order = [lc.FLASH_LOCAL_STAGES.index(lc.parse_flash_local_boot_log(lines[:k])["stage"])
+                     for k in range(start + 1, len(lines) + 1)]
+            self.assertEqual(order, sorted(order))
+
+    def test_only_the_latest_boot_counts(self):
+        restarted = self.later + [
+            "(EngineCore pid=9) INFO 10-20 01:00:00 [core.py:124] Initializing a V1 LLM engine (v0.1) with config: x",
+            "b12x routing checkpoint shards: 1/21 shards routed, 5.00 GB selected on rank 0, 0:09"]
+        b = lc.parse_flash_local_boot_log(restarted)
+        self.assertFalse(b["fired_up"])
+        self.assertEqual((b["stage"], b["detail"], b["done"]), ("loading-weights", "shard 1 of 21 (5.00 GB)", ["init"]))
+
+    def test_a_log_kept_from_its_first_line_is_read_from_there(self):
+        b = lc.parse_flash_local_boot_log(["b12x routing checkpoint shards: 7/21 shards routed, 33.58 GB selected on rank 0, 1:26"])
+        self.assertEqual((b["stage"], b["detail"], b["done"]), ("loading-weights", "shard 7 of 21 (33.58 GB)", ["init"]))
+
+    def test_an_empty_log_is_not_a_boot(self):
+        b = lc.parse_flash_local_boot_log([])
+        self.assertEqual((b["stage"], b["fired_up"], b["done"], b["detail"]), (None, False, [], ""))
+
+
 class KolibriLane(unittest.TestCase):
     K = "qwen38-kolibri.service"
 
