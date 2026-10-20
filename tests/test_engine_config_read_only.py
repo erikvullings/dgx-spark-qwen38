@@ -59,6 +59,20 @@ class TheEnginesReadTheConfigDirectory(unittest.TestCase):
         self.assertEqual(MOUNT.findall(job), [("$CONFIG_DIR", "")], job)
         self.assertIn('--out "/out/$name"', job)
 
+    def test_the_flash_local_engine_sees_only_the_two_files_it_reads(self):
+        # a community image, from one account: the directory holds the cockpit's own secret and the
+        # other services' keys besides the two files this engine reads, its key and its template, and
+        # read-only is not hidden (found in review, 2026-10-20). --mount, not -v: a source that is not
+        # there fails the start instead of becoming a directory root makes in its place.
+        text = code("qwen38-flash-local.service.template")
+        self.assertEqual(MOUNT.findall(text), [], "the whole directory mounted")
+        mounts = re.findall(r"--mount type=bind,source=__HOME__/\.config/qwen38/([\w.-]+),target=/out/([\w.-]+),readonly",
+                            text)
+        self.assertEqual(sorted(mounts), [("api-key", "api-key"),
+                                          ("chat-template-flash-local.jinja", "chat-template-flash-local.jinja")])
+        self.assertEqual(sorted(set(re.findall(r"/out/([\w.-]+)", text))), ["api-key", "chat-template-flash-local.jinja"])
+        self.assertEqual(text.count("/out/") - 2, len(READS.findall(text)), "an /out/ path it is not given to read")
+
     def test_the_shapes_are_read(self):
         # so a pattern that stopped matching would not leave the scans above green and blind
         for line, want in (('  -v __HOME__/.config/qwen38:/out \\', [("__HOME__/.config/qwen38", "")]),

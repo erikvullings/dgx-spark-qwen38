@@ -296,5 +296,36 @@ class ItStartsOnlyWithItsTableCopiesThere(Base):
             self.ck.FLASH_LOCAL_UNIT_PATH = saved
 
 
+class ItStartsOnlyWithItsTemplateThere(Base):
+    """Its unit mounts its chat template on its own (--mount, not the whole directory): the check that
+    a lane does not start on an empty template read the directory's -v mount only, and passed it by
+    (found in review, 2026-10-20)."""
+
+    def test_an_empty_template_holds_the_start_back(self):
+        cfg = self.box / "cfg"
+        cfg.mkdir(exist_ok=True)
+        tmpl = cfg / "chat-template-flash-local.jinja"
+        unit = self.box / "template.service"
+        unit.write_text(f"ExecStart=/bin/bash -c 'exec /usr/bin/docker run -v {self.box}/hf2:/root/.cache/huggingface "
+                        f"--mount type=bind,source={tmpl},target=/out/chat-template-flash-local.jinja,readonly "
+                        f"eugr/spark-vllm-b12x@sha256:{'0' * 64} vllm serve {REPO_ID} --revision {'b' * 40} "
+                        f"--chat-template /out/chat-template-flash-local.jinja --port 30000'\n")
+        d = self.box / "hf2" / "hub" / "models--nvidia--Qwen3.8-Flash-Next-FP4-Local" / "snapshots" / ("b" * 40)
+        d.mkdir(parents=True)
+        (d / "config.json").write_text("{}")
+        (d / "model.safetensors").write_text("w")
+        saved = self.ck.FLASH_LOCAL_UNIT_PATH
+        self.ck.FLASH_LOCAL_UNIT_PATH = unit
+        self.ck.run = lambda argv, **kw: "sha256:abc\n"
+        try:
+            for body, want in (("", False), ("{{ messages }}", True)):
+                with self.subTest(template=body):
+                    tmpl.write_text(body)
+                    self.ck.UNIT_TARGET_CACHE.clear()
+                    self.assertIs(self.ck.lane_startable("flash-local"), want)
+        finally:
+            self.ck.FLASH_LOCAL_UNIT_PATH = saved
+
+
 if __name__ == "__main__":
     unittest.main()

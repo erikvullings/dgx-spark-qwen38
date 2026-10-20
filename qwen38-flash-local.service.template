@@ -39,6 +39,11 @@ ExecStartPre=/bin/bash __HOME__/.config/qwen38/engine-preflight.sh qwen38-flash-
 # generation_config.json, which vLLM applies to any request that does not set them.
 # VLLM_NO_USAGE_STATS and DO_NOT_TRACK: vLLM reports anonymous usage to its authors by default; a
 # box that serves its owner's data sends nothing anywhere.
+# Of the config directory, the two files the engine reads, read-only, and nothing else: its key and
+# its chat template. The image is a community build, from one account, and the directory holds the
+# cockpit's own secret and the other services' keys, which a read-only mount still shows (found in
+# review, 2026-10-20). --mount, not -v: a source that is not there fails the start, where -v made a
+# directory in its place, owned by root.
 # vllm_engine_auth.RequireKey asks the key on every route but /health and /metrics, as on the
 # other lanes. No --api-key and no --config: this build would put /metrics behind the key, which
 # the cockpit and the proxy read without one, and the middleware already asks it everywhere else.
@@ -64,7 +69,8 @@ ExecStart=/bin/bash -c 'exec /usr/bin/docker run --rm --name qwen38-flash-local 
   -v __HOME__/.config/qwen38/flash-local-cache/triton:/root/.triton \
   -v __HF_CACHE__:/root/.cache/huggingface \
   __TABLE_MOUNTS__ \
-  -v __HOME__/.config/qwen38:/out:ro \
+  --mount type=bind,source=__HOME__/.config/qwen38/api-key,target=/out/api-key,readonly \
+  --mount type=bind,source=__HOME__/.config/qwen38/chat-template-flash-local.jinja,target=/out/chat-template-flash-local.jinja,readonly \
   -v __HOME__/.config/qwen38/vllm-auth:/opt/qwen38-auth:ro \
   __IMAGE__ \
   vllm serve __MODEL__ --revision __REV__ \

@@ -2567,9 +2567,13 @@ def lane_startable(lane: str):
     # read-only too (:ro), as the engines have it since 2026-10-18
     tmpl = re.search(r"--chat-template\s+[\"']?/out/([^\s\"']+)", text)
     out = re.search(r"-v\s+[\"']?([^ :\"']+)[\"']?:/out(?=[:\"'\s]|$)", text, re.M)
-    if tmpl and out:
+    # or the template mounted on its own, as the Flash FP4-Local lane mounts it (--mount): read by the
+    # directory's mount only, its check was passed by (found in review, 2026-10-20)
+    alone = tmpl and re.search(r"--mount\s+type=bind,source=([^,\s]+),target=/out/" + re.escape(tmpl.group(1))
+                               + r"(?=[,\s])", text)
+    if tmpl and (out or alone):
         try:
-            if (Path(out.group(1)) / tmpl.group(1)).stat().st_size == 0:
+            if (Path(alone.group(1)) if alone else Path(out.group(1)) / tmpl.group(1)).stat().st_size == 0:
                 return False
         except OSError:
             return False
