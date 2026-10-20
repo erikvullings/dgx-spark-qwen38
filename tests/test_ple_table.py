@@ -106,7 +106,7 @@ class TableFiles(unittest.TestCase):
         folder = self.d / "copies"
         r = self.run_it("copy", "--dir", str(folder))
         self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
-        self.assertEqual(sorted(p.name for p in folder.iterdir()), sorted(self.cache.table))
+        self.assertEqual(sorted(p.name for p in folder.iterdir() if not p.name.startswith(".")), sorted(self.cache.table))
         mounts = self.run_it("mounts", "--dir", str(folder)).stdout.split()
         want = [x for sha in self.cache.table for x in
                 ("-v", f"{folder / sha}:/root/.cache/huggingface/hub/{HUB}/blobs/{sha}:ro")]
@@ -129,15 +129,65 @@ class TableFiles(unittest.TestCase):
         self.assertEqual(self.run_it("copy", "--dir", str(folder)).returncode, 0)
         self.assertEqual((folder / self.cache.table[0]).read_bytes(), good)
 
+    def new_revision_of_the_table(self):
+        """The checkpoint's second table file changed, as a later revision would change it."""
+        body = b"table, revised" * 100
+        sha = hashlib.sha256(body).hexdigest()
+        (self.cache.blobs / sha).write_bytes(body)
+        link = self.cache.snap / "tensors/model-00003-of-00003.safetensors"
+        link.unlink()
+        os.symlink(os.path.relpath(self.cache.blobs / sha, link.parent), link)
+        return [self.cache.table[0], sha]
+
+    def listed(self, folder):
+        return sorted(p.name for p in folder.iterdir() if not p.name.startswith("."))
+
     def test_an_earlier_revisions_copies_go_and_nothing_else(self):
         folder = self.d / "copies"
-        folder.mkdir()
-        old = "a" * 64
-        (folder / old).write_bytes(b"old")
-        (folder / (old + ".part")).write_bytes(b"old")
-        (folder / "notes.txt").write_text("mine")
         self.assertEqual(self.run_it("copy", "--dir", str(folder)).returncode, 0)
-        self.assertEqual(sorted(p.name for p in folder.iterdir()), sorted(self.cache.table + ["notes.txt"]))
+        (folder / "notes.txt").write_text("mine")
+        gone = self.cache.table[1]
+        (folder / (gone + ".part")).write_bytes(b"cut short")
+        table = self.new_revision_of_the_table()
+        r = self.run_it("copy", "--dir", str(folder))
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        self.assertEqual(self.listed(folder), sorted(table + ["notes.txt"]))
+
+    def test_a_file_it_did_not_make_stays_whatever_its_name(self):
+        # its copies are named by their sha256, as the cache's blobs are: a folder that holds other
+        # such files (another model's blobs) lost them all at the first copy (found in review,
+        # 2026-10-20)
+        folder = self.d / "copies"
+        folder.mkdir()
+        theirs = ["b" * 64, "c" * 64 + ".part"]
+        for name in theirs:
+            (folder / name).write_bytes(b"not ours")
+        self.assertEqual(self.run_it("copy", "--dir", str(folder)).returncode, 0)
+        self.new_revision_of_the_table()
+        self.assertEqual(self.run_it("copy", "--dir", str(folder)).returncode, 0)
+        for name in theirs:
+            self.assertEqual((folder / name).read_bytes(), b"not ours")
+
+    def test_a_folder_inside_the_cache_is_refused_and_the_cache_kept(self):
+        # pointed at the checkpoint's own blobs, the copy found the table's files already there and
+        # removed every other blob of the checkpoint as an earlier revision's copies
+        before = sorted(p.name for p in self.cache.blobs.iterdir())
+        for folder in (self.cache.blobs, self.cache.root / "ple"):
+            r = self.run_it("copy", "--dir", str(folder))
+            self.assertNotEqual(r.returncode, 0, folder)
+            self.assertIn("inside the Hugging Face cache", r.stdout + r.stderr)
+        self.assertEqual(sorted(p.name for p in self.cache.blobs.iterdir()), before)
+        self.assertFalse((self.cache.root / "ple").exists())
+
+    def test_a_folder_the_unit_cannot_name_is_refused(self):
+        # the unit names the copies inside bash -c '...', put in by sed: a space split the mount, a
+        # quote ended the command, a & or a | broke the substitution, and the unit restarted in a loop
+        for bad in ("copies here", "it's", "a&b", "a|b"):
+            with self.subTest(folder=bad):
+                r = self.run_it("copy", "--dir", str(self.d / bad))
+                self.assertNotEqual(r.returncode, 0)
+                self.assertIn("no space, no quote", r.stdout + r.stderr)
+                self.assertFalse((self.d / bad).exists())
 
     def test_mounts_refuse_while_a_copy_is_missing(self):
         r = self.run_it("mounts", "--dir", str(self.d / "empty"))

@@ -18,9 +18,10 @@
 # THE N-GRAM TABLE is read at every token, from the checkpoint's files: a cache on another disk than
 # the home directory's (an external SSD) gets copies of the table's files beside the home directory,
 # in ~/flash-local-ple, which the unit mounts over the cache's own (ple-table.py says why and how);
-# FLASH_LOCAL_PLE_DIR=<folder> puts them elsewhere, FLASH_LOCAL_PLE_DIR=none reads the table where
-# the cache is, and the choice holds for every run after, a Load from the cockpit included
-# (FLASH_LOCAL_PLE_DIR= brings the default back).
+# FLASH_LOCAL_PLE_DIR=<folder> puts them elsewhere (outside the cache), FLASH_LOCAL_PLE_DIR=none reads
+# the table where the cache is, and the choice holds for every run after, a Load from the cockpit
+# included (FLASH_LOCAL_PLE_DIR= brings the default back). The copies the lane made are listed in
+# their folder, and they alone are ever removed there.
 #
 # install.sh puts this lane's unit in on every plain install, like the other lanes, and its first
 # Load from the cockpit pulls its image and fetches its checkpoint; ./install.sh --no-flash-local
@@ -104,10 +105,14 @@ vlane_engine_env "${FLASH_LOCAL_PORT:-}"
 
 if [ "$ACTION" = uninstall ]; then
   step "Removing the Flash FP4-Local lane"
-  # the copies of the n-gram table the unit mounts, read before the unit goes (Hasan's choice,
-  # 2026-10-20: they go with the lane; the checkpoint they were copied from stays)
-  TABLE_COPIES="$({ grep -hoE -- "-v [^ :]+:/root/\.cache/huggingface/hub/[^ :]+/blobs/[0-9a-f]{64}:ro" "$INSTALLED" 2>/dev/null || true; } \
-                  | sed -e 's/^-v //' -e 's|:.*$||')"
+  # The folders the copies of the n-gram table can be in, read before the unit goes: the one the unit
+  # mounts them from, the one chosen (FLASH_LOCAL_PLE_DIR, kept) and the default one. In each, the
+  # copies ple-table.py lists as its own go, and nothing else (Hasan's choice, 2026-10-20: they go with
+  # the lane; the checkpoint they were copied from stays).
+  TABLE_DIRS="$( { { grep -hoE -- "-v [^ :]+:/root/\.cache/huggingface/hub/[^ :]+/blobs/[0-9a-f]{64}:ro" "$INSTALLED" 2>/dev/null || true; } \
+                     | sed -e 's/^-v //' -e 's|:.*$||' -e 's|/[0-9a-f]\{64\}$||'
+                   { head -1 "$CONFIG_DIR/flash-local-ple-dir" 2>/dev/null || true; } | grep -vx none
+                   printf '%s\n' "$HOME/flash-local-ple"; } | awk 'NF && !seen[$0]++')"
   vlane_uninstall_unit
   vlane_uninstall_clients
   # The image is pulled, not built: no build of it to prune (qwen38-flash-local names none), and
@@ -116,12 +121,17 @@ if [ "$ACTION" = uninstall ]; then
   vlane_uninstall_runtime qwen38-flash-local "$FLASH_LOCAL_IMAGE" "$FLASH_LOCAL_REPO"
   pin_untag flash-local
   rm -f "$CONFIG_DIR/chat-template-flash-local.jinja" "$CONFIG_DIR/seccomp-io-uring.json" "$CONFIG_DIR/flash-local-ple-dir"
-  if [ -n "$TABLE_COPIES" ]; then
-    # the copies by name (blobs named by their sha256), then their folder if nothing else is in it
-    while IFS= read -r f; do rm -f "$f" "$f.part"; done <<< "$TABLE_COPIES"
-    rmdir "$(dirname "$(head -1 <<< "$TABLE_COPIES")")" 2>/dev/null || true
-    echo "the n-gram table's copies removed ($(wc -l <<< "$TABLE_COPIES") files)"
-  fi
+  while IFS= read -r d; do
+    [ -f "$d/.qwen38-ple-copies" ] || continue
+    # the copies by name (blobs named by their sha256), the list, then their folder if nothing else is in it
+    n=0
+    while IFS= read -r c; do
+      if [[ "$c" =~ ^[0-9a-f]{64}$ ]]; then rm -f "$d/$c" "$d/$c.part"; n=$((n + 1)); fi
+    done < "$d/.qwen38-ple-copies"
+    rm -f "$d/.qwen38-ple-copies"
+    rmdir "$d" 2>/dev/null || true
+    echo "the n-gram table's copies removed from $d ($n files)"
+  done <<< "$TABLE_DIRS"
   exit 0
 fi
 

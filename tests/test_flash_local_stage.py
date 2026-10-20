@@ -103,7 +103,7 @@ class TheStagedUnit(unittest.TestCase):
         folder = self.box.t / "copies"
         rc, out = self.box.stage(FLASH_LOCAL_PLE_DIR=str(folder))
         self.assertEqual(rc, 0, out)
-        self.assertEqual(sorted(p.name for p in folder.iterdir()), sorted(self.box.table))
+        self.assertEqual(sorted(p.name for p in folder.iterdir() if not p.name.startswith(".")), sorted(self.box.table))
         unit = self.box.out.read_text()
         mounts = re.findall(r"-v (\S+):(/root/\.cache/huggingface/hub/\S+):ro", unit)
         self.assertEqual(mounts, [(str(folder / s), f"/root/.cache/huggingface/hub/{HUB}/blobs/{s}") for s in self.box.table])

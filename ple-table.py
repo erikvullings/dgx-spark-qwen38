@@ -17,12 +17,14 @@ over the cache's own, file by file. The cache itself is never touched.
     ple-table.py HF_CACHE REPO REV --home HOME [--dir DIR] mounts   the unit's -v arguments, one line
 
 --dir is FLASH_LOCAL_PLE_DIR: a folder for the copies whatever disk the cache is on, or "none" to
-read the table where the cache is. Without it, HOME/flash-local-ple when the cache is on another
-disk than HOME. A copy is made as NAME.part, checked against its blob's name (the sha256 of its
-content, as the Hub's cache names every large file) and only then renamed: a copy cut short is
-never mounted. A copy already there is checked the same way at every copy. copy removes from the
-folder the copies no file of the table names any more (an earlier revision's), and nothing else.
-Exit status 2: the checkpoint is not whole in the cache.
+read the table where the cache is, never a folder inside the cache. Without it, HOME/flash-local-ple
+when the cache is on another disk than HOME. A copy is made as NAME.part, checked against its blob's
+name (the sha256 of its content, as the Hub's cache names every large file) and only then renamed: a
+copy cut short is never mounted. A copy already there is checked the same way at every copy. The
+folder's .qwen38-ple-copies lists the copies this tool keeps there, and copy removes those of them no
+file of the table names any more (an earlier revision's), and nothing else: a file named like a blob
+that it did not make stays, whatever its name (found in review, 2026-10-20: it removed every such
+file, the blobs of a model included). Exit status 2: the checkpoint is not whole in the cache.
 """
 import argparse
 import hashlib
@@ -35,6 +37,8 @@ import sys
 
 BLOB = re.compile(r"^[0-9a-f]{64}$")
 CONTAINER_HUB = "/root/.cache/huggingface/hub"
+# the copies this tool keeps in the folder, one name a line: the only files it ever removes there
+OURS = ".qwen38-ple-copies"
 
 
 def table_files(snapshot: pathlib.Path) -> list[tuple[str, pathlib.Path]]:
@@ -60,10 +64,36 @@ def where(args, blobs_dir: pathlib.Path) -> pathlib.Path | None:
     if args.dir == "none":
         return None
     if args.dir:
-        return pathlib.Path(args.dir)
+        folder = pathlib.Path(args.dir)
+        # the unit names the copies inside a quoted command, and its renderer puts them in with sed
+        if not re.fullmatch(r"[\w./+@:,=-]+", args.dir):
+            raise SystemExit(f"FLASH_LOCAL_PLE_DIR={args.dir!r}: a path of letters, digits and . _ - / + @ : , ="
+                             " only (no space, no quote): the lane's unit names it inside a quoted command")
+        # inside the cache, the copies would be the cache's own files (its blobs folder), or files the
+        # Hub's tools take for the cache's
+        cache = pathlib.Path(args.hf_cache).resolve()
+        if folder.resolve() == cache or cache in folder.resolve().parents:
+            raise SystemExit(f"FLASH_LOCAL_PLE_DIR={args.dir} is inside the Hugging Face cache ({args.hf_cache}):"
+                             " the copies go in a folder outside it, or FLASH_LOCAL_PLE_DIR=none reads the table"
+                             " where the cache is")
+        return folder
     if os.stat(blobs_dir).st_dev == os.stat(args.home).st_dev:
         return None
     return pathlib.Path(args.home) / "flash-local-ple"
+
+
+def kept(folder: pathlib.Path) -> set[str]:
+    """The names of the copies this tool keeps in the folder."""
+    try:
+        return {n for n in (folder / OURS).read_text().split() if BLOB.match(n)}
+    except OSError:
+        return set()
+
+
+def keep_list(folder: pathlib.Path, names: set[str]) -> None:
+    part = folder / (OURS + ".part")
+    part.write_text("".join(n + "\n" for n in sorted(names)))
+    part.rename(folder / OURS)
 
 
 def sha256(path: pathlib.Path) -> str:
@@ -114,8 +144,12 @@ def main() -> None:
         return
     folder.mkdir(parents=True, exist_ok=True)
     keep = {b.name for _, b in files}
+    ours = kept(folder)
     for name, blob in files:
         dest = folder / blob.name
+        # listed before it is written: a copy cut short is this tool's to finish or remove
+        ours.add(blob.name)
+        keep_list(folder, ours)
         # a copy already there is checked again (15 s for the seven on the reference box): one that
         # changed since would feed the model wrong embeddings without a single error
         if dest.is_file() and dest.stat().st_size == blob.stat().st_size and sha256(dest) == blob.name:
@@ -132,11 +166,12 @@ def main() -> None:
             raise SystemExit(f"the copy of {name} does not match its sha256: the cache's file may be damaged"
                              " (fetch the checkpoint again), or the disk of the copy is failing")
         part.rename(dest)
-    for p in folder.iterdir():
-        stem = p.name[:-5] if p.name.endswith(".part") else p.name
-        if BLOB.match(stem) and stem not in keep:
-            p.unlink()
-            print(f"removed {p.name[:12]}..., a copy no file of this table names any more")
+    for stale in sorted(ours - keep):
+        for p in (folder / stale, folder / (stale + ".part")):
+            if p.is_file():
+                p.unlink()
+                print(f"removed {p.name[:12]}..., a copy no file of this table names any more")
+    keep_list(folder, keep)
     print(f"the table is read from {folder}: {len(files)} files, {total / 10**9:.1f} GB, checked")
 
 

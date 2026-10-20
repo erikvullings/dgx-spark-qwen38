@@ -96,6 +96,9 @@ inventory_images() {
 }
 
 dir_size() { du -sh "$1" 2>/dev/null | cut -f1; }
+# The Flash FP4-Local lane's copies in a folder: the files its list names (ple-table.py keeps it), one
+# path a line. Never the folder's other files: FLASH_LOCAL_PLE_DIR can be a folder of the user's own.
+fl_copies() { awk -v d="$1" '/^[0-9a-f]{64}$/ {print d "/" $0}' "$1/.qwen38-ple-copies" 2>/dev/null; }
 # The reclaim command for a directory: the user's rm, or sudo when a directory in it is not
 # theirs to empty. Engine containers of past versions ran as root on the mounted HF cache
 # and left root-owned .no_exist and refs entries behind (reference box: three checkpoints,
@@ -178,7 +181,9 @@ while IFS= read -r p; do
   if [ -n "$p" ] && [ -d "$p" ]; then echo "  ple-file  $p ($(dir_size "$p"), flash mmap backing store)"; fi
 done <<< "$PLE_DIRS"
 while IFS= read -r p; do
-  if [ -n "$p" ] && [ -d "$p" ]; then echo "  table     $p ($(dir_size "$p"), the Flash FP4-Local lane's copies of its n-gram table)"; fi
+  if [ -n "$p" ] && [ -f "$p/.qwen38-ple-copies" ]; then
+    echo "  table     $p ($(fl_copies "$p" | xargs -r du -ch 2>/dev/null | tail -1 | cut -f1), the Flash FP4-Local lane's copies of its n-gram table)"
+  fi
 done <<< "$FL_TABLE_DIRS"
 if [ -d "$SPILL_DIR" ]; then echo "  spill     $SPILL_DIR ($(dir_size "$SPILL_DIR"), the diffusion runtime's transformed weights)"; fi
 if [ -d "$DIFF_CACHE" ]; then echo "  cache     $DIFF_CACHE ($(dir_size "$DIFF_CACHE"), the diffusion runtime's converted weights and compile caches)"; fi
@@ -338,7 +343,9 @@ while IFS= read -r p; do
   if [ -n "$p" ] && [ -d "$p" ]; then echo "  $(rm_cmd "$p") '$p'    # $(dir_size "$p"), flash PLE backing file"; fi
 done <<< "$PLE_DIRS"
 while IFS= read -r p; do
-  if [ -n "$p" ] && [ -d "$p" ]; then echo "  $(rm_cmd "$p") '$p'    # $(dir_size "$p"), the Flash FP4-Local lane's copies of its n-gram table"; fi
+  if [ -n "$p" ] && [ -f "$p/.qwen38-ple-copies" ]; then
+    echo "  rm -f $(fl_copies "$p" | sed "s/.*/'&' '&.part'/" | tr '\n' ' ')'$p/.qwen38-ple-copies'; rmdir '$p'    # the Flash FP4-Local lane's copies of its n-gram table, and nothing else there"
+  fi
 done <<< "$FL_TABLE_DIRS"
 if [ -d "$SPILL_DIR" ]; then echo "  $(rm_cmd "$SPILL_DIR") '$SPILL_DIR'    # $(dir_size "$SPILL_DIR"), the diffusion runtime's transformed weights"; fi
 if [ -d "$DIFF_CACHE" ]; then echo "  $(rm_cmd "$DIFF_CACHE") '$DIFF_CACHE'    # $(dir_size "$DIFF_CACHE"), the diffusion runtime's converted weights and compile caches"; fi
