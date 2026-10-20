@@ -103,6 +103,8 @@ dl_free_gb(){ { df -BG --output=avail "$(existing "${1:-$HF_CACHE}")" 2>/dev/nul
 # notes the SGLang text unit it takes the boot from, a switch to a text target notes its own.
 # shellcheck source=lanes.sh
 . "$REPO_DIR/lanes.sh"
+# A terminal opened before the account joined the docker group: the run goes on with it (lanes.sh).
+docker_session bash "$REPO_DIR/${BASH_SOURCE[0]##*/}" "$@"
 [ "$FETCH_ONLY" -eq 1 ] || text_lane_migrate
 
 # ── The Kolibri lane: a text lane on vLLM, switched to the way the image lane is ────

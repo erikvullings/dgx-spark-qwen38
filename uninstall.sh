@@ -57,6 +57,13 @@ for arg in "${@:-}"; do
     *) echo "Unknown flag: $arg (see --help)" >&2; exit 1 ;;
   esac
 done
+# A terminal opened before the account joined the docker group sees none of its images: the
+# inventory below skipped them all (docker info failed) and left them on the disk. It goes on
+# with the group (lanes.sh).
+die(){ printf '\n\033[1;31mERROR:\033[0m %s\n' "$*" >&2; exit 1; }
+# shellcheck source=lanes.sh
+. "$REPO_DIR/lanes.sh"
+docker_session bash "$REPO_DIR/${BASH_SOURCE[0]##*/}" "$@"
 
 # ── Inventory: every name this repo has ever created, shown only if present ──
 # Local serving images built by install.sh across versions (any tag: v1.2,

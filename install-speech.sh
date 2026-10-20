@@ -28,6 +28,9 @@ UNIT=qwen38-speech.service
 INSTALLED="/etc/systemd/system/$UNIT"
 die(){ printf '\n\033[1;31mERROR:\033[0m %s\n' "$*" >&2; exit 1; }
 step(){ printf '\n\033[1;36m── %s\033[0m\n' "$*"; }
+# what the lanes' installers share; this one takes host_packages from it
+# shellcheck source=lanes.sh
+. "$HERE/lanes.sh"
 
 # Under sudo every path below moves to /root. install.sh refuses the same way.
 if [ "$(id -u)" = "0" ] && [ "${ALLOW_ROOT:-0}" != "1" ]; then
@@ -144,6 +147,16 @@ fi
 
 step "1/6 Preflight"
 case "$(uname -m)" in aarch64|arm64) : ;; *) die "this lane is verified on the DGX Spark's ARM64 GB10 only (this box is $(uname -m))." ;; esac
+# Run from a terminal, this installs what the lane needs and the box lacks (lanes.sh
+# host_packages), each tool by the package that has it. The checks below, as before, say what
+# could not be put in.
+HOST_PKGS=()
+for t in git:git curl:curl cmake:cmake c++:build-essential sha256sum:coreutils taskset:util-linux; do
+  command -v "${t%%:*}" >/dev/null || HOST_PKGS+=("${t#*:}")
+done
+command -v ffmpeg >/dev/null || HOST_PKGS+=(ffmpeg)
+python3 -c 'import venv, ensurepip' 2>/dev/null || HOST_PKGS+=(python3-venv)
+[ "${#HOST_PKGS[@]}" -eq 0 ] || host_packages "the speech lane" "${HOST_PKGS[@]}" || true
 for t in git curl cmake c++ sha256sum taskset; do
   command -v "$t" >/dev/null || die "$t is missing. Fix: sudo apt-get install -y git curl cmake build-essential coreutils util-linux"
 done

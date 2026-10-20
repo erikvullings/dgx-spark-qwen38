@@ -43,6 +43,8 @@ class Box:
         self.script = self.d / "uninstall.sh"
         self.script.write_text(text)
         (self.d / "oc-merge-limits.py").write_text((REPO / "oc-merge-limits.py").read_text())
+        # the library it sources since v1.37.2, for the docker group of a terminal older than it
+        (self.d / "lanes.sh").write_text((REPO / "lanes.sh").read_text())
         stub = self.d / "bin"
         stub.mkdir()
         log = self.d / "calls"

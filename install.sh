@@ -675,6 +675,17 @@ done
 [ "$PLAN_ONLY" -eq 0 ] || [ "$NO_SERVICE" -eq 0 ] \
   || die "--plan lists what a run does to the box's services; --no-service writes none."
 case "$RECOMMENDED" in 0|1) ;; *) die "QWEN38_RECOMMENDED takes 0 or 1 (got: $RECOMMENDED)" ;; esac
+# A terminal opened before its account joined the docker group has none of the group's rights: the
+# run goes on with them from here, where it has printed and exported nothing yet (lanes.sh). An
+# account outside the group is added at step 1, after every refusal that comes before it.
+docker_session bash "$REPO_DIR/${BASH_SOURCE[0]##*/}" "$@"
+# Started again by that step 1 (lanes.sh docker_grant): what this run prints up to it is on the
+# screen already, from the run that added the account. The runs this one starts print as usual.
+DOCKER_SAID=""
+if [ "${QWEN38_DOCKER_RELAUNCHED:-}" = granted ]; then
+  DOCKER_SAID=1; export QWEN38_DOCKER_RELAUNCHED="shown"
+  exec 3>&1 1>/dev/null
+fi
 export QWEN38_RECOMMENDED="$RECOMMENDED"   # the side lanes' installers this run calls read it
 
 # ── Converge on the operator's installed choices ──
@@ -1492,10 +1503,16 @@ case "$GPU_NAME" in *GB10*) ;; *) echo "WARNING: expected GB10, found '$GPU_NAME
 command -v docker >/dev/null || die "docker not found. Install Docker + NVIDIA Container Toolkit (stock on DGX OS)."
 command -v python3 >/dev/null || die "python3 not found on the host (needed for the template patcher; stock on DGX OS)."
 command -v ss >/dev/null || die "ss not found (iproute2, stock on DGX OS): the preflight cannot check the ports without it."
-docker info >/dev/null 2>&1 || die "Cannot talk to the docker daemon. Fix: sudo usermod -aG docker \$USER && re-login (or run with a user in the docker group)."
 # /proc/meminfo, not `free`: free(1) localizes its row labels (issue #3)
 TOTAL_GB=$(awk '/^MemTotal/{print int($2/1048576)}' /proc/meminfo)
 [ "$TOTAL_GB" -ge 110 ] || die "This config needs a ~121 GB unified-memory machine; found ${TOTAL_GB} GB."
+# An account outside the docker group, as a new box's is, joins it here, after every refusal above
+# (and --help, --plan or a mistyped flag never get here), and the run starts again with it; a daemon
+# down or a refusal elsewhere stops with the way out (lanes.sh docker_grant). --no-service uses no
+# sudo: it says how instead.
+DOCKER_GRANT=yes; [ "$NO_SERVICE" -eq 0 ] || DOCKER_GRANT=no
+docker_grant bash "$REPO_DIR/${BASH_SOURCE[0]##*/}" "$@"
+[ -z "$DOCKER_SAID" ] || exec 1>&3 3>&-
 # A GPU outside its ATS addressing mode cannot start the flash lane (issue #54), and a flash install
 # fetches its image and its checkpoint (223 GB in all). A new flash install stops here, before the
 # first byte. A run for a box whose flash lane is installed gives it its units only, which say why at
@@ -1645,6 +1662,24 @@ if [ "$NO_SERVICE" -eq 0 ] && ! sudo -n true 2>/dev/null; then
   sudo -v || die "sudo could not be used here: run 'sudo -v' in this terminal, then re-run ./install.sh"
 fi
 echo "OK (aarch64, ${TOTAL_GB} GB RAM, ${FREE_DISK_GB} GB free)"
+# What the image and video lanes build or run with, which DGX OS lacks: Python's headers, which
+# their first Load builds xatlas against, and ffmpeg, which the video pipeline refuses to start
+# without. Installed now, while this terminal can give sudo its password: the first Load runs from
+# the cockpit, which has no terminal, and both lanes' installers stopped on it (an ASUS GX10, DGX
+# OS 7.6.0, 2026-10-20). Their own checks, the same, still say what an install here could not put.
+HOST_PKGS=()
+# --no-start and --no-service return before those lanes, and need neither (nor sudo for them)
+if [ "$NO_START" -eq 1 ] || [ "$NO_SERVICE" -eq 1 ]; then
+  :
+elif [ "$WANT_IMAGE" -eq 1 ] || [ "$WANT_VIDEO" -eq 1 ]; then
+  python3 -c 'import venv, ensurepip' 2>/dev/null || HOST_PKGS+=(python3-venv)
+  [ -f "$(python3 -c 'import sysconfig; print(sysconfig.get_paths()["include"])' 2>/dev/null)/Python.h" ] || HOST_PKGS+=(python3-dev)
+fi
+if [ "$NO_START" -eq 0 ] && [ "$NO_SERVICE" -eq 0 ] && [ "$WANT_VIDEO" -eq 1 ] \
+   && ! { command -v ffmpeg && command -v ffprobe; } >/dev/null 2>&1; then
+  HOST_PKGS+=(ffmpeg)
+fi
+[ "${#HOST_PKGS[@]}" -eq 0 ] || host_packages "the image and video lanes" "${HOST_PKGS[@]}" || true
 
 if [ "$UNITS_ONLY" -eq 1 ]; then
   if [ -n "$ATS_CANNOT" ]; then step "2/10 The Flash-Next image: not pulled, as this GPU cannot start the flash lane"
@@ -3380,6 +3415,10 @@ except Exception as e:
     echo "  Anthropic  : http://<host>:$PROXY_PORT/v1/messages   (Bearer auth only)"
     echo "  Engine     : $ENGINE_BIND:$PORT, behind the proxy (ENGINE_BIND=0.0.0.0 opens it)"
     echo "  API key    : $CONFIG_DIR/api-key"
+    # started again with the docker group (lanes.sh): the terminal it came from has not got it
+    if [ -n "${QWEN38_DOCKER_RELAUNCHED:-}" ]; then
+      echo "  Docker     : $(id -un) is in the docker group; a terminal opened before this install gets it at its next login (the cockpit and these scripts need nothing)"
+    fi
     if [ "$OPENCODE" -eq 1 ]; then
       OC_NOW="$( { opencode --version 2>/dev/null || true; } | tail -1 | tr -d 'v[:space:]')"
       # What starts it from the user's own shell: this script's PATH is not theirs, the

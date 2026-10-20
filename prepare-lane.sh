@@ -179,6 +179,8 @@ case "$1" in
     CONFIG_DIR="$HOME/.config/qwen38"; REPO_DIR="$HERE"
     # shellcheck source=lanes.sh
     . "$HERE/lanes.sh"
+    # a terminal opened before the account joined the docker group: on with the group (lanes.sh)
+    docker_session bash "$HERE/${BASH_SOURCE[0]##*/}" "$@"
     pins_or_die
     if [ "$1" = flash ]; then prepare_flash; else prepare_27b; fi ;;
   *) usage ;;

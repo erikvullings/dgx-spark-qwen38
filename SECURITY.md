@@ -107,7 +107,11 @@ since v1.26.1).
 **The cockpit (`dashboard/`, :30090)** runs as the user who installed the box,
 and that user is already root-equivalent: `install.sh` requires it to be in the
 `docker` group, and a member of that group can start a container with the host's
-`/` mounted. The NOPASSWD sudoers lines rendered from
+`/` mounted. Since v1.37.2 the installer adds it to that group when it is not in it,
+which is how DGX OS's first-boot setup leaves the account it creates. It says so,
+and why, before it runs sudo: where sudo asks for the password, a person can stop
+there (sudo does not ask while an earlier ticket is still valid, nor for an account
+that needs no password). With `--no-service`, which uses no sudo, it says how instead. The NOPASSWD sudoers lines rendered from
 `dashboard/sudoers-cockpit.template` add no privilege to that, and they are no
 boundary either: two of them `install` a file the user writes
 (`~/.config/qwen38/*.switch-stage`) into `/etc/systemd/system`, and with
@@ -137,7 +141,10 @@ pinned revision, the opencode release by its sha256. The image and video lanes
 commit and checkpoint revision are pinned, but pip resolves the wheel's dependency tree
 from PyPI at install time, with no hash checked. The speech lane (`./install-speech.sh`,
 opt-in) pins llama.cpp's commit, its models by sha256, and every package of its venv by
-exact version, wheels only, also without hashes. The engine enforces its key, read from a file created
+exact version, wheels only, also without hashes. The system packages the image and video
+lanes need on a new box (`python3-dev`, `ffmpeg`, and `python3-venv` where it is missing), and
+the speech lane's build tools when its installer finds one missing, come from the box's own apt
+sources, Ubuntu's signed archive, installed by sudo at the versions its package lists name. The engine enforces its key, read from a file created
 0600 and handed to it through SGLang's `--config`, so it is in no process's command line and the chat template and launcher are regenerated from the
 repo on every install.
 

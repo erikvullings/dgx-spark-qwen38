@@ -351,3 +351,213 @@ room_per_disk(){
       || die "need ~${need[$dev]} GB free on the disk of ${at[$dev]} for this first Load (${what[$dev]}); found ${free[$dev]:-unknown} GB. Free some space, then Load the lane again: what came already is kept."
   done
 }
+
+# ── What a box fresh from its first-boot setup lacks, put right where a script needs it ──────────
+# The docker group. NVIDIA's first-boot setup puts the account it creates in adm, sudo, audio, dip,
+# plugdev, users and lpadmin, never docker (its oobe-admin, DGX OS 7.6.0 on an ASUS GX10), and the
+# daemon's socket is root:docker 0660: the engines, the cockpit and these scripts run their
+# containers as that account. The one-liner stopped at its first check on every new box, and its
+# fix told a desktop user to log out (found on an ASUS GX10, 2026-10-20). An account added to the
+# group has it from its next login on; a terminal opened before, the install's own included, keeps
+# the groups of its login, and the scripts run from it come through docker_session.
+
+# A script started again by docker_relaunch ignores again what it ignored before: sg sets SIGHUP,
+# SIGINT, SIGQUIT and the terminal-stop signals back to their defaults in the run it starts, and a
+# run under nohup lost its SIGHUP there (measured, 2026-10-20).
+for _sig in ${QWEN38_SIG_IGNORED:-}; do
+  case "$_sig" in HUP|INT|QUIT|TSTP|TTIN|TTOU) trap '' "$_sig" ;; esac
+done
+unset _sig
+
+docker_in_session(){  # this process has the docker group
+  local line gid
+  line="$(getent group docker 2>/dev/null)" || return 1
+  gid="${line#*:*:}"; gid="${gid%%:*}"
+  case " $(id -G) " in *" $gid "*) return 0 ;; esac
+  return 1
+}
+
+docker_in_group(){  # the account is in the docker group, as its next login will have it
+  case " $(id -nG "$(id -un)" 2>/dev/null) " in *" docker "*) return 0 ;; esac
+  return 1
+}
+
+# docker_relaunch_ok CMD...: docker_relaunch below can start CMD again here: not done already; sg,
+# env and /proc there; the account's own group with a name (sg takes no number); the account named
+# in the docker group's own member list (sg reads that list, and an account a directory service puts
+# in the group without it is asked a group password there); and no word of CMD, of the paths of sg
+# and env, of the account's group, or of a value to hand back past sg, holding a character sg's
+# `sh -c` would read as its own.
+docker_relaunch_ok(){
+  local v line own
+  [ -z "${QWEN38_DOCKER_RELAUNCHED:-}" ] || return 1
+  command -v sg >/dev/null 2>&1 && command -v env >/dev/null 2>&1 && [ -r "/proc/$$/environ" ] || return 1
+  own="$(id -gn "$(id -un)" 2>/dev/null)" || return 1
+  line="$(getent group docker 2>/dev/null)" || return 1
+  case ",${line##*:}," in *",$(id -un),"*) ;; *) return 1 ;; esac
+  for v in "$(command -v sg)" "$(command -v env)" "$own" "$@"; do
+    case "$v" in ''|*[!A-Za-z0-9._/:=@+,-]*) return 1 ;; esac
+  done
+  while IFS= read -r -d '' v; do
+    case "${v%%=*}" in
+      GCONV_PATH|GETCONF_DIR|GLIBC_TUNABLES|HOSTALIASES|LD_*|LOCALDOMAIN|LOCPATH|MALLOC_*|NIS_PATH|NLSPATH|RESOLV_HOST_CONF|RES_OPTIONS|TMPDIR|TZDIR)
+        case "$v" in *[!A-Za-z0-9._/:=@+,-]*) return 1 ;; esac ;;
+    esac
+  done < "/proc/$$/environ"
+  return 0
+}
+
+# docker_relaunch WHY CMD...: CMD again, with the groups a new login has, for the rest of this run:
+# sg to docker, then to the account's own group, which a lone `sg docker` leaves in docker's place (the
+# units take it for their Group=; measured on the reference box, 2026-10-20). sg runs CMD as a child
+# it waits for and passes its exit status back (measured): the run is then the child of the second sg
+# and the grandchild of the first, both waiting with SIGINT and SIGHUP ignored, so it stops by its
+# process group (Ctrl+C, systemd, the cockpit), and a kill of the first PID stops only that sg. CMD
+# gets the environment this process started with: what it exported since is taken out, what it
+# changed is set back. The start's values it left as they were pass in the environment, never in a
+# command line; those it changed are set back as env's arguments, and the variables the C library
+# takes from a setuid program's environment (TMPDIR and the like), handed back after sg, go into its
+# `sh -c` line: neither is a key the scripts read. The signals this process ignores
+# are ignored again (lanes.sh, above), and WHY is said to the run it starts (QWEN38_DOCKER_RELAUNCHED).
+# Returns 1, having run nothing, where docker_relaunch_ok says no or a step here fails: the callers
+# then say the way out.
+docker_relaunch(){
+  local why="$1" sg envp own n v back="" ign="" mask sig
+  local -a start=() fix=()
+  local -A at_start=()
+  shift
+  docker_relaunch_ok "$@" || return 1
+  sg="$(command -v sg)" && envp="$(command -v env)" && own="$(id -gn "$(id -un)")" || return 1
+  mapfile -d '' -t start < "/proc/$$/environ" 2>/dev/null || return 1
+  for v in "${start[@]}"; do
+    n="${v%%=*}"
+    case "$n" in ''|[0-9]*|*[!A-Za-z0-9_]*) continue ;; esac
+    at_start[$n]="${v#*=}"
+    case "$n" in
+      GCONV_PATH|GETCONF_DIR|GLIBC_TUNABLES|HOSTALIASES|LD_*|LOCALDOMAIN|LOCPATH|MALLOC_*|NIS_PATH|NLSPATH|RESOLV_HOST_CONF|RES_OPTIONS|TMPDIR|TZDIR)
+        back="$back $v" ;;
+    esac
+  done
+  while IFS= read -r n; do
+    [ -n "${at_start[$n]+x}" ] || fix+=(-u "$n")
+  done < <(compgen -e)
+  for n in "${!at_start[@]}"; do
+    case "$n" in _|SHLVL|PWD|OLDPWD) continue ;; esac
+    if [ "${!n-}" != "${at_start[$n]}" ] || ! printenv "$n" >/dev/null; then
+      fix+=("$n=${at_start[$n]}")
+    fi
+  done
+  mask="$(awk '/^SigIgn:/ {print $2}' "/proc/$$/status" 2>/dev/null)" || mask=0
+  for sig in 1:HUP 2:INT 3:QUIT 20:TSTP 21:TTIN 22:TTOU; do
+    [ $(( 0x${mask:-0} >> (${sig%%:*} - 1) & 1 )) -eq 0 ] || ign="$ign ${sig#*:}"
+  done
+  exec "$envp" "${fix[@]}" QWEN38_DOCKER_RELAUNCHED="$why" QWEN38_SIG_IGNORED="${ign# }" \
+    "$sg" docker -c "exec $sg $own -c 'exec $envp$back $*'"
+}
+
+# docker_session CMD...: the account is in the docker group and this process is not (its terminal
+# was opened before the account joined): CMD again with the group, as from a new login. Otherwise
+# nothing: a docker that refuses for another reason says so where it is reached.
+docker_session(){
+  docker_in_session && return 0
+  docker_in_group || return 0
+  if docker_relaunch_ok "$@"; then
+    echo "Docker: $(id -un) is in the docker group, and this terminal was opened before it joined; going on with the group (no need to log out)."
+    docker_relaunch session "$@" || true
+  fi
+  die "Docker: this terminal was opened before $(id -un) joined the docker group, and this run cannot start again with it here. Log out and back in (or open a new SSH session), then the same command again."
+}
+
+# docker_grant CMD...: docker answers, or this run makes it answer and runs CMD again. A refusal on
+# the system's socket (root:docker) of an account outside the group is put right with sudo, said
+# before sudo runs: where it asks for the password, a person can stop there. A run that cannot start
+# again here (docker_relaunch_ok) still gets the account added, and says to log in again instead of
+# going on. DOCKER_GRANT=no (a run that uses no sudo) says how instead. A daemon that is not running,
+# a refusal anywhere else (DOCKER_HOST, a context, a rootless Docker), an account sudo refuses or that
+# a directory service keeps: each stops with its own way out. No docker command at all is left to the
+# caller's own check.
+docker_grant(){
+  local err who
+  command -v docker >/dev/null 2>&1 || return 0
+  err="$(docker info 2>&1 >/dev/null)" && return 0
+  who="$(id -un)"
+  case "$err" in
+    */run/docker.sock*) ;;
+    *) die "docker does not answer: $(printf '%s' "$err" | tr '\n' ' ' | cut -c1-300)" ;;
+  esac
+  case "$err" in
+    *[Pp]"ermission denied"*) ;;
+    *"daemon is running"*|*"docker daemon running"*|*"Cannot connect to the Docker daemon"*)
+      die "Docker is installed, but its service is not running. Run sudo systemctl enable --now docker, then the same command again." ;;
+    *) die "docker does not answer: $(printf '%s' "$err" | tr '\n' ' ' | cut -c1-300)" ;;
+  esac
+  [ "$(stat -L -c %G /run/docker.sock 2>/dev/null)" = docker ] \
+    || die "docker refuses $who on /run/docker.sock, which is not the docker group's ($(stat -L -c '%U:%G %a' /run/docker.sock 2>/dev/null)): $(printf '%s' "$err" | head -1 | cut -c1-200)"
+  docker_in_session \
+    && die "docker refuses $who on /run/docker.sock, although this process has the docker group: $(printf '%s' "$err" | head -1 | cut -c1-200)"
+  docker_session "$@"
+  if [ "${DOCKER_GRANT:-yes}" = no ]; then
+    die "Docker: $who is not in the docker group, which the engines run their containers through (the box's first-boot setup leaves it out), and this run uses no sudo. Run sudo usermod -aG docker $who, log out and back in, then the same command again."
+  fi
+  echo "Docker: $who is not in the docker group, which the engines and the cockpit run their containers through (the box's first-boot setup leaves it out)."
+  echo "Docker: adding it now, with sudo. A member of that group can run any container, which makes it root on this machine (SECURITY.md)."
+  sudo usermod -aG docker "$who" \
+    || die "Docker: $who could not be added to the docker group. Run sudo usermod -aG docker $who, log out and back in, then the same command again."
+  docker_in_group \
+    || die "Docker: usermod said yes, and $who is still not in the docker group (an account of a directory service?). Have it added there, log in again, then the same command again."
+  if docker_relaunch_ok "$@"; then
+    echo "Docker: $who is in the docker group now; this run goes on with it (no need to log out)."
+    docker_relaunch granted "$@" || true
+  fi
+  die "Docker: $who is in the docker group now, and this run cannot start again with it here. Log out and back in (or open a new SSH session), then the same command again."
+}
+
+# host_packages WHY PKG...: Ubuntu packages a lane builds or runs with, which the caller found
+# missing, installed with sudo, named first. Only where sudo can ask (a terminal) or need not (a
+# ticket): the cockpit's Loads have neither, so install.sh puts these in while its terminal is there
+# (DGX OS 7.6.0 has neither python3-dev nor ffmpeg; found on an ASUS GX10, 2026-10-20). Once per run:
+# the lanes' installers that install.sh calls do not try again. apt is told it has no one to ask
+# (needrestart asked in the terminal), or, where sudo says it may not set those variables (a rule for
+# apt-get alone), run without them. A sudo that refuses the account or its password is not asked
+# again. apt waits up to five minutes for another package manager, and a lock still held then is said
+# rather than waited for again. Lists too old for the archive are refreshed once. sudo and apt speak
+# English here (LC_ALL=C), whatever the account's language, so that their words can be read. Returns
+# 1 when they could not be installed, saying the command: the caller's own check then says what is
+# missing.
+host_packages(){
+  local why="$1" rc out
+  shift
+  [ "$#" -gt 0 ] || return 0
+  [ -z "${QWEN38_HOST_PACKAGES_TRIED:-}" ] || return 1
+  export QWEN38_HOST_PACKAGES_TRIED=1
+  if ! sudo -n true 2>/dev/null && ! { : < /dev/tty; } 2>/dev/null; then
+    echo "NOTE: missing on this box, for $why: $*. No terminal is here for sudo to ask its password: run sudo apt-get install -y $* yourself." >&2
+    return 1
+  fi
+  echo "Installing $* for $why, missing on this box (sudo apt-get install -y $*)."
+  out="$(mktemp)"
+  local -a apt=(sudo DEBIAN_FRONTEND=noninteractive NEEDRESTART_MODE=l apt-get -o DPkg::Lock::Timeout=300 -q -y)
+  if LC_ALL=C "${apt[@]}" install "$@" 2> "$out"; then rm -f "$out"; return 0; else rc=$?; fi
+  cat "$out" >&2
+  # sudo itself said no (a wrong password three times, an account outside sudoers): never asked again
+  if [ "$rc" -eq 1 ] && grep -q -E "incorrect password|password is required|not in the sudoers|not allowed to (run|execute)" "$out"; then
+    rm -f "$out"
+    echo "NOTE: sudo refused; run sudo apt-get install -y $* yourself." >&2
+    return 1
+  fi
+  if [ "$rc" -eq 1 ] && grep -q "not allowed to set" "$out"; then
+    apt=(sudo apt-get -o DPkg::Lock::Timeout=300 -q -y)
+    if LC_ALL=C "${apt[@]}" install "$@" 2> "$out"; then rm -f "$out"; return 0; fi
+    cat "$out" >&2
+  fi
+  if grep -q -E "Could not get lock|Unable to acquire the dpkg frontend lock" "$out"; then
+    rm -f "$out"
+    echo "NOTE: another package manager held apt's lock; run sudo apt-get install -y $* once it is done." >&2
+    return 1
+  fi
+  rm -f "$out"
+  "${apt[@]}" update || true
+  if "${apt[@]}" install "$@"; then return 0; fi
+  echo "NOTE: apt-get could not install $*; run sudo apt-get install -y $* yourself." >&2
+  return 1
+}

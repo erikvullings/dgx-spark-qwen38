@@ -62,6 +62,8 @@ CONFIG_DIR="$HOME/.config/qwen38"
 # the text lane the box comes back to, one record shared with switch-model.sh (lanes.sh)
 # shellcheck source=lanes.sh
 . "$HERE/lanes.sh"
+# A terminal opened before the account joined the docker group: the run goes on with it (lanes.sh).
+docker_session bash "$HERE/${BASH_SOURCE[0]##*/}" "$@"
 # what the three vLLM lanes' installers share: the engine's cache and port, the uninstall, the
 # service, the preflight and the room, the fetch, the proof
 # shellcheck source=vllm-lane.sh

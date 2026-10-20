@@ -20,9 +20,21 @@ class TheCockpitsRootIsStatedAsItIs(unittest.TestCase):
         self.assertNotIn("reaches root through exactly one", FLAT)
 
     def test_the_docker_group_is_named_while_install_sh_requires_it(self):
-        if "usermod -aG docker" in (REPO / "install.sh").read_text():
-            self.assertIn("`docker` group", FLAT)
-            self.assertIn("root-equivalent", FLAT)
+        # install.sh reaches docker through lanes.sh (docker_grant) since v1.37.2: the check
+        # reads both, or it would have stopped checking without a word when the line moved
+        code = (REPO / "install.sh").read_text() + (REPO / "lanes.sh").read_text()
+        self.assertIn("docker_grant", (REPO / "install.sh").read_text())
+        self.assertIn("usermod -aG docker", code)
+        self.assertIn("`docker` group", FLAT)
+        self.assertIn("root-equivalent", FLAT)
+
+    def test_the_page_says_the_installer_adds_the_account(self):
+        # it adds the account itself on a box whose first-boot setup left it out (v1.37.2)
+        if "sudo usermod -aG docker" in (REPO / "lanes.sh").read_text():
+            self.assertIn("adds it to that group when it is not in it", FLAT)
+            self.assertIn("before it runs sudo", FLAT)
+            # and not a promise of a password prompt that a sudo ticket skips (found in review)
+            self.assertIn("does not ask while an earlier ticket is still valid", FLAT)
 
     def test_the_staged_unit_install_is_named_while_the_allowlist_has_it(self):
         sudoers = (REPO / "dashboard" / "sudoers-cockpit.template").read_text()

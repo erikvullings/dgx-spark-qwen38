@@ -70,6 +70,8 @@ CONFIG_DIR="$HOME/.config/qwen38"
 # the text lane the box comes back to, one record shared with switch-model.sh (lanes.sh)
 # shellcheck source=lanes.sh
 . "$HERE/lanes.sh"
+# A terminal opened before the account joined the docker group: the run goes on with it (lanes.sh).
+docker_session bash "$HERE/${BASH_SOURCE[0]##*/}" "$@"
 LANE_DIR="${VIDEO_LANE_DIR:-$(installed WorkingDirectory)}"; LANE_DIR="${LANE_DIR:-$HOME/.local/share/qwen38-video}"
 VENV="$LANE_DIR/venv"
 SRC="$LANE_DIR/sglang"
@@ -236,6 +238,14 @@ step "1/6 Preflight"
 case "$(uname -m)" in aarch64|arm64) : ;; *) die "this lane is verified on the DGX Spark's ARM64 GB10 only (this box is $(uname -m))." ;; esac
 command -v nvidia-smi >/dev/null || die "nvidia-smi not found: this needs the NVIDIA driver."
 command -v git >/dev/null || die "git is required (stock on DGX OS)."
+# Run from a terminal, this installs what the lane needs and the box lacks (lanes.sh
+# host_packages). The checks below, as before, say what could not be put in: the cockpit's
+# runs have no terminal for sudo's password, and install.sh puts these in for them.
+HOST_PKGS=()
+{ command -v ffmpeg && command -v ffprobe; } >/dev/null 2>&1 || HOST_PKGS+=(ffmpeg)
+python3 -c 'import venv, ensurepip' 2>/dev/null || HOST_PKGS+=(python3-venv)
+[ -f "$(python3 -c 'import sysconfig; print(sysconfig.get_paths()["include"])' 2>/dev/null)/Python.h" ] || HOST_PKGS+=(python3-dev)
+[ "${#HOST_PKGS[@]}" -eq 0 ] || host_packages "the video lane" "${HOST_PKGS[@]}" || true
 # The MiniMax-H3 pipeline requires ffmpeg and ffprobe for media processing and
 # validated output delivery, and refuses to start without them (its own words in
 # minimax_h3_pipeline.py). Installed from the OS package, once, before anything else.
