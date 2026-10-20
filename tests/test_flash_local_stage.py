@@ -66,10 +66,11 @@ class Box:
 
 
 def exec_command(unit: str) -> str:
-    """The ExecStart command as bash runs it: systemd joins the lines a backslash ends."""
+    """The ExecStart command as bash runs it: systemd joins the lines a backslash ends, and hands
+    bash a $ for each $$."""
     line = unit[unit.index("ExecStart=/bin/bash -c '") + len("ExecStart=/bin/bash -c '"):]
     line = line[:line.index("'\nExecStop=")]
-    return line.replace("\\\n", " ")
+    return line.replace("\\\n", " ").replace("$$", "$")
 
 
 class TheStagedUnit(unittest.TestCase):
@@ -117,6 +118,147 @@ class TheStagedUnit(unittest.TestCase):
         share = float(re.search(r"--gpu-memory-utilization (\S+)", cmd).group(1))
         self.assertTrue(share < ceiling < 1.0, (share, ceiling))
         self.assertTrue(share - 0.05 <= ceiling * threshold < share, (ceiling, threshold, share))
+
+    def guard(self, unit: str, tries: int = 0) -> list:
+        """The check at the head of the unit's ExecStart, as bash runs it, with its tries of 3 s set."""
+        cmd = exec_command(unit)
+        self.assertIn("exec /usr/bin/docker run", cmd)
+        head = cmd[:cmd.index("exec /usr/bin/docker run")].strip()
+        script = f"{self.box.home}/.config/qwen38/flash-local-files.sh"
+        # the check named once, there before it runs (else 78 and its line), then run
+        self.assertTrue(head.startswith(f"check={script}; ") and 'bash "$check" ' in head, head)
+        self.assertTrue(head.endswith("|| exit $?;"), head)
+        self.assertTrue(os.access(script, os.X_OK), "the stage put no check where the unit runs it")
+        return ["env", f"FLASH_LOCAL_FILES_TRIES={tries}", "bash", "-c", head + " exit 0"]
+
+    def test_a_start_without_its_checkpoint_or_a_copy_stays_failed(self):
+        # A start missing what the unit mounts made runc create it, owned by root: the checkpoint's
+        # folders inside the Hugging Face cache, which install.sh then read as a lane begun, and a folder
+        # in place of a missing copy of the table (found in review, proved on the reference box,
+        # 2026-10-20). The unit's main process checks them before the engine runs and exits 78, which
+        # RestartPreventExitStatus holds for the main process alone: from an ExecStartPre the same 78
+        # was started again every 15 s (found in review, 2026-10-20, systemd.service(5) of systemd 255).
+        folder = self.box.t / "copies"
+        rc, out = self.box.stage(FLASH_LOCAL_PLE_DIR=str(folder))
+        self.assertEqual(rc, 0, out)
+        unit = self.box.out.read_text()
+        lines = unit.splitlines()
+        self.assertEqual([l for l in lines if l.startswith("ExecStartPre=") and "exit 78" in l], [],
+                         "the check is a start step, whose 78 systemd starts again")
+        self.assertIn("RestartPreventExitStatus=78", lines)
+        guard = self.guard(unit)
+
+        def start():
+            return subprocess.run(guard, capture_output=True, text=True, timeout=30)
+        self.assertEqual(start().returncode, 0)
+        copy = next(p for p in sorted(folder.iterdir()) if not p.name.startswith("."))
+        copy.rename(copy.with_name("gone"))
+        r = start()
+        self.assertEqual(r.returncode, 78)
+        self.assertIn(str(copy), r.stderr)
+        self.assertIn("./switch-model.sh flash-local", r.stderr, "the remedy fetches nothing")
+        self.assertIn("or the disk that holds the Hugging Face cache is not mounted", r.stderr)
+        self.assertNotIn("prepare-lane.sh", r.stderr, "prepare-lane.sh pulls the image and nothing else")
+        # a folder left in the copy's place is no copy: [ -s ] alone took it for one
+        copy.mkdir()
+        self.assertEqual(start().returncode, 78)
+        copy.rmdir()
+        copy.with_name("gone").rename(copy)
+        index = self.box.hf / "hub" / HUB / "snapshots" / PINS["FLASH_LOCAL_REV"] / "model.safetensors.index.json"
+        index.rename(index.with_name("gone.json"))
+        self.assertEqual(start().returncode, 78)
+        index.with_name("gone.json").rename(index)
+        self.assertEqual(start().returncode, 0)
+
+    def test_a_checkpoint_cut_short_or_a_copy_cut_short_stays_failed(self):
+        # a fetch cut short leaves the small index before the large files, and a copy cut short
+        # (a power cut, a full disk) has the copy's name: the check took both for whole, and the
+        # engine then died at every start, started again every 15 s (found in review, 2026-10-20)
+        folder = self.box.t / "copies"
+        rc, out = self.box.stage(FLASH_LOCAL_PLE_DIR=str(folder))
+        self.assertEqual(rc, 0, out)
+        guard = self.guard(self.box.out.read_text())
+
+        def start():
+            return subprocess.run(guard, capture_output=True, text=True, timeout=30)
+        self.assertEqual(start().returncode, 0)
+        snap = self.box.hf / "hub" / HUB / "snapshots" / PINS["FLASH_LOCAL_REV"]
+        shard = snap / "tensors" / "model-00001-of-00003.safetensors"
+        target = shard.resolve()
+        target.rename(target.with_name("gone"))
+        r = start()
+        self.assertEqual(r.returncode, 78, r.stderr)
+        self.assertIn(f"{shard} is missing or not whole", r.stderr)
+        target.with_name("gone").rename(target)
+        copy = next(p for p in sorted(folder.iterdir()) if not p.name.startswith("."))
+        whole = copy.read_bytes()
+        copy.write_bytes(whole[:-1])
+        r = start()
+        self.assertEqual(r.returncode, 78, r.stderr)
+        self.assertIn(f"{copy} is missing or not whole", r.stderr)
+        copy.write_bytes(whole)
+        self.assertEqual(start().returncode, 0)
+
+    def test_the_check_waits_for_a_disk_mounted_late(self):
+        # a cache on another disk may be mounted after the unit starts at boot (nofail,
+        # docs/external-disk.md): a 78 is final now, so the check gives the files time to come
+        folder = self.box.t / "copies"
+        rc, out = self.box.stage(FLASH_LOCAL_PLE_DIR=str(folder))
+        self.assertEqual(rc, 0, out)
+        index = self.box.hf / "hub" / HUB / "snapshots" / PINS["FLASH_LOCAL_REV"] / "model.safetensors.index.json"
+        index.rename(index.with_name("gone.json"))
+        p = subprocess.Popen(self.guard(self.box.out.read_text(), tries=7),
+                             stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        import time
+        time.sleep(4)
+        self.assertIsNone(p.poll(), "the check gave up before its time")
+        index.with_name("gone.json").rename(index)
+        self.assertEqual(p.wait(timeout=30), 0)
+
+    def test_the_cockpit_reads_why_and_says_it(self):
+        # its line is the cockpit's to read (lifecycle.parse_preflight): a line of another form
+        # left the page at "keeps crashing", and "cannot start" would blame the GPU's ATS mode
+        sys.path.insert(0, str(REPO / "dashboard"))
+        import lifecycle
+        folder = self.box.t / "copies"
+        rc, out = self.box.stage(FLASH_LOCAL_PLE_DIR=str(folder))
+        self.assertEqual(rc, 0, out)
+        copy = next(p for p in sorted(folder.iterdir()) if not p.name.startswith("."))
+        copy.unlink()
+        r = subprocess.run(self.guard(self.box.out.read_text()), capture_output=True, text=True, timeout=30)
+        self.assertEqual(r.returncode, 78)
+        said = lifecycle.parse_preflight(r.stderr.splitlines())
+        self.assertEqual((said or {}).get("verdict"), "lacks its files", r.stderr)
+        flags = lifecycle.preflight_flags({"state": "failed"}, unit_sub="failed", preflight=said)
+        self.assertIn(str(copy), flags.get("lacks", ""))
+        self.assertNotIn("cannot", flags)
+
+    def test_its_check_gone_the_start_stops_with_its_line(self):
+        # a configuration restored from before the check: bash exited 127, which systemd started
+        # again every 15 s, on a line the cockpit does not read (found in review, 2026-10-20)
+        sys.path.insert(0, str(REPO / "dashboard"))
+        import lifecycle
+        rc, out = self.box.stage()
+        self.assertEqual(rc, 0, out)
+        guard = self.guard(self.box.out.read_text())
+        script = pathlib.Path(f"{self.box.home}/.config/qwen38/flash-local-files.sh")
+        script.unlink()
+        r = subprocess.run(guard, capture_output=True, text=True, timeout=30)
+        self.assertEqual(r.returncode, 78, r.stderr)
+        said = lifecycle.parse_preflight(r.stderr.splitlines())
+        self.assertEqual((said or {}).get("verdict"), "lacks its files", r.stderr)
+        self.assertIn(f"{script} is missing (the check of its files)", said["reason"])
+        # and the stage puts it back, as the lane's Load runs it for a lane that cannot start
+        rc, out = self.box.stage()
+        self.assertEqual(rc, 0, out)
+        self.assertTrue(os.access(script, os.X_OK))
+
+    def test_read_in_place_the_start_checks_the_checkpoint_alone(self):
+        rc, out = self.box.stage(FLASH_LOCAL_PLE_DIR="none")
+        self.assertEqual(rc, 0, out)
+        guard = " ".join(self.guard(self.box.out.read_text()))
+        self.assertNotIn("/blobs/", guard)
+        self.assertNotIn("__", guard)
 
     def test_copies_of_the_table_are_mounted_over_the_caches_files(self):
         folder = self.box.t / "copies"

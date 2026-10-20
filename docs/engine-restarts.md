@@ -69,6 +69,20 @@ GPU** with the reason:
 preflight: qwen38-flash.service cannot start: the GPU's addressing mode is None (nvidia-smi --query-gpu=addressing_mode) and the flash lane needs ATS: ...
 ```
 
+The Flash FP4-Local unit then asks whether what its engine reads is there
+(`flash-local-files.sh`, the head of its `ExecStart`, after the guard above): its checkpoint at the pinned revision,
+its index and every file the index names (a fetch cut short leaves the index first), and the copies of
+its n-gram table, each of its original's size, when the cache is on another disk
+([flash-local-lane.md](flash-local-lane.md)). A start without them made Docker create what was
+missing, as root: folders inside the Hugging Face cache, and a folder in a copy's place. It
+gives a cache on a disk mounted late at boot 90 s, then ends the start with exit code 78,
+which systemd does not start the lane again on, and the cockpit shows **cannot start: a file
+is missing** with the path, until a Load brings the files back:
+
+```
+preflight: qwen38-flash-local.service lacks its files: <path> is missing (its checkpoint, or a copy of its n-gram table), or the disk that holds the Hugging Face cache is not mounted. ...
+```
+
 Settings, for a test or a box that needs them: `QWEN38_PREFLIGHT_WAIT_S` (60),
 `QWEN38_PREFLIGHT_HELD_MIB` (2048), `QWEN38_PREFLIGHT_ORPHAN_GIB` (16), set in a drop-in.
 

@@ -2308,7 +2308,7 @@ class TheGuardsFlags(unittest.TestCase):
         "cannot" did not (found on the reference box, 2026-10-19)."""
         added = set()
         for verdict, st, sub in (("waits", "starting", "start-pre"), ("refused", "failed", "failed"),
-                                 ("cannot start", "failed", "failed")):
+                                 ("cannot start", "failed", "failed"), ("lacks its files", "failed", "failed")):
             out = lc.preflight_flags({"state": st}, unit_sub=sub, preflight={"verdict": verdict, "reason": "r"})
             added |= set(out) - {"state"}
         self.assertEqual(added, set(lc.GUARD_FLAGS))

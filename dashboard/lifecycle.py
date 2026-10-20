@@ -691,14 +691,15 @@ def wedge_plan(*, decided: bool, prev_state: str | None, wedged_since: float | N
 # without them the lane read "starting" while it was held, and "keeps crashing" when it was
 # refused, which sends the operator after the wrong thing.
 PREFLIGHT_RE = re.compile(r"preflight: (?:NOT starting (\S+): (.+?), still after \d+ s\."
-                          r"|(\S+) (waits|starts|cannot start): (.+))")
+                          r"|(\S+) (waits|starts|cannot start|lacks its files): (.+))")
 
 
 def parse_preflight(lines: list[str]) -> dict | None:
     """The guard's last word among these journal lines: {"verdict": "waits" | "refused" |
-    "starts" | "cannot start", "reason": str}, or None when it said nothing. "cannot start" is the
-    flash launcher's: a GPU outside its ATS addressing mode, which no wait or reboot changes
-    (flash-ats-check.sh, issue #54)."""
+    "starts" | "cannot start" | "lacks its files", "reason": str}, or None when it said nothing.
+    "cannot start" is the flash launcher's: a GPU outside its ATS addressing mode, which no wait
+    or reboot changes (flash-ats-check.sh, issue #54). "lacks its files" is the Flash FP4-Local
+    unit's: its checkpoint or a copy of its n-gram table is missing, which its Load brings back."""
     last = None
     for ln in lines:
         m = PREFLIGHT_RE.search(ln)
@@ -713,14 +714,15 @@ def parse_preflight(lines: list[str]) -> dict | None:
 
 # The flags preflight_flags may add, which the cockpit hands the page: one list, as the collector
 # copied them by hand and left "cannot" out (found on the reference box, 2026-10-19).
-GUARD_FLAGS = ("held", "refused", "cannot")
+GUARD_FLAGS = ("held", "refused", "cannot", "lacks")
 
 
 def preflight_flags(state: dict, *, unit_sub: str, preflight: dict | None) -> dict:
     """The state with what the guard said, when it is why the lane is not up: held while it
     waits (the unit runs its start step and nothing else), refused once it would not start
     (the unit failed, or waits for its next attempt), cannot when this GPU cannot start it
-    (the unit failed and systemd does not start it again)."""
+    (the unit failed and systemd does not start it again), lacks when a file the engine reads is
+    missing (failed too, until a Load fetches it)."""
     if not preflight:
         return state
     out = dict(state)
@@ -730,6 +732,8 @@ def preflight_flags(state: dict, *, unit_sub: str, preflight: dict | None) -> di
         out["refused"] = preflight["reason"]
     elif preflight["verdict"] == "cannot start" and state.get("state") == "failed":
         out["cannot"] = preflight["reason"]
+    elif preflight["verdict"] == "lacks its files" and state.get("state") == "failed":
+        out["lacks"] = preflight["reason"]
     return out
 
 

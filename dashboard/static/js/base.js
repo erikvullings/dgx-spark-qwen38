@@ -72,9 +72,10 @@ const STATE_LABEL = {
   orphan: 'running outside systemd'};
 // the word for a lane, with what the start guard or a lost scheduler adds to its state: a lane
 // held by the guard read "starting", one it refused "failed" (engine-preflight.sh, issue #26),
-// and a flash lane on a GPU outside its ATS mode is no matter of memory (issue #54)
+// a flash lane on a GPU outside its ATS mode is no matter of memory (issue #54), and neither is the
+// Flash FP4-Local lane missing a file it reads (its unit's guard)
 const stateLabel = e => !e ? '' : e.held ? 'waiting for GPU memory' : e.refused ? 'not starting: GPU memory held'
-  : e.cannot ? 'cannot start on this GPU' : e.zombie ? 'lost its scheduler' : e.state === 'failed' && e.crashed_serving ? 'restarting after a crash'
+  : e.cannot ? 'cannot start on this GPU' : e.lacks ? 'cannot start: a file is missing' : e.zombie ? 'lost its scheduler' : e.state === 'failed' && e.crashed_serving ? 'restarting after a crash'
   : (STATE_LABEL[e.state] || e.state);
 const sentence = s => s ? s.charAt(0).toUpperCase() + s.slice(1) : '';
 const STATE_KIND = {ready: 'ok', degraded: 'warn', failed: 'err', stopped: '', stopping: 'warn', wedged: 'err', orphan: 'err'};
@@ -680,9 +681,18 @@ function laneJourneySteps(target){
   // none enabled: the switch step makes this one the boot lane, as it does from any other
   const enabled = bootUnit();
   const curTarget = (engines()[unit] || {}).target;
-  if (enabled !== unit || (curTarget && curTarget !== target) || (!curTarget && LANE_TARGETS[unit].length > 1 && target !== LANE_TARGETS[unit][0]))
-    steps.push({name: 'switch', params: {target}, title: `Point the boot at ${TARGET_NAME[target]}`,
-      desc: 'Verifies the checkpoint and makes this lane the one enabled at boot. Nothing restarts.'});
+  // a lane that cannot start as installed (its checkpoint or a copy of its table missing) gets the
+  // switch, which fetches and copies them, even as the boot lane already: its Load started it
+  // alone and it failed again on the same missing file (found in review, 2026-10-20)
+  const whole = !lane || (F.lanesStartable || {})[lane] !== false;
+  if (enabled !== unit || (curTarget && curTarget !== target) || (!curTarget && LANE_TARGETS[unit].length > 1 && target !== LANE_TARGETS[unit][0])
+      || !whole)
+    // for a boot lane that lacks a file, the step fetches or copies it: up to 102 GB, not a check
+    steps.push({name: 'switch', params: {target},
+      title: whole || enabled !== unit ? `Point the boot at ${TARGET_NAME[target]}` : `Bring back what ${LANE_NAME[unit]} lacks`,
+      desc: whole ? 'Verifies the checkpoint and makes this lane the one enabled at boot. Nothing restarts.'
+        : 'Fetches what its checkpoint lacks' + (unit === FLASH_LOCAL_UNIT ? ' and copies its n-gram table again (up to 102 GB to fetch, 32 GB to copy)' : '')
+          + ', and makes this lane the one enabled at boot. Nothing restarts.'});
   if (serving && serving[0] !== unit)
     steps.push({name: 'unit', params: {verb: 'stop', unit: serving[0]}, title: `Stop ${laneLabel(serving[0])}`,
       desc: serving[0] === IMAGE_UNIT || serving[0] === VIDEO_UNIT ? 'A generation in flight is lost.' : 'Clients on :30001 see the engine unavailable until the next one answers.'});
@@ -960,6 +970,9 @@ function renderBanners(state, errors){
     // Said while no other lane is up, whose Load is the way out it names: a unit that exited 78
     // stays failed until a reboot, and the banner stayed red over the lane that serves.
     if (e.state === 'failed' && e.cannot) { if (!otherUp(n)) add('err', `${name} cannot start on this box.`, `${sentence(e.cannot)}. Load another lane from Lanes.`); }
+    // a file the engine reads is missing (its checkpoint, a copy of its table): the unit exited 78
+    // and stays failed, and its Load fetches the file again (its switch step, laneJourneySteps)
+    else if (e.state === 'failed' && e.lacks) { if (!otherUp(n)) add('err', `${name} cannot start: a file it reads is missing.`, `${sentence(e.lacks)}.`); }
     else if (e.state === 'failed' && e.refused) add('err', `${name} is not starting.`, `${sentence(e.refused)}. ` + (e.restarting ? 'systemd checks again every 15 s and starts it once that memory is back; if nothing holds it, a reboot frees it.' : 'Start it again from Lanes once that memory is back; if nothing holds it, a reboot frees it.'));
     else if (e.state === 'failed' && e.restarting && e.crashed_serving) add('warn', `${name} stopped while it was serving and is starting again.`, 'systemd starts it again 15 s after it stops, and the lane comes back by itself. Its journal in Logs says why it stopped.');
     else if (e.state === 'failed' && e.restarting) add('err', `${name} keeps crashing.`, `It dies during startup and systemd relaunches it every 15 s${e.restarts ? ` (${e.restarts} so far)` : ''}. Stop it from Lanes to end the loop; its journal is in Logs.`);

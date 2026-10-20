@@ -971,7 +971,8 @@ class TheStartGuardAndALostSchedulerAreSaidAsTheyAre(unittest.TestCase):
         const units = {units: Object.assign({}, UNITS.units, {'qwen38-sglang.service': {active: 'activating', enabled: 'enabled'}})};
         feed({config: Object.assign({}, CONFIG, %s), units, lifecycle: life({'qwen38-sglang.service': %s})});
         report({banner: txt('banners'), card: laneCard('qwen38-sglang.service').state.textContent,
-                boot: laneCard('qwen38-sglang.service').boot.textContent, bay: bay('qwen38-sglang.service').state.textContent});
+                boot: laneCard('qwen38-sglang.service').boot.textContent, bay: bay('qwen38-sglang.service').state.textContent,
+                why: laneCard('qwen38-sglang.service').why.textContent, whyClass: laneCard('qwen38-sglang.service').why.className});
         """ % (config, engine))
 
     def test_a_held_start_says_what_holds_it(self):
@@ -1002,6 +1003,35 @@ class TheStartGuardAndALostSchedulerAreSaidAsTheyAre(unittest.TestCase):
         for wrong in ("GPU memory", "reboot", "keeps crashing", "memory is back"):
             self.assertNotIn(wrong, r["banner"])
         self.assertEqual(r["card"], "cannot start on this GPU")
+
+    def test_a_missing_file_says_which_and_what_brings_it_back(self):
+        """The Flash FP4-Local unit's guard: a file its engine reads is missing, and the unit exited
+        78. Its line was of no form the cockpit reads, so the lane said "keeps crashing", and a
+        "cannot start" would have blamed the GPU's ATS mode (found in review, 2026-10-20)."""
+        why = ("/home/u/flash-local-ple/2a1129b5 is missing (its checkpoint, or a copy of its n-gram table). "
+               "Load the lane from the cockpit, or run ./switch-model.sh flash-local")
+        r = self.page("eng('failed', {restarting: false, lacks: %s})" % json.dumps(why))
+        self.assertIn("cannot start: a file it reads is missing.", r["banner"])
+        self.assertIn("/home/u/flash-local-ple/2a1129b5 is missing", r["banner"])
+        self.assertIn("./switch-model.sh flash-local", r["banner"])
+        for wrong in ("ATS", "GPU memory", "keeps crashing"):
+            self.assertNotIn(wrong, r["banner"] + r["why"])
+        self.assertEqual(r["card"], "cannot start: a file is missing")
+        self.assertIn("Load the lane from the cockpit", r["why"])
+
+    def test_a_missing_files_path_breaks_inside_its_card(self):
+        """The reason holds a whole path, with no space to break at, in a flex line that did not
+        break: on a phone the page scrolled sideways while the lane was down (found in review,
+        2026-10-20, 677 px of page for 500 on screen). The line breaks anywhere, at every width."""
+        why = ("/home/u/.cache/huggingface/hub/models--nvidia--Qwen3.8-Flash-Next-FP4-Local/snapshots/"
+               "b9ce18a6887e18c089fdea8509a33e63429a3300/model.safetensors.index.json is missing")
+        r = self.page("eng('failed', {restarting: false, lacks: %s})" % json.dumps(why))
+        self.assertIn(why, r["why"])
+        cls = r["whyClass"].split()
+        decls = [d for sel, media, d in css_rules() if not media
+                 and any(part.strip() == "." + c for c in cls for part in sel.split(","))]
+        self.assertTrue(any(re.search(r"overflow-wrap:\s*anywhere", d) and re.search(r"min-width:\s*0\b", d)
+                            for d in decls), decls)
 
     def test_its_banner_goes_once_another_lane_serves(self):
         """The banner says to load another lane, and a unit that exited 78 stays failed until a
@@ -1797,6 +1827,44 @@ class TheLoadWindowCanBeHiddenWhileItsStepsRun(unittest.TestCase):
         self.assertTrue(r["hidden"])
         self.assertTrue(r["back"], "the job button reopens the load window")
         self.assertIn("1 min 30 so far: downloading", r["live"])
+
+
+class ALoadBringsBackWhatALaneLacks(unittest.TestCase):
+    """A lane that cannot start as installed (its checkpoint or a copy of its table missing) gets
+    its switch, which fetches and copies them, even as the boot lane: its Load started it alone
+    and it failed again on the same missing file (found in review, 2026-10-20)."""
+
+    def steps(self, startable):
+        return run(self, r"""
+        const U = JSON.parse(JSON.stringify(UNITS));
+        U.units['qwen38-sglang.service'] = {active: 'inactive', enabled: 'disabled'};
+        U.units['qwen38-flash-local.service'] = {active: 'failed', enabled: 'enabled'};
+        feed({units: U, lifecycle: life({'qwen38-flash-local.service': eng('failed', {target: 'flash-local'})})});
+        feed({lanes_ready: {'flash-local': true}, lanes_startable: {'flash-local': %s}});
+        report(laneJourneySteps('flash-local').map(s => s.name + (s.params.verb ? ':' + s.params.verb : '')));
+        """ % json.dumps(startable))
+
+    def test_a_lane_missing_a_file_gets_its_switch(self):
+        self.assertEqual(self.steps(False), ["switch", "unit:start"])
+
+    def test_its_step_says_it_fetches_and_copies_not_that_it_verifies(self):
+        # the step read "Verifies the checkpoint ... Nothing restarts." where it may fetch 102 GB or
+        # copy 32 GB (found in review, 2026-10-20)
+        r = run(self, r"""
+        const U = JSON.parse(JSON.stringify(UNITS));
+        U.units['qwen38-sglang.service'] = {active: 'inactive', enabled: 'disabled'};
+        U.units['qwen38-flash-local.service'] = {active: 'failed', enabled: 'enabled'};
+        feed({units: U, lifecycle: life({'qwen38-flash-local.service': eng('failed', {target: 'flash-local'})})});
+        feed({lanes_ready: {'flash-local': true}, lanes_startable: {'flash-local': false}});
+        const s = laneJourneySteps('flash-local')[0];
+        report({title: s.title, desc: s.desc});
+        """)
+        self.assertEqual(r["title"], "Bring back what Flash FP4-Local lacks")
+        self.assertIn("Fetches what its checkpoint lacks and copies its n-gram table again", r["desc"])
+        self.assertNotIn("Verifies", r["desc"])
+
+    def test_a_whole_boot_lane_is_only_started(self):
+        self.assertEqual(self.steps(True), ["unit:start"])
 
 
 class TheLastFiveMinutesSayTheEnginesCounters(unittest.TestCase):

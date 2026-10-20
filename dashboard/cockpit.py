@@ -2592,10 +2592,23 @@ def lane_startable(lane: str):
     state, snap = served_snapshot(text, model, allow)
     if state != "complete":
         return False
-    # The Flash FP4-Local lane mounts the copies of its n-gram table, file by file, when its cache
-    # is on another disk (ple-table.py): a copy gone, docker refuses the start and the unit loops.
-    for src in re.findall(r"-v\s+(\S+?):/root/\.cache/huggingface/hub/\S+/blobs/[0-9a-f]{64}:ro", text):
-        if not Path(src).is_file():
+    # The Flash FP4-Local unit checks its files with flash-local-files.sh before its engine: the
+    # check gone, it refuses every start, and a Load that only started it could not bring it back
+    # (its switch's stage puts it in; found in review, 2026-10-20).
+    for check in re.findall(r"(/\S+/flash-local-files\.sh)\b", text):
+        if not Path(check).is_file():
+            return False
+    # It mounts the copies of its n-gram table, file by file, when its cache is on another disk
+    # (ple-table.py): a copy is there when it has its original's size in the cache, as its unit's
+    # check and ple-table.py read it; one gone, empty or cut short, the unit refuses the start, and
+    # three rules for one fact had drifted apart (found in review, 2026-10-20).
+    hf = re.search(r"-v\s+(\S+?):/root/\.cache/huggingface(?=\s)", text)
+    for src, rel in re.findall(r"-v\s+(\S+?):/root/\.cache/huggingface/(hub/\S+/blobs/[0-9a-f]{64}):ro", text):
+        try:
+            size = Path(src).stat().st_size if Path(src).is_file() else 0
+            if size == 0 or (hf and size != (Path(hf.group(1)) / rel).stat().st_size):
+                return False
+        except OSError:
             return False
     # a Nemotron lane loads its drafter with the checkpoint, from the cache, offline: both whole
     # (found on the reference box, 2026-10-16)

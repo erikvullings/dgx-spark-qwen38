@@ -212,5 +212,15 @@ table's copies when they are needed, and starts it: 17 to 19 minutes for the fir
 kernels for this GPU, about 5 min 30 s after. From a terminal: `./prepare-lane.sh flash-local` the
 first time, then `./switch-model.sh flash-local`. `--with-flash-local` installs it whole at install
 time and proves it, `--no-flash-local` leaves it out for good, and `./install-flash-local.sh
---uninstall` removes its unit, its caches, its patched template, its filter, its image's pin tag and
-the table's copies. The image and the checkpoint stay, and it prints how to delete them.
+--uninstall` removes its unit, its caches, its patched template, its filter, its check of its files,
+its image's pin tag and the table's copies. The image and the checkpoint stay, and it prints how to
+delete them.
+
+A start with its checkpoint or a copy of its table missing or not whole (a file the checkpoint's index
+names and the cache lacks, a copy empty or cut short) stays failed: its unit's check of its files
+(`flash-local-files.sh`, the head of its `ExecStart`, after the memory guard) waits 90 s
+for a disk mounted late at boot, then says which file is missing and exits 78, which systemd does not
+start the lane again on, and the cockpit shows **cannot start: a file is missing**. With the disk of
+the cache mounted, a Load from the cockpit, or `./switch-model.sh flash-local`, brings the files back
+([engine-restarts.md](engine-restarts.md)); with it away, the Load would fetch the checkpoint onto the
+system's disk.

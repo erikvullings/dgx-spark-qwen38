@@ -129,6 +129,25 @@ class TableFiles(unittest.TestCase):
         self.assertEqual(self.run_it("copy", "--dir", str(folder)).returncode, 0)
         self.assertEqual((folder / self.cache.table[0]).read_bytes(), good)
 
+    def test_an_empty_folder_left_in_a_copys_place_goes_and_one_with_files_is_said(self):
+        # a start of v1.37.0 with a copy missing made Docker create a folder in its place, and the
+        # copy's rename failed on every Load after copying it whole (found in review, 2026-10-20)
+        folder = self.d / "copies"
+        folder.mkdir()
+        (folder / self.cache.table[0]).mkdir()
+        r = self.run_it("copy", "--dir", str(folder))
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        self.assertTrue((folder / self.cache.table[0]).is_file())
+        self.assertEqual(hashlib.sha256((folder / self.cache.table[0]).read_bytes()).hexdigest(), self.cache.table[0])
+        (folder / self.cache.table[1]).unlink()
+        (folder / self.cache.table[1]).mkdir()
+        (folder / self.cache.table[1] / "x").write_text("x")
+        r = self.run_it("copy", "--dir", str(folder))
+        self.assertNotEqual(r.returncode, 0)
+        self.assertIn("is a folder, not a copy", r.stderr)
+        self.assertIn("sudo rm -r", r.stderr)
+        self.assertFalse((folder / (self.cache.table[1] + ".part")).exists(), "nothing copied before saying so")
+
     def new_revision_of_the_table(self):
         """The checkpoint's second table file changed, as a later revision would change it."""
         body = b"table, revised" * 100
@@ -227,6 +246,85 @@ class TableFiles(unittest.TestCase):
         r = self.run_it("mounts", "--dir", str(self.d / "empty"))
         self.assertEqual(r.returncode, 1)
         self.assertEqual(r.stdout, "")
+
+    def test_an_empty_or_cut_copy_is_no_copy_to_mount(self):
+        # mounts took any file for a copy: an empty one, which the unit's check refuses at every
+        # start, went into the unit (found in review, 2026-10-20)
+        folder = self.d / "copies"
+        self.assertEqual(self.run_it("copy", "--dir", str(folder)).returncode, 0)
+        self.assertEqual(self.run_it("mounts", "--dir", str(folder)).returncode, 0)
+        copy = folder / self.cache.table[0]
+        good = copy.read_bytes()
+        for broken in (b"", good[:-1]):
+            with self.subTest(size=len(broken)):
+                copy.write_bytes(broken)
+                r = self.run_it("mounts", "--dir", str(folder))
+                self.assertEqual((r.returncode, r.stdout), (1, ""), r.stderr)
+                self.assertIn(f"{len(good)} to copy", self.run_it("plan", "--dir", str(folder)).stdout)
+        copy.write_bytes(good)
+
+    def test_a_folder_it_cannot_write_is_said_with_its_remedy(self):
+        # a start of v1.37.0 that found the whole folder missing made it, as root: the copy ended in a
+        # traceback, or said a folder that held no file held some (found in review, 2026-10-20)
+        folder = self.d / "copies"
+        folder.mkdir()
+        (folder / self.cache.table[0]).mkdir()
+        folder.chmod(0o555)
+        try:
+            r = self.run_it("copy", "--dir", str(folder))
+        finally:
+            folder.chmod(0o755)
+        self.assertNotEqual(r.returncode, 0)
+        self.assertNotIn("Traceback", r.stderr)
+        self.assertNotIn("holds files", r.stderr)
+        self.assertIn(f"{folder} is not writable by", r.stderr)
+        # the user's own folder: chmod gives it back, not chown (found in review, 2026-10-20)
+        self.assertIn(f"chmod u+w {folder}", r.stderr)
+        self.assertNotIn("sudo chown", r.stderr)
+
+    def test_a_folder_it_cannot_make_is_said_not_a_traceback(self):
+        # FLASH_LOCAL_PLE_DIR under a parent it cannot write: the copy ended in a PermissionError
+        # traceback at every Load (found in review, 2026-10-20)
+        parent = self.d / "locked"
+        parent.mkdir()
+        parent.chmod(0o555)
+        try:
+            r = self.run_it("copy", "--dir", str(parent / "copies"))
+        finally:
+            parent.chmod(0o755)
+        self.assertNotEqual(r.returncode, 0)
+        self.assertNotIn("Traceback", r.stderr)
+        self.assertIn("could not be made", r.stderr)
+        self.assertIn("FLASH_LOCAL_PLE_DIR", r.stderr)
+
+    def test_each_copy_is_on_the_disk_before_it_takes_its_name(self):
+        # a power cut between the rename and the write-back left a renamed copy empty or cut short,
+        # which a start then read (found in review, 2026-10-20): the copy is synced, then renamed,
+        # then its folder synced
+        import sys as _sys
+        from unittest import mock
+        mod = load()
+        folder = self.d / "copies"
+        events = []
+        real_fsync, real_rename = os.fsync, pathlib.Path.rename
+
+        def fsync(fd):
+            events.append(("fsync", os.readlink(f"/proc/self/fd/{fd}")))
+            return real_fsync(fd)
+
+        def rename(self_, target):
+            events.append(("rename", str(self_)))
+            return real_rename(self_, target)
+        argv = ["ple-table.py", str(self.cache.root), NAME, REV, "--home", str(self.home), "--dir", str(folder), "copy"]
+        with mock.patch.object(_sys, "argv", argv), mock.patch.object(mod.os, "fsync", fsync), \
+                mock.patch.object(pathlib.Path, "rename", rename):
+            mod.main()
+        for sha in self.cache.table:
+            part = str(folder / (sha + ".part"))
+            synced = events.index(("fsync", part))
+            renamed = events.index(("rename", part))
+            self.assertLess(synced, renamed, events)
+            self.assertEqual(events[renamed + 1], ("fsync", str(folder)), events)
 
     def test_no_snapshot_is_said_with_status_2(self):
         shutil.rmtree(self.cache.snap)

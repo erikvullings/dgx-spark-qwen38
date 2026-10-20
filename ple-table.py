@@ -31,10 +31,12 @@ that it did not make stays, whatever its name (found in review, 2026-10-20: it r
 file, the blobs of a model included). Exit status 2: the checkpoint is not whole in the cache.
 """
 import argparse
+import errno
 import hashlib
 import json
 import os
 import pathlib
+import pwd
 import re
 import shutil
 import sys
@@ -116,6 +118,42 @@ def existing(path: pathlib.Path) -> pathlib.Path:
     return path
 
 
+def whole_copy(copy: pathlib.Path, blob: pathlib.Path) -> bool:
+    """A copy is there when it is a file of its original's size: an empty one, which the unit's
+    check refuses at every start, or one cut short, was taken for there and mounted (found in
+    review, 2026-10-20); its sha256 is the copy's own check, too slow for a mount line."""
+    try:
+        return copy.is_file() and copy.stat().st_size == blob.stat().st_size
+    except OSError:
+        return False
+
+
+def writable_folder(folder: pathlib.Path) -> None:
+    """The copies' folder, made when missing; one this user cannot make or write into is said with
+    what gives it back. A start of v1.37.0 that found the whole folder missing made it, as root,
+    and every Load ended in a traceback, or in advice that did not fit its cause (found in review,
+    2026-10-20)."""
+    user = pwd.getpwuid(os.getuid()).pw_name
+    try:
+        folder.mkdir(parents=True, exist_ok=True)
+    except OSError as e:
+        raise SystemExit(f"{folder} could not be made ({e.strerror}): set FLASH_LOCAL_PLE_DIR to a folder {user} can"
+                         " write into, or FLASH_LOCAL_PLE_DIR=none to read the table where the cache is") from None
+    if os.access(folder, os.W_OK | os.X_OK):
+        return
+    try:
+        read_only = bool(os.statvfs(folder).f_flag & os.ST_RDONLY)
+    except OSError:
+        read_only = False
+    if read_only:
+        remedy = "its disk is mounted read-only: mount it read-write"
+    elif folder.stat().st_uid != os.getuid():
+        remedy = f"a start that found it missing may have made it, as root: give it back with sudo chown {user}: {folder}"
+    else:
+        remedy = f"it is {user}'s, without the right to write: chmod u+w {folder}"
+    raise SystemExit(f"{folder} is not writable by {user}: {remedy}, then Load the lane again")
+
+
 def room(args, repo_dir: pathlib.Path) -> None:
     """The room the copies need on their folder's disk, said before anything is downloaded: the copy
     refused only after the checkpoint's 102 GB were fetched (found in review, 2026-10-20). With the
@@ -128,8 +166,7 @@ def room(args, repo_dir: pathlib.Path) -> None:
     snapshot = repo_dir / "snapshots" / args.rev
     if (snapshot / "model.safetensors.index.json").is_file():
         try:
-            need = sum(b.stat().st_size for _, b in table_files(snapshot)
-                       if not ((folder / b.name).is_file() and (folder / b.name).stat().st_size == b.stat().st_size))
+            need = sum(b.stat().st_size for _, b in table_files(snapshot) if not whole_copy(folder / b.name, b))
         except SystemExit:
             pass              # not whole yet: the table's size, as before the download
     free = shutil.disk_usage(existing(folder)).free
@@ -172,13 +209,13 @@ def main() -> None:
         if folder is None:
             print(f"in place: {len(files)} files, {total} bytes, read from {repo_dir / 'blobs'}")
             return
-        missing = sum(b.stat().st_size for _, b in files if not (folder / b.name).is_file())
+        missing = sum(b.stat().st_size for _, b in files if not whole_copy(folder / b.name, b))
         print(f"copies: {len(files)} files, {total} bytes, {missing} to copy into {folder}")
         return
     if args.action == "mounts":
         if folder is None:
             return
-        absent = [b.name for _, b in files if not (folder / b.name).is_file()]
+        absent = [b.name for _, b in files if not whole_copy(folder / b.name, b)]
         if absent:
             print(f"{len(absent)} copies are not in {folder}: run the copy first", file=sys.stderr)
             sys.exit(1)
@@ -188,11 +225,25 @@ def main() -> None:
     if folder is None:
         print(f"the table is read in place, from {repo_dir / 'blobs'}: no copy")
         return
-    folder.mkdir(parents=True, exist_ok=True)
+    writable_folder(folder)
     keep = {b.name for _, b in files}
     ours = kept(folder)
     for name, blob in files:
         dest = folder / blob.name
+        # A start of v1.37.0 with this copy missing made Docker create a folder in its place, owned by
+        # root (proved on the reference box, 2026-10-20), and the rename below then failed on every
+        # Load, after copying gigabytes. An empty one goes, the folder around it being the user's; one
+        # holding files is no copy to overwrite (found in the series' second review, 2026-10-20).
+        if dest.is_dir() and not dest.is_symlink():
+            try:
+                dest.rmdir()
+            except OSError as e:
+                if e.errno in (errno.ENOTEMPTY, errno.EEXIST):
+                    raise SystemExit(f"{dest} is a folder, not a copy of {name}, and it holds files: remove it"
+                                     f" (sudo rm -r {dest}), then Load the lane again") from None
+                raise SystemExit(f"{dest} is a folder, not a copy of {name}, and it could not be removed"
+                                 f" ({e.strerror}): remove it (sudo rmdir {dest}), then Load the lane again") from None
+            print(f"removed the empty folder {blob.name[:12]}... left in a copy's place", flush=True)
         # listed before it is written: a copy cut short is this tool's to finish or remove
         ours.add(blob.name)
         keep_list(folder, ours)
@@ -207,11 +258,21 @@ def main() -> None:
                              " free some space, or set FLASH_LOCAL_PLE_DIR")
         print(f"copying {name} ({blob.stat().st_size / 10**9:.1f} GB) into {folder}", flush=True)
         shutil.copyfile(blob, part)
+        # on the disk before it takes its name, the folder's entry too: a power cut (this box has had
+        # them) could leave a renamed copy empty or cut short, which a start then read (found in
+        # review, 2026-10-20)
+        with open(part, "rb") as f:
+            os.fsync(f.fileno())
         if sha256(part) != blob.name:
             part.unlink()
             raise SystemExit(f"the copy of {name} does not match its sha256: the cache's file may be damaged"
                              " (fetch the checkpoint again), or the disk of the copy is failing")
         part.rename(dest)
+        fd = os.open(folder, os.O_RDONLY)
+        try:
+            os.fsync(fd)
+        finally:
+            os.close(fd)
     for stale in sorted(ours - keep):
         for p in (folder / stale, folder / (stale + ".part")):
             if p.is_file():

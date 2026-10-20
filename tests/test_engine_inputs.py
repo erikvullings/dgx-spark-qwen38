@@ -136,6 +136,19 @@ class WhatTheEngineReads(unittest.TestCase):
         check.write_text("#!/usr/bin/env bash\necho addressing mode ATS, said otherwise\n")
         self.assertEqual(box.run("fingerprint"), fp)
 
+    def test_the_check_the_flash_local_unit_asks_before_its_engine_is_no_input(self):
+        """The Flash FP4-Local unit asks flash-local-files.sh before its engine, the head of its ExecStart, and the
+        engine never reads it: a new wording of it must not ask a serving lane to restart. Written in
+        the unit itself, any change to it did (found in the series' second review, 2026-10-20)."""
+        box = Box()
+        check = box.cfg / "flash-local-files.sh"
+        check.write_text("#!/bin/bash\nexit 0\n")
+        box.unit.write_text(box.unit.read_text().replace(
+            "ExecStart=/bin/bash -c '", f"ExecStart=/bin/bash -c 'bash {check} /x/model.safetensors.index.json || exit $$?; "))
+        fp = box.run("fingerprint")
+        check.write_text("#!/bin/bash\necho said otherwise\nexit 0\n")
+        self.assertEqual(box.run("fingerprint"), fp)
+
     def test_the_flash_unit_brings_in_its_launcher_and_what_it_names(self):
         box = Box(flash=True)
         fp = box.run("fingerprint")

@@ -289,7 +289,33 @@ class ItStartsOnlyWithItsTableCopiesThere(Base):
         self.ck.run = lambda argv, **kw: "sha256:abc\n"
         try:
             self.assertFalse(self.ck.lane_startable("flash-local"), "its table's copy is missing")
+            # an empty copy is no copy, as the unit's own check says (flash-local-files.sh): the page
+            # offered a Start the unit then refused (found in the series' second review, 2026-10-20)
+            (copies / sha).write_text("")
+            self.ck.UNIT_TARGET_CACHE.clear()
+            self.assertFalse(self.ck.lane_startable("flash-local"), "its table's copy is empty")
+            # the copy's original, in the cache: a copy has its size, as the unit's check and
+            # ple-table.py read it, and one cut short is no copy (found in review, 2026-10-20)
+            orig = self.box / "hf" / "hub" / "models--nvidia--Qwen3.8-Flash-Next-FP4-Local" / "blobs" / sha
+            orig.parent.mkdir(parents=True, exist_ok=True)
+            orig.write_text("rows")
             (copies / sha).write_text("rows")
+            self.ck.UNIT_TARGET_CACHE.clear()
+            self.assertTrue(self.ck.lane_startable("flash-local"))
+            (copies / sha).write_text("row")
+            self.ck.UNIT_TARGET_CACHE.clear()
+            self.assertFalse(self.ck.lane_startable("flash-local"), "its table's copy is cut short")
+            (copies / sha).write_text("rows")
+            self.ck.UNIT_TARGET_CACHE.clear()
+            self.assertTrue(self.ck.lane_startable("flash-local"))
+            # the unit's check of its files gone, it refuses every start: its Load must run the
+            # switch, whose stage puts the check back (found in review, 2026-10-20)
+            check = self.box / "cfg-check" / "flash-local-files.sh"
+            unit.write_text(unit.read_text().replace("ExecStart=/bin/bash -c '", f"ExecStart=/bin/bash -c 'check={check}; ", 1))
+            self.ck.UNIT_TARGET_CACHE.clear()
+            self.assertFalse(self.ck.lane_startable("flash-local"), "its check of its files is gone")
+            check.parent.mkdir()
+            check.write_text("exit 0\n")
             self.ck.UNIT_TARGET_CACHE.clear()
             self.assertTrue(self.ck.lane_startable("flash-local"))
         finally:

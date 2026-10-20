@@ -36,9 +36,10 @@ def _read(path):
 
 
 # Scripts a unit runs that the engine never reads: the guards run before it starts and are
-# no input to it (engine-preflight.sh, and flash-ats-check.sh, which the flash launcher asks
-# before it runs the image), so a new guard never restarts a healthy engine.
-NOT_INPUTS = {"engine-preflight.sh", "flash-ats-check.sh"}
+# no input to it (engine-preflight.sh, flash-ats-check.sh, which the flash launcher asks before
+# it runs the image, and flash-local-files.sh, which the Flash FP4-Local unit asks before it), so a
+# new guard never restarts a healthy engine.
+NOT_INPUTS = {"engine-preflight.sh", "flash-ats-check.sh", "flash-local-files.sh"}
 # The [Unit] lines that name the other lanes order and exclude them, and systemd applies them at
 # its daemon-reload: the engine reads none of them. A lane added to the box changes them in every
 # other unit, and the update that brought it restarted the text lane that served, 5 to 15 min, for

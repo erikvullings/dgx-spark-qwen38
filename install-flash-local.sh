@@ -125,7 +125,8 @@ if [ "$ACTION" = uninstall ]; then
   # would have untagged every lane's pin, none of which a unit names by that tag.
   vlane_uninstall_runtime qwen38-flash-local "$FLASH_LOCAL_IMAGE" "$FLASH_LOCAL_REPO"
   pin_untag flash-local
-  rm -f "$CONFIG_DIR/chat-template-flash-local.jinja" "$CONFIG_DIR/seccomp-io-uring.json" "$CONFIG_DIR/flash-local-ple-dir"
+  rm -f "$CONFIG_DIR/chat-template-flash-local.jinja" "$CONFIG_DIR/seccomp-io-uring.json" "$CONFIG_DIR/flash-local-ple-dir" \
+        "$CONFIG_DIR/flash-local-files.sh"
   while IFS= read -r d; do
     [ -f "$d/.qwen38-ple-copies" ] || continue
     # the copies by name (blobs named by their sha256), the list, then their folder if nothing else is in it
@@ -191,9 +192,13 @@ lane_table(){  # $1 copy: make the copies whole first; mounts: only name the cop
   esac
 }
 
-# The unit, rendered for this box: written to $1.
+# The unit, rendered for this box: written to $1. Its start checks what the engine reads before it runs: the
+# checkpoint's index at the pinned revision, and each copy of the table its mounts name.
 render_unit(){
-  sed -e "s|__USER__|$(id -un)|g" -e "s|__GROUP__|$(id -gn)|g" -e "s|__HOME__|$HOME|g" \
+  local index="$HF_CACHE/hub/models--${MODEL//\//--}/snapshots/$MODEL_REV/model.safetensors.index.json" sources
+  sources="$( { grep -oE -- '-v [^ :]+:' <<< "$TABLE_MOUNTS" || true; } | sed -e 's/^-v //' -e 's/:$//' | tr '\n' ' ')"
+  sed -e "s|__CHECKPOINT_INDEX__|$index|g" -e "s|__TABLE_SOURCES__|${sources% }|g" \
+      -e "s|__USER__|$(id -un)|g" -e "s|__GROUP__|$(id -gn)|g" -e "s|__HOME__|$HOME|g" \
       -e "s|__IMAGE__|$LOCAL_IMAGE|g" -e "s|__MODEL__|$MODEL|g" -e "s|__REV__|$MODEL_REV|g" \
       -e "s|__GMU__|$GMU|g" -e "s|__SEQS__|$SEQS|g" -e "s|__HF_CACHE__|$HF_CACHE|g" \
       -e "s|__ENGINE_BIND__|$ENGINE_BIND|g" -e "s|__PORT__|$PORT|g" \
@@ -213,6 +218,9 @@ install_service(){
   # (the unit says why); the docker client reads it at every start, as the user
   cmp -s "$HERE/seccomp-io-uring.json" "$CONFIG_DIR/seccomp-io-uring.json" \
     || install -m 644 "$HERE/seccomp-io-uring.json" "$CONFIG_DIR/seccomp-io-uring.json"
+  # the check of what the engine reads, the head of the unit's ExecStart (flash-local-files.sh says why)
+  cmp -s "$HERE/flash-local-files.sh" "$CONFIG_DIR/flash-local-files.sh" \
+    || install -m 755 "$HERE/flash-local-files.sh" "$CONFIG_DIR/flash-local-files.sh"
   RENDER="$(mktemp)"; trap 'rm -f "$RENDER"' EXIT
   render_unit "$RENDER"
   # with what the engine reads at its start besides the unit: a lane started before they changed
@@ -247,13 +255,15 @@ if [ "$MODE" = stage ]; then
   mkdir -p "$CONFIG_DIR/flash-local-cache/vllm" "$CONFIG_DIR/flash-local-cache/flashinfer" \
            "$CONFIG_DIR/flash-local-cache/b12x" "$CONFIG_DIR/flash-local-cache/triton"
   [ -f "$CONFIG_DIR/seccomp-io-uring.json" ] || install -m 644 "$HERE/seccomp-io-uring.json" "$CONFIG_DIR/seccomp-io-uring.json"
+  [ -f "$CONFIG_DIR/flash-local-files.sh" ] || install -m 755 "$HERE/flash-local-files.sh" "$CONFIG_DIR/flash-local-files.sh"
   render_unit "$STAGE_OUT"
   grep -q '__[A-Z][A-Z0-9_]*__' "$STAGE_OUT" && die "the unit template still holds an unsubstituted placeholder"
   exit 0
 fi
 
 step "1/5 Preflight (FP4-Local: $MODEL @ ${MODEL_REV:0:12})"
-vlane_preflight engine-preflight.sh engine-secrets.sh vllm_engine_auth.py ckpt-fetch.py patch-template.py seccomp-io-uring.json
+vlane_preflight engine-preflight.sh engine-secrets.sh vllm_engine_auth.py ckpt-fetch.py patch-template.py seccomp-io-uring.json \
+  flash-local-files.sh
 vlane_room "$FLASH_LOCAL_IMAGE" "$MODEL"
 if [ "$MODE" = units ]; then
   echo "OK: $(uname -m), key present; the image and the checkpoint come with the lane's first Load"

@@ -15,6 +15,13 @@ Group=__GROUP__
 ExecStartPre=-/usr/bin/docker rm -f qwen38-flash-local
 # The memory the last engine held has to be back before this one starts (see engine-preflight.sh).
 ExecStartPre=/bin/bash __HOME__/.config/qwen38/engine-preflight.sh qwen38-flash-local.service
+# What the engine reads has to be there before it runs: flash-local-files.sh, the head of ExecStart
+# (after the memory guard above) and so the unit's main process, checks the checkpoint and the table's
+# copies (it says why), gives a cache on a disk mounted late at boot 90 s, and exits 78 without them,
+# which leaves the unit failed with the reason on the lane's card. A script of its own: a new wording
+# of it restarts no serving lane. The check itself gone (a configuration restored from before it),
+# bash exited 127, which systemd started again every 15 s (found in review, 2026-10-20): that too
+# exits 78, with its line.
 # NVIDIA's serving command for a DGX Spark, from the model card at the pinned revision (the
 # community b12x vLLM image, every environment variable and every flag as the card gives them:
 # the NVFP4 experts and MXFP8 layers read by b12x, the n-gram embedding table read from the
@@ -30,8 +37,10 @@ ExecStartPre=/bin/bash __HOME__/.config/qwen38/engine-preflight.sh qwen38-flash-
 # minutes in, the driver refused 44 to 149 allocations and MemAvailable fell to between 0.5 and 3.5 GiB. PyTorch
 # collects its cached blocks only under a ceiling below the whole GPU: 0.95 of it, which nothing
 # reaches, and the collection past 0.8 of that, about 92 GiB, above the 90 the engine holds in
-# service. A boot with it kept 19 GiB free at its lowest (1.05 without it), met no refusal, and
-# served with the same KV cache (measured on the reference box, 2026-10-20).
+# service. A boot with it kept 19 GiB free at its lowest (1.05 without it) and served with the same
+# KV cache. It ends the dip, not the driver's refusals: three of five boots after had 5 to 233 of
+# them, with 14.1 GiB free or more, cause unknown, and each came up and served (measured on the
+# reference box, 2026-10-20).
 # --security-opt seccomp=seccomp-io-uring.json: the n-gram table is read over io_uring, whose
 # three calls Docker's default seccomp profile refuses. The card turns seccomp and AppArmor off
 # for it; this lane keeps both, with Docker's own default profile (Docker 29.6.2's, unchanged)
@@ -59,7 +68,9 @@ ExecStartPre=/bin/bash __HOME__/.config/qwen38/engine-preflight.sh qwen38-flash-
 # the cockpit and the proxy read without one, and the middleware already asks it everywhere else.
 # No dev mode: its /server_info carries no pool, and the proxy reads the pool from /metrics only
 # where /server_info is absent (the vLLM lanes' way).
-ExecStart=/bin/bash -c 'exec /usr/bin/docker run --rm --name qwen38-flash-local --gpus all \
+ExecStart=/bin/bash -c 'check=__HOME__/.config/qwen38/flash-local-files.sh; [ -f "$$check" ] || { echo "preflight: qwen38-flash-local.service lacks its files: $$check is missing (the check of its files). Load the lane from the cockpit, or run ./switch-model.sh flash-local" >&2; exit 78; }; \
+  bash "$$check" __CHECKPOINT_INDEX__ __TABLE_SOURCES__ || exit $$?; \
+  exec /usr/bin/docker run --rm --name qwen38-flash-local --gpus all \
   --memory 110g --memory-swap 110g --shm-size 16g --network host --ipc=host \
   --ulimit memlock=-1 --ulimit stack=67108864 \
   --security-opt seccomp=__HOME__/.config/qwen38/seccomp-io-uring.json \
@@ -102,6 +113,10 @@ ExecStart=/bin/bash -c 'exec /usr/bin/docker run --rm --name qwen38-flash-local 
     --host __ENGINE_BIND__ --port __PORT__'
 ExecStop=-/usr/bin/docker stop -t 20 qwen38-flash-local
 Restart=always
+# 78: what the engine reads is missing (flash-local-files.sh, the head of ExecStart above and so its
+# main process, the only one this setting holds for), which no new start brings back; the unit stays
+# failed with the reason in its journal
+RestartPreventExitStatus=78
 # docker stops vLLM with SIGTERM (143) or SIGKILL (137) on a plain stop: a clean stop, not a failure
 SuccessExitStatus=137 143
 RestartSec=15
