@@ -29,7 +29,7 @@ NVMe) on 2026-10-19 and 20, with the scripts and their raw output kept beside th
 | KV cache | 467,328 tokens, BF16 (the `concurrency` tier) | 921,090 to 984,833 tokens, FP8 |
 | window, and the proxy's prompt ceiling | 262,144, 250,000 | 262,144, 250,000 |
 | requests at a time, drafter | 8, MTP (3 steps) | 8, MTP (4 tokens) |
-| a later boot, until it answers | 12 to 15 minutes (it writes its table first) | about 5 min 30 s (the first: 17 min, b12x tunes its kernels) |
+| a later boot, until it answers | 12 to 15 minutes (it writes its table first) | about 5 min 30 s (the first: 17 to 19 min, b12x tunes its kernels) |
 | free memory in service, MemAvailable | 9.2 to 12.1 GiB | 16.6 to 19 GiB |
 | alone, real text at the agents' sampling | 43.8 tok/s | 47.4 tok/s |
 | 8 at a time, real text at the agents' sampling | 123.7 tok/s | 106.6 tok/s |
@@ -45,7 +45,11 @@ out of 164, both inside the run-to-run spread of one engine, and NVIDIA's card g
 on GPQA Diamond and 88.7 % on ToolEvalBench against its BF16 teacher's 92.2 % and 89.4 %. "Real text
 at the agents' sampling" is GSM8K's first 128 questions 8 at a time and 16 alone, at temperature 1.0,
 top_p 0.95 and the checkpoint's top_k 20, as `real.sh` sends them, measured on both lanes on
-2026-10-20. The random prompts are `vllm bench serve`'s, from a client in a container of its own.
+2026-10-20. The random prompts are `vllm bench serve`'s, from a client in a container of its own. No
+request named a reasoning effort, so each lane's template gave its default, `lean` on both then. This
+lane's template now defaults to the card's `xhigh`: at it, on the same questions, answers ran longer
+(427 tokens on average against 237), the MTP head's tokens a step fell from 3.7 to 2.85, and eight
+requests at a time decoded 99.4 tok/s (one run, 2026-10-20).
 
 Alone on real text this lane decodes faster, 47.4 tok/s against 43.8. Eight requests at a time, the
 flash lane does, by 16 % at the agents' sampling and by 15 % on GSM8K at temperature 0. Random prompts,
@@ -53,8 +57,7 @@ which no agent sends, favour the flash lane alone and at eight: a measure of the
 predictable text says more than one on noise. This lane also prefills about 30 % faster, takes 102 GB
 less disk (121 against 223: a smaller checkpoint and image, and no table written beside it), writes
 nothing at boot, starts in less than half the time, holds twice the KV cache and leaves the box some 7 GiB
-more of free memory in service. Its boot, though, takes nearly all of the box's memory for a few seconds
-(Memory, below). Which to load is a choice of use, and the cockpit loads either.
+more of free memory in service. Which to load is a choice of use, and the cockpit loads either.
 
 ## The n-gram table is read at every token: keep it on the internal disk
 
@@ -95,7 +98,8 @@ Measured with the filter and without it, everything else equal: 23.34 against 23
 The unit runs the model card's command for a DGX Spark, flag for flag and variable for variable
 (`qwen38-flash-local.service.template` lists them), with this box's port, key, cache and sandbox,
 the template patched as the other Qwen lanes' are (`patch-template.py`, the default effort left at
-the card's `xhigh`), and its own caches, so that only the first boot compiles and tunes. Then each
+the card's `xhigh`), its own caches, so that only the first boot compiles and tunes, and one setting
+of PyTorch's allocator that the card does not give, for its boot (Memory, below). Then each
 setting that could do better was measured against it, one at a time, on the same boot recipe
 (`~/qa-tools/pr55/recipe/`: a drop-in per variant, the engine restarted, the same probes in the
 same order, the SoC under 70 °C before a start and under 75 °C before a run):
@@ -131,8 +135,9 @@ sampling, and nothing of the throughput: inside the run-to-run spread (the score
 questions). The card's recipe for a DGX Spark stays, unchanged. Not tried, and why: a schedule of
 draft lengths by batch size, which this build has, turns off the fused multi-step draft and the
 prefix cache's request-boundary checkpoints (below) in its source. More requests at a time than the
-card's 8, and a larger KV cache than its memory share gives, were not tried either: the boot already
-takes nearly all of the box's memory for a moment (below, Memory).
+card's 8, and a larger KV cache than its memory share gives, were not tried either: the card's share
+already gives the KV cache 921,090 to 984,833 tokens, three and a half requests of the whole window
+or more.
 
 ## An agent's turns: its prompt comes back from the cache
 
@@ -155,13 +160,28 @@ In service it leaves the box room: MemAvailable was 18 to 19 GiB once it served,
 lowest under eight requests, where the flash lane on SGLang served at 9.2 to 12.1 GiB under the same
 measures the same night.
 
-Its boot does not. About four minutes in, once its weights are loaded and before its n-gram table is
-set up, the engine takes some 35 GiB more for 2 to 6 seconds and gives them back. The box's
-MemAvailable fell then to between 0.5 and 3.5 GiB, at each of the nine boots of the night of
-2026-10-20 (the box's own telemetry, a reading every 2 s), under the 9 GiB this box keeps as its
-floor, below which the GB10's unified memory can stall the whole box rather than fail an allocation.
-The box went through all nine. What takes that memory is not found yet: until it is, this lane's boot
-is the one moment it needs the box to itself, with no other heavy user of memory beside it.
+Its boot did not, until one setting of PyTorch's allocator. vLLM loads the weights with that allocator
+splitting no block above 20 MiB, then b12x lays out the experts' NVFP4 scales, layer by layer: the
+blocks it frees on the way are not used again, and the allocator's cache grows until the GPU's driver
+refuses it memory, then drops it at once and asks again. On a discrete GPU that cache sits in the GPU's
+own memory. On a GB10 it is the machine's. About four minutes into each of the twelve boots this build
+had on the reference box (2026-10-19 and 20), the driver refused 44 to 149 allocations
+(`NV_ERR_NO_MEMORY` in the kernel log) and MemAvailable fell to between 0.5 and 3.5 GiB, around and
+under the cockpit's floor of 3 GiB, where this box has met crashed engines and livelocks before
+([gb10-memory.md](gb10-memory.md)). Read every 0.2 s at the last of them, it fell from 37 to 1.05 GiB in 8 seconds and
+was back at 42 GiB within one, as the driver refused, and `py-spy` found the engine inside b12x's
+`prepare_w4a16_modelopt_nvfp4_weights`, under vLLM's `process_weights_after_loading`.
+
+PyTorch collects the blocks it keeps, before it asks the driver for more, only under a ceiling below
+the whole GPU (`per_process_memory_fraction`), once it holds the share of that ceiling its threshold
+says (`garbage_collection_threshold`). The unit gives both: a ceiling of 0.95 of the GPU's 121.63 GiB,
+which nothing reaches, and the collection past 0.8 of that ceiling, 92.4 GiB, above the 90.4 GiB the engine holds
+in service (its weights, KV cache, activations and CUDA graphs). A test holds the two to the share the
+unit gives vLLM. Two boots with it, on the same box and checkpoint, the second from the unit as an
+update puts it in and restarted from the cockpit: MemAvailable at 19.1 and 18.7 GiB at their lowest,
+no refusal from the driver, ready in 322 s both times against 329 to 336 before, and the same KV cache
+(932,991 and 933,806 tokens). The engine serves as fast with it: `bench.sh`, at the lane's default
+effort, measured a greedy median of 55.4 tok/s with it and 55.1 without it (2026-10-20).
 
 ## What it does not have
 
@@ -179,7 +199,7 @@ is the one moment it needs the box to itself, with no other heavy user of memory
 
 A plain install puts its unit in, and its first Load from the cockpit pulls its image (18.2 GB on
 disk, 9.7 GB to download, by digest), fetches its checkpoint at its pinned revision, makes the
-table's copies when they are needed, and starts it: 17 minutes for the first boot, b12x tuning its
+table's copies when they are needed, and starts it: 17 to 19 minutes for the first boot, b12x tuning its
 kernels for this GPU, about 5 min 30 s after. From a terminal: `./prepare-lane.sh flash-local` the
 first time, then `./switch-model.sh flash-local`. `--with-flash-local` installs it whole at install
 time and proves it, `--no-flash-local` leaves it out for good, and `./install-flash-local.sh

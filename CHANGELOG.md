@@ -31,8 +31,9 @@ checkpoint's own files over io_uring, the KV cache in FP8, a window of 262,144 t
 drafting 4 tokens, 8 requests at a time, a memory share of 0.8. The box adds its port and key (the
 engine binds 127.0.0.1, and the vLLM lanes' middleware asks the key on every route but /health and
 /metrics), the chat template patched as the other Qwen lanes' are, with the card's default effort,
-`xhigh`, its own caches, so that only the first boot compiles and tunes (17 minutes, then about 5 and
-a half), and its sandbox (below). The model is pinned at its revision of 2026-10-15 (every revision
+`xhigh`, its own caches, so that only the first boot compiles and tunes (17 to 19 minutes, then
+about 5 and a half), its sandbox, and one setting of PyTorch's allocator for its boot (both below).
+The model is pinned at its revision of 2026-10-15 (every revision
 since its weights came changes its model card only, file by file), the image by its arm64 digest of
 2026-10-15. Each setting that could do better was measured against the card's, one at a time, on the
 reference box: the scheduling said async (vLLM already turns it on with MTP), drafting 3 tokens (10 %
@@ -64,7 +65,8 @@ against 23.39 tok/s alone, 76.69 against 77.65 at eight, the same prefill. Of th
 engine sees the two files it reads, its key and its template, read-only: the image is a community
 build, and the directory holds the cockpit's own secret and the other services' keys.
 
-**Measured against the flash lane** (the reference box, the same harnesses, 2026-10-19 and 20). Alone
+**Measured against the flash lane** (the reference box, the same harnesses, 2026-10-19 and 20, no
+request naming a reasoning effort, so both lanes at their templates' default then, `lean`). Alone
 on real text at the agents' sampling (GSM8K at temperature 1.0), this lane decodes faster, 47.4 tok/s
 against 43.8. Eight at a time the flash lane does: 123.7 against 106.6 tok/s at the agents' sampling,
 132.1 against 114.6 on GSM8K's 1,314 questions at temperature 0. Their quality ties: GSM8K 97.64 %
@@ -96,11 +98,18 @@ own: read by its prefix, it was taken for a flash target, and its Load prepared 
 flash lane. It is prepared once the image its unit names by digest is there, and startable only when
 the copies of its table that its unit mounts and its template are there.
 
-**Its boot needs the box to itself.** About four minutes into every boot, once its weights are loaded
-and before its table is set up, the engine takes some 35 GiB more for 2 to 6 seconds and gives them
-back: the box's MemAvailable fell then to between 0.5 and 3.5 GiB at each of nine boots, under the 9
-GiB this box keeps as its floor, and the box went through all nine. In service it leaves 16.6 to 19 GiB
-free. What takes that memory is not found yet, and the lane's page says so.
+**Its boot leaves the box its memory.** vLLM loads the weights with PyTorch's allocator splitting no
+block above 20 MiB, then b12x lays out the experts' NVFP4 scales: the blocks it frees on the way are
+not used again, and the allocator's cache grows until the GPU's driver refuses it memory, which on a
+GB10 is the machine's. About four minutes into each of the twelve boots this build had on the
+reference box, the driver refused 44 to 149 allocations and MemAvailable fell to between 0.5 and 3.5
+GiB, where this box has met crashed engines and livelocks before. PyTorch collects the blocks it
+keeps only under a ceiling below the whole GPU: the unit gives it one, 0.95 of the GPU's memory,
+which nothing reaches, and the collection past 0.8 of that, 92.4 GiB, above the 90.4 the engine holds
+in service. Two boots with it kept 18.7 and 19.1 GiB free at their lowest, met no refusal and kept
+the same KV cache, and the engine served as fast: `bench.sh` at a greedy median of 55.4 tok/s with
+it, 55.1 without. The model card's command does not set it: it is the one setting the lane adds, and
+its page says why.
 
 **Found on the way, fixed before it shipped.**
 
@@ -122,10 +131,32 @@ free. What takes that memory is not found yet, and the lane's page says so.
   lane's own files only now, as the other lanes' switches do.
 - Two of the CI's gates did not know the lane yet, and stopped it: the list of the targets a flag
   installs, and the cockpit's sudoers allowlist, checked against every privileged call of the switch.
+- `install-flash-local.sh` was not executable, and install.sh runs every installer by its path: the
+  lane did not install, "Permission denied" (found on the reference box, where the tests had run it
+  through bash). It is now, and a test runs each installer the way install.sh does.
+- The lane's card on the Now view named its version twice, "Flash FP4-Local (NVIDIA) FP4-Local": a
+  lane's name gets its version only when it does not say it already (found on the reference box).
+
+**Proved on the reference box** (2026-10-20). Installed by the update path while the flash lane served:
+its engine kept running, the proxy and the cockpit restarted. Loaded from the cockpit, the lane
+answered 18 minutes 48 after its first start, b12x tuning its kernels. Through the proxy, with the
+box's key, under its own name and the flash lane's: the OpenAI and Anthropic SDKs, fetch in Node and in
+Bun, LiteLLM, Claude Code, opencode, Hermes and pi (each agent's second request found its prompt in
+the cache, about half of all the tokens they sent), an image read in both dialects, and the engine's
+routes refused without the key but /health and /metrics. A conversation of 40,000 tokens recomputed 22
+to 25 tokens at each turn after the first, its first token in 0.33 to 0.36 s (45 to 98 tokens and 0.35
+to 0.41 s with reasoning on). Idle, its engine took 3 % of one core. The cockpit's views had no banner
+and no script error. The allocator's setting and the fixed card went in by the same update path, which
+said the lane runs older files until its next start: restarted from the cockpit, the lane met no
+refusal from the driver, and every proof above passed again, `bench.sh` at a greedy median of 55.4
+tok/s (55.1 before). Then the lane removed by its uninstall, which put the flash lane back at boot,
+and the box back on v1.36.4 by its installer: the flash lane served again, to the SDKs, fetch,
+LiteLLM and the four agents, with the units and services the box had before the lane.
 
 **Tests.** Each change has a test that fails on the old code. The lane's installer: its unit staged
 for a switch (no placeholder, the filter, its two files of the config directory, the template at
-`xhigh`, a command bash reads whole), read in place or with the table's copies mounted, refused with no
+`xhigh`, a command bash reads whole, its allocator's ceiling above the share vLLM is given and its
+collection under that share), read in place or with the table's copies mounted, refused with no
 checkpoint, its folder kept and judged, its room checked before a download, and nothing written but
 its own files, and its uninstall, which removes the copies it made and nothing else. `ple-table.py`: the
 table's files found from the checkpoint's index, the copies checked against their sha256 and made again
@@ -137,7 +168,8 @@ provider), switch-model.sh (its fetch in its own image, its stage, the lane it s
 and video installers' lists, what a vLLM lane's start reads, the pins and their check, the proxy (the
 ceiling, `none`, System One), pi and omp, the cockpit (its panel and its two boots from its own
 engine's captured answers, its refusals in its name and the Nemotron lanes' in theirs, its target, its
-preparation and its start, the page with eight lanes), the docs' sizes. Mutants killed.
+preparation and its start, the page with eight lanes, every card naming its version once), every
+installer run by its path, the docs' sizes. Mutants killed.
 
 ## v1.36.4 (2026-10-19): the flash lane says it cannot start on a GPU outside its ATS mode, and fetches nothing for it (issue #54)
 

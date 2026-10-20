@@ -527,20 +527,21 @@ NVIDIA's own build of the flash model for one local GPU. Its experts are in NVFP
 layers in MXFP8, refined by quantization-aware distillation, and its n-gram table, in NVFP4 too,
 stays inside the checkpoint's files, read where it lies at every token: nothing is written at boot.
 It runs on vLLM with NVIDIA's b12x kernels, in the community image and with the command its model
-card gives for a DGX Spark, with its MTP head drafting 4 tokens and 8 requests at a time. It serves
+card gives for a DGX Spark, with its MTP head drafting 4 tokens and 8 requests at a time, and one
+setting of PyTorch's allocator that keeps its boot from taking the box's memory. It serves
 on the text port behind the same proxy and key, as model `qwen3.8-flash-next-fp4`, OpenAI or
 Anthropic dialect alike, reasoning at `xhigh` unless a request asks for less, images inside the
 request. It needs 121 GB, installed on demand like the others: `--with-flash-local` or
 `--all-weights` does it at install, `--no-flash-local` leaves it out. Contributed by Dimitris
 Kontokostas ([#55](https://github.com/hasso5703/dgx-spark-qwen38/pull/55)).
 
-On the cockpit's Lanes view, pick **Flash FP4-Local (NVIDIA)** and press **Load** (17 minutes to
+On the cockpit's Lanes view, pick **Flash FP4-Local (NVIDIA)** and press **Load** (17 to 19 minutes to
 answer the first time, about 5 and a half after). From a terminal, `./prepare-lane.sh flash-local`
 the first time, then `./switch-model.sh flash-local`. Measured here, against the flash lane:
 
 | | flash (SGLang) | Flash FP4-Local |
 |---|---|---|
-| alone / 8 at a time, real text at the agents' sampling | 43.8 / 123.7 tok/s | 47.4 / 106.6 tok/s |
+| alone / 8 at a time, real text at the agents' sampling, both at `lean` | 43.8 / 123.7 tok/s | 47.4 / 106.6 tok/s |
 | GSM8K (1,314) / HumanEval (164) | 97.49 % / 96.95 % | 97.64 % / 98.17 % |
 | prefill, one 32K prompt | 1,617 tok/s | 2,141 tok/s |
 | KV cache / free memory in service | 467,328 tokens / 9.2 to 12.1 GiB | about 950,000 tokens / 16.6 to 19 GiB |
