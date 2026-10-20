@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Keepalive proxy in front of SGLang or vLLM (v6.42). No content logging, and the only
+"""Keepalive proxy in front of SGLang or vLLM (v6.43). No content logging, and the only
 rewriting is the tool-schema guard (role 4); one route, POST /v1/systemone, is answered
 here instead of relayed (role 5).
 
@@ -40,6 +40,11 @@ Six roles, nothing else:
    PROXY_HOLD_MAX_S, instead of failing at once. A streamed one hears from the proxy at
    once (200, then the keepalives of role 1); see "Holding a request" below.
 
+v6.43: the Flash FP4-Local lane (NVIDIA's FP4 build of the flash model, on vLLM) is a Qwen lane:
+the flash lane's one-prompt ceiling holds while it serves, as its window is the flash lane's, and a
+reasoning effort of "none" becomes enable_thinking false there as on SGLang, since its chat template
+is the flash lane's and refuses "none" (vLLM hands the template a "none" sent inside
+chat_template_kwargs as it came). System One says which lanes it serves on, on any vLLM lane.
 v6.42: what a cloud review of the repository found open, closed (2026-10-18). The identity wall
 reads the Bearer scheme in any case, as the engine and the door do; a caller's x-override-*
 headers stay at the door, the rid aside, as the SGLang lanes start their engine with the header
@@ -519,7 +524,11 @@ PROMPT_CEILING_TOKENS = int(os.environ.get("PROMPT_CEILING_TOKENS", "0") or 0)
 # 250,000 until the next boot, and the restart cut every stream in flight (found in review,
 # 2026-09-24). PROMPT_CEILING_TOKENS stays, as a ceiling on any lane.
 FLASH_PROMPT_CEILING_TOKENS = int(os.environ.get("FLASH_PROMPT_CEILING_TOKENS", "0") or 0)
-FLASH_SERVED_NAMES = frozenset({"qwen3.8-flash-next"})
+FLASH_SERVED_NAMES = frozenset({"qwen3.8-flash-next", "qwen3.8-flash-next-fp4"})
+# The Qwen lanes vLLM serves (v6.43): the Flash FP4-Local lane, the flash model in NVIDIA's FP4
+# build, with the flash lane's chat template. Named one by one: a lane vLLM serves under another
+# name (Kolibri, the Nemotron lanes) has a template of its own, and its bodies go as they came.
+QWEN_VLLM_NAMES = frozenset({"qwen3.8-flash-next-fp4"})
 # Hard ceiling on one request body, in bytes (0 = none). The oversize guard
 # below measures prompt bodies once they are read; without a cap a lying or broken
 # Content-Length in the gigabytes is allocated before anything is counted,
@@ -935,10 +944,14 @@ def qwen_effort_none(body, path):
     a 400), and the clients set up for the Kolibri lane send it for "off" (pi, opencode's none
     variant, omp's minimal), so a client left on kolibri-1 broke on the next Qwen lane (found
     in review, 2026-10-14). Kolibri's template takes "none": on vLLM, and on any doubt, the
-    body goes as it came."""
+    body goes as it came, but for the Qwen lanes vLLM serves (QWEN_VLLM_NAMES, v6.43), whose
+    template is the flash lane's."""
     if not body or not path.split("?", 1)[0] == "/v1/chat/completions":
         return body, False
-    if b'"none"' not in body or b'"reasoning_effort"' not in body or _SERVED["engine"] != "sglang":
+    if b'"none"' not in body or b'"reasoning_effort"' not in body:
+        return body, False
+    if _SERVED["engine"] != "sglang" and not (_SERVED["engine"] == "vllm"
+                                             and set(_SERVED["names"] or ()) & QWEN_VLLM_NAMES):
         return body, False
     try:
         j = json.loads(body)
@@ -2884,9 +2897,11 @@ def systemone_model(requested):
                             "answer here could say which model produced it; retry in a few seconds")
     if _SERVED["engine"] == "vllm":
         # v6.37: its option labels are measured on the Qwen tokenizer, and the Kolibri lane's
-        # engine caps top_logprobs far below the fan-out's (it failed as a 502 there).
-        raise SystemOneUsage(f"System One needs a Qwen lane (the 27B or the flash): this box serves "
-                             f"{names[0]} now. Load one of those lanes from the cockpit.", plain=False)
+        # engine caps top_logprobs far below the fan-out's (it failed as a 502 there). vLLM caps
+        # them on any lane (--max-logprobs), the Qwen one included (v6.43): the message names
+        # the lanes it does serve on, not "a Qwen lane", which the Flash FP4-Local lane is.
+        raise SystemOneUsage(f"System One serves on the 27B and the flash lanes (SGLang): this box serves "
+                             f"{names[0]} on vLLM now. Load one of those lanes from the cockpit.", plain=False)
     if requested in SYSTEMONE_ALIASES or requested in names:
         return names[0] if requested in SYSTEMONE_ALIASES else requested
     raise SystemOneUsage(f"Unknown model: {requested}", plain=False)
@@ -4964,7 +4979,7 @@ if __name__ == "__main__":
     holds = (f"holds requests up to {HOLD_MAX_S:.0f}s while {' or '.join(HOLD_UNITS)} comes back"
              if HOLD_UNITS and HOLD_MAX_S > 0 else "holds nothing")
     # one f-string: the cockpit's tests render this line from the source
-    log(f"v6.42 on {BIND}:{port} -> {UPSTREAM} (keepalive {KEEPALIVE_S:.0f}s, max silence {MAX_SILENCE_S:.0f}s, {holds})")
+    log(f"v6.43 on {BIND}:{port} -> {UPSTREAM} (keepalive {KEEPALIVE_S:.0f}s, max silence {MAX_SILENCE_S:.0f}s, {holds})")
     if FLASH_PROMPT_CEILING_TOKENS > 0:
         log(f"one-prompt ceiling {FLASH_PROMPT_CEILING_TOKENS} tokens while the flash lane serves"
             + (f", {PROMPT_CEILING_TOKENS} on any lane" if PROMPT_CEILING_TOKENS > 0 else ""))

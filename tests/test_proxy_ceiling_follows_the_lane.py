@@ -51,6 +51,7 @@ def fit_module():
 CASES = [  # (PROMPT_CEILING_TOKENS, FLASH_PROMPT_CEILING_TOKENS, served, expected)
     (0, 250000, ("qwen3.8-27b",), 0),
     (0, 250000, ("qwen3.8-flash-next",), 250000),
+    (0, 250000, ("qwen3.8-flash-next-fp4",), 250000),   # the Flash FP4-Local lane: the flash window
     (0, 250000, (), 250000),                      # unknown: the tighter, retryable mistake
     (100000, 250000, ("qwen3.8-flash-next",), 100000),
     (100000, 250000, ("qwen3.8-27b",), 100000),

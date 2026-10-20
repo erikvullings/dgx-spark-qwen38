@@ -163,8 +163,9 @@ def fit(pool: int, ceiling: int = 0, window: int = 0,
     return (context // 1000) * 1000, (output // 1000) * 1000
 
 
-# The flash lane's served name: its own one-prompt ceiling applies while it serves (v6.25).
-FLASH_SERVED_NAMES = ("qwen3.8-flash-next",)
+# The flash lane's served name: its own one-prompt ceiling applies while it serves (v6.25), and
+# while the Flash FP4-Local lane serves, whose window is the flash lane's (v6.43).
+FLASH_SERVED_NAMES = ("qwen3.8-flash-next", "qwen3.8-flash-next-fp4")
 
 
 def ceiling_from_env(text: str, served=None) -> int:

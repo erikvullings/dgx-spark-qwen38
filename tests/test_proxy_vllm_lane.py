@@ -229,13 +229,18 @@ class PureParts(unittest.TestCase):
             m.note_engine(("kolibri-1",), "vllm")              # a lane switch
         self.assertEqual((m._VOCAB["size"], m._rid_override_honoured), (0, None))
 
-    def test_system_one_says_it_needs_a_qwen_lane(self):
-        self.mod._SERVED.update(names=("kolibri-1",), engine="vllm", ts=time.time())
-        self.mod.served_models = lambda: ("kolibri-1",)
-        with self.assertRaises(self.mod.SystemOneUsage) as e:
-            self.mod.systemone_model("jev-latest")
-        self.assertIn("System One needs a Qwen lane", str(e.exception))
-        self.assertIn("kolibri-1", str(e.exception))
+    def test_system_one_names_the_lanes_it_serves_on(self):
+        # on every vLLM lane, the Qwen one included: "needs a Qwen lane" read as a contradiction
+        # while the Flash FP4-Local lane, a Qwen lane, served (found in review, 2026-10-19)
+        for served in ("kolibri-1", "qwen3.8-flash-next-fp4"):
+            with self.subTest(served=served):
+                self.mod._SERVED.update(names=(served,), engine="vllm", ts=time.time())
+                self.mod.served_models = lambda s=served: (s,)
+                with self.assertRaises(self.mod.SystemOneUsage) as e:
+                    self.mod.systemone_model("jev-latest")
+                self.assertIn("serves on the 27B and the flash lanes (SGLang)", str(e.exception))
+                self.assertIn(served, str(e.exception))
+                self.assertNotIn("needs a Qwen lane", str(e.exception))
 
 
 class ThroughTheProxy(unittest.TestCase):
@@ -436,7 +441,8 @@ class ThroughTheProxy(unittest.TestCase):
         # the clients set up for Kolibri send "none" for "off", and the Qwen templates refuse
         # it with a 400: a client left on kolibri-1 broke on the next Qwen lane (found in
         # review, 2026-10-14)
-        for owner, served in (("sglang", "qwen3.8-flash-next"), ("vllm", "kolibri-1")):
+        # and on the Flash FP4-Local lane, a Qwen lane on vLLM whose template is the flash lane's
+        for owner, served in (("sglang", "qwen3.8-flash-next"), ("vllm", "kolibri-1"), ("vllm", "qwen3.8-flash-next-fp4")):
             for how in ({"reasoning_effort": "none"}, {"chat_template_kwargs": {"reasoning_effort": "none"}}):
                 with self.subTest(owner=owner, how=how):
                     FakeVllm.served, FakeVllm.owner = served, owner
@@ -446,7 +452,7 @@ class ThroughTheProxy(unittest.TestCase):
                                           "messages": [{"role": "user", "content": "hi"}]}, **how))
                     self.assertTrue(got.startswith(b"HTTP/1.1 200"), got[:200])
                     sent = FakeVllm.bodies[-1]
-                    if owner == "sglang":
+                    if served.startswith("qwen3.8-"):
                         self.assertNotIn("reasoning_effort", sent)
                         self.assertEqual(sent["chat_template_kwargs"], {"enable_thinking": False})
                     else:
