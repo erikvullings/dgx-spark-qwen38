@@ -92,8 +92,9 @@ engine with the header overrides on, for the request id the proxy names, and the
 others set fields of its scheduler no client of this port has to set (proxy v6.42).
 
 Served model names: `qwen3.8-27b` (27B lane, both context modes),
-`qwen3.8-flash-next` (flash lane), `kolibri-1` (Kolibri lane), `nemotron-3.5-bolt`
-(Nemotron lane) and `nemotron-3.5-super-vl` (Nemotron Super lane). Send the name, not the checkpoint path. A client set up for one lane
+`qwen3.8-flash-next` (flash lane), `qwen3.8-flash-next-fp4` (Flash FP4-Local lane),
+`kolibri-1` (Kolibri lane), `nemotron-3.5-bolt` (Nemotron lane) and `nemotron-3.5-super-vl`
+(Nemotron Super lane). Send the name, not the checkpoint path. A client set up for one lane
 keeps working on another: SGLang answers any name, and on the vLLM lanes, whose vLLM
 refuses a model it does not serve, the proxy gives such a request the served name
 (proxy v6.37).
@@ -103,7 +104,15 @@ Qwen lanes in three things a client sees: its reasoning comes in the `reasoning`
 of the message (vLLM's name; the Qwen lanes say `reasoning_content`), its levels are
 its own (`low`, `medium`, `high`, which its template defaults to, and `none`, in
 `chat_template_kwargs.reasoning_effort` or the top-level `reasoning_effort`), and it
-has no vision. `/v1/systemone` needs a Qwen lane and says so there.
+has no vision. `/v1/systemone` needs one of the SGLang Qwen lanes and says so there.
+
+The Flash FP4-Local lane (vLLM, [docs/flash-local-lane.md](flash-local-lane.md)) serves the flash
+model with the flash lane's chat template, so a client sees the Qwen levels below, `lean`, `low`,
+`medium` and `xhigh`, with one difference: a request that names no level gets `xhigh`, its model
+card's default. `none` turns the reasoning off there too (the proxy says it in the template's words,
+v6.43). Its reasoning comes in the `reasoning` field (vLLM's name), it reads images sent inside the
+request (a data URL) and fetches no URL, and its window is 262,144 tokens. `/v1/systemone` is not
+served on it: the endpoint says which lanes serve it.
 
 The Nemotron lanes (vLLM, [docs/nemotron-lane.md](nemotron-lane.md) and
 [docs/nemotron-super-lane.md](nemotron-super-lane.md)) also say their

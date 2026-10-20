@@ -1,0 +1,187 @@
+# The Flash FP4-Local lane: NVIDIA's FP4 build of Qwen3.8-Flash-Next, on vLLM
+
+`nvidia/Qwen3.8-Flash-Next-FP4-Local` is NVIDIA's own build of Qwen3.8-Flash-Next for one local
+GPU, released on Hugging Face on 2026-10-05: its experts in NVFP4 and its other layers in MXFP8,
+refined by quantization-aware distillation (QAD), and its n-gram embedding (PLE) table in NVFP4 too,
+stored inside seven of the checkpoint's own files. Its NVFP4 scales are in a new lossless format
+that upstream vLLM does not read yet, so its model card serves it with community vLLM images that
+carry NVIDIA's b12x kernels, `eugr/spark-vllm-b12x` on a DGX Spark. This lane serves it on the text
+lanes' port, behind the same proxy and key, as model `qwen3.8-flash-next-fp4`, with its MTP head
+drafting 4 tokens and the reasoning effort its chat template defaults to, `xhigh`. It is a lane of
+its own beside the flash lane (`docs/flash-lane.md`), which serves the same model on SGLang from
+RadixArk's export.
+
+The lane comes from Dimitris Kontokostas's pull request #55, which brought the model, its image
+and its card's recipe to this repository. Its integration as a lane, the n-gram table's placement,
+the sandbox and the measurements below were done on the reference box.
+
+Every number on this page was measured on the reference box (an ASUS Ascent GX10: GB10, 124 GiB of
+unified memory, its Hugging Face cache on an external USB SSD, its home directory on the internal
+NVMe) on 2026-10-19 and 20, with the scripts and their raw output kept beside them.
+
+## The two flash lanes side by side
+
+| | flash (SGLang, RadixArk's export) | Flash FP4-Local (vLLM, NVIDIA's build) |
+|---|---|---|
+| checkpoint on disk | 135.3 GB | 102.3 GB |
+| n-gram table | FP8, 47.7 GiB, written beside the home directory at every boot | NVFP4, 26.8 GiB, read in place from the checkpoint's files |
+| weights in memory, once loaded | 81.31 GiB (SGLang's count) | 70.32 GiB (vLLM's count) |
+| KV cache | 467,328 tokens, BF16 (the `concurrency` tier) | 921,090 to 984,833 tokens, FP8 |
+| window, and the proxy's prompt ceiling | 262,144, 250,000 | 262,144, 250,000 |
+| requests at a time, drafter | 8, MTP (3 steps) | 8, MTP (4 tokens) |
+| a later boot, until it answers | 12 to 15 minutes (it writes its table first) | about 5 min 30 s (the first: 17 min, b12x tunes its kernels) |
+| free memory in service, MemAvailable | 9.2 to 12.1 GiB | 16.6 to 19 GiB |
+| alone, real text at the agents' sampling | 43.8 tok/s | 47.4 tok/s |
+| 8 at a time, real text at the agents' sampling | 123.7 tok/s | 106.6 tok/s |
+| 8 at a time, GSM8K's 1,314 questions at temperature 0 | 97.49 %, 132.1 tok/s, 2,297 s | 97.64 %, 114.6 tok/s, 2,765 s |
+| HumanEval, 164 problems, pass@1 | 96.95 % (159) | 98.17 % (161) |
+| random prompts at temperature 0, alone / 8 at a time | 35.3 / 103.4 tok/s | 23.3 / 77.0 tok/s |
+| prefill, one prompt of 32K / 100K tokens | 1,617 / 1,638 tok/s | 2,141 / 2,079 tok/s |
+
+Both quality runs used the same harness (`sglang.test.run_eval` from the SGLang image, temperature
+0, and `evals/humaneval.py`, 32 at a time), the flash lane's on 2026-10-19 morning, this lane's that
+night. On quality they tie: GSM8K differs by 2 questions out of 1,314 and HumanEval by 2 problems
+out of 164, both inside the run-to-run spread of one engine, and NVIDIA's card gives this build 91.5 %
+on GPQA Diamond and 88.7 % on ToolEvalBench against its BF16 teacher's 92.2 % and 89.4 %. "Real text
+at the agents' sampling" is GSM8K's first 128 questions 8 at a time and 16 alone, at temperature 1.0,
+top_p 0.95 and the checkpoint's top_k 20, as `real.sh` sends them, measured on both lanes on
+2026-10-20. The random prompts are `vllm bench serve`'s, from a client in a container of its own.
+
+Alone on real text this lane decodes faster, 47.4 tok/s against 43.8. Eight requests at a time, the
+flash lane does, by 16 % at the agents' sampling and by 15 % on GSM8K at temperature 0. Random prompts,
+which no agent sends, favour the flash lane alone and at eight: a measure of the engines on
+predictable text says more than one on noise. This lane also prefills about 30 % faster, takes 102 GB
+less disk (121 against 223: a smaller checkpoint and image, and no table written beside it), writes
+nothing at boot, starts in less than half the time, holds twice the KV cache and leaves the box some 7 GiB
+more of free memory in service. Its boot, though, takes nearly all of the box's memory for a few seconds
+(Memory, below). Which to load is a choice of use, and the cockpit loads either.
+
+## The n-gram table is read at every token: keep it on the internal disk
+
+The engine reads the table's rows at random over io_uring at every token, from the checkpoint's own
+files (`VLLM_PLE_TABLE_MEMORY=disk`, `B12X_DISK_BACKEND=io_uring`, the card's settings). Where those
+files are decides the speed:
+
+| where the seven files are | alone | eight at a time, in all | first token, alone |
+|---|---|---|---|
+| on the USB SSD (the cache's disk) | 15.7 tok/s | 15.6 tok/s | 1.49 s |
+| on the internal NVMe | 23.4 tok/s | 77.7 tok/s | 0.75 s |
+
+Random prompts of 1,024 tokens, 512 out, `vllm bench serve` at temperature 0 (6 prompts alone, 32
+at eight, and on the SSD the eight read off the engine's own token counter over 101 s, the run cut
+there). On the SSD, eight requests decode no faster than one: every token waits on the disk.
+So the lane reads the table where the cache is only when the cache is on the disk of the home
+directory, a new box's default. When the cache is on another disk, the Load copies the seven files
+(32 GB) into `~/flash-local-ple`, checks each copy against its sha256, and the unit mounts them over
+the cache's own, file by file, and the weights the engine reads once at boot stay where they are.
+`FLASH_LOCAL_PLE_DIR=<folder>` puts the copies elsewhere, `FLASH_LOCAL_PLE_DIR=none` reads the table
+where the cache is, and the choice holds for every run after (`ple-table.py` says how,
+`docs/external-disk.md` what else an external disk changes).
+
+## The sandbox: Docker's own filter, plus io_uring
+
+io_uring's three system calls are refused by Docker's default seccomp profile, so the model card
+starts the engine with seccomp and AppArmor turned off. This lane keeps both: its unit passes
+`seccomp-io-uring.json`, Docker 29.6.2's own default profile (moby's
+`profiles/seccomp/default.json`, unchanged) with one rule more that allows `io_uring_setup`,
+`io_uring_enter` and `io_uring_register`, and nothing else (a test holds the file to that). The
+engine runs as root in its container, on the host's network: with the filter off it could, for
+one, make a user namespace, which this profile still refuses (checked in the container both ways).
+Measured with the filter and without it, everything else equal: 23.34 against 23.39 tok/s alone,
+76.69 against 77.65 at eight, 2,141 against 2,136 tok/s of prefill, all inside the noise.
+
+## The serving command, and how it was chosen
+
+The unit runs the model card's command for a DGX Spark, flag for flag and variable for variable
+(`qwen38-flash-local.service.template` lists them), with this box's port, key, cache and sandbox,
+the template patched as the other Qwen lanes' are (`patch-template.py`, the default effort left at
+the card's `xhigh`), and its own caches, so that only the first boot compiles and tunes. Then each
+setting that could do better was measured against it, one at a time, on the same boot recipe
+(`~/qa-tools/pr55/recipe/`: a drop-in per variant, the engine restarted, the same probes in the
+same order, the SoC under 70 °C before a start and under 75 °C before a run):
+
+The first series, at temperature 0 (`vllm bench serve` with random prompts of 1,024 tokens and 512
+out, 6 alone and 32 at eight, then the prefill of one 32K prompt, then the first 200 questions of
+GSM8K, 8 at a time):
+
+| against the card's recipe | alone | eight at a time | prefill | GSM8K 200 | KV cache | kept |
+|---|---|---|---|---|---|---|
+| the card's recipe | 23.27 tok/s | 76.99 tok/s | 2,120 tok/s | 99.0 %, 111.9 tok/s | 954,184 | yes |
+| `--async-scheduling` said | 23.10 | 75.44 | 2,092 | 99.0 %, 112.7 | 951,250 | already on: vLLM turns it on with MTP |
+| MTP drafting 3 tokens | 22.90 | 84.76 | 2,086 | 99.0 %, 109.9 | 949,279 | no |
+| 8,192 tokens a step | 22.98 | 74.68 | 2,158 | 98.5 %, 112.5 | 786,105 | no |
+
+The second series, at the sampling the agents get (temperature 1.0, top_p 0.95, and the top_k 20 of
+the checkpoint's `generation_config.json`, which vLLM applies to a request that sets none): GSM8K's
+first 128 questions 8 at a time, then 16 alone, with the tokens each step of the MTP head's drafts
+produced, read off vLLM's counters:
+
+| draft and verification | 8 at a time | its tokens a step | alone | its tokens a step | kept |
+|---|---|---|---|---|---|
+| the card's: greedy drafts, standard verification | 99.2 %, 106.6 tok/s | 3.66 | 47.4 tok/s | 3.71 | yes |
+| `draft_sample_method: probabilistic` | 96.1 %, 105.1 tok/s | 3.72 | 48.5 tok/s | 3.83 | no |
+| the same, with `rejection_sample_method: block` | 98.4 %, 105.6 tok/s | 3.78 | 48.5 tok/s | 3.79 | no |
+
+Random prompts flatter shorter drafts: what the model writes after random tokens is hard to
+predict, so a draft of 3 tokens wastes less than one of 4, and led by 10 % at eight requests there.
+On real text the card's 4 tokens led. Eight thousand tokens a step bought 2 % of prefill and cost 17 %
+of the KV cache and 3 minutes 37 more at boot. Drafting by sampling, which NVIDIA's recipe for an RTX
+PRO 6000 sets, and verifying drafts as a block raised the tokens a step by 1.5 to 3 % at the agents'
+sampling, and nothing of the throughput: inside the run-to-run spread (the scores too, on 128
+questions). The card's recipe for a DGX Spark stays, unchanged. Not tried, and why: a schedule of
+draft lengths by batch size, which this build has, turns off the fused multi-step draft and the
+prefix cache's request-boundary checkpoints (below) in its source. More requests at a time than the
+card's 8, and a larger KV cache than its memory share gives, were not tried either: the boot already
+takes nearly all of the box's memory for a moment (below, Memory).
+
+## An agent's turns: its prompt comes back from the cache
+
+An agent sends its whole conversation again at every turn, and on a hybrid model like this one a
+prefix cache can only serve what it kept a recurrent state for. This build keeps those states at a
+request's boundaries for this model (its log says so at boot: "Request-boundary recurrent checkpoint
+caching is enabled"): the leading instructions, the whole prompt and the end of the answer. Measured
+through the proxy with a conversation as an agent holds it (`prefix_probe.py`: a 40,000-token system
+prompt, then six turns, each the whole history and a new question): the first turn computed its
+40,013 tokens in 17.5 s, and every turn after found 100 % of its prompt in the cache but its last 22
+to 25 tokens, its first token after 0.31 to 0.34 s.
+
+## Memory
+
+At the card's share of 0.8, vLLM counted 114.4 GiB free of 121.63 at its start (the box's other
+services, the cockpit and the speech lane among them, held the rest), loaded 70.32 GiB of weights,
+profiled 2.01 GiB of activations and 0.34 GiB of CUDA graphs, and gave the KV cache 17.85 GiB: between
+921,090 and 984,833 tokens over the boots measured, with what the rest of the box held at each start.
+In service it leaves the box room: MemAvailable was 18 to 19 GiB once it served, and 16.6 GiB at its
+lowest under eight requests, where the flash lane on SGLang served at 9.2 to 12.1 GiB under the same
+measures the same night.
+
+Its boot does not. About four minutes in, once its weights are loaded and before its n-gram table is
+set up, the engine takes some 35 GiB more for 2 to 6 seconds and gives them back. The box's
+MemAvailable fell then to between 0.5 and 3.5 GiB, at each of the nine boots of the night of
+2026-10-20 (the box's own telemetry, a reading every 2 s), under the 9 GiB this box keeps as its
+floor, below which the GB10's unified memory can stall the whole box rather than fail an allocation.
+The box went through all nine. What takes that memory is not found yet: until it is, this lane's boot
+is the one moment it needs the box to itself, with no other heavy user of memory beside it.
+
+## What it does not have
+
+- The SGLang lanes' routes: no `/flush_cache`, no route that aborts every generation, no
+  `/server_info` pool. The cockpit says so in its name (the Flush and Abort buttons, the opencode
+  fit), and stopping the lane stops its generations.
+- System One (`/v1/systemone`) answers on the SGLang lanes only: this lane serves on vLLM, and the
+  endpoint says to load one of them.
+- A 1M window: the model's own window is 262,144 tokens, which this lane serves whole, as the
+  card's command for a DGX Spark does. The card says it extends to 1,000,000 tokens and gives no
+  recipe for it: a window stretched by YaRN is a study of its own (the 27B lane's,
+  `docs/context-1m.md`), not done for this lane yet.
+
+## Installing, loading, removing
+
+A plain install puts its unit in, and its first Load from the cockpit pulls its image (18.2 GB on
+disk, 9.7 GB to download, by digest), fetches its checkpoint at its pinned revision, makes the
+table's copies when they are needed, and starts it: 17 minutes for the first boot, b12x tuning its
+kernels for this GPU, about 5 min 30 s after. From a terminal: `./prepare-lane.sh flash-local` the
+first time, then `./switch-model.sh flash-local`. `--with-flash-local` installs it whole at install
+time and proves it, `--no-flash-local` leaves it out for good, and `./install-flash-local.sh
+--uninstall` removes its unit, its caches, its patched template, its filter, its image's pin tag and
+the table's copies. The image and the checkpoint stay, and it prints how to delete them.

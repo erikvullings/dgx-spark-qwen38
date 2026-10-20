@@ -1,5 +1,144 @@
 # Changelog
 
+## v1.37.0 (2026-10-20): NVIDIA's FP4-Local build of the flash model, as an eighth lane on vLLM
+
+**What it is.** [Qwen3.8-Flash-Next FP4-Local](https://huggingface.co/nvidia/Qwen3.8-Flash-Next-FP4-Local)
+is NVIDIA's own build of the flash model for one local GPU: its experts in NVFP4 and its other layers
+in MXFP8, refined by quantization-aware distillation, and its n-gram (PLE) table in NVFP4 too, kept
+inside seven of the checkpoint's own files. Its NVFP4 scales are in a new lossless format that upstream
+vLLM does not read yet: its model card serves it with community vLLM images that carry NVIDIA's b12x
+kernels, `eugr/spark-vllm-b12x` on a DGX Spark. Dimitris Kontokostas brought the model, that image and
+the card's recipe to this repository in pull request #55, with his own measurements. Thank you,
+Dimitris. Every plain install now puts it in as an eighth lane, beside the flash lane, which keeps
+serving RadixArk's export on SGLang, and on demand like the others: its unit now, and its first Load
+from the cockpit pulls its image (18.2 GB, 9.7 to download, by digest) and fetches its checkpoint
+(102.3 GB at its pinned revision). `--with-flash-local` or `--all-weights` does it at install and
+proves it, `--no-flash-local` leaves it out and later runs remember it. On the cockpit's Lanes view it
+is **Flash FP4-Local (NVIDIA)**, then **Load**. From a terminal, `./prepare-lane.sh flash-local` the
+first time, then `./switch-model.sh flash-local`. Clients reach it through the proxy on `:30001` with
+the box's key, as model `qwen3.8-flash-next-fp4`, in the OpenAI and the Anthropic dialects alike,
+images inside the request.
+
+**What an update does.** It puts in the lane's unit, and nothing heavy: no image is pulled and no
+weight fetched until its first Load. Every other lane's unit names the new one in its `Conflicts=` and
+`After=` lines, which systemd applies at its daemon-reload: each such unit keeps its date and its
+engine keeps running. The proxy restarts once (v6.43, its unit holds requests for this lane too while
+it boots), and so does the cockpit.
+
+**The card's recipe, kept.** The unit runs the model card's serving command for a DGX Spark, flag for
+flag and variable for variable: the experts and the MXFP8 layers read by b12x, the table read from the
+checkpoint's own files over io_uring, the KV cache in FP8, a window of 262,144 tokens, its MTP head
+drafting 4 tokens, 8 requests at a time, a memory share of 0.8. The box adds its port and key (the
+engine binds 127.0.0.1, and the vLLM lanes' middleware asks the key on every route but /health and
+/metrics), the chat template patched as the other Qwen lanes' are, with the card's default effort,
+`xhigh`, its own caches, so that only the first boot compiles and tunes (17 minutes, then about 5 and
+a half), and its sandbox (below). The model is pinned at its revision of 2026-10-15 (every revision
+since its weights came changes its model card only, file by file), the image by its arm64 digest of
+2026-10-15. Each setting that could do better was measured against the card's, one at a time, on the
+reference box: the scheduling said async (vLLM already turns it on with MTP), drafting 3 tokens (10 %
+ahead at eight requests on random prompts, 1.8 % behind on real text), 8,192 tokens a step (2 % more
+prefill for 17 % less KV cache and 3 minutes 37 more at boot), drafts sampled and drafts verified as a
+block, at the agents' sampling (1.5 to 3 % more tokens a step, no throughput gained). None beat it:
+`docs/flash-local-lane.md` has every number.
+
+**Its n-gram table, on the internal disk.** The engine reads the table's rows at random at every
+token. From the reference box's USB SSD, where its Hugging Face cache lives, one request alone got
+15.7 tokens a second and eight together 15.6 in all. With the same seven files on the internal NVMe,
+23.4 and 77.7, and the first token came twice as fast. So when the cache is on another disk than the
+home directory, the Load copies those seven files (32 GB) into `~/flash-local-ple`, checks each against
+its sha256, and the unit mounts them over the cache's own, file by file (`ple-table.py`). The weights
+the engine reads once at boot stay where they are. `FLASH_LOCAL_PLE_DIR=<folder>` puts the copies
+elsewhere, `FLASH_LOCAL_PLE_DIR=none` reads the table where the cache is, and the choice holds for
+every run after, a Load from the cockpit included. Their room is checked before anything is
+downloaded, the copies are listed in their folder, and they go with the lane, nothing else there with
+them. A new page, `docs/external-disk.md`, says what each lane reads from its disk and when, what can
+live on an external one, and how to set one up.
+
+**Its sandbox.** io_uring's three system calls are refused by Docker's default seccomp profile, and the
+model card turns seccomp and AppArmor off to read the table. The lane keeps both: its unit passes
+`seccomp-io-uring.json`, Docker 29.6.2's own default profile with one rule more that allows those three
+calls, and nothing else (a test holds the file to Docker's, byte for byte). The engine runs as root in
+its container on the host's network, and with the filter off it could, for one, make a user namespace,
+which the profile still refuses. Measured with the filter and without it, everything else equal: 23.34
+against 23.39 tok/s alone, 76.69 against 77.65 at eight, the same prefill. Of the config directory, the
+engine sees the two files it reads, its key and its template, read-only: the image is a community
+build, and the directory holds the cockpit's own secret and the other services' keys.
+
+**Measured against the flash lane** (the reference box, the same harnesses, 2026-10-19 and 20). Alone
+on real text at the agents' sampling (GSM8K at temperature 1.0), this lane decodes faster, 47.4 tok/s
+against 43.8. Eight at a time the flash lane does: 123.7 against 106.6 tok/s at the agents' sampling,
+132.1 against 114.6 on GSM8K's 1,314 questions at temperature 0. Their quality ties: GSM8K 97.64 %
+against 97.49 %, HumanEval 98.17 % against 96.95 % (2 problems of 164), and NVIDIA's card gives this
+build 91.5 % on GPQA Diamond and 88.7 % on ToolEvalBench against its BF16 teacher's 92.2 % and 89.4 %.
+This lane prefills about 30 % faster (2,141 tok/s against 1,617 at 32K), takes 121 GB of disk against
+223, writes nothing at boot, answers about 5 and a half minutes after a start against 12 to 15, holds
+twice the KV cache (about 950,000 tokens against 467,328) and leaves 16.6 to 19 GiB free in service
+against 9.2 to 12.1.
+
+**Clients.** Its chat template is the flash lane's, byte for byte, so its levels are the Qwen lanes'
+(`lean`, `low`, `medium`, `xhigh`), with `xhigh` when a request names none, its card's default. The
+proxy (v6.43) treats it as a Qwen lane: the flash lane's one-prompt ceiling of 250,000 tokens holds
+while it serves, a reasoning effort of `none` becomes `enable_thinking: false` as on SGLang (its
+template refuses `none`, and vLLM hands the template a `none` sent inside `chat_template_kwargs` as it
+came), and System One says which lanes serve it, on any vLLM lane. Its reasoning comes in the
+`reasoning` field, vLLM's name. opencode gets its provider (its four levels, `xhigh` first, images on),
+pi and omp theirs from the same generated config, and omp starts it at `xhigh` too. An agent's turns
+find their prompt in the prefix cache: this build keeps a request's boundaries for this model, and
+every turn after the first of a 40,000-token conversation recomputed only its last 22 to 25 tokens.
+
+**The cockpit.** The lane's card in the rack, with NVIDIA's mark and a hue of its own. Its boot read
+stage by stage from its own container's log: the shard being read, the MTP head's after the model's,
+"tuning b12x's kernels for this GPU, at its first boot only" for the 12 minutes b12x takes at the first
+boot, then "loading b12x's kernel choices" at the boots after. Its engine panel says MTP and the draft
+length its unit gives, and the prompt ceiling the proxy applies to it. Flush, abort, the opencode fit,
+the canary and System One say why they cannot act there, in its name. `flash-local` is a target of its
+own: read by its prefix, it was taken for a flash target, and its Load prepared and switched the SGLang
+flash lane. It is prepared once the image its unit names by digest is there, and startable only when
+the copies of its table that its unit mounts and its template are there.
+
+**Its boot needs the box to itself.** About four minutes into every boot, once its weights are loaded
+and before its table is set up, the engine takes some 35 GiB more for 2 to 6 seconds and gives them
+back: the box's MemAvailable fell then to between 0.5 and 3.5 GiB at each of nine boots, under the 9
+GiB this box keeps as its floor, and the box went through all nine. In service it leaves 16.6 to 19 GiB
+free. What takes that memory is not found yet, and the lane's page says so.
+
+**Found on the way, fixed before it shipped.**
+
+- A lane's pinned image tags were read by their prefix: the flash lane's update would have untagged
+  the image of any lane whose name begins with `flash-` (this one), its 18 GB then deleted by the next
+  `docker image prune`. Each lane's tags are read whole now, and the lane's retired pins take their
+  tags with them as the text lanes' do.
+- The image and video installers prove their lane by stopping the one that serves and starting it
+  again from a list of their own, which did not name this lane: run while it served, they left the box
+  with no engine. Their lists are their units' `Conflicts=` now, a test holds them to it.
+- The folder chosen for the table's copies was read at each run only, and a Load from the cockpit runs
+  with none of the user's environment: it lost the choice. It is kept now, judged first (inside the
+  cache, or a path a unit cannot carry, is refused before it is kept), and a relative folder is made
+  whole.
+- The copy removed from its folder every file named like a blob that the table did not name: pointed
+  at a model's blobs, it removed them all. Only the copies it lists are ever removed, by the copy, the
+  lane's uninstall and the commands uninstall.sh prints.
+- A switch to the lane put in the start scripts every lane runs, from the checkout: it writes the
+  lane's own files only now, as the other lanes' switches do.
+- Two of the CI's gates did not know the lane yet, and stopped it: the list of the targets a flag
+  installs, and the cockpit's sudoers allowlist, checked against every privileged call of the switch.
+
+**Tests.** Each change has a test that fails on the old code. The lane's installer: its unit staged
+for a switch (no placeholder, the filter, its two files of the config directory, the template at
+`xhigh`, a command bash reads whole), read in place or with the table's copies mounted, refused with no
+checkpoint, its folder kept and judged, its room checked before a download, and nothing written but
+its own files, and its uninstall, which removes the copies it made and nothing else. `ple-table.py`: the
+table's files found from the checkpoint's index, the copies checked against their sha256 and made again
+when they changed, never from a damaged file, an earlier revision's copies removed and a file it did
+not make kept, a folder inside the cache or one a unit cannot carry refused, the room said before and
+after the download. The filter against Docker's own profile, byte for byte. A lane's pin tags read
+whole, and the retired ones untagged. install.sh (the lane on demand, its flags, its boot, its opencode
+provider), switch-model.sh (its fetch in its own image, its stage, the lane it stops named), the image
+and video installers' lists, what a vLLM lane's start reads, the pins and their check, the proxy (the
+ceiling, `none`, System One), pi and omp, the cockpit (its panel and its two boots from its own
+engine's captured answers, its refusals in its name and the Nemotron lanes' in theirs, its target, its
+preparation and its start, the page with eight lanes), the docs' sizes. Mutants killed.
+
 ## v1.36.4 (2026-10-19): the flash lane says it cannot start on a GPU outside its ATS mode, and fetches nothing for it (issue #54)
 
 The flash lane serves its 47.7 GiB N-gram table from a file on NVMe, which the GPU reads through the

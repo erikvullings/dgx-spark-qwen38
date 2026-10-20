@@ -5,7 +5,13 @@ so that "on the roadmap" means a checkbox with a definition of done, not a
 mood. Statuses: shipped, in progress, planned, considered (considered items
 have a reason they are not yet planned, stated here or in an issue).
 
-## Shipped, current: v1.35
+## Shipped, current: v1.37
+
+- **Flash FP4-Local, an eighth lane** (v1.37.0): NVIDIA's FP4 build of the
+  flash model on vLLM, with the flash lane's quality in about half its disk
+  and twice its KV cache, its n-gram table kept on the internal disk.
+
+## Shipped, v1.35
 
 - **Nemotron 3.5 Super VL, a seventh lane** (v1.35.0): NVIDIA's 120B with
   vision and a 1M-token window, on vLLM in the Nemotron lane's image,
