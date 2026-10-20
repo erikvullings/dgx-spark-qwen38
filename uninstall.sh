@@ -28,8 +28,10 @@ HF_CACHES="$( { printf '%s\n' "${HF_CACHE:-}"; unit_mount /root/.cache/huggingfa
                printf '%s\n' "$HOME/.cache/huggingface"; } | awk 'NF && !seen[$0]++')"
 PLE_DIRS="$( { printf '%s\n' "${PLE_DIR:-}"; unit_mount /ple; printf '%s\n' "$HOME/flashnext-ple"; } | awk 'NF && !seen[$0]++')"
 # The Flash FP4-Local lane's copies of its n-gram table (ple-table.py), where its unit mounts them
-# from, where FLASH_LOCAL_PLE_DIR puts them, and their default folder.
+# from, where FLASH_LOCAL_PLE_DIR puts them (given now, or kept by its installer), and their
+# default folder.
 FL_TABLE_DIRS="$( { [ "${FLASH_LOCAL_PLE_DIR:-}" = none ] || printf '%s\n' "${FLASH_LOCAL_PLE_DIR:-}"
+                    { head -1 "$CONFIG_DIR/flash-local-ple-dir" 2>/dev/null || true; } | grep -vx none
                     { grep -hoE -- "-v [^ :]+:/root/\.cache/huggingface/hub/[^ :]+/blobs/[0-9a-f]{64}:ro" "$SYSTEMD_DIR/qwen38-flash-local.service" 2>/dev/null || true; } \
                       | sed -e 's/^-v //' -e 's|:.*$||' | xargs -r -n1 dirname
                     printf '%s\n' "$HOME/flash-local-ple"; } | awk 'NF && !seen[$0]++')"

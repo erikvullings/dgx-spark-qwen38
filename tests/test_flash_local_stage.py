@@ -54,12 +54,15 @@ class Box:
         (snap / "model.safetensors.index.json").write_text(json.dumps({"weight_map": weight_map}))
         self.out = self.t / "stage.service"
 
-    def stage(self, **env):
+    def stage(self, cwd=None, **env):
         e = {"PATH": "/usr/bin:/bin", "HOME": str(self.home), "HF_CACHE": str(self.hf),
              "LANES_UNIT_DIR": str(self.units), **env}
         r = subprocess.run(["bash", str(REPO / "install-flash-local.sh"), "--stage", str(self.out)],
-                           capture_output=True, text=True, env=e, timeout=120)
+                           capture_output=True, text=True, env=e, timeout=120, cwd=cwd)
         return r.returncode, r.stdout + r.stderr
+
+    def mounts(self):
+        return re.findall(r"-v (\S+):/root/\.cache/huggingface/hub/\S+:ro", self.out.read_text())
 
 
 def exec_command(unit: str) -> str:
@@ -106,6 +109,31 @@ class TheStagedUnit(unittest.TestCase):
         self.assertEqual(mounts, [(str(folder / s), f"/root/.cache/huggingface/hub/{HUB}/blobs/{s}") for s in self.box.table])
         r = subprocess.run(["bash", "-n", "-c", exec_command(unit)], capture_output=True, text=True)
         self.assertEqual(r.returncode, 0, r.stderr)
+
+    def test_the_folder_chosen_is_kept_for_a_load_run_with_none_of_the_users_environment(self):
+        # a Load from the cockpit stages the unit with none of the user's environment: read without
+        # the choice made at the install, it named no copy and the table was read where the cache is,
+        # or copied it again to ~/flash-local-ple (found in review, 2026-10-20)
+        folder = self.box.t / "copies"
+        rc, out = self.box.stage(FLASH_LOCAL_PLE_DIR=str(folder))
+        self.assertEqual(rc, 0, out)
+        rc, out = self.box.stage()
+        self.assertEqual(rc, 0, out)
+        self.assertEqual(self.box.mounts(), [str(folder / s) for s in self.box.table])
+        self.assertFalse((self.box.home / "flash-local-ple").exists())
+        # given empty, the default comes back: the cache here is on the home directory's disk
+        rc, out = self.box.stage(FLASH_LOCAL_PLE_DIR="")
+        self.assertEqual(rc, 0, out)
+        self.assertEqual(self.box.mounts(), [])
+        rc, out = self.box.stage()
+        self.assertEqual((rc, self.box.mounts()), (0, []), out)
+
+    def test_a_relative_folder_is_mounted_by_its_whole_path(self):
+        # docker run -v takes a host path only whole: "copies/<sha>" is read as a volume's name,
+        # refused, and the unit restarted in a loop
+        rc, out = self.box.stage(cwd=self.box.t, FLASH_LOCAL_PLE_DIR="copies")
+        self.assertEqual(rc, 0, out)
+        self.assertEqual(self.box.mounts(), [str(self.box.t / "copies" / s) for s in self.box.table])
 
     def test_a_cache_on_the_home_directorys_disk_is_read_in_place(self):
         # a new box: the cache under the home directory, on its disk

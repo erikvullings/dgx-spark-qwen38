@@ -19,7 +19,8 @@
 # the home directory's (an external SSD) gets copies of the table's files beside the home directory,
 # in ~/flash-local-ple, which the unit mounts over the cache's own (ple-table.py says why and how);
 # FLASH_LOCAL_PLE_DIR=<folder> puts them elsewhere, FLASH_LOCAL_PLE_DIR=none reads the table where
-# the cache is.
+# the cache is, and the choice holds for every run after, a Load from the cockpit included
+# (FLASH_LOCAL_PLE_DIR= brings the default back).
 #
 # install.sh puts this lane's unit in on every plain install, like the other lanes, and its first
 # Load from the cockpit pulls its image and fetches its checkpoint; ./install.sh --no-flash-local
@@ -114,7 +115,7 @@ if [ "$ACTION" = uninstall ]; then
   # would have untagged every lane's pin, none of which a unit names by that tag.
   vlane_uninstall_runtime qwen38-flash-local "$FLASH_LOCAL_IMAGE" "$FLASH_LOCAL_REPO"
   pin_untag flash-local
-  rm -f "$CONFIG_DIR/chat-template-flash-local.jinja" "$CONFIG_DIR/seccomp-io-uring.json"
+  rm -f "$CONFIG_DIR/chat-template-flash-local.jinja" "$CONFIG_DIR/seccomp-io-uring.json" "$CONFIG_DIR/flash-local-ple-dir"
   if [ -n "$TABLE_COPIES" ]; then
     # the copies by name (blobs named by their sha256), then their folder if nothing else is in it
     while IFS= read -r f; do rm -f "$f" "$f.part"; done <<< "$TABLE_COPIES"
@@ -138,6 +139,22 @@ lane_template(){
 # the home directory's (ple-table.py). TABLE_MOUNTS is the unit's -v arguments for the copies, empty
 # when the table is read where the cache is. Without a checkpoint in the cache (--units-only on a
 # new box) the unit names no copy; the Load's switch makes them.
+# FLASH_LOCAL_PLE_DIR is kept for the runs after, in a file of its own, as install.sh keeps PLE_DIR:
+# a Load from the cockpit stages the unit with none of the user's environment, and without the
+# choice it read the table where the cache is, or copied it again to ~/flash-local-ple (found in
+# review, 2026-10-20). Given again it replaces the one kept, given empty the default comes back. A
+# folder is kept whole: docker run -v takes a host path only from the root.
+PLE_CHOICE="$CONFIG_DIR/flash-local-ple-dir"
+if [ -n "${FLASH_LOCAL_PLE_DIR+set}" ]; then
+  case "$FLASH_LOCAL_PLE_DIR" in ""|none) ;; *) FLASH_LOCAL_PLE_DIR="$(realpath -m -- "$FLASH_LOCAL_PLE_DIR")" ;; esac
+  if [ -n "$FLASH_LOCAL_PLE_DIR" ]; then
+    mkdir -p "$CONFIG_DIR" && printf '%s\n' "$FLASH_LOCAL_PLE_DIR" > "$PLE_CHOICE"
+  else
+    rm -f "$PLE_CHOICE"
+  fi
+elif [ -s "$PLE_CHOICE" ]; then
+  FLASH_LOCAL_PLE_DIR="$(head -1 "$PLE_CHOICE")"
+fi
 TABLE_DIR_ARG=(--dir "${FLASH_LOCAL_PLE_DIR:-}")
 TABLE_MOUNTS=""
 lane_table(){  # $1 copy: make the copies whole first; mounts: only name the copies already there
