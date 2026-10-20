@@ -171,16 +171,6 @@ pin-watch workflow, the issue templates) and the v6.16 client docs. The
 metrics flag is live on a box once it has been re-installed and restarted;
 the cockpit drift panel says so, per lane, until it is.
 
-## In progress
-- **Mirrors of every pin** (planned next): the checkpoints, the draft and
-  the base images mirrored into an org this project controls, and
-  `MIRROR.md` as the runbook, so a deleted upstream revision is an
-  inconvenience instead of the end of an installation path. The pin-watch
-  workflow is the alarm; this is the extinguisher. Needs infrastructure
-  decisions (which org, where the images live, what it costs) and they are
-  not made on vibes: the first mirror is the one this repo would use on a
-  fresh install.
-
 ## Planned
 
 - **Beyond one box, in that order: more GB10 machines, then more hardware,
@@ -231,6 +221,14 @@ the cockpit drift panel says so, per lane, until it is.
   play in the browser, Load and proof like the other lanes'), the lane in the one command,
   and Qwen3-TTS as a second voice once llama.cpp's server endpoint lands and runs faster
   than real time.
+- **Mirrors of every pin** (not started): the checkpoints, the draft and
+  the base images mirrored into an org this project controls, and
+  `MIRROR.md` as the runbook, so a deleted upstream revision is an
+  inconvenience instead of the end of an installation path. The pin-watch
+  workflow is the alarm; this is the extinguisher. Needs infrastructure
+  decisions (which org, where the images live, what it costs) and they are
+  not made on vibes: the first mirror is the one this repo would use on a
+  fresh install.
 
 ## Considered (and why not yet)
 
