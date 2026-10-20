@@ -64,8 +64,10 @@ client.audio.speech.create(model="kokoro-82m", voice="ff_siwis", input="Bonjour.
   above), and `response_format` `json`, `text` or `verbose_json`, which adds the language
   heard and the duration; there are no segments or timestamps. `model` and `prompt` are
   accepted and ignored.
-- **Speech** takes an `input` of up to 4,096 characters, a `voice` (OpenAI's names, `alloy`
-  and the others, get the default voice, so clients that send them work), `speed` from 0.5
+- **Speech** takes an `input` of up to 4,096 characters, a `voice` (OpenAI's eleven names,
+  `alloy` and the others, each get an English voice of their own when the default voice is
+  English, and the default voice when it speaks another language, which an English voice would
+  read wrong), `speed` from 0.5
   to 2, `response_format` `wav` (the default) or `pcm`, and an optional `language` (else the
   voice's own). `mp3`, `opus`, `aac` and `flac` are refused with a 400 that says so. Open
   WebUI sends no format and converts what it gets, so it needs nothing.

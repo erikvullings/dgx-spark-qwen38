@@ -75,6 +75,54 @@ def form(fields, filename="clip.wav", data=b"RIFF....WAVEfake"):
     return ctype, body
 
 
+class OpenAIVoiceNames(unittest.TestCase):
+    """OpenAI's eleven voice names, which clients such as Open WebUI send. All of them answered
+    with the default voice, so a picker of those names changed nothing anyone could hear (issue
+    #53). On an English box each is an English voice of its own; on a box whose default voice
+    speaks another language, that voice answers them all, as an English one would read its text
+    wrong."""
+
+    ENGLISH = ["af_heart", "af_alloy", "am_eric", "bf_lily", "af_jessica", "am_echo", "bm_fable",
+               "af_nova", "am_onyx", "af_sky", "af_sarah", "am_puck"]
+
+    def front(self, default, voices):
+        tts = FakeTTS()
+        tts.voices = voices
+        srv = serve(ss.make_handler(tts, "http://127.0.0.1:9", default, "qwen3-asr-0.6b", decode=None))
+        self.addCleanup(srv.server_close)
+        self.addCleanup(srv.shutdown)
+        base = f"http://127.0.0.1:{srv.server_address[1]}"
+
+        def speak(voice):
+            req = urllib.request.Request(base + "/v1/audio/speech", json.dumps({"input": "hi", "voice": voice}).encode(),
+                                         headers={"Content-Type": "application/json"})
+            with urllib.request.urlopen(req, timeout=10) as r:
+                return r.status
+        return tts, speak
+
+    def test_on_an_english_box_each_name_is_a_voice_of_its_own(self):
+        tts, speak = self.front("af_heart", self.ENGLISH)
+        for name in sorted(ss.OPENAI_VOICES):
+            self.assertEqual(speak(name), 200, name)
+        voices = [c[1] for c in tts.calls]
+        self.assertEqual(len(set(voices)), 11, voices)
+        self.assertNotIn("af_heart", voices)
+        by_name = dict(zip(sorted(ss.OPENAI_VOICES), tts.calls))
+        self.assertEqual((by_name["alloy"][1], by_name["alloy"][3]), ("af_alloy", "en-us"))
+        self.assertEqual((by_name["fable"][1], by_name["fable"][3]), ("bm_fable", "en-gb"))
+
+    def test_on_a_french_box_the_default_voice_answers_them_all(self):
+        tts, speak = self.front("ff_siwis", ["ff_siwis"] + self.ENGLISH)
+        for name in ("alloy", "echo", "fable"):
+            self.assertEqual(speak(name), 200, name)
+        self.assertEqual([(c[1], c[3]) for c in tts.calls], [("ff_siwis", "fr-fr")] * 3)
+
+    def test_a_name_whose_voice_the_lane_lacks_gets_the_default_voice(self):
+        tts, speak = self.front("af_heart", [v for v in self.ENGLISH if v != "am_eric"])
+        self.assertEqual(speak("ash"), 200)
+        self.assertEqual(tts.calls[-1][1], "af_heart")
+
+
 class Routes(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
@@ -123,7 +171,8 @@ class Routes(unittest.TestCase):
         self.assertEqual(code, 200)
         self.assertEqual((headers["Content-Type"], headers["X-Sample-Rate"], len(body)), ("audio/pcm", "24000", 9600))
 
-    def test_openai_voice_names_get_the_default_voice(self):
+    def test_openai_voice_names_the_lane_lacks_get_the_default_voice(self):
+        # this fake lane has none of the eleven English voices: a client's name is still served
         for name in ("alloy", "nova", "shimmer"):
             with self.subTest(name):
                 self.assertEqual(self.speak(input="hi", voice=name)[0], 200)

@@ -55,10 +55,15 @@ PIECE_S = 30
 SEARCH_S = 7.5
 # Qwen3-ASR writes the language it heard before the text, and llama-server passes it on.
 PREFIX = re.compile(r"^\s*language\s+([^<\s]*)\s*<asr_text>")
-# OpenAI's voice names, which clients such as Open WebUI send by default: the lane's own
-# default voice answers them, as no Kokoro voice has those names.
-OPENAI_VOICES = {"alloy", "ash", "ballad", "coral", "echo", "fable", "nova", "onyx",
-                 "sage", "shimmer", "verse"}
+# OpenAI's voice names, which clients such as Open WebUI send by default, and the Kokoro voice
+# each one answers with. All eleven answered with the lane's default voice, so a picker of those
+# names changed nothing anyone could hear (issue #53, whose author drew up this table, each voice
+# checked against the 41 the lane serves, 2026-10-20). They are English voices, two of them
+# British: on a box whose default voice speaks another language, that voice keeps answering all
+# eleven, as an English voice would read its text wrong and the language has no eleven to give.
+OPENAI_VOICES = {"alloy": "af_alloy", "ash": "am_eric", "ballad": "bf_lily", "coral": "af_jessica",
+                 "echo": "am_echo", "fable": "bm_fable", "nova": "af_nova", "onyx": "am_onyx",
+                 "sage": "af_sky", "shimmer": "af_sarah", "verse": "am_puck"}
 # Kokoro's voice prefix gives its language (af_heart is American English, ff_siwis
 # French); the espeak code is what kokoro-onnx phonemizes with. Each of these came back
 # word for word through the recognizer on 2026-10-05 (docs/speech-lane.md). Two are left
@@ -314,7 +319,10 @@ def make_handler(tts, asr_url, default_voice, asr_name, tts_name="kokoro-82m", a
             if not isinstance(voice, str):
                 return self._err(400, "'voice' must be a string")
             if voice in OPENAI_VOICES:
-                voice = default_voice
+                # its English voice on an English box, if the lane has it; the default voice else
+                english = LANG_OF_PREFIX.get(default_voice[:1], "").startswith("en")
+                mapped = OPENAI_VOICES[voice]
+                voice = mapped if english and mapped in tts.voices else default_voice
             if voice not in tts.voices:
                 return self._err(400, f"no voice '{voice}': GET /v1/voices lists the {len(tts.voices)} there are")
             try:
