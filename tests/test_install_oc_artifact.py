@@ -20,7 +20,7 @@ INSTALL = REPO / "install.sh"
 
 def block() -> str:
     text = INSTALL.read_text()
-    start = text.index("OC_27B=0; OC_FLASH=0; OC_KOLIBRI=0; OC_NEMOTRON=0; OC_NEMOTRON_SUPER=0\n")
+    start = text.index("OC_27B=0; OC_FLASH=0; OC_KOLIBRI=0; OC_NEMOTRON=0; OC_NEMOTRON_SUPER=0; OC_FLASH_LOCAL=0\n")
     end = text.index("\nPYEOF\n", start) + len("\nPYEOF\n")
     return text[start:end]
 
@@ -32,7 +32,8 @@ PINS = "\n".join(line for line in INSTALL.read_text().splitlines()
 
 def generate(lane, mode, unit_ctx=None, flash_unit=False, model="RadixArk/Qwen3.8-27B-NVFP4",
              pair=None, names=False, flash_running=None, kolibri_unit=False, kolibri_boot=False, doc=False,
-             nemotron_unit=False, nemotron_boot=False, super_unit=False, super_boot=False):
+             nemotron_unit=False, nemotron_boot=False, super_unit=False, super_boot=False,
+             flocal_unit=False, flocal_boot=False):
     t = pathlib.Path(tempfile.mkdtemp(prefix="oc-art-"))
     kolibri = t / "qwen38-kolibri.service"
     if kolibri_unit:
@@ -43,6 +44,9 @@ def generate(lane, mode, unit_ctx=None, flash_unit=False, model="RadixArk/Qwen3.
     nsuper = t / "qwen38-nemotron-super.service"
     if super_unit:
         nsuper.write_text("ExecStart=... nvidia/NVIDIA-Nemotron-3.5-Super-VL-120B-A12B-NVFP4 --revision 8a115b9d ...\n")
+    flocal = t / "qwen38-flash-local.service"
+    if flocal_unit:
+        flocal.write_text("ExecStart=... nvidia/Qwen3.8-Flash-Next-FP4-Local --revision b9ce18a6 ...\n")
     if flash_running:
         (t / "launch-flash.sh").write_text(
             "docker run img python3 -m sglang.launch_server --model-path RadixArk/Qwen3.8-Flash-Next-NVFP4 "
@@ -59,6 +63,7 @@ def generate(lane, mode, unit_ctx=None, flash_unit=False, model="RadixArk/Qwen3.
               f'KOLIBRI_UNIT_PATH="{kolibri}"; KOLIBRI_BOOT={1 if kolibri_boot else 0}\n'
               f'NEMOTRON_UNIT_PATH="{nemotron}"; NEMOTRON_BOOT={1 if nemotron_boot else 0}\n'
               f'NEMOTRON_SUPER_UNIT_PATH="{nsuper}"; NEMOTRON_SUPER_BOOT={1 if super_boot else 0}\n'
+              f'FLASH_LOCAL_UNIT_PATH="{flocal}"; FLASH_LOCAL_BOOT={1 if flocal_boot else 0}\n'
               f'MODEL_CHOICE={"flash" if lane == "flash" else "stock"}\n'
               f'REPO_DIR="{REPO}"; CONFIG_DIR="{t}"; OC_PORT=30001; OC_CTX={ctx}; OC_OUT={out}\n'
               'OC_LABEL=local; OPENCODE_PIN=1\n' + block())
@@ -246,6 +251,47 @@ class ABoxBootingNemotronSuper(unittest.TestCase):
     def test_without_its_unit_there_is_no_super_provider(self):
         d = generate("27b", "1m", unit_ctx=1010000, pair=("551000", "160000"), nemotron_unit=True, doc=True)
         self.assertNotIn("nemotron-super", d["provider"])
+
+
+class ABoxBootingFlashLocal(unittest.TestCase):
+    """The Flash FP4-Local lane, its own provider (its own served model): serving at boot it is
+    opencode's default, its compaction sized from its window; installed beside another lane it is
+    offered; with no unit, absent. Its levels are the flash lane's Qwen levels, xhigh first: its
+    template's default (Hasan's choice, 2026-10-19)."""
+
+    def test_the_default_the_compaction_and_the_provider_are_flash_locals(self):
+        d = generate("27b", "1m", unit_ctx=1010000, flash_unit=True, pair=("551000", "160000"),
+                     flocal_unit=True, flocal_boot=True, doc=True)
+        self.assertEqual(d["model"], "flash-local/qwen3.8-flash-next-fp4")
+        keep = int(subprocess.run([str(REPO / "oc-limits.sh"), "--preserve", "205000"], capture_output=True,
+                                  text=True, check=True).stdout)
+        self.assertEqual(d["compaction"]["preserve_recent_tokens"], keep)
+        m = d["provider"]["flash-local"]["models"]["qwen3.8-flash-next-fp4"]
+        self.assertEqual(m["limit"], {"context": 205000, "input": 205000, "output": 32000})
+        self.assertEqual(m["name"], "Qwen3.8-Flash-Next FP4-Local NVIDIA + MTP (local, 262K)")
+        self.assertTrue(m["attachment"])
+        self.assertEqual(m["modalities"]["input"], ["text", "image"])
+        self.assertEqual(list(m["variants"]), ["xhigh", "lean", "low", "medium"])
+        self.assertEqual(m["variants"]["lean"], {"chat_template_kwargs": {"reasoning_effort": "lean"}})
+        self.assertEqual(d["provider"]["flash-local"]["name"], "Qwen3.8-Flash-Next FP4-Local (DGX Spark)")
+
+    def test_its_pair_is_the_flash_lanes_and_fits_its_window(self):
+        ctx, out, *_ = subprocess.run([str(REPO / "oc-limits.sh"), "flash-local"], capture_output=True,
+                                      text=True, check=True).stdout.split()
+        fctx, fout, *_ = subprocess.run([str(REPO / "oc-limits.sh"), "flash"], capture_output=True,
+                                        text=True, check=True).stdout.split()
+        self.assertEqual((int(ctx), int(out)), (int(fctx), int(fout)), "the same model and window as the flash lane")
+        self.assertLessEqual(int(ctx) - 20000 + 43863 + int(out), 262144, "threshold + worst step + answer fit the window")
+
+    def test_installed_but_not_at_boot_it_is_offered_and_the_27b_keeps_its_own(self):
+        d = generate("27b", "1m", unit_ctx=1010000, pair=("551000", "160000"), flocal_unit=True, doc=True)
+        self.assertEqual(d["model"], "qwen38/qwen3.8-27b")
+        self.assertIn("flash-local", d["provider"])
+        self.assertEqual(d["compaction"]["preserve_recent_tokens"], 132000)
+
+    def test_without_its_unit_there_is_no_flash_local_provider(self):
+        d = generate("27b", "1m", unit_ctx=1010000, pair=("551000", "160000"), nemotron_unit=True, doc=True)
+        self.assertNotIn("flash-local", d["provider"])
 
 
 if __name__ == "__main__":

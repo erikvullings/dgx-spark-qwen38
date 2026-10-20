@@ -290,9 +290,10 @@ def vllm_lane_disabled(case, lane, secondary, lane_boot):
     (d / "systemctl").write_text(f'#!/bin/bash\n[ "$1" = is-enabled ] && [ "${{@: -1}}" = qwen38-{lane}.service ]\n')
     for f in ("sudo", "systemctl"):
         (d / f).chmod(0o755)
-    boots = {"kolibri": 0, "nemotron": 0, "nemotron-super": 0, lane: lane_boot}
+    boots = {"kolibri": 0, "nemotron": 0, "nemotron-super": 0, "flash-local": 0, lane: lane_boot}
     r = subprocess.run(["bash", "-c", f'set -euo pipefail\nRECOMMENDED=0\nSECONDARY="{secondary}"; KOLIBRI_BOOT={boots["kolibri"]}; '
-                        f'NEMOTRON_BOOT={boots["nemotron"]}; NEMOTRON_SUPER_BOOT={boots["nemotron-super"]}\n' + block],
+                        f'NEMOTRON_BOOT={boots["nemotron"]}; NEMOTRON_SUPER_BOOT={boots["nemotron-super"]}; '
+                        f'FLASH_LOCAL_BOOT={boots["flash-local"]}\n' + block],
                        capture_output=True, text=True, timeout=30,
                        env={"PATH": f"{d}:/usr/bin:/bin"})
     case.assertEqual(r.returncode, 0, r.stderr)
@@ -370,6 +371,42 @@ class ABoxBootingNemotronSuper(unittest.TestCase):
         self.assertEqual(vllm_lane_disabled(self, "nemotron-super", "", 1), [], "the run that keeps it at boot")
         self.assertEqual(vllm_lane_disabled(self, "nemotron-super", "flash", 0), [], "the run for the other text lane")
 
+
+
+class ABoxBootingFlashLocal(unittest.TestCase):
+    """The Flash FP4-Local lane keeps the same promise, on its own unit."""
+
+    def resolve(self, text_lane, env=None):
+        home = tmp("lane-flash-local-home-")
+        cfg = home / ".config" / "qwen38"
+        cfg.mkdir(parents=True)
+        (cfg / "text-lane").write_text(text_lane + "\n")      # the record a switch to it wrote
+        (cfg / "launch-flash.sh").write_text(ABoxBootingKolibri.LAUNCHER)
+        units = {"qwen38-sglang.service": SGL_UNIT, "qwen38-flash.service": ABoxBootingKolibri.FLASH_UNIT,
+                 "qwen38-flash-local.service": "[Service]\n"}
+        rc, out, _ = converge(units, enabled=("qwen38-flash-local.service",), env={**SHARED, **(env or {})}, home=home)
+        self.assertEqual(rc, 97, out)
+        return out
+
+    def test_it_stays_the_boot_lane_and_the_flash_before_it_is_brought_up_to_date(self):
+        out = self.resolve("qwen38-flash.service")
+        self.assertIn("The Flash FP4-Local lane is this box's boot lane", out)
+        self.assertNotIn("The Nemotron Super lane is this box's boot lane", out)
+        self.assertIn("INSTALLED=flash", out)
+
+    def test_a_27b_before_it_stays_the_27b(self):
+        self.assertIn("INSTALLED=27b", self.resolve("qwen38-sglang.service"))
+
+    def test_an_explicit_target_takes_the_boot_back(self):
+        out = self.resolve("qwen38-flash.service", env={"MODEL_CHOICE": "flash"})
+        self.assertIn("MODEL_CHOICE=flash given on a box booting the Flash FP4-Local lane", out)
+        self.assertNotIn("The Flash FP4-Local lane is this box's boot lane", out)
+
+    def test_the_run_that_takes_the_boot_back_disables_it(self):
+        self.assertEqual(vllm_lane_disabled(self, "flash-local", "", 0),
+                         ["sudo systemctl disable qwen38-flash-local.service"])
+        self.assertEqual(vllm_lane_disabled(self, "flash-local", "", 1), [], "the run that keeps it at boot")
+        self.assertEqual(vllm_lane_disabled(self, "flash-local", "flash", 0), [], "the run for the other text lane")
 
 class ItLeavesWhatIsSharedToItsParent(unittest.TestCase):
     """What the run for the other lane must not touch, read where it would."""
@@ -705,7 +742,7 @@ class TheOtherLanesAndTheirProofs(unittest.TestCase):
             second_state="installed", second_fresh=1, image_rc=0, video_rc=0, prove_fail="",
             want_kolibri=1, with_kolibri=0, kolibri_rc=0, prepared=(), all_weights=0, begun=(), second_new=None,
             want_nemotron=1, with_nemotron=0, nemotron_rc=0, want_super=1, with_super=0, super_rc=0,
-            nemotron_image=None):
+            nemotron_image=None, want_flocal=0, with_flocal=0, flocal_rc=0):
         t = tmp("lane-end-")
         unit_dir = t / "units"
         unit_dir.mkdir()
@@ -716,11 +753,15 @@ class TheOtherLanesAndTheirProofs(unittest.TestCase):
                 # the two Nemotron lanes run one image, Bolt's, from the cache their unit mounts
                 (unit_dir / u).write_text(f"[Unit]\nExecStart=/usr/bin/docker run -v {hf}:/root/.cache/huggingface "
                                           f"qwen38-nemotron:test org/{vllm} --revision {'a' * 40} \\\n")
+            elif vllm == "flash-local":
+                # the Flash FP4-Local lane runs an image pulled by digest, from the cache its unit mounts
+                (unit_dir / u).write_text(f"[Unit]\nExecStart=/usr/bin/docker run -v {hf}:/root/.cache/huggingface "
+                                          f"org/b12x@sha256:{'b' * 64} vllm serve org/flash-local --revision {'a' * 40} \\\n")
             else:
                 (unit_dir / u).write_text(f"[Unit]\nExecStart=/usr/bin/docker run qwen38-{vllm}:test\n"
                                           if vllm == "kolibri" else "[Unit]\n")
         # a Nemotron lane's own first Load fetched its checkpoint into that cache
-        for lane in set(prepared) & {"nemotron", "nemotron-super"}:
+        for lane in set(prepared) & {"nemotron", "nemotron-super", "flash-local"}:
             (hf / "hub" / f"models--org--{lane}").mkdir(parents=True)
         # a prepared lane: its runtime is on the box (the venv and its wheel's note; a vLLM lane's image)
         for lane in prepared:
@@ -743,7 +784,7 @@ class TheOtherLanesAndTheirProofs(unittest.TestCase):
         log.write_text("")
         for name, rc in (("install-image.sh", image_rc), ("install-video.sh", video_rc),
                          ("install-kolibri.sh", kolibri_rc), ("install-nemotron.sh", nemotron_rc),
-                         ("install-nemotron-super.sh", super_rc)):
+                         ("install-nemotron-super.sh", super_rc), ("install-flash-local.sh", flocal_rc)):
             stub(repo / name, f'echo "{name} $*" >> "{log}"\n'
                               f'case "$*" in *--no-smoke*) exit {rc} ;; esac\nexit 0')
         (repo / "oc-fit-limits.py").write_text(f"open({str(log)!r}, 'a').write('oc-fit-limits\\n')\n")
@@ -756,7 +797,8 @@ class TheOtherLanesAndTheirProofs(unittest.TestCase):
         have = {"kolibri": "kolibri" in prepared,
                 "nemotron": bool({"nemotron", "nemotron-super"} & set(prepared)) if nemotron_image is None else nemotron_image}
         stub(bin_ / "docker", 'case "$*" in ' + "".join(f"*qwen38-{v}:*) exit {0 if have[v] else 1} ;; "
-                                                        for v in ("kolibri", "nemotron")) + "esac\nexit 1")
+                                                        for v in ("kolibri", "nemotron"))
+             + f"*org/b12x@sha256:*) exit {0 if 'flash-local' in prepared else 1} ;; " + "esac\nexit 1")
         block = self.BLOCK.replace("/etc/systemd/system/", f"{unit_dir}/")
         # lanes.sh first, as install.sh sources it (side_nemotron_begun reads a unit's cache through it),
         # then this test's own stale_since
@@ -768,14 +810,16 @@ class TheOtherLanesAndTheirProofs(unittest.TestCase):
                   f'REPO_DIR="{repo}"; CONFIG_DIR="{t}"; LANE=27b; UNIT_NAME=qwen38-sglang.service; SMOKE_MODEL=qwen3.8-27b\n'
                   f'KOLIBRI_UNIT_PATH="{unit_dir}/qwen38-kolibri.service"; NEMOTRON_UNIT_PATH="{unit_dir}/qwen38-nemotron.service"\n'
                   f'NEMOTRON_SUPER_UNIT_PATH="{unit_dir}/qwen38-nemotron-super.service"\n'
+                  f'FLASH_LOCAL_UNIT_PATH="{unit_dir}/qwen38-flash-local.service"\n'
                   'KEEPALIVE_UNIT=qwen38-keepalive.service; PORT=30000; PROXY_PORT=30001; CONTEXT_MODE=1m; OPENCODE=1; KA_CHANGED=0\n'
                   f"WANT_IMAGE={want_image}; WANT_VIDEO={want_video}; WITH_IMAGE={with_image}; WITH_VIDEO={with_video}\n"
                   f"WITH_FLASH={with_flash}; WITH_27B=0; WANT_KOLIBRI={want_kolibri}; WITH_KOLIBRI={with_kolibri}\n"
                   f"WANT_NEMOTRON={want_nemotron}; WITH_NEMOTRON={with_nemotron}\n"
                   f"WANT_NEMOTRON_SUPER={want_super}; WITH_NEMOTRON_SUPER={with_super}\n"
+                  f"WANT_FLASH_LOCAL={want_flocal}; WITH_FLASH_LOCAL={with_flocal}\n"
                   f"SECOND_LANE=flash; SECOND_UNIT=qwen38-flash.service; SECOND_STATE={second_state}; SECOND_FRESH={second_fresh}; SECOND_NEW={second_fresh if second_new is None else second_new}\n"
                   + block + '\necho "STATES second=$SECOND_STATE image=$IMAGE_STATE video=$VIDEO_STATE kolibri=$KOLIBRI_STATE'
-                  ' nemotron=$NEMOTRON_STATE super=$NEMOTRON_SUPER_STATE"\n')
+                  ' nemotron=$NEMOTRON_STATE super=$NEMOTRON_SUPER_STATE flocal=$FLASH_LOCAL_STATE"\n')
         r = subprocess.run(["bash", "-c", script], capture_output=True, text=True, timeout=30,
                            env={"PATH": f"{bin_}:/usr/bin:/bin"})
         return r.returncode, r.stdout + r.stderr, log.read_text().splitlines()
@@ -840,6 +884,44 @@ class TheOtherLanesAndTheirProofs(unittest.TestCase):
         self.assertEqual(rc, 0, out)
         self.assertIn("install-nemotron.sh --units-only", calls)
         self.assertIn("install-nemotron-super.sh --units-only", calls)
+
+    def test_the_flash_local_lane_comes_as_its_units_on_a_new_box_and_whole_with_all_weights(self):
+        rc, out, calls = self.end(want_flocal=1)
+        self.assertEqual(rc, 0, out)
+        self.assertEqual(calls[:6], [
+            "install-image.sh --units-only", "install-video.sh --units-only", "install-kolibri.sh --units-only",
+            "install-nemotron.sh --units-only", "install-nemotron-super.sh --units-only", "install-flash-local.sh --units-only"])
+        self.assertIn("flocal=units", out)
+        rc, out, calls = self.end(want_flocal=1, all_weights=1)
+        self.assertEqual(rc, 0, out)
+        self.assertIn("install-flash-local.sh --no-smoke", calls)
+        self.assertIn("install-flash-local.sh ", calls)              # its proof, after the others'
+        self.assertLess(calls.index("install-nemotron-super.sh "), calls.index("install-flash-local.sh "))
+        self.assertIn("flocal=proved", out)
+        # left out (--no-flash-local): nothing of it runs
+        rc, out, calls = self.end(want_flocal=0, all_weights=1)
+        self.assertFalse([c for c in calls if c.startswith("install-flash-local.sh")], calls)
+
+    def test_the_flash_local_lane_is_begun_by_its_image_and_its_checkpoint(self):
+        # its first Load pulled its image and fetched its checkpoint: an update installs it whole
+        units = ("qwen38-flash-local.service",)
+        rc, out, calls = self.end(units=units, second_fresh=0, prepared=("flash-local",), want_image=0, want_video=0,
+                                  want_kolibri=0, want_nemotron=0, want_super=0, want_flocal=1)
+        self.assertEqual(rc, 0, out)
+        self.assertEqual(calls, ["install-flash-local.sh --no-smoke"])
+        self.assertIn("flocal=installed", out)
+        # its unit alone, never loaded: its units only, as on a new box
+        rc, out, calls = self.end(units=units, second_fresh=0, want_image=0, want_video=0,
+                                  want_kolibri=0, want_nemotron=0, want_super=0, want_flocal=1)
+        self.assertEqual(rc, 0, out)
+        self.assertEqual(calls, ["install-flash-local.sh --units-only"])
+
+    def test_a_failed_flash_local_install_is_said_and_the_rest_goes_on(self):
+        rc, out, calls = self.end(want_flocal=1, flocal_rc=1, all_weights=1)
+        self.assertEqual(rc, 0, out)
+        self.assertIn("NOTE: the Flash FP4-Local lane did not install", out)
+        self.assertNotIn("install-flash-local.sh ", calls)           # nothing to prove
+        self.assertIn("flocal=failed", out)
 
     def test_all_weights_proves_the_nemotron_lane_the_other_one_never_loaded(self):
         # --all-weights on a box where only Bolt was loaded: Super VL is new there, installed

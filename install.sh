@@ -470,6 +470,8 @@ WITH_NEMOTRON=0
 NO_NEMOTRON=0
 WITH_NEMOTRON_SUPER=0
 NO_NEMOTRON_SUPER=0
+WITH_FLASH_LOCAL=0
+NO_FLASH_LOCAL=0
 ALL_WEIGHTS=0
 PLAN_ONLY=0
 # --recommended (v1.36.0): every setting the list before step 1 compares, but the site's (the
@@ -502,6 +504,8 @@ for arg in "$@"; do
     --no-nemotron) NO_NEMOTRON=1 ;;
     --with-nemotron-super) WITH_NEMOTRON_SUPER=1 ;;
     --no-nemotron-super) NO_NEMOTRON_SUPER=1 ;;
+    --with-flash-local) WITH_FLASH_LOCAL=1 ;;
+    --no-flash-local) NO_FLASH_LOCAL=1 ;;
     --all-weights) ALL_WEIGHTS=1 ;;
     --with-claude-warmup)
       echo "NOTE: --with-claude-warmup was removed in v1.3 (the repo's client story moved to opencode)."
@@ -514,6 +518,7 @@ Usage: ./install.sh [--no-start] [--no-service] [--no-opencode | --with-opencode
                    [--no-27b | --with-27b] [--no-kolibri | --with-kolibri]
                    [--no-nemotron | --with-nemotron]
                    [--no-nemotron-super | --with-nemotron-super]
+                   [--no-flash-local | --with-flash-local]
                    [--all-weights] [--plan] [--recommended]
 
 Run it as yourself. Never with sudo in front: it calls sudo itself for the
@@ -529,8 +534,11 @@ other text lane (the flash beside the 27B, its image, checkpoint and PLE table,
 223 GB; or the 27B beside a serving flash, its image, draft and checkpoint,
 58), the image lane (46), the video lane (174), the Kolibri lane (Aleph
 Alpha's Kolibri-1, on vLLM, 102), the Nemotron lane (NVIDIA's Nemotron 3.5
-Bolt, on vLLM, 51) and the Nemotron Super lane (NVIDIA's Nemotron 3.5 Super VL
-on vLLM, in the Nemotron lane's image: 77 beside it, else 102). The lane that
+Bolt, on vLLM, 51), the Nemotron Super lane (NVIDIA's Nemotron 3.5 Super VL
+on vLLM, in the Nemotron lane's image: 77 beside it, else 102) and the Flash
+FP4-Local lane (NVIDIA's FP4 build of the flash model, on vLLM, 121; 32 more
+when the HF cache is on another disk than the home directory's, for the copy
+of its n-gram table). The lane that
 serves proves it serves before the run ends; on a new box the 27B takes 58 GB
 of disk, about 39 GB of
 downloads (about 6 to 7 minutes at 100 MB/s). A lane installed whole (--all-weights, --with-<lane>)
@@ -572,9 +580,13 @@ without a terminal.
   --no-nemotron-super   leave the Nemotron 3.5 Super VL lane out (vLLM, 102 GB),
                         remembered the same way (./install-nemotron-super.sh --uninstall)
   --with-nemotron-super bring it back after a --no-nemotron-super
+  --no-flash-local      leave the Flash FP4-Local lane out (vLLM, 121 GB),
+                        remembered the same way (./install-flash-local.sh --uninstall)
+  --with-flash-local    bring it back after a --no-flash-local
   --all-weights         install every lane whole now (the flash beside the 27B,
-                        the image, video, Kolibri and both Nemotron lanes), runtime
-                        and weights, about 731 GB of disk, and prove each new one
+                        the image, video, Kolibri, both Nemotron and the Flash
+                        FP4-Local lanes), runtime and weights, about 852 GB of disk
+                        (884 with the cache on another disk), and prove each new one
                         (without it, each is prepared at its first Load from
                         the cockpit; --with-<lane> does the same for that one
                         lane)
@@ -697,6 +709,7 @@ FLASH_UNIT_PATH="/etc/systemd/system/qwen38-flash.service"
 KOLIBRI_UNIT_PATH="/etc/systemd/system/qwen38-kolibri.service"
 NEMOTRON_UNIT_PATH="/etc/systemd/system/qwen38-nemotron.service"
 NEMOTRON_SUPER_UNIT_PATH="/etc/systemd/system/qwen38-nemotron-super.service"
+FLASH_LOCAL_UNIT_PATH="/etc/systemd/system/qwen38-flash-local.service"
 for _p in "$SGL_UNIT_PATH" "$FLASH_UNIT_PATH"; do
   if [ -f "$_p" ] && [ ! -r "$_p" ]; then
     echo "NOTE: an installed unit ($_p) exists but is not readable (pre-v1.2.3 installs used mode 600),"
@@ -833,6 +846,20 @@ if [ -z "$SECONDARY" ] && systemctl is-enabled --quiet qwen38-nemotron-super.ser
     echo "without making one of them the boot lane again. Switch from the cockpit when you want another."
   fi
 fi
+# And the Flash FP4-Local lane, under the same promise.
+FLASH_LOCAL_BOOT=0
+if [ -z "$SECONDARY" ] && systemctl is-enabled --quiet qwen38-flash-local.service 2>/dev/null \
+   && [ "$SGL_ENABLED" -eq 0 ] && [ "$FLASH_ENABLED" -eq 0 ]; then
+  if [ -n "$_ENV_MODEL_CHOICE" ]; then
+    echo "MODEL_CHOICE=$_ENV_MODEL_CHOICE given on a box booting the Flash FP4-Local lane: making that text lane the boot lane again."
+  elif [ "$RECOMMENDED" -eq 1 ]; then
+    echo "--recommended on a box booting the Flash FP4-Local lane: the 27B lane becomes the boot lane again, as on a new box."
+  else
+    FLASH_LOCAL_BOOT=1
+    echo "The Flash FP4-Local lane is this box's boot lane: this run brings the other lanes up to date"
+    echo "without making one of them the boot lane again. Switch from the cockpit when you want another."
+  fi
+fi
 # Which text lane to bring up to date on that path. Both text units can be on disk with
 # neither enabled, since a switch to a side lane disables both, so enablement cannot say which
 # one was in use; switch-model.sh writes it down instead (lanes.sh: one record since v1.30, the
@@ -846,7 +873,7 @@ if [ "$FLASH_READABLE" -eq 1 ] && [ "$FLASH_ENABLED" -eq 1 ] && [ "$SGL_ENABLED"
 fi
 if [ "$FLASH_READABLE" -eq 1 ] && [ "$FLASH_ENABLED" -eq 1 ] && [ "$SGL_ENABLED" -eq 0 ]; then
   INSTALLED_CHOICE=flash
-elif [ $((IMAGE_BOOT + VIDEO_BOOT + KOLIBRI_BOOT + NEMOTRON_BOOT + NEMOTRON_SUPER_BOOT)) -gt 0 ] && [ "$TEXT_LANE_LAST" = "qwen38-flash.service" ] \
+elif [ $((IMAGE_BOOT + VIDEO_BOOT + KOLIBRI_BOOT + NEMOTRON_BOOT + NEMOTRON_SUPER_BOOT + FLASH_LOCAL_BOOT)) -gt 0 ] && [ "$TEXT_LANE_LAST" = "qwen38-flash.service" ] \
      && [ "$FLASH_READABLE" -eq 1 ]; then
   INSTALLED_CHOICE=flash          # the text lane this box used before it switched to a side lane
 elif [ "$SGL_READABLE" -eq 1 ]; then
@@ -1179,6 +1206,9 @@ fi
 if [ "$NO_NEMOTRON_SUPER" -eq 1 ] && [ "$WITH_NEMOTRON_SUPER" -eq 1 ]; then
   printf -- '--no-nemotron-super and --with-nemotron-super contradict each other (drop one flag)\n' >&2; exit 1
 fi
+if [ "$NO_FLASH_LOCAL" -eq 1 ] && [ "$WITH_FLASH_LOCAL" -eq 1 ]; then
+  printf -- '--no-flash-local and --with-flash-local contradict each other (drop one flag)\n' >&2; exit 1
+fi
 
 # --no-start and --no-service both return before the image step, so the flag would be
 # accepted and silently do nothing. Say so here rather than at the end of a long install.
@@ -1205,6 +1235,11 @@ fi
 if [ "$WITH_NEMOTRON_SUPER" -eq 1 ] && { [ "$NO_START" -eq 1 ] || [ "$NO_SERVICE" -eq 1 ]; }; then
   printf -- '--with-nemotron-super needs the full install: it installs a systemd unit and proves it serves.\n' >&2
   printf -- 'Run ./install.sh without --no-start/--no-service, or ./install-nemotron-super.sh on its own.\n' >&2
+  exit 1
+fi
+if [ "$WITH_FLASH_LOCAL" -eq 1 ] && { [ "$NO_START" -eq 1 ] || [ "$NO_SERVICE" -eq 1 ]; }; then
+  printf -- '--with-flash-local needs the full install: it installs a systemd unit and proves it serves.\n' >&2
+  printf -- 'Run ./install.sh without --no-start/--no-service, or ./install-flash-local.sh on its own.\n' >&2
   exit 1
 fi
 # the same for the whole box: --no-service did none of it, --no-start the other text lane alone
@@ -1261,7 +1296,7 @@ lane_wanted(){  # $1 lane (image, video, flash, 27b), $2 --no-$1 given, $3 --wit
     echo "Leaving the $1 lane out (your earlier --no-$1). Pass --with-$1 to bring it back."
   fi
 }
-WANT_IMAGE=0; WANT_VIDEO=0; WANT_FLASH=0; WANT_27B=0; WANT_KOLIBRI=0; WANT_NEMOTRON=0; WANT_NEMOTRON_SUPER=0
+WANT_IMAGE=0; WANT_VIDEO=0; WANT_FLASH=0; WANT_27B=0; WANT_KOLIBRI=0; WANT_NEMOTRON=0; WANT_NEMOTRON_SUPER=0; WANT_FLASH_LOCAL=0
 if [ -z "$SECONDARY" ]; then
   lane_wanted image "$NO_IMAGE" "$WITH_IMAGE"; WANT_IMAGE="$WANT"
   lane_wanted video "$NO_VIDEO" "$WITH_VIDEO"; WANT_VIDEO="$WANT"
@@ -1270,6 +1305,7 @@ if [ -z "$SECONDARY" ]; then
   lane_wanted kolibri "$NO_KOLIBRI" "$WITH_KOLIBRI"; WANT_KOLIBRI="$WANT"
   lane_wanted nemotron "$NO_NEMOTRON" "$WITH_NEMOTRON"; WANT_NEMOTRON="$WANT"
   lane_wanted nemotron-super "$NO_NEMOTRON_SUPER" "$WITH_NEMOTRON_SUPER"; WANT_NEMOTRON_SUPER="$WANT"
+  lane_wanted flash-local "$NO_FLASH_LOCAL" "$WITH_FLASH_LOCAL"; WANT_FLASH_LOCAL="$WANT"
 fi
 
 # The image, video, Kolibri and Nemotron lanes are installed on demand: a run puts in their units
@@ -1308,12 +1344,24 @@ side_nemotron_begun(){  # $1 the lane's unit
   hf="$(unit_hf_cache "$1")"
   [ -n "$repo" ] && [ -n "$hf" ] && [ -d "$hf/hub/models--${repo//\//--}" ]
 }
-side_begun(){  # $1 lane (image, video, kolibri, nemotron, nemotron-super)
+# The Flash FP4-Local lane is begun once its first Load began, as a Nemotron lane is: the image its
+# unit names (pulled by digest, the one digest in the unit) and its checkpoint in the cache the
+# unit mounts.
+side_flash_local_begun(){
+  local img repo hf
+  img="$({ grep -m1 -oE '[^ ]+@sha256:[0-9a-f]{64}' "$FLASH_LOCAL_UNIT_PATH" 2>/dev/null || true; })"
+  { [ -n "$img" ] && docker image inspect "$img" >/dev/null 2>&1; } || return 1
+  repo="$({ grep -m1 -oE '[^ ]+ --revision [0-9a-f]{40}' "$FLASH_LOCAL_UNIT_PATH" 2>/dev/null || true; } | cut -d' ' -f1)"
+  hf="$(unit_hf_cache "$FLASH_LOCAL_UNIT_PATH")"
+  [ -n "$repo" ] && [ -n "$hf" ] && [ -d "$hf/hub/models--${repo//\//--}" ]
+}
+side_begun(){  # $1 lane (image, video, kolibri, nemotron, nemotron-super, flash-local)
   case "$1" in
     image|video) [ -x "$(side_lane_dir "$1")/venv/bin/python" ] ;;
     kolibri) side_kolibri_image ;;
     nemotron) side_nemotron_begun "$NEMOTRON_UNIT_PATH" ;;
     nemotron-super) side_nemotron_begun "$NEMOTRON_SUPER_UNIT_PATH" ;;
+    flash-local) side_flash_local_begun ;;
     *) return 1 ;;
   esac
 }
@@ -1570,6 +1618,8 @@ if [ -z "$SECONDARY" ] && ss -tlnH 2>/dev/null | awk '{print $4}' | grep -q ":$P
     echo "Note: the Nemotron lane is serving on :$PORT; this run updates the lanes beside it."
   elif docker inspect qwen38-nemotron-super --format '{{join .Args " "}}' 2>/dev/null | grep -qE -- "--port ${PORT}(\s|$)"; then
     echo "Note: the Nemotron Super lane is serving on :$PORT; this run updates the lanes beside it."
+  elif docker inspect qwen38-flash-local --format '{{join .Args " "}}' 2>/dev/null | grep -qE -- "--port ${PORT}(\s|$)"; then
+    echo "Note: the Flash FP4-Local lane is serving on :$PORT; this run updates the lanes beside it."
   else
     die "Port $PORT is already in use by another program (see: ss -tlnp | grep :$PORT). Free it, or install with PORT=<other> ./install.sh"
   fi
@@ -2075,7 +2125,7 @@ OC_PORT="$PROXY_PORT"
 # box (nobody should be offered a model that nothing serves); the model being
 # installed right now always appears. The default model is the one being
 # installed. json.dump writes the file: no hand-escaping.
-OC_27B=0; OC_FLASH=0; OC_KOLIBRI=0; OC_NEMOTRON=0; OC_NEMOTRON_SUPER=0
+OC_27B=0; OC_FLASH=0; OC_KOLIBRI=0; OC_NEMOTRON=0; OC_NEMOTRON_SUPER=0; OC_FLASH_LOCAL=0
 { [ "$LANE" = "27b" ] || [ -f "$SGL_UNIT_PATH" ]; } && OC_27B=1
 { [ "$LANE" = "flash" ] || [ -f "$FLASH_UNIT_PATH" ]; } && OC_FLASH=1
 # The Kolibri lane is installed at the end of a run (install-kolibri.sh): its provider comes
@@ -2109,6 +2159,15 @@ if [ "$OC_NEMOTRON_SUPER" -eq 1 ]; then
     || die "oc-limits.sh refused nemotron-super (repo bug: please open an issue)"
   OC_NEMOTRON_SUPER_CTX="${OC_NEMOTRON_SUPER_PAIR%% *}"; OC_NEMOTRON_SUPER_OUT="$(echo "$OC_NEMOTRON_SUPER_PAIR" | cut -d' ' -f2)"
   OC_NEMOTRON_SUPER_NAME="$(python3 "$REPO_DIR/oc-point-default.py" --label nemotron-super 1048576 || true)"
+fi
+# The Flash FP4-Local lane, its own provider (its own served model) with its unit.
+[ -f "$FLASH_LOCAL_UNIT_PATH" ] && OC_FLASH_LOCAL=1
+OC_FLASH_LOCAL_CTX=""; OC_FLASH_LOCAL_OUT=""; OC_FLASH_LOCAL_NAME=""
+if [ "$OC_FLASH_LOCAL" -eq 1 ]; then
+  OC_FLASH_LOCAL_PAIR="$("$REPO_DIR/oc-limits.sh" flash-local)" \
+    || die "oc-limits.sh refused flash-local (repo bug: please open an issue)"
+  OC_FLASH_LOCAL_CTX="${OC_FLASH_LOCAL_PAIR%% *}"; OC_FLASH_LOCAL_OUT="$(echo "$OC_FLASH_LOCAL_PAIR" | cut -d' ' -f2)"
+  OC_FLASH_LOCAL_NAME="$(python3 "$REPO_DIR/oc-point-default.py" --label flash-local 262144 || true)"
 fi
 # How much of a conversation survives a compaction verbatim, from the same table.
 OC_KEEP="$("$REPO_DIR/oc-limits.sh" --preserve "$OC_CTX")" \
@@ -2150,6 +2209,10 @@ fi
 if [ "$NEMOTRON_SUPER_BOOT" -eq 1 ] && [ "$OC_NEMOTRON_SUPER" -eq 1 ] && [ -n "$OC_NEMOTRON_SUPER_CTX" ]; then
   OC_KEEP="$("$REPO_DIR/oc-limits.sh" --preserve "$OC_NEMOTRON_SUPER_CTX")" \
     || die "oc-limits.sh --preserve failed for $OC_NEMOTRON_SUPER_CTX (repo bug: please open an issue)"
+fi
+if [ "$FLASH_LOCAL_BOOT" -eq 1 ] && [ "$OC_FLASH_LOCAL" -eq 1 ] && [ -n "$OC_FLASH_LOCAL_CTX" ]; then
+  OC_KEEP="$("$REPO_DIR/oc-limits.sh" --preserve "$OC_FLASH_LOCAL_CTX")" \
+    || die "oc-limits.sh --preserve failed for $OC_FLASH_LOCAL_CTX (repo bug: please open an issue)"
 fi
 # The other engine's limits, for when both providers are present: the 27B block
 # keeps its context-mode limits, flash always serves its native window. A flash install
@@ -2215,6 +2278,8 @@ OC_NEMOTRON="$OC_NEMOTRON" OC_NEMOTRON_CTX="$OC_NEMOTRON_CTX" OC_NEMOTRON_OUT="$
 OC_NEMOTRON_NAME="$OC_NEMOTRON_NAME" OC_NEMOTRON_BOOT="$NEMOTRON_BOOT" \
 OC_NEMOTRON_SUPER="$OC_NEMOTRON_SUPER" OC_NEMOTRON_SUPER_CTX="$OC_NEMOTRON_SUPER_CTX" OC_NEMOTRON_SUPER_OUT="$OC_NEMOTRON_SUPER_OUT" \
 OC_NEMOTRON_SUPER_NAME="$OC_NEMOTRON_SUPER_NAME" OC_NEMOTRON_SUPER_BOOT="$NEMOTRON_SUPER_BOOT" \
+OC_FLASH_LOCAL="$OC_FLASH_LOCAL" OC_FLASH_LOCAL_CTX="$OC_FLASH_LOCAL_CTX" OC_FLASH_LOCAL_OUT="$OC_FLASH_LOCAL_OUT" \
+OC_FLASH_LOCAL_NAME="$OC_FLASH_LOCAL_NAME" OC_FLASH_LOCAL_BOOT="$FLASH_LOCAL_BOOT" \
 OC_KEEP="$OC_KEEP" OC_PIN="$OPENCODE_PIN" \
 OC_CONFIG_DIR="$CONFIG_DIR" python3 - <<'PYEOF' || die "could not write the opencode provider config"
 import json
@@ -2309,6 +2374,15 @@ if os.environ.get("OC_NEMOTRON_SUPER") == "1":
                                                int(os.environ["OC_NEMOTRON_SUPER_CTX"]), int(os.environ["OC_NEMOTRON_SUPER_OUT"]),
                                                os.environ.get("OC_NEMOTRON_SUPER_NAME") or "Nemotron 3.5 Super VL (local, 1M)",
                                                "nemotron-super")
+if os.environ.get("OC_FLASH_LOCAL") == "1":
+    # one definition, shared with switch-model.sh (oc-flash-local.py says why)
+    import importlib.util
+    spec = importlib.util.spec_from_file_location("oc_flash_local", os.path.join(os.environ["OC_REPO_DIR"], "oc-flash-local.py"))
+    ocf = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(ocf)
+    providers["flash-local"] = ocf.provider(base_url, f"{cfg_dir}/api-key",
+                                            int(os.environ["OC_FLASH_LOCAL_CTX"]), int(os.environ["OC_FLASH_LOCAL_OUT"]),
+                                            os.environ.get("OC_FLASH_LOCAL_NAME") or "Qwen3.8-Flash-Next FP4-Local (local, 262K)")
 
 default = "flashnext/qwen3.8-flash-next" if lane == "flash" else "qwen38/qwen3.8-27b"
 if os.environ.get("OC_KOLIBRI_BOOT") == "1" and "kolibri" in providers:
@@ -2317,6 +2391,8 @@ if os.environ.get("OC_NEMOTRON_BOOT") == "1" and "nemotron" in providers:
     default = "nemotron/nemotron-3.5-bolt"
 if os.environ.get("OC_NEMOTRON_SUPER_BOOT") == "1" and "nemotron-super" in providers:
     default = "nemotron-super/nemotron-3.5-super-vl"
+if os.environ.get("OC_FLASH_LOCAL_BOOT") == "1" and "flash-local" in providers:
+    default = "flash-local/qwen3.8-flash-next-fp4"
 # Compaction is global in opencode.json, not per-model, so it is sized from the
 # INSTALLED target (oc-limits.sh --preserve) and rewritten by every install and
 # switch. preserve_recent_tokens exists because opencode's own default clamps it
@@ -2365,7 +2441,7 @@ if [ ! -e "$OC_USER_CFG" ]; then
   mkdir -p "$HOME/.config/opencode"
   install -m 644 "$CONFIG_DIR/opencode.json" "$OC_USER_CFG"
   echo "  no opencode config yet: installed this repo's at $OC_USER_CFG"
-elif ! grep -qsE '"(qwen38|flashnext|kolibri|nemotron|nemotron-super)"' "$OC_USER_CFG"; then
+elif ! grep -qsE '"(qwen38|flashnext|kolibri|nemotron|nemotron-super|flash-local)"' "$OC_USER_CFG"; then
   # the user's own config, with none of this repo's providers in it: theirs to merge
   echo "  your $OC_USER_CFG has no provider for this box: merge the \"qwen38\" (or \"flashnext\")"
   echo "  block from $CONFIG_DIR/opencode.json into it (docs/opencode.md)"
@@ -2437,6 +2513,10 @@ fi
 if [ "$NEMOTRON_SUPER_BOOT" -eq 1 ] && [ "$OC_NEMOTRON_SUPER" -eq 1 ]; then
   # the Nemotron Super lane is this box's lane: opencode's default stays on it
   OC_POINT_LANE=nemotron-super; OC_POINT_CHOICE=nemotron-super; OC_POINT_WINDOW=1048576
+fi
+if [ "$FLASH_LOCAL_BOOT" -eq 1 ] && [ "$OC_FLASH_LOCAL" -eq 1 ]; then
+  # the Flash FP4-Local lane is this box's lane: opencode's default stays on it
+  OC_POINT_LANE=flash-local; OC_POINT_CHOICE=flash-local; OC_POINT_WINDOW=262144
 fi
 python3 "$REPO_DIR/oc-point-default.py" "$CONFIG_DIR/opencode.json" "$OC_POINT_LANE" "$OC_POINT_CHOICE" "$OC_POINT_WINDOW" \
   || die "could not point the generated opencode config at the installed lane"
@@ -2739,6 +2819,11 @@ if [ -z "$SECONDARY" ] && [ "$NEMOTRON_SUPER_BOOT" -eq 0 ] && systemctl is-enabl
   echo "disabling the Nemotron Super lane at boot (unit kept, switch back anytime from the cockpit)"
   sudo systemctl disable qwen38-nemotron-super.service
 fi
+# The Flash FP4-Local lane is the eighth, under the same rule.
+if [ -z "$SECONDARY" ] && [ "$FLASH_LOCAL_BOOT" -eq 0 ] && systemctl is-enabled --quiet qwen38-flash-local.service 2>/dev/null; then
+  echo "disabling the Flash FP4-Local lane at boot (unit kept, switch back anytime from the cockpit)"
+  sudo systemctl disable qwen38-flash-local.service
+fi
 KEEPALIVE_UNIT="qwen38-keepalive.service"
 KA_CHANGED=0      # whether this run changed what the proxy runs (see its restart below)
 # The proxy, its code and its unit are the serving run's (see the secondary run above).
@@ -2824,7 +2909,7 @@ if [ -n "$SECONDARY" ]; then
   fi
   exit 0
 fi
-if [ -z "$ATS_CANNOT" ] && [ "$IMAGE_BOOT" -eq 0 ] && [ "$VIDEO_BOOT" -eq 0 ] && [ "$KOLIBRI_BOOT" -eq 0 ] && [ "$NEMOTRON_BOOT" -eq 0 ] && [ "$NEMOTRON_SUPER_BOOT" -eq 0 ]; then
+if [ -z "$ATS_CANNOT" ] && [ "$IMAGE_BOOT" -eq 0 ] && [ "$VIDEO_BOOT" -eq 0 ] && [ "$KOLIBRI_BOOT" -eq 0 ] && [ "$NEMOTRON_BOOT" -eq 0 ] && [ "$NEMOTRON_SUPER_BOOT" -eq 0 ] && [ "$FLASH_LOCAL_BOOT" -eq 0 ]; then
   sudo systemctl enable "$UNIT_NAME"
   text_lane_note "$UNIT_NAME"
 else
@@ -2867,12 +2952,17 @@ else
     "$REPO_DIR/install-nemotron-super.sh" "$(side_mode nemotron-super "$WITH_NEMOTRON_SUPER")" \
       || echo "NOTE: the Nemotron Super lane did not install or update; retry with ./install-nemotron-super.sh --no-smoke"
   fi
+  if [ "$WANT_FLASH_LOCAL" -eq 1 ]; then
+    "$REPO_DIR/install-flash-local.sh" "$(side_mode flash-local "$WITH_FLASH_LOCAL")" \
+      || echo "NOTE: the Flash FP4-Local lane did not install or update; retry with ./install-flash-local.sh --no-smoke"
+  fi
   SERVING_LANE=""
   [ "$IMAGE_BOOT" -eq 1 ] && SERVING_LANE="image"
   [ "$VIDEO_BOOT" -eq 1 ] && SERVING_LANE="video"
   [ "$KOLIBRI_BOOT" -eq 1 ] && SERVING_LANE="Kolibri"
   [ "$NEMOTRON_BOOT" -eq 1 ] && SERVING_LANE="Nemotron"
   [ "$NEMOTRON_SUPER_BOOT" -eq 1 ] && SERVING_LANE="Nemotron Super"
+  [ "$FLASH_LOCAL_BOOT" -eq 1 ] && SERVING_LANE="Flash FP4-Local"
   if [ -n "$ATS_CANNOT" ]; then
     step "Done: this box is up to date, and its flash lane, which this GPU cannot start, was not started"
     echo "  why       : $ATS_CANNOT"
@@ -3166,13 +3256,14 @@ except Exception as e:
     # New here, and proved when this run builds it whole: a lane with no unit yet, or one whose
     # runtime is not on the box (installed on demand, its units only: --all-weights on such a
     # box built every lane and proved none, found in review, 2026-10-15).
-    IMAGE_FRESH=0; VIDEO_FRESH=0; KOLIBRI_FRESH=0; NEMOTRON_FRESH=0; NEMOTRON_SUPER_FRESH=0
+    IMAGE_FRESH=0; VIDEO_FRESH=0; KOLIBRI_FRESH=0; NEMOTRON_FRESH=0; NEMOTRON_SUPER_FRESH=0; FLASH_LOCAL_FRESH=0
     { [ -f /etc/systemd/system/qwen38-image.service ] && side_begun image; } || IMAGE_FRESH=1
     { [ -f /etc/systemd/system/qwen38-video.service ] && side_begun video; } || VIDEO_FRESH=1
     { [ -f "$KOLIBRI_UNIT_PATH" ] && side_begun kolibri; } || KOLIBRI_FRESH=1
     { [ -f "$NEMOTRON_UNIT_PATH" ] && side_begun nemotron; } || NEMOTRON_FRESH=1
     { [ -f "$NEMOTRON_SUPER_UNIT_PATH" ] && side_begun nemotron-super; } || NEMOTRON_SUPER_FRESH=1
-    IMAGE_STATE=off; VIDEO_STATE=off; KOLIBRI_STATE=off; NEMOTRON_STATE=off; NEMOTRON_SUPER_STATE=off
+    { [ -f "$FLASH_LOCAL_UNIT_PATH" ] && side_begun flash-local; } || FLASH_LOCAL_FRESH=1
+    IMAGE_STATE=off; VIDEO_STATE=off; KOLIBRI_STATE=off; NEMOTRON_STATE=off; NEMOTRON_SUPER_STATE=off; FLASH_LOCAL_STATE=off
     if [ "$WANT_IMAGE" -eq 1 ]; then
       step "Qwen-Image 2.1 lane (text-to-image, editing, native RGBA)"
       IMAGE_MODE="$(side_mode image "$WITH_IMAGE")"
@@ -3213,19 +3304,28 @@ except Exception as e:
         echo "NOTE: the Nemotron Super lane did not install (the lines above say why); the rest goes on."
       fi
     fi
+    if [ "$WANT_FLASH_LOCAL" -eq 1 ]; then
+      step "Flash FP4-Local lane (NVIDIA's FP4 build of the flash model, on vLLM with b12x)"
+      FLASH_LOCAL_MODE="$(side_mode flash-local "$WITH_FLASH_LOCAL")"
+      if "$REPO_DIR/install-flash-local.sh" "$FLASH_LOCAL_MODE"; then FLASH_LOCAL_STATE=installed; [ "$FLASH_LOCAL_MODE" = --units-only ] && FLASH_LOCAL_STATE=units; else
+        FLASH_LOCAL_STATE=failed
+        echo "NOTE: the Flash FP4-Local lane did not install (the lines above say why); the rest goes on."
+      fi
+    fi
     # What to prove: what this run installed for the first time, or what was asked for
     # by name (--with-<lane>, which also proves a lane already there).
     SECOND_WITH=0
     { [ "$SECOND_LANE" = flash ] && [ "$WITH_FLASH" -eq 1 ]; } && SECOND_WITH=1
     { [ "$SECOND_LANE" = 27b ] && [ "$WITH_27B" -eq 1 ]; } && SECOND_WITH=1
-    PROVE_SECOND=0; PROVE_IMAGE=0; PROVE_VIDEO=0; PROVE_KOLIBRI=0; PROVE_NEMOTRON=0; PROVE_NEMOTRON_SUPER=0
+    PROVE_SECOND=0; PROVE_IMAGE=0; PROVE_VIDEO=0; PROVE_KOLIBRI=0; PROVE_NEMOTRON=0; PROVE_NEMOTRON_SUPER=0; PROVE_FLASH_LOCAL=0
     { [ "$SECOND_STATE" = installed ] && { [ "$SECOND_NEW" -eq 1 ] || [ "$SECOND_WITH" -eq 1 ]; }; } && PROVE_SECOND=1
     { [ "$IMAGE_STATE" = installed ] && { [ "$IMAGE_FRESH" -eq 1 ] || [ "$WITH_IMAGE" -eq 1 ]; }; } && PROVE_IMAGE=1
     { [ "$VIDEO_STATE" = installed ] && { [ "$VIDEO_FRESH" -eq 1 ] || [ "$WITH_VIDEO" -eq 1 ]; }; } && PROVE_VIDEO=1
     { [ "$KOLIBRI_STATE" = installed ] && { [ "$KOLIBRI_FRESH" -eq 1 ] || [ "$WITH_KOLIBRI" -eq 1 ]; }; } && PROVE_KOLIBRI=1
     { [ "$NEMOTRON_STATE" = installed ] && { [ "$NEMOTRON_FRESH" -eq 1 ] || [ "$WITH_NEMOTRON" -eq 1 ]; }; } && PROVE_NEMOTRON=1
     { [ "$NEMOTRON_SUPER_STATE" = installed ] && { [ "$NEMOTRON_SUPER_FRESH" -eq 1 ] || [ "$WITH_NEMOTRON_SUPER" -eq 1 ]; }; } && PROVE_NEMOTRON_SUPER=1
-    if [ $((PROVE_SECOND + PROVE_IMAGE + PROVE_VIDEO + PROVE_KOLIBRI + PROVE_NEMOTRON + PROVE_NEMOTRON_SUPER)) -gt 0 ]; then
+    { [ "$FLASH_LOCAL_STATE" = installed ] && { [ "$FLASH_LOCAL_FRESH" -eq 1 ] || [ "$WITH_FLASH_LOCAL" -eq 1 ]; }; } && PROVE_FLASH_LOCAL=1
+    if [ $((PROVE_SECOND + PROVE_IMAGE + PROVE_VIDEO + PROVE_KOLIBRI + PROVE_NEMOTRON + PROVE_NEMOTRON_SUPER + PROVE_FLASH_LOCAL)) -gt 0 ]; then
       step "Proving the new lanes serve: the ${LANE/27b/27B} lane stops meanwhile, then comes back"
       sudo systemctl stop "$UNIT_NAME"
       if [ "$PROVE_SECOND" -eq 1 ]; then
@@ -3248,6 +3348,9 @@ except Exception as e:
       fi
       if [ "$PROVE_NEMOTRON_SUPER" -eq 1 ]; then
         if "$REPO_DIR/install-nemotron-super.sh"; then NEMOTRON_SUPER_STATE=proved; else NEMOTRON_SUPER_STATE=unproved; fi
+      fi
+      if [ "$PROVE_FLASH_LOCAL" -eq 1 ]; then
+        if "$REPO_DIR/install-flash-local.sh"; then FLASH_LOCAL_STATE=proved; else FLASH_LOCAL_STATE=unproved; fi
       fi
       step "The ${LANE/27b/27B} lane again"
       prove_text_lane "$UNIT_NAME" "$SMOKE_MODEL" \
@@ -3357,6 +3460,7 @@ except Exception as e:
     lane_line "Kolibri-1  " "$KOLIBRI_STATE" kolibri kolibri "102 GB" "$KOLIBRI_UNIT_PATH"
     lane_line "Nemotron   " "$NEMOTRON_STATE" nemotron nemotron "51 GB" "$NEMOTRON_UNIT_PATH"
     lane_line "Super VL   " "$NEMOTRON_SUPER_STATE" nemotron-super nemotron-super "102 GB" "$NEMOTRON_SUPER_UNIT_PATH"
+    lane_line "FP4-Local  " "$FLASH_LOCAL_STATE" flash-local flash-local "121 GB" "$FLASH_LOCAL_UNIT_PATH"
     [ "$LANE" = "27b" ] && echo "  Benchmark  : ./bench.sh"
     record_install full
     exit 0
