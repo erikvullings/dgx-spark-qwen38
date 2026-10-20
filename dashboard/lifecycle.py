@@ -173,6 +173,64 @@ def parse_nemotron_boot_log(lines: list[str]) -> dict:
     return {"stage": stage, "done": done, "fired_up": fired, "detail": detail}
 
 
+# ── The Flash FP4-Local lane: vLLM with b12x's own loader ───────────────────────────────────────
+# NVIDIA's FP4-Local checkpoint is read by b12x's loader, which writes lines of its own instead of
+# vLLM's: "b12x routing checkpoint shards: 10/21 shards routed, 48.58 GB selected on rank 0", the
+# model's 21 shards and then the MTP head's 3, each ended by vLLM's "Loading weights took". After
+# "Model loading took", b12x tunes its kernels for this GPU, at the first boot only ("b12x
+# compiling ...", "autotuning ...", thousands of candidates measured: 12 min on the reference box,
+# 2026-10-19), and loads its choices at the boots after ("b12x priming ...", nothing measured, a
+# few seconds); a second round, for the GDN prefill, comes after "GPU KV cache size:". Read with
+# the Nemotron markers, the whole load read as "starting vLLM" and the tuning as a silent compile.
+FLASH_LOCAL_STAGES = KOLIBRI_STAGES
+FLASH_LOCAL_MARKERS = [
+    ("Initializing a V1 LLM engine", "init", "starting vLLM"),
+    ("b12x routing checkpoint shards", "loading-weights", "the checkpoint, shard by shard"),
+    ("Model loading took", "allocating-kv", "preparing b12x's kernels for this GPU"),
+    ("GPU KV cache size:", "capturing-graphs", "capturing the CUDA graphs"),
+    ("init engine (profile, create kv cache, warmup model) took", "warming-up", "starting the API"),
+    ("Application startup complete", "warming-up", "ready"),
+]
+_B12X_SHARDS = re.compile(r"b12x routing checkpoint shards: (\d+)/(\d+) shards routed, ([\d.]+) GB selected")
+_B12X_KERNELS = re.compile(r"b12x (planning|compiling|autotuning|priming|ready) ([\w.]+): (\d+)/(\d+) ready.*?(\d+) measured")
+
+
+def parse_flash_local_boot_log(lines: list[str]) -> dict:
+    """The Flash FP4-Local lane's container log, in the shape parse_kolibri_boot_log returns: the
+    shard being read, the MTP head's after the model's, and b12x's tuning in `detail`, the first
+    boot's named as such. Only the latest boot counts."""
+    start = 0
+    for i, ln in enumerate(lines):
+        if "Initializing a V1 LLM engine" in ln:
+            start = i
+    stage, detail, fired, head, tuned = None, "", False, False, False
+    for ln in lines[start:]:
+        for needle, st, what in FLASH_LOCAL_MARKERS:
+            if needle in ln:
+                stage, detail = st, what
+                if needle == "Application startup complete":
+                    fired = True
+        if "Loading weights took" in ln:          # the model's: the MTP head's shards come next
+            head = True
+        m = _B12X_SHARDS.search(ln)
+        if m:
+            stage = "loading-weights"
+            detail = f"{'the MTP head, ' if head else ''}shard {m.group(1)} of {m.group(2)} ({m.group(3)} GB)"
+        k = _B12X_KERNELS.search(ln)
+        if k and stage in ("allocating-kv", "capturing-graphs"):
+            verb, family, ready, total, measured = k.groups()
+            tuned = tuned or verb in ("compiling", "autotuning") or int(measured) > 0
+            if tuned:
+                detail = (f"tuning b12x's kernels for this GPU, at its first boot only "
+                          f"({family}: {ready} of {total} ready)")
+            else:
+                detail = f"loading b12x's kernel choices ({family}: {ready} of {total})"
+    done = list(FLASH_LOCAL_STAGES[:FLASH_LOCAL_STAGES.index(stage)]) if stage in FLASH_LOCAL_STAGES else []
+    if fired:
+        done = list(FLASH_LOCAL_STAGES)
+    return {"stage": stage, "done": done, "fired_up": fired, "detail": detail}
+
+
 def _parse_diffusion_boot_log(lines: list[str], markers: list, stages: tuple) -> dict:
     """A diffusion lane's journal, reduced to the same shape parse_boot_log returns.
 
@@ -425,24 +483,28 @@ TRANSITIONAL = BUSY_STATES - {"ready", "degraded", "orphan", "wedged"}
 # about 116 GiB of weights by measured components (48.09 + 61.73 + 0.56 + 5.2,
 # docs/video-lane.md), for the same reason. So is the Kolibri lane: 73.6 GiB of weights
 # (42.8 for its NVFP4 variant) and a KV cache beside them; the Nemotron lane, 24.1 GiB of
-# weights and a KV cache set by its memory share, 85 GiB in all; and the Nemotron Super lane,
-# 70 GiB of weights, 91 in all at its share.
+# weights and a KV cache set by its memory share, 85 GiB in all; the Nemotron Super lane,
+# 70 GiB of weights, 91 in all at its share; and the Flash FP4-Local lane, 70 GiB of weights
+# and the rest of its share, 97 GiB, in KV cache.
 ENGINE_UNITS = ("qwen38-sglang.service", "qwen38-flash.service",
                 "qwen38-image.service", "qwen38-video.service", "qwen38-kolibri.service",
-                "qwen38-nemotron.service", "qwen38-nemotron-super.service")
+                "qwen38-nemotron.service", "qwen38-nemotron-super.service", "qwen38-flash-local.service")
 IMAGE_UNIT = "qwen38-image.service"
 VIDEO_UNIT = "qwen38-video.service"
 KOLIBRI_UNIT = "qwen38-kolibri.service"
 NEMOTRON_UNIT = "qwen38-nemotron.service"
 NEMOTRON_SUPER_UNIT = "qwen38-nemotron-super.service"
+FLASH_LOCAL_UNIT = "qwen38-flash-local.service"
 # The SGLang engines that serve text on ENGINE_BASE. Every probe, guard and belt that talks
 # to that port (the generation canary, the pool guard, the wedge autoheal) is about these
 # and only these: with a diffusion lane serving, :30000 is closed, and asking "is an
 # engine ready" instead sent the canary a chat completion to a dead port every 90 s. The
 # Kolibri lane serves text on that port too, from vLLM, which none of those belts know
 # (its routes, its log and its model names are not SGLang's): the cockpit follows it on
-# its own facts, as it does the image and the video lanes. So do the Nemotron lanes.
-TEXT_UNITS = tuple(u for u in ENGINE_UNITS if u not in (IMAGE_UNIT, VIDEO_UNIT, KOLIBRI_UNIT, NEMOTRON_UNIT, NEMOTRON_SUPER_UNIT))
+# its own facts, as it does the image and the video lanes. So do the Nemotron lanes and the Flash
+# FP4-Local lane, vLLM too.
+TEXT_UNITS = tuple(u for u in ENGINE_UNITS
+                   if u not in (IMAGE_UNIT, VIDEO_UNIT, KOLIBRI_UNIT, NEMOTRON_UNIT, NEMOTRON_SUPER_UNIT, FLASH_LOCAL_UNIT))
 
 
 def blocked_reasons(action: str, params: dict, states: dict) -> list[str]:
@@ -972,7 +1034,8 @@ def guard_verdict(zombies: dict, guard: dict, override_env: bool | None) -> tupl
 # opencode default model vs the lane actually serving (the cockpit panel's verdict).
 LANE_PROVIDER = {"qwen38-sglang.service": "qwen38", "qwen38-flash.service": "flashnext",
                  "qwen38-kolibri.service": "kolibri", "qwen38-nemotron.service": "nemotron",
-                 "qwen38-nemotron-super.service": "nemotron-super"}
+                 "qwen38-nemotron-super.service": "nemotron-super",
+                 "qwen38-flash-local.service": "flash-local"}
 
 
 def opencode_default_follows(default_model, states: dict) -> tuple:

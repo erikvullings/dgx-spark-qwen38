@@ -32,6 +32,7 @@ const UNITS = {units: {'qwen38-sglang.service': {active: 'active', enabled: 'ena
                        'qwen38-kolibri.service': {active: 'inactive', enabled: 'disabled'},
                        'qwen38-nemotron.service': {active: 'inactive', enabled: 'disabled'},
                        'qwen38-nemotron-super.service': {active: 'inactive', enabled: 'disabled'},
+                       'qwen38-flash-local.service': {active: 'inactive', enabled: 'disabled'},
                        'qwen38-keepalive.service': {active: 'active', enabled: 'enabled'}}};
 const life = (engines, extra) => Object.assign({engines, events: [], blocked: {}}, extra || {});
 const eng = (state, extra) => Object.assign({state, target: 'stock', elapsed: 600}, extra || {});
@@ -1106,13 +1107,13 @@ class AnEmptyStateIsSaidNotPending(unittest.TestCase):
                                                                   .map(d => d.nextSibling.textContent);
         report({cps, image: installed('qwen38-image.service'), video: installed('qwen38-video.service'),
                 kolibri: installed('qwen38-kolibri.service'), nemotron: installed('qwen38-nemotron.service'),
-                nsuper: installed('qwen38-nemotron-super.service'),
+                nsuper: installed('qwen38-nemotron-super.service'), flocal: installed('qwen38-flash-local.service'),
                 u27: installed('qwen38-sglang.service'), flash: installed('qwen38-flash.service')});
         """)
         self.assertNotIn("…", r["cps"], r)
-        self.assertEqual(sorted(r["cps"]), ["not installed"] * 5 + ["unknown"] * 2, r)
-        self.assertEqual((r["image"], r["video"], r["kolibri"], r["nemotron"], r["nsuper"], r["u27"], r["flash"]),
-                         (False, False, False, False, False, True, True), r)
+        self.assertEqual(sorted(r["cps"]), ["not installed"] * 6 + ["unknown"] * 2, r)
+        self.assertEqual((r["image"], r["video"], r["kolibri"], r["nemotron"], r["nsuper"], r["flocal"], r["u27"], r["flash"]),
+                         (False, False, False, False, False, False, True, True), r)
 
     def test_a_gpu_that_did_not_answer_reads_no_reading_and_nothing_made_up(self):
         r = run(self, r"""
@@ -1150,7 +1151,7 @@ class TheBootLaneIsSaidOnlyWhenOneIs(unittest.TestCase):
     BODY = r"""
     const units = JSON.parse(JSON.stringify(UNITS));
     for (const u of ['qwen38-sglang.service', 'qwen38-flash.service', 'qwen38-image.service', 'qwen38-video.service', 'qwen38-kolibri.service',
-                     'qwen38-nemotron.service', 'qwen38-nemotron-super.service'])
+                     'qwen38-nemotron.service', 'qwen38-nemotron-super.service', 'qwen38-flash-local.service'])
       if (%s !== null) units.units[u].enabled = %s;
     feed({config: CONFIG, units, lifecycle: life({'qwen38-sglang.service': eng('stopped', {target: 'uncensored'}),
                                                  'qwen38-flash.service': eng('stopped', {target: 'flash'})})});
@@ -1170,7 +1171,7 @@ class TheBootLaneIsSaidOnlyWhenOneIs(unittest.TestCase):
         r = self.page("'disabled'")
         self.assertEqual(r["sub"], "no lane starts at boot; load one from Lanes", r)
         self.assertTrue(r["atBoot"] and all(a == "manual start" for a in r["atBoot"]), r["atBoot"])
-        self.assertEqual(r["notes"], ["manual start"] * 7, r["notes"])
+        self.assertEqual(r["notes"], ["manual start"] * 8, r["notes"])
         self.assertIn("Boot lanenone", r["facts"])
         self.assertEqual(len(r["steps"]), 2, r["steps"])
         self.assertIn("switch-model.sh uncensored", r["steps"][0])
@@ -1988,7 +1989,7 @@ class EachLaneWearsItsMakersMark(unittest.TestCase):
                 hidden: [...document.querySelectorAll('#rack .mark, #lanes-list .mark')].map(m => m.getAttribute('aria-hidden')),
                 none, flash, video});
         """)
-        lanes = ["qwen.svg", "qwen.svg", "alephalpha.svg", "nvidia.svg", "nvidia.svg", "qwen.svg", "minimax.svg"]   # 27B, flash, Kolibri, the Nemotron lanes, image, video
+        lanes = ["qwen.svg", "qwen.svg", "nvidia.svg", "alephalpha.svg", "nvidia.svg", "nvidia.svg", "qwen.svg", "minimax.svg"]   # 27B, flash, Flash FP4-Local, Kolibri, the Nemotron lanes, image, video
         self.assertEqual(r["bays"], lanes)
         self.assertEqual(r["cards"], lanes)
         # the mark is decoration beside the lane's name: no alt text to read twice

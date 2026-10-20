@@ -37,22 +37,24 @@ PIN_MODELS = {
     "NEMOTRON_BOLT_DRAFT_REV": "nvidia/NVIDIA-Nemotron-3.5-Bolt-74B-A9B-24GB-LiLiCorr",
     "NEMOTRON_SUPER_REV": "nvidia/NVIDIA-Nemotron-3.5-Super-VL-120B-A12B-NVFP4",
     "NEMOTRON_SUPER_DRAFT_REV": "nvidia/NVIDIA-Nemotron-3.5-Super-VL-120B-A12B-NVFP4-LiLiCorr",
+    "FLASH_LOCAL_REV": "nvidia/Qwen3.8-Flash-Next-FP4-Local",
 }
 
 # Where the pins are written: the text lanes' in the switch and the installer, every other
 # lane's in its own installer.
 PIN_FILES = ("switch-model.sh", "run.sh", "install.sh",
              "install-image.sh", "install-video.sh", "install-kolibri.sh", "install-nemotron.sh",
-             "install-nemotron-super.sh")
+             "install-nemotron-super.sh", "install-flash-local.sh")
 
 PIN_RE = re.compile(r'^\s*([A-Z][A-Z0-9_]*REV)="?\$?\{?[A-Z0-9_:-]*?([0-9a-f]{40})',
                     re.MULTILINE)
 
 # Images that belong to this stack (everything else is none of our business). The Kolibri and
 # Nemotron lanes run images built on the box, which carry a tag and no digest: their builds were
-# missing from Library's engine images (found on the reference box, 2026-10-16).
+# missing from Library's engine images (found on the reference box, 2026-10-16). The Flash
+# FP4-Local lane runs the community b12x image its model card names, pulled by digest.
 ENGINE_IMAGE_RE = re.compile(
-    r"^(lmsysorg/sglang|qwen38-flash|qwen38-dflash2|qwen38-sglang|qwen38-kolibri:|qwen38-nemotron:|vllm)")
+    r"^(lmsysorg/sglang|qwen38-flash|qwen38-dflash2|qwen38-sglang|qwen38-kolibri:|qwen38-nemotron:|vllm|eugr/spark-vllm-b12x)")
 
 
 # Where a lane's unit or launcher says its Hugging Face cache is: a text lane mounts it into
