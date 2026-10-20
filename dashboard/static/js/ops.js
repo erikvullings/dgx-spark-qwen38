@@ -44,22 +44,30 @@ on('decode', d => {
   setText('tr-kv', t ? (100 * t.token_usage).toFixed(1) + ' %' : u.tokens ? (100 * u.tokens).toFixed(0) + ' %' : 'idle');
 });
 // ── the last 5 minutes, from the engine's own counters (engine_metrics.py) ──────
-// Each request is counted once, when it finishes; a speed holds no idle time; the cockpit's
-// canary is taken out. The window is the cockpit's, so a reload of the page loses nothing.
+// On SGLang each request is counted once, when it finishes, and the cockpit's canary is taken
+// out; vLLM counts its tokens and latencies at every step, and a request, its wait and its
+// prefill once it finishes (vllm/v1/metrics/stats.py). A speed holds no idle time on either.
+// The window is the cockpit's, so a reload of the page loses nothing.
 // No rate off the scheduler's log lines sits here: each of those is a token count over the
 // time since the previous line of its kind, idle time included (the v1.22.12 notes in
 // CHANGELOG.md have the measurements).
+// The lanes that serve text on vLLM, whose counters the collector reads too (engine_metrics.py):
+// no canary runs on them, and they count no client that left. A list of them, which the lane-lists
+// test holds to the lanes whose installer stands on vllm-lane.sh, by its name; their names are the
+// cockpit's: a copy of them said "Nemotron" where every other view says "Nemotron Bolt" (found in
+// review, 2026-10-20).
+const VLLM_UNITS = [KOLIBRI_UNIT, NEMOTRON_UNIT, NEMOTRON_SUPER_UNIT, FLASH_LOCAL_UNIT];
+const VLLM_LANE_NAME = Object.fromEntries(VLLM_UNITS.map(u => [u, LANE_NAME[u]]));
 on('metrics', d => {
   if (!d.lane){
-    // The Kolibri lane serves on vLLM, whose counters are not SGLang's: "no text engine is
-    // serving" was said while it served (found in review, 2026-10-14)
+    // The Kolibri lane serves on vLLM: "no text engine is serving" was said while it served
+    // (found in review, 2026-10-14)
     const sv = (servingEngine() || [])[0];
-    const vname = sv === KOLIBRI_UNIT ? 'Kolibri' : sv === NEMOTRON_UNIT ? 'Nemotron' : sv === NEMOTRON_SUPER_UNIT ? 'Nemotron Super'
-      : sv === FLASH_LOCAL_UNIT ? 'Flash FP4-Local' : '', up = !!vname && textReady();
+    const vname = VLLM_LANE_NAME[sv] || '', up = !!vname && textReady();
     // while it loads it serves nothing yet, next to a Requests line that says so (review, 2026-10-14)
     cap('wm-cap', up ? `${vname}: vLLM` : vname ? `${vname}: loading` : 'no text engine', ''); setText('wm-note', '');
-    setText('wm-verdict', up ? `The ${vname} lane serves on vLLM, and these counters are SGLang\'s: there are none here for it. Its running and waiting requests are above.`
-                         : vname ? `The ${vname} lane is loading: it serves nothing yet, and these counters are SGLang\'s.`
+    setText('wm-verdict', up ? `The ${vname} lane serves on vLLM: its counters come with the next read.`
+                         : vname ? `The ${vname} lane is loading: it serves nothing yet.`
                          : 'No text engine is serving: there is nothing to count.');
     facts($('wm-facts'), []); return;
   }
@@ -67,7 +75,7 @@ on('metrics', d => {
     // nothing read yet for this engine: a read that failed is said apart from one on its way
     cap('wm-cap', d.read === false ? 'no counters' : 'first read', ''); setText('wm-note', '');
     setText('wm-verdict', d.read === false
-      ? 'The engine has not answered /metrics. An engine started without --enable-metrics has no counters to show (both text lanes here start with it), and a busy one answers a later read.'
+      ? 'The engine has not answered /metrics, and a busy one answers a later read. An SGLang engine started without --enable-metrics has no counters to show: every SGLang lane here starts with it, and vLLM always serves them.'
       : 'The first read of the engine’s counters is on its way.');
     facts($('wm-facts'), []); return;
   }
@@ -75,6 +83,7 @@ on('metrics', d => {
   // num_running_reqs while it runs, and a canary-only window must still read quiet, even
   // though the Busiest moment row says one request ran
   const w = d.watched_s || 0, any = d.requests > 0 || d.decode_tps != null || d.ttft_s != null || d.prefill_tps != null;
+  const vllm = d.lane in VLLM_LANE_NAME;
   const peaks = [d.pool_max ? `${Math.round(100 * d.pool_max)} % of the pool` : null,
                  d.running_max ? `${fmtN(d.running_max)} request${d.running_max > 1 ? 's' : ''} at once` : null,
                  d.queued_max ? `${fmtN(d.queued_max)} waiting` : null].filter(Boolean);
@@ -82,10 +91,13 @@ on('metrics', d => {
   cap('wm-cap', d.approximate ? 'approximate' : any ? 'watching' : 'quiet', d.approximate ? 'warn' : any ? 'ok' : '');
   setText('wm-verdict', (d.read === false ? 'The last read of the engine’s counters failed: these numbers come from the one before. ' : '')
       + (d.approximate ? 'A canary ran beside a client request, so it is counted as one while it lies inside the window. ' : '')
-      + 'From the engine’s own counters: each request counted once, when it finishes, and the cockpit’s canary taken out.');
+      + (vllm ? 'From vLLM’s own counters: its tokens and latencies as it makes them, a request, its wait and its prefill once it finishes.'
+         : 'From the engine’s own counters: each request counted once, when it finishes, and the cockpit’s canary taken out.'));
   facts($('wm-facts'), [
     ['Requests finished', fmtN(d.requests)],
-    ['Prompt tokens from the cache', d.reuse == null ? 'no request finished' : `${(100 * d.reuse).toFixed(1)} % of ${fmtN(d.prompt_tokens)}`],
+    // vLLM counts a prompt's tokens as it reads them, SGLang when its request finishes
+    ['Prompt tokens from the cache', d.reuse == null ? (vllm ? 'no prompt read' : 'no request finished')
+                                                     : `${(100 * d.reuse).toFixed(1)} % of ${fmtN(d.prompt_tokens)}`],
     // the queue is what the client waits before the engine starts on it; prefill counts the
     // tokens the engine computed over its own prefill stopwatch, cache reads not in it
     ['Queued before starting', d.queue_s == null ? null : `${d.queue_s < 10 ? d.queue_s.toFixed(2) : d.queue_s.toFixed(1)} s on average`],
@@ -99,7 +111,8 @@ on('metrics', d => {
     // the levels are not counters: these are the cockpit's own peaks of its reads
     ['Busiest moment', peaks.length ? peaks.join(', ') : null],
     ['Idle in the window', d.idle_share == null ? null : `${Math.round(100 * d.idle_share)} % of the time`],
-    ['Abandons the engine accepted', d.aborted > 0 ? fmtN(d.aborted) : 'none']]);
+    // vLLM counts no client that left (engine_metrics.py): not counted, which is not none
+    ['Abandons the engine accepted', d.aborted == null ? 'not counted by vLLM' : d.aborted > 0 ? fmtN(d.aborted) : 'none']]);
 });
 const feedTime = ts => {
   if (!ts || ts.length < 19) return ts || '';

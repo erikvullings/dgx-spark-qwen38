@@ -1473,5 +1473,88 @@ class TheLastFiveMinutesAreTheEnginesOwnCounters(Base):
         self.assertEqual(self.count["requests"], 0)
 
 
+class TheVllmLanesCountersAreReadToo(Base):
+    """The Traffic view reads the vLLM lanes' /metrics as well (engine_metrics.py names both
+    engines' counters). With a vLLM lane serving, the collector asked for no page at all: its
+    key was taken among the SGLang lanes alone, and the view said nothing of a lane that served
+    (found in review, 2026-10-20). vLLM counts a request's tokens per iteration and its
+    inter-token samples per step, and no canary runs on its lanes."""
+
+    UNIT = "qwen38-flash-local.service"
+
+    def setUp(self):
+        import http.server
+        import threading
+        self.count = {"requests": 0, "reads": 0}
+        count = self.count
+
+        def page():
+            n = count["requests"]
+            # a request: 14 prompt tokens, 4 of them from the cache, and 9 generated, the
+            # first at 0.05 s and the other 8 over two steps of 0.08 s: (9 - 1) / 0.16 = 50 tok/s
+            return (f'vllm:request_success_total{{engine="0",finished_reason="stop",model_name="m"}} {n}\n'
+                    f'vllm:prompt_tokens_total{{engine="0",model_name="m"}} {14 * n}\n'
+                    f'vllm:prompt_tokens_cached_total{{engine="0",model_name="m"}} {4 * n}\n'
+                    f'vllm:generation_tokens_total{{engine="0",model_name="m"}} {9 * n}\n'
+                    f'vllm:time_to_first_token_seconds_count{{engine="0",model_name="m"}} {n}\n'
+                    f'vllm:time_to_first_token_seconds_sum{{engine="0",model_name="m"}} {0.05 * n}\n'
+                    f'vllm:inter_token_latency_seconds_count{{engine="0",model_name="m"}} {2 * n}\n'
+                    f'vllm:inter_token_latency_seconds_sum{{engine="0",model_name="m"}} {0.16 * n}\n'
+                    f'vllm:num_requests_running{{engine="0",model_name="m"}} 1.0\n'
+                    f'vllm:num_requests_waiting{{engine="0",model_name="m"}} 0.0\n'
+                    f'vllm:kv_cache_usage_perc{{engine="0",model_name="m"}} 0.25\n')
+
+        class Engine(http.server.BaseHTTPRequestHandler):
+            def log_message(self, *a):
+                pass
+
+            def do_GET(self):
+                out = page().encode() if self.path == "/metrics" else b""
+                count["reads"] += self.path == "/metrics"
+                self.send_response(200 if out else 404)
+                self.send_header("Content-Length", str(len(out)))
+                self.end_headers()
+                self.wfile.write(out)
+
+        srv = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Engine)
+        threading.Thread(target=srv.serve_forever, daemon=True).start()
+        self.addCleanup(srv.server_close)
+        self.addCleanup(srv.shutdown)
+        saved = (self.cp.ENGINE_BASE, self.cp.METRICS)
+        with self.cp.LIFE_LOCK:
+            saved_life = {k: dict(v) for k, v in self.cp.LIFE.items()}
+            self.cp.LIFE["states"] = {self.UNIT: "ready"}
+            self.cp.LIFE["enter"] = {self.UNIT: "1000"}
+        self.cp.ENGINE_BASE = f"http://127.0.0.1:{srv.server_address[1]}"
+        self.cp.METRICS = self.cp.em.Window(300.0)
+
+        def restore():
+            self.cp.ENGINE_BASE, self.cp.METRICS = saved
+            with self.cp.LIFE_LOCK:
+                self.cp.LIFE.clear(); self.cp.LIFE.update(saved_life)
+        self.addCleanup(restore)
+
+    def test_each_vllm_lane_that_serves_is_read(self):
+        for unit in ("qwen38-flash-local.service", "qwen38-kolibri.service", "qwen38-nemotron.service",
+                     "qwen38-nemotron-super.service"):
+            with self.subTest(unit=unit):
+                with self.cp.LIFE_LOCK:
+                    self.cp.LIFE["states"] = {unit: "ready"}
+                reads = self.count["reads"]
+                out = self.cp.collect_engine_metrics()
+                self.assertEqual((out["lane"], out.get("read")), (unit, True), out)
+                self.assertEqual(self.count["reads"], reads + 1, "the collector asked the engine for its page")
+
+    def test_a_request_is_counted_with_vllms_decode_speed(self):
+        self.cp.collect_engine_metrics()
+        self.count["requests"] += 1
+        out = self.cp.collect_engine_metrics()
+        self.assertEqual((out["lane"], out.get("requests"), out.get("prompt_tokens"), out.get("cached_tokens"),
+                          out.get("generated_tokens")), (self.UNIT, 1, 14, 4, 9), out)
+        self.assertAlmostEqual(out["decode_tps"], 50.0)
+        self.assertEqual((out["running_max"], out["pool_max"], out["canaries_out"]), (1, 0.25, 0), out)
+        self.assertIsNone(out["aborted"], "vLLM counts no client that left: not counted, which is not none")
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

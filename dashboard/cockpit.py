@@ -1162,13 +1162,14 @@ def engine_metrics_read(timeout: float = 4.0):
         return None
 
 
-def serving_text_key():
-    """(unit, its start) of the text engine serving now, or None. The counters are one
-    engine's: they start again from zero with every start of it."""
+def serving_text_key(units=None):
+    """(unit, its start) of the text engine serving now among `units` (the SGLang lanes, the
+    canary's, by default), or None. The counters are one engine's: they start again from zero
+    with every start of it."""
     with LIFE_LOCK:
         states = dict(LIFE.get("states", {}))
         enter = dict(LIFE.get("enter", {}))
-    for unit in lc.TEXT_UNITS:
+    for unit in lc.TEXT_UNITS if units is None else units:
         if states.get(unit) in ("ready", "degraded", "wedged"):
             return (unit, enter.get(unit))
     return None
@@ -1177,7 +1178,9 @@ def serving_text_key():
 @guard
 def collect_engine_metrics():
     """5 s tier: the serving engine's counters over the last 5 minutes."""
-    key = serving_text_key()
+    # the vLLM lanes' too: engine_metrics.py reads their names, and a key taken among the SGLang
+    # lanes alone never asked them for a page (found in review, 2026-10-20)
+    key = serving_text_key(lc.TEXT_UNITS + VLLM_UNITS)
     if key is None:
         return {"node_id": "local", "lane": None}
     started = time.time()

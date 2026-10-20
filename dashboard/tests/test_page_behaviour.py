@@ -143,6 +143,8 @@ class TheKolibriLaneIsSaidAsItIs(unittest.TestCase):
         report({verdict: txt('wm-verdict'), acc: txt('tr-acc'), kv: txt('tr-kv')});
         """)
         self.assertIn("serves on vLLM", r["verdict"])
+        # its name as every other view says it (LANE_NAME): a copy said "Kolibri" and "Nemotron"
+        self.assertIn("The Kolibri-1 lane serves on vLLM", r["verdict"])
         self.assertNotIn("No text engine is serving", r["verdict"])
         self.assertEqual((r["acc"], r["kv"]), ("no draft model", "25.0 %"))
 
@@ -1944,6 +1946,27 @@ class TheLastFiveMinutesSayTheEnginesCounters(unittest.TestCase):
         self.assertEqual((r["cap"], r["facts"]), ("no counters", {}), r)
         self.assertIn("--enable-metrics", r["verdict"])
         self.assertIn("a busy one answers a later read", r["verdict"])
+
+    def test_a_vllm_lanes_counters_say_no_canary_ran(self):
+        # the collector reads the vLLM lanes too, where no canary runs: "the cockpit's canary
+        # taken out" would say of them a thing that never happened (found in review, 2026-10-20)
+        for unit in ("qwen38-flash-local.service", "qwen38-kolibri.service", "qwen38-nemotron.service",
+                     "qwen38-nemotron-super.service"):
+            with self.subTest(unit=unit):
+                r = self.box(dict(self.FULL, lane=unit, canaries_out=0, aborted=None))
+                # vLLM counts its tokens and latencies at every step, not once a request ends: a turn
+                # still decoding at the window's end is in the tokens and not in the requests
+                # (vllm/v1/metrics/stats.py, found in review, 2026-10-20)
+                self.assertIn("From vLLM’s own counters: its tokens and latencies as it makes them, a request, "
+                              "its wait and its prefill once it finishes", r["verdict"])
+                self.assertNotIn("each request counted once", r["verdict"])
+                self.assertNotIn("canary", r["verdict"])
+                self.assertEqual(r["facts"]["Decode speed"], "49.8 tok/s per request")
+                # vLLM counts no client that left: "none" would say none left
+                self.assertEqual(r["facts"]["Abandons the engine accepted"], "not counted by vLLM")
+                # no prompt read in the window says so: a request may well have finished in it
+                r = self.box(dict(self.FULL, lane=unit, canaries_out=0, aborted=None, prompt_tokens=0, reuse=None))
+                self.assertEqual(r["facts"]["Prompt tokens from the cache"], "no prompt read")
 
 
 

@@ -404,6 +404,10 @@ class EveryListNamesThemAll(unittest.TestCase):
         for table in ("const SIDE_LANE = {", "const READY_DEFAULT = {"):
             line = next(k for k, l in enumerate(base, 1) if l.startswith(table))
             self.assertIn(f"base.js:{line}", read, f"{table} is not read")
+        # and the list of the vLLM lanes the Traffic view names them by, held to that family by its name
+        ops = (REPO / "dashboard" / "static" / "js" / "ops.js").read_text().splitlines()
+        line = next(k for k, l in enumerate(ops, 1) if l.startswith("const VLLM_UNITS = ["))
+        self.assertEqual(read.get(f"ops.js:{line}"), VLLM)
 
 
 class TheScannerReadsJavaScriptAsJavaScriptDoes(unittest.TestCase):
