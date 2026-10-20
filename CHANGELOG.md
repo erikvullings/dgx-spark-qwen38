@@ -1,5 +1,89 @@
 # Changelog
 
+## v1.37.2 (2026-10-20): the Traffic view on the vLLM lanes, and what a review of v1.37.0 found
+
+**The Traffic view reads the vLLM lanes.** Its last five minutes come from the serving engine's own
+counters, and it read SGLang's lanes only: on the Flash FP4-Local lane, Kolibri and the two Nemotron
+lanes it showed nothing. It asks them for their counters now, reads either engine's names, and keeps
+the decode speed on one clock for each. SGLang counts the time between a request's outputs per token,
+vLLM once per step, so with a drafter vLLM's count is steps: read as tokens, it would have said
+14.8 tok/s where the engine decoded 36.4. Its decode speed is its generated tokens less its first
+tokens over that time. vLLM counts no client that left (its abort skips the statistics of a finished
+request), so on its lanes the view says the abandons are not counted, rather than none. Its tokens
+accepted per draft step are vLLM's own measure there, one plus the accepted tokens per draft: the
+generated tokens per draft said 6.22 on a page where vLLM counts 2.99. It says that vLLM counts its
+tokens and latencies at every step, and a request, its wait and its prefill once it finishes, and it
+names the lanes as the rest of the cockpit does. Taken from Dimitris Kontokostas's rework of his pull
+request, thank you again, Dimitris.
+
+**bench.sh names the lane it measures.** It took any served name with "flash" in it for the flash
+lane, and any other for the 27B lane: the FP4-Local lane got the SGLang flash lane's header,
+reference and warm-up note above its own numbers, and Kolibri and the Nemotron lanes the 27B lane's
+71.4. Each lane is named by its served name now, the FP4-Local lane with the reference measured on
+the reference box at its default effort (a greedy median of 55.1 to 55.4 tok/s), and a lane with no
+reference says so.
+
+**The FP4-Local lane does not start without its checkpoint, and says why.** A start missing what its
+unit mounts made Docker create it, owned by root: the checkpoint's folders inside the Hugging Face
+cache, which install.sh then read as a lane begun, and a folder in place of a missing copy of the
+table (proved on the reference box with the lane's image and a cache of its own). Before its engine,
+after the memory guard every lane runs, the unit runs `flash-local-files.sh`, which checks the
+checkpoint, its index and every file the index names (a fetch cut short leaves the index first), and
+each copy of the table at its original's size, and gives a cache on a disk mounted late at boot 90 s
+to come. Without them it exits
+78, which leaves the unit failed, as the flash lane's ATS check does, and the cockpit shows the
+missing file on the lane's card and in its banner, with what brings it back: the lane's Load, or
+`./switch-model.sh flash-local`, once the disk of the cache is mounted. The check is a script of its
+own, which the engine does not read: a new wording of it never asks a serving lane to restart, and
+with the check itself gone (a configuration restored from before it) the start stops the same way,
+where it was started again every 15 s. The cockpit reads a copy empty or cut short as missing, as
+the check does: its Load makes the copy again, where it started a lane that then failed on it, and its
+step says that it fetches and copies rather than that it verifies. A copy empty or cut short is no
+longer written into the unit by an install: the lane reads the table where the cache is until its
+next Load makes the copy whole. Each copy is on the disk before it takes its name, so a power cut no
+longer leaves a renamed copy empty or cut short, and a copies folder that cannot be made or written
+into is said with the remedy that fits its cause, where the copy ended in a traceback.
+
+**A Load brings back what a lane lacks.** The Load of a lane that was the boot lane already only
+started it, so a lane whose checkpoint or table copy had gone failed again on the same missing file.
+A lane that cannot start as installed now gets its switch first, which fetches and copies what is
+missing. A folder that Docker left in a copy's place before this release is removed first: the copy
+failed on it at every Load, after copying the file whole (proved with a folder made by root through
+Docker, 2026-10-20).
+
+**A lane seen booting once says "Last boot".** Its card read "Last 1 boots: 5 min 22. Median 5 min
+22.": it reads "Last boot: 5 min 22." now.
+
+**The proxy's corruption tripwire reads vLLM's reasoning (v6.44).** vLLM streams the thinking as
+`reasoning`, which the tripwire did not read: on the FP4-Local lane, a Qwen lane on vLLM whose token
+id 0 is "!", a decode that lost its state while it reasoned went unseen.
+
+**omp starts a lane at its template's default.** omp sends its default level with every request, and
+got `lean` for every patched Qwen template: on a box installed with `LEAN_DEFAULT=0`, whose templates
+keep Qwen's `xhigh`, omp alone answered at `lean`. Its default is the installed template's now. pi
+sends no effort and was right already.
+
+**What an update does.** The proxy restarts once (v6.44), and so does the cockpit. On a box installed
+with `LEAN_DEFAULT=0`, omp's config is written again, its Qwen lanes starting at `xhigh`, and
+elsewhere it is left as it is. On a box with the FP4-Local lane, its unit is rewritten with its start
+check, and the check is put in beside it (`~/.config/qwen38/flash-local-files.sh`): a lane that
+serves keeps running, and the installer says it runs older files until its next start.
+
+**Tests.** Each fix has a test that fails on the old code: the Traffic view's collector on each vLLM
+lane and what its page says there, vLLM's uncounted abandons and its accept length, the start check
+(a missing file, a folder in a copy's place, a disk mounted late, the line the cockpit reads, the
+check out of what the engine reads), the card's line on a phone, an empty copy, the folder left in a
+copy's place, a copies folder that cannot be written, an empty or cut copy, the check gone, the Load
+of a lane that lacks a file, the tripwire, omp's default, the one-boot line and bench.sh's names
+(thirteen failures on the old script).
+A new test holds every list of the lanes, in the shell scripts, the cockpit's Python and the page's
+JavaScript, to the lanes the unit templates name, whether a list names them by their units, with or
+without ".service", or by the constants that hold them, the keys of the page's tables included, and
+reads the narrower lists from what they are about. The page's JavaScript is read as JavaScript reads
+it, to the end of each file or the test fails, and a list named for the vLLM lanes or for the b12x
+lanes must be that family. A ninth lane the lists do not name fails it, and so does a list with a lane
+taken out, unless what it kept is itself one of the families, as the text lanes are.
+
 ## v1.37.1 (2026-10-20): every lane's measures on one page, FP4-Local's boot refusals said as they are
 
 **Every lane's headline first.** BENCHMARKS.md opened on its first headline, three engines for the
