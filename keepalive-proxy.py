@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Keepalive proxy in front of SGLang or vLLM (v6.43). No content logging, and the only
+"""Keepalive proxy in front of SGLang or vLLM (v6.44). No content logging, and the only
 rewriting is the tool-schema guard (role 4); one route, POST /v1/systemone, is answered
 here instead of relayed (role 5).
 
@@ -40,6 +40,10 @@ Six roles, nothing else:
    PROXY_HOLD_MAX_S, instead of failing at once. A streamed one hears from the proxy at
    once (200, then the keepalives of role 1); see "Holding a request" below.
 
+v6.44: the corruption tripwire reads vLLM's reasoning too. vLLM streams the thinking as
+delta.reasoning, which the guard did not read: on the Flash FP4-Local lane, a Qwen lane on vLLM
+whose token id 0 is "!", a decode that lost its state while it reasoned went unseen (found in
+review, 2026-10-20).
 v6.43: the Flash FP4-Local lane (NVIDIA's FP4 build of the flash model, on vLLM) is a Qwen lane:
 the flash lane's one-prompt ceiling holds while it serves, as its window is the flash lane's, and a
 reasoning effort of "none" becomes enable_thinking false there as on SGLang, since its chat template
@@ -3291,7 +3295,8 @@ def delta_text(j):
     try:
         ch = (j.get("choices") or [{}])[0]
         d = ch.get("delta") or {}
-        for k in ("content", "reasoning_content"):
+        # vLLM streams the thinking as "reasoning", SGLang as "reasoning_content" (v6.44)
+        for k in ("content", "reasoning_content", "reasoning"):
             v = d.get(k)
             if isinstance(v, str) and v:
                 return v
@@ -4979,7 +4984,7 @@ if __name__ == "__main__":
     holds = (f"holds requests up to {HOLD_MAX_S:.0f}s while {' or '.join(HOLD_UNITS)} comes back"
              if HOLD_UNITS and HOLD_MAX_S > 0 else "holds nothing")
     # one f-string: the cockpit's tests render this line from the source
-    log(f"v6.43 on {BIND}:{port} -> {UPSTREAM} (keepalive {KEEPALIVE_S:.0f}s, max silence {MAX_SILENCE_S:.0f}s, {holds})")
+    log(f"v6.44 on {BIND}:{port} -> {UPSTREAM} (keepalive {KEEPALIVE_S:.0f}s, max silence {MAX_SILENCE_S:.0f}s, {holds})")
     if FLASH_PROMPT_CEILING_TOKENS > 0:
         log(f"one-prompt ceiling {FLASH_PROMPT_CEILING_TOKENS} tokens while the flash lane serves"
             + (f", {PROMPT_CEILING_TOKENS} on any lane" if PROMPT_CEILING_TOKENS > 0 else ""))

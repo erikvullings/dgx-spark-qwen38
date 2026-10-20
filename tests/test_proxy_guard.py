@@ -793,6 +793,18 @@ class CorruptionRun(unittest.TestCase):
             {"type": "content_block_delta", "delta": {"text": "hey"}}), "hey")
         self.assertEqual(self.k.delta_text({"choices": [{"delta": {}}]}), "")
 
+    def test_vllms_reasoning_field_is_read_and_trips(self):
+        # vLLM streams the thinking as delta.reasoning, not reasoning_content: on the Flash
+        # FP4-Local lane, a Qwen lane on vLLM whose token id 0 is "!", the guard read none of
+        # its reasoning (found in review, 2026-10-20)
+        self.assertEqual(self.k.delta_text(
+            {"choices": [{"delta": {"reasoning": "think"}}]}), "think")
+        h = self.k.H.__new__(self.k.H)
+        ev = b'data: {"choices":[{"delta":{"reasoning":"!"}}]}\n\n'
+        fired = [h._scan_corruption(ev) for _ in range(self.k.CORRUPTION_RUN)]
+        self.assertEqual(fired.count(True), 1)
+        self.assertTrue(fired[-1])
+
     def test_tool_arguments_are_not_scanned(self):
         # a JSON blob of exclamation marks inside tool arguments is the model's
         # business, not a decode failure
