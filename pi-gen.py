@@ -18,15 +18,17 @@ per model name, modalities, contextWindow, maxTokens, a 1568x1568 /
 512 KiB image resize limit and compat.supportsDeveloperRole false (the
 system prompt as "system": the served template refuses "developer");
 pi's settings.json adds the default model,
-modelThinkingLevels "off" for the Qwen models (unset sends no effort field, which
-is the patched template's lean default) and "high" for Kolibri, which is sent
+modelThinkingLevels "off" for the Qwen models (unset sends no effort field: the
+installed template's default, lean, or xhigh on a box installed with LEAN_DEFAULT=0
+and on the Flash FP4-Local lane) and "high" for Kolibri, which is sent
 its effort (EFFORT_FIELD), keepRecentTokens from the artifact's
 compaction block and per-lane reserveTokens = the lane's output cap. omp
 gets the same values re-serialized: the same models array, thinking block
 added, inputLimits and pi's compat dropped (its schema has no room for them);
 default provider + model id -> modelRoles.default. The thinking block lists
 the template's own tiers (the artifact's variants, lean included, what pi's
-fixed enum cannot offer) with defaultLevel lean; compat carries
+fixed enum cannot offer) with defaultLevel the installed template's default (lean, or xhigh on a
+box installed with LEAN_DEFAULT=0); compat carries
 thinkingFormat qwen-chat-template, qwenTemplateReasoningEffort and a
 reasoningEffortMap, which route the pick onto
 chat_template_kwargs.reasoning_effort alone, what the patched template reads
@@ -44,6 +46,7 @@ done or with nothing to generate (no artifact, as on a --no-opencode box),
 import argparse
 import json
 import os
+import re
 import shlex
 import sys
 
@@ -229,11 +232,29 @@ OMP_LEVEL = {"lean": "minimal", "low": "low", "medium": "medium", "minimal": "mi
              "high": "high", "xhigh": "xhigh", "max": "max", "none": "minimal"}
 
 
-def omp_thinking(tiers):
+# The patched template each Qwen lane reads, beside the configs this writes (patch-template.py). Its
+# default is the effort a request that names none gets: lean on a box installed as is, Qwen's xhigh on
+# one installed with LEAN_DEFAULT=0. omp sends its default level on every request, so it starts there:
+# it took lean for every patched template, and a LEAN_DEFAULT=0 box got lean in omp alone (found in
+# review, 2026-10-20).
+LANE_TEMPLATE = {"qwen38": "chat-template-sglang.jinja", "flashnext": "chat-template-flashnext.jinja",
+                 "flash-local": "chat-template-flash-local.jinja"}
+TEMPLATE_DEFAULT = re.compile(r"reasoning_effort\s*\|\s*default\(\s*['\"]([a-z]+)['\"]\s*\)")
+
+
+def template_default(out_dir, prov):
+    """The installed template's default effort for a provider's lane; None when unknown."""
+    name = LANE_TEMPLATE.get(prov)
+    m = TEMPLATE_DEFAULT.search((read_text(os.path.join(out_dir, name)) if name else None) or "")
+    return m.group(1) if m else None
+
+
+def omp_thinking(tiers, default_effort=None):
     """template tiers -> (thinking block, compat), enum-clean. lean rides on
     minimal, high/max collapse onto xhigh, exactly as the patched template
     maps. compat always carries qwenTemplateReasoningEffort; the map only
-    when a tier needs another spelling."""
+    when a tier needs another spelling. default_effort is the installed
+    template's own default (template_default), which omp's default level follows."""
     levels, rmap = [], {}
     for t in tiers:
         lvl = OMP_LEVEL.get(t)
@@ -246,8 +267,8 @@ def omp_thinking(tiers):
     compat = {"thinkingFormat": "qwen-chat-template"}
     if not levels:
         return None, compat
-    if tiers and tiers[0] == "xhigh":
-        default = "xhigh"             # a template left at Qwen's own default, listed first (oc-flash-local.py)
+    if (tiers and tiers[0] == "xhigh") or (default_effort == "xhigh" and "xhigh" in levels):
+        default = "xhigh"             # Qwen's own default: listed first (oc-flash-local.py), or kept by the template
     elif "lean" in tiers and "minimal" in levels:
         default = "minimal"           # the patched Qwen template's own default
     elif "none" in tiers and "high" in levels:
@@ -261,7 +282,7 @@ def omp_thinking(tiers):
     return thinking, compat
 
 
-def omp_convert(models_doc, settings, efforts):
+def omp_convert(models_doc, settings, efforts, defaults=None):
     """The pi pair, re-serialized into omp's YAML shapes: same values, no rebuild.
     The thinking block carries omp's enum levels; reasoningEffortMap turns the
     selection onto the template's tiers (minimal -> lean) and, with
@@ -276,7 +297,7 @@ def omp_convert(models_doc, settings, efforts):
             # file. models is an ARRAY in omp too (verified against omp's own
             # validation error).
             e = {k: v for k, v in m.items() if k not in ("inputLimits", "compat", "thinkingLevelMap")}
-            thinking, compat = omp_thinking(efforts.get(f"{prov}/{m['id']}", []))
+            thinking, compat = omp_thinking(efforts.get(f"{prov}/{m['id']}", []), (defaults or {}).get(prov))
             if thinking:
                 e["thinking"] = thinking
             if compat:
@@ -311,7 +332,8 @@ def main():
     if not models_doc["providers"]:
         print(f"NOTE: {a.config} has none of this repo's providers ({'/'.join(OURS)}): nothing to generate.")
         return
-    omp_models, omp_cfg = omp_convert(models_doc, settings, efforts)
+    defaults = {prov: template_default(a.out, prov) for prov in models_doc["providers"]}
+    omp_models, omp_cfg = omp_convert(models_doc, settings, efforts, defaults)
     jd = lambda d: json.dumps(d, indent=2) + "\n"
     write(os.path.join(a.out, "pi", "models.json"), jd(models_doc), a.dry_run)
     write(os.path.join(a.out, "pi", "settings.json"), jd(settings), a.dry_run)

@@ -191,6 +191,27 @@ class PiGen(unittest.TestCase):
         pi_entry = {k: v for k, v in entry.items() if k not in ("compat", "thinkingLevelMap")}
         self.assertEqual(omp_entry, pi_entry, "one build, two serializations; omp has no thinkingLevelMap")
 
+    def test_omp_starts_a_lane_at_its_installed_templates_default(self):
+        # omp sends its default level on every request, and took lean for every patched Qwen template:
+        # a box installed with LEAN_DEFAULT=0, whose templates keep Qwen's xhigh, got lean in omp alone
+        # (found in review, 2026-10-20). The default is the installed template's, read beside the configs.
+        os.makedirs(self.out, exist_ok=True)
+
+        def level(default):
+            if default is None:
+                p = pathlib.Path(self.out, "chat-template-sglang.jinja")
+                if p.exists():
+                    p.unlink()
+            else:
+                pathlib.Path(self.out, "chat-template-sglang.jinja").write_text(
+                    "{%- set reasoning_effort = reasoning_effort|default('" + default + "') %}\n")
+            self.gen()
+            omp_models, _ = self.read_omp()
+            return omp_models["providers"]["qwen38"]["models"][0]["thinking"]["defaultLevel"]
+        self.assertEqual(level("xhigh"), "xhigh")
+        self.assertEqual(level("lean"), "minimal")
+        self.assertEqual(level(None), "minimal")          # no template there: the patched default
+
     def test_the_flash_local_lane_starts_at_xhigh_in_omp(self):
         # its template's default is Qwen's own, xhigh (Hasan's choice for this lane, 2026-10-19), which
         # its provider lists first: omp took "lean" in its tiers for the patched template's default
