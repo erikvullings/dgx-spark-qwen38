@@ -333,8 +333,8 @@ fi
 #     and a generation holds one for as long as it runs. A Stop during a 2048x2048 request
 #     sat 60 s in "stopping" until systemd killed the lane and marked the unit failed
 #     (2026-09-23). Now 5 s, then the requests in flight are cancelled and it stops clean.
-# The other three are sgl-project/sglang#43391, merged upstream on 2026-10-10 and in no
-# release yet, one file each: the Turbo checkpoint's eight-step sigma grid, which its
+# The other three are sgl-project/sglang#43391, merged upstream on 2026-10-10 and in SGLang
+# v0.5.22 (2026-10-16), the release after this pin, one file each: the Turbo checkpoint's eight-step sigma grid, which its
 # model_index.json carries, reaches the sampler. Without them the Turbo weights load and
 # sample on a uniform schedule from num_inference_steps, which is not how it was trained;
 # with them the base checkpoint, which has no grid, samples exactly as before.

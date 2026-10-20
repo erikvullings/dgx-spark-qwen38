@@ -99,9 +99,9 @@ Five, all applied by `install-image.sh` from `image-sglang/`, all checked agains
 upstream files at the pin by a CI step, and all skipped with a note if a future pin no longer
 fits them. The first two are not about images, and the lane serves either way. The other
 three are [sgl-project/sglang#43391](https://github.com/sgl-project/sglang/pull/43391), merged
-upstream on 2026-10-10 and in no release yet, one file each, which the Turbo cannot do
-without (the installer refuses to serve it on a runtime they did not reach); the next pin
-that carries #43391 drops them.
+upstream on 2026-10-10 and in SGLang v0.5.22 (2026-10-16), the release after the one this lane
+pins, one file each, which the Turbo cannot do without (the installer refuses to serve it on a
+runtime they did not reach); the next pin that carries #43391 drops them.
 
 #### An idle lane no longer holds a CPU core
 
