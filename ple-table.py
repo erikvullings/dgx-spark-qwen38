@@ -4,9 +4,9 @@ it there.
 
 The table of nvidia/Qwen3.8-Flash-Next-FP4-Local (26.8 GiB) lives inside seven of the checkpoint's
 21 files, and vLLM reads it in place at every token, rows at random over io_uring. Read from a USB
-SSD (the reference box's cache, 2026-10-19), a request alone decoded 15.7 tokens a second and eight
+SSD (the reference box's cache, 2026-10-19), a request alone got 15.7 tokens a second and eight
 together 15.6 in all; with the same seven files on the internal NVMe, 23.4 and 77.7, and the first
-token of a 1,024-token prompt came twice as fast. The weights the engine loads once at boot can stay
+token of a 1,024-token prompt came twice as fast (1.49 s against 0.75). The weights the engine loads once at boot can stay
 where the cache is: only the table is read at every token. Hasan's choice (2026-10-20): the table is
 read where the cache is when the cache is on the disk of the home directory (a new box's default),
 and otherwise from copies of those files in a folder of the home directory, which the unit mounts
@@ -15,9 +15,11 @@ over the cache's own, file by file. The cache itself is never touched.
     ple-table.py HF_CACHE REPO REV --home HOME [--dir DIR] plan     what goes where, in bytes
     ple-table.py HF_CACHE REPO REV --home HOME [--dir DIR] copy     make the copies whole
     ple-table.py HF_CACHE REPO REV --home HOME [--dir DIR] mounts   the unit's -v arguments, one line
+    ple-table.py HF_CACHE REPO REV --home HOME [--dir DIR] check    the folder refused or not, no checkpoint needed
 
 --dir is FLASH_LOCAL_PLE_DIR: a folder for the copies whatever disk the cache is on, or "none" to
-read the table where the cache is, never a folder inside the cache. Without it, HOME/flash-local-ple
+read the table where the cache is, never a folder inside the cache, and its path one a unit can carry
+(install.sh's rule). Without it, HOME/flash-local-ple
 when the cache is on another disk than HOME. A copy is made as NAME.part, checked against its blob's
 name (the sha256 of its content, as the Hub's cache names every large file) and only then renamed: a
 copy cut short is never mounted. A copy already there is checked the same way at every copy. The
@@ -39,6 +41,9 @@ BLOB = re.compile(r"^[0-9a-f]{64}$")
 CONTAINER_HUB = "/root/.cache/huggingface/hub"
 # the copies this tool keeps in the folder, one name a line: the only files it ever removes there
 OURS = ".qwen38-ple-copies"
+# install.sh's rule for every path a unit carries: in a docker -v inside a quoted bash -c line, and in
+# systemd's own syntax, a space, a colon, a quote, a $ or a % broke the unit it went into
+PLAIN = re.compile(r"/[A-Za-z0-9._/+@-]*")
 
 
 def table_files(snapshot: pathlib.Path) -> list[tuple[str, pathlib.Path]]:
@@ -65,10 +70,9 @@ def where(args, blobs_dir: pathlib.Path) -> pathlib.Path | None:
         return None
     if args.dir:
         folder = pathlib.Path(args.dir)
-        # the unit names the copies inside a quoted command, and its renderer puts them in with sed
-        if not re.fullmatch(r"[\w./+@:,=-]+", args.dir):
-            raise SystemExit(f"FLASH_LOCAL_PLE_DIR={args.dir!r}: a path of letters, digits and . _ - / + @ : , ="
-                             " only (no space, no quote): the lane's unit names it inside a quoted command")
+        if not PLAIN.fullmatch(args.dir):
+            raise SystemExit(f"FLASH_LOCAL_PLE_DIR={args.dir}: the lane's unit cannot carry that path. Use an absolute"
+                             " path of letters, digits and . _ / + @ - only, as for HF_CACHE.")
         # inside the cache, the copies would be the cache's own files (its blobs folder), or files the
         # Hub's tools take for the cache's
         cache = pathlib.Path(args.hf_cache).resolve()
@@ -111,9 +115,14 @@ def main() -> None:
     ap.add_argument("rev")
     ap.add_argument("--home", required=True)
     ap.add_argument("--dir", default="")
-    ap.add_argument("action", choices=("plan", "copy", "mounts"))
+    ap.add_argument("action", choices=("plan", "copy", "mounts", "check"))
     args = ap.parse_args()
     repo_dir = pathlib.Path(args.hf_cache) / "hub" / ("models--" + args.repo.replace("/", "--"))
+    if args.action == "check":
+        # the folder chosen, refused before the installer keeps it for the runs after; no checkpoint needed
+        if args.dir and args.dir != "none":
+            where(args, repo_dir / "blobs")
+        return
     snapshot = repo_dir / "snapshots" / args.rev
     if not (snapshot / "model.safetensors.index.json").is_file():
         print(f"no snapshot of {args.repo} @ {args.rev[:12]} in {args.hf_cache}: fetch the checkpoint first",

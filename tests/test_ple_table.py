@@ -182,12 +182,22 @@ class TableFiles(unittest.TestCase):
     def test_a_folder_the_unit_cannot_name_is_refused(self):
         # the unit names the copies inside bash -c '...', put in by sed: a space split the mount, a
         # quote ended the command, a & or a | broke the substitution, and the unit restarted in a loop
-        for bad in ("copies here", "it's", "a&b", "a|b"):
+        # and a : split docker's -v into more fields than it takes (found in review, 2026-10-20):
+        # install.sh's own rule for the paths a unit carries, the same
+        for bad in ("copies here", "it's", "a&b", "a|b", "ple:2026", "a%b"):
             with self.subTest(folder=bad):
-                r = self.run_it("copy", "--dir", str(self.d / bad))
-                self.assertNotEqual(r.returncode, 0)
-                self.assertIn("no space, no quote", r.stdout + r.stderr)
+                for action in ("copy", "check"):
+                    r = self.run_it(action, "--dir", str(self.d / bad))
+                    self.assertNotEqual(r.returncode, 0)
+                    self.assertIn("letters, digits and . _ / + @ - only", r.stdout + r.stderr)
                 self.assertFalse((self.d / bad).exists())
+
+    def test_check_needs_no_checkpoint_and_passes_a_plain_folder(self):
+        shutil.rmtree(self.cache.snap)
+        for good in ("none", "", str(self.d / "ple-copies_2.0+x@y")):
+            with self.subTest(folder=good):
+                r = self.run_it("check", "--dir", good)
+                self.assertEqual(r.returncode, 0, r.stderr)
 
     def test_mounts_refuse_while_a_copy_is_missing(self):
         r = self.run_it("mounts", "--dir", str(self.d / "empty"))

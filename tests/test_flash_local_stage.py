@@ -128,6 +128,15 @@ class TheStagedUnit(unittest.TestCase):
         rc, out = self.box.stage()
         self.assertEqual((rc, self.box.mounts()), (0, []), out)
 
+    def test_a_folder_refused_is_not_kept(self):
+        # kept before it was checked, a folder ple-table.py refuses stayed the choice of every Load
+        # after, each failing the same way (found in review, 2026-10-20)
+        for bad in (str(self.box.hf / "ple"), str(self.box.t / "a:b")):
+            with self.subTest(folder=bad):
+                rc, out = self.box.stage(FLASH_LOCAL_PLE_DIR=bad)
+                self.assertNotEqual(rc, 0, out)
+                self.assertFalse((self.box.home / ".config" / "qwen38" / "flash-local-ple-dir").exists())
+
     def test_a_relative_folder_is_mounted_by_its_whole_path(self):
         # docker run -v takes a host path only whole: "copies/<sha>" is read as a volume's name,
         # refused, and the unit restarted in a loop

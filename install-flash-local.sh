@@ -157,6 +157,10 @@ lane_template(){
 PLE_CHOICE="$CONFIG_DIR/flash-local-ple-dir"
 if [ -n "${FLASH_LOCAL_PLE_DIR+set}" ]; then
   case "$FLASH_LOCAL_PLE_DIR" in ""|none) ;; *) FLASH_LOCAL_PLE_DIR="$(realpath -m -- "$FLASH_LOCAL_PLE_DIR")" ;; esac
+  # refused before it is kept: kept first, a folder ple-table.py refuses stayed the choice of every
+  # Load after, each failing the same way (found in review, 2026-10-20)
+  python3 "$HERE/ple-table.py" "$HF_CACHE" "$MODEL" "$MODEL_REV" --home "$HOME" --dir "$FLASH_LOCAL_PLE_DIR" check \
+    || die "FLASH_LOCAL_PLE_DIR=$FLASH_LOCAL_PLE_DIR is not kept (the line above says why)"
   if [ -n "$FLASH_LOCAL_PLE_DIR" ]; then
     mkdir -p "$CONFIG_DIR" && printf '%s\n' "$FLASH_LOCAL_PLE_DIR" > "$PLE_CHOICE"
   else
