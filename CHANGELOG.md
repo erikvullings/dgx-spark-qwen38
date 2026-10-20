@@ -1,6 +1,42 @@
 # Changelog
 
-## v1.37.2 (2026-10-20): the Traffic view on the vLLM lanes, and what a review of v1.37.0 found
+## v1.37.2 (2026-10-20): a new DGX Spark or GX10 installs in one go, the Traffic view on the vLLM lanes, and what a review of v1.37.0 found
+
+**A new box installs in one go.** NVIDIA's first-boot setup puts the account it creates in adm, sudo,
+audio, dip, plugdev, users and lpadmin, never in docker (its `oobe-admin`, read on an ASUS Ascent GX10
+with DGX OS 7.6.0), and the daemon's socket is root:docker. So the one-liner stopped at its first check
+on every new box, and the fix it printed told a desktop user to log out. Past that, the image and video
+lanes stopped on `python3-dev` and `ffmpeg`, neither of which DGX OS 7.6.0 has. The installer now adds
+the account to the group itself at step 1, after every refusal that comes before it (`--help`, `--plan`
+and a mistyped flag never get there), saying so and why (a member of that group is root on the machine)
+before it runs `sudo`, and starts again with the group, in the same terminal, without saying twice what
+it said before. `--no-service`, which uses no `sudo`, says how instead. The installer puts in Python's
+headers and ffmpeg while its terminal can give `sudo` its password, when the run installs those lanes:
+their first Load runs from the cockpit, which has none. A terminal opened before the account joined,
+the install's own included, gets the group the same way when it runs `install.sh`, `switch-model.sh`,
+`prepare-lane.sh`, `uninstall.sh` or a lane's installer (`uninstall.sh` skipped every image there, and
+left them on the disk), and a lane's installer run from a terminal puts in what it lacks, once per run.
+The run started again has the groups of a new login: `sg docker` alone makes docker the process's own
+group, so it goes back to the account's own group after (measured on the reference box). `sg` runs it
+as a child and passes its exit status back: the run is then the child of the second `sg` and the
+grandchild of the first, both waiting with Ctrl+C's signal ignored, so it stops by its process group,
+as Ctrl+C, systemd and the cockpit stop it, and a kill of its first PID stops only that `sg`. It gets
+the environment the run started with: what the installer exported since is taken out, and what it
+changed is set back. The values it left as they were, a key among them, pass in the environment and
+never in a command line; those it changed are set back as env's arguments, and the variables the C
+library takes from a setuid program's environment (TMPDIR and the like), handed back after `sg`, go
+into its command. The signals the run ignored (nohup's SIGHUP, which `sg` sets back to its default)
+are ignored again. A run that cannot start again here says to log in again: after adding the account
+when it was outside the group (a group name or a path with a space in it), and without adding
+anything when a directory service puts the account in the group outside the member list `sg` reads. A daemon that is not running (in Docker
+29's words as in the older ones), a refusal elsewhere than the system's socket (`DOCKER_HOST`, a
+context, a rootless Docker), an account `sudo` refuses or that a directory service keeps: each stops
+with its own way out, and nothing is started twice. Found on an ASUS Ascent GX10.
+
+**The units take the account's own group.** They took the shell's: after `newgrp docker`, which
+NVIDIA's own guides have a person type to reach Docker, every unit rendered from that shell said
+`Group=docker`, and an update from a normal shell wrote them back and restarted what they run. The
+eleven renders take `$(id -gn "$(id -un)")`, the account's own group, whatever the shell's is.
 
 **The Traffic view reads the vLLM lanes.** Its last five minutes come from the serving engine's own
 counters, and it read SGLang's lanes only: on the Flash FP4-Local lane, Kolibri and the two Nemotron
@@ -63,7 +99,8 @@ got `lean` for every patched Qwen template: on a box installed with `LEAN_DEFAUL
 keep Qwen's `xhigh`, omp alone answered at `lean`. Its default is the installed template's now. pi
 sends no effort and was right already.
 
-**What an update does.** The proxy restarts once (v6.44), and so does the cockpit. On a box installed
+**What an update does.** The proxy restarts once (v6.44), and so does the cockpit. A box whose account
+is in the docker group, with Python's headers and ffmpeg, sees nothing of the new box's steps. On a box installed
 with `LEAN_DEFAULT=0`, omp's config is written again, its Qwen lanes starting at `xhigh`, and
 elsewhere it is left as it is. On a box with the FP4-Local lane, its unit is rewritten with its start
 check, and the check is put in beside it (`~/.config/qwen38/flash-local-files.sh`): a lane that
@@ -76,6 +113,16 @@ check out of what the engine reads), the card's line on a phone, an empty copy, 
 copy's place, a copies folder that cannot be written, an empty or cut copy, the check gone, the Load
 of a lane that lacks a file, the tripwire, omp's default, the one-boot line and bench.sh's names
 (thirteen failures on the old script).
+A new box's steps have 56 cases (`tests/test_fresh_machine.py`): 55 fail on the code before (the
+56th holds that get.sh asks for nothing, as it did not), 37 on this fix's first version, 9 on its
+second and 5 on its third, each of them taken apart by an independent review: docker, id, getent,
+stat, sudo (in French as in English), sg and env stand in for the machine, and install.sh, get.sh and
+uninstall.sh run whole up to a wall, so a run that went on without the group shows as the wall.
+`tests/test_units_account_group.py` holds every render of the units' group to the account's. On the
+reference box, from a process without the docker group, the real `lanes.sh` and `sg` start a script
+again with the account's own group first, docker answering, its arguments, and the environment it
+started with (a variable exported after the start does not reach it); and the real `install.sh` starts
+again before its first line.
 A new test holds every list of the lanes, in the shell scripts, the cockpit's Python and the page's
 JavaScript, to the lanes the unit templates name, whether a list names them by their units, with or
 without ".service", or by the constants that hold them, the keys of the page's tables included, and
