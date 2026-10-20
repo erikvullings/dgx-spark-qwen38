@@ -102,6 +102,23 @@ class TheMedianOfAnEvenCount(unittest.TestCase):
         self.assertIn("15 min 12", r["said"])
 
 
+
+class OneBootIsSaidInTheSingular(unittest.TestCase):
+    """A lane seen booting once read "Last 1 boots: 5 min 22. Median 5 min 22.": its fix, planned for
+    v1.35.1, was never made (found by an audit of the plans, 2026-10-20). One boot is "Last boot",
+    with no median of one beside it."""
+
+    def test_one_boot_and_two(self):
+        r = run(self, r"""
+        feed({config: CONFIG, units: UNITS, lifecycle: life({
+          'qwen38-flash.service': eng('stopped', {target: 'flash', boots: [322]}),
+          'qwen38-image.service': eng('stopped', {target: 'image', boots: [61, 75]})})});
+        const said = u => [...LCARDS.get(u).hist.querySelectorAll('p')].map(p => p.textContent).find(t => /boot/i.test(t));
+        report({one: said('qwen38-flash.service'), two: said('qwen38-image.service')});
+        """)
+        self.assertEqual(r["one"], "Last boot: 5 min 22.")
+        self.assertEqual(r["two"], "Last 2 boots: 61 s, 75 s. Median 68 s.")
+
 class TheRequestIdOverrideOnKolibri(unittest.TestCase):
     """Traffic said "Request id override: no engine" while Kolibri served: the override is an
     SGLang setting the guard reads on the SGLang lanes only."""
