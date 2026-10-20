@@ -183,6 +183,15 @@ no refusal from the driver, ready in 322 s both times against 329 to 336 before,
 (932,991 and 933,806 tokens). The engine serves as fast with it: `bench.sh`, at the lane's default
 effort, measured a greedy median of 55.4 tok/s with it and 55.1 without it (2026-10-20).
 
+Five more boots with it on 2026-10-20 say what it does not do. The driver still refused allocations
+in three of them, 233, 130 and 5 times, every one from `_memdescAllocInternal`: each time from about
+33 s after the model's weights were read, where b12x lays out the scales and where the dip was (4 min
+03 to 5 min 07 into the boot, one of them until its KV cache was allocated). MemAvailable, read every
+0.2 or 0.5 s at four of the five, stayed at 11.7 GiB or more, and at 14.1 GiB or more while the driver
+refused. So the setting ends the dip, not the refusals, which do not come from the box running out of
+memory. Their cause is not known yet. Each of those boots came up and served, and the cockpit's
+Machine view counts the refusals of the last hour.
+
 ## What it does not have
 
 - The SGLang lanes' routes: no `/flush_cache`, no route that aborts every generation, no
