@@ -1151,8 +1151,8 @@ METRICS_LOCK = threading.Lock()
 
 def engine_metrics_read(timeout: float = 4.0):
     """One read of the serving engine's counters and the levels it showed with them, or
-    None: no engine, no answer in time, or not an SGLang page. Unauthenticated: SGLang
-    exempts /metrics from the API key."""
+    None: no engine, no answer in time, or a page of neither engine's. Unauthenticated:
+    SGLang exempts /metrics from the API key, and so does the vLLM lanes' middleware."""
     try:
         with urllib.request.urlopen(ENGINE_BASE + "/metrics", timeout=timeout) as r:
             text = r.read(4_000_000).decode("utf-8", "replace")

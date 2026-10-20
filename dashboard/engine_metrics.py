@@ -58,7 +58,12 @@ finishes, and the window's generated tokens over its difference is that window's
 length, what one step netted (its one token plus the drafts it accepted). Measured by this
 view's author (2026-10-08): a 700-token request spent 194 verifications, 3.61 a step at
 4 drafts, while the `spec_accept_length` gauge sat at 2.7, an average since the boot, and
-the scheduler prints its own only per a log window of its choice.
+the scheduler prints its own only per a log window of its choice. vLLM counts its drafts at
+every step (`spec_decode_num_drafts_total`, one per request that drafted in it) and the draft tokens
+it accepted (`spec_decode_num_accepted_tokens_total`), and its accept length is its own formula, one
+plus the accepted tokens per draft (vllm/v1/metrics/stats.py): the generated tokens per draft, read
+as on SGLang, said 6.22 on a Kolibri page where vLLM counts 2.99, its steps without a draft counted
+in (found in review, 2026-10-20).
 The levels (`full_token_usage`, `num_running_reqs`, `num_queue_reqs`) are not counters: no
 delta is possible, so the window keeps its own peaks, honest lower bounds of what peaked.
 
@@ -359,8 +364,9 @@ class Window:
             # 14.8 where the engine decoded 36.4, FP4-Local, 2026-10-19)
             "decode_tps": (d["decoded"] - d["first"]) / d["itl_sum"]
             if d["itl_sum"] > 0 and d["decoded"] > d["first"] else None,
-            # finished tokens over the drafter's verifications: what a step netted, its own
-            # count bearing no idle time; a lane without a drafter calls verify never
+            # what a step with a draft netted, its own count bearing no idle time: on SGLang the
+            # finished tokens over its verifications, on vLLM one plus the accepted tokens per
+            # draft (its own formula); a lane without a drafter verifies and drafts never
             "acc_len": (1 + d["acc"] / d["ver"] if b.get("engine") == "vllm" else d["generated"] / d["ver"])
             if d["ver"] > 0 else None,
             "throughput_tps": d["generated"] / covered if covered > 0 else None,
