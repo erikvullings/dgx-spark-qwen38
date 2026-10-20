@@ -53,7 +53,7 @@ builds on its published config,
 takes its measurements as its DGX Spark reference, and it is listed in
 [awesome-dgx-spark](https://github.com/bidual/awesome-dgx-spark).
 
-![The Spark cockpit's Now view: one pool of unified memory and what holds it, the lanes in their rack with their makers' marks and the serving one edged in green, and below them the requests and the timeline](docs/img/cockpit-now.png)
+![The Spark cockpit's Now view: one pool of unified memory and what holds it, and the eight lanes in their rack with their makers' marks, the serving one edged in green](docs/img/cockpit-now.png)
 
 *The cockpit, installed by default: one pool of unified memory, lanes that take turns in it, and the whole box run from a browser, on a laptop or a phone.*
 
@@ -850,7 +850,7 @@ from a laptop or a phone over a private network, and `127.0.0.1` otherwise. A re
 that. The login is the same API key over plain HTTP, so this belongs on a tailnet or a LAN you
 trust and never on the open internet.
 
-![The Lanes view: each lane with its maker's mark, every version it can load in one row of buttons with the one serving marked in green, its Load or Stop button, its facts and its last five boots](docs/img/cockpit-lanes.png)
+![The Lanes view: the lane that serves edged in green with its Stop button, and each lane with its maker's mark, every version it can load in one row of buttons with the chosen one lit, its Load button, its facts and its last five boots](docs/img/cockpit-lanes.png)
 
 *Lanes: every version of each lane in sight, what its boots took on this box and the KV pool each one won, and one button that loads it: switch, stop, start, each step asking first and showing its command.*
 
