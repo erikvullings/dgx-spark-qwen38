@@ -90,7 +90,13 @@ class TheFitToolAndTheCockpitAgree(unittest.TestCase):
     def test_the_cockpit_asks_the_fit_tool(self):
         cockpit = (REPO / "dashboard/cockpit.py").read_text()
         block = cockpit[cockpit.index("def collect_engine_info():"):cockpit.index("CANARY: dict =")]
-        self.assertIn('_oc_fit().ceiling_from_env(env or "", slim.get("served_model_name"))', block)
+        # one reading of it for the SGLang lanes' panel and the vLLM lanes' (proxy_prompt_ceiling,
+        # since the Flash FP4-Local lane, which the proxy holds to the flash lane's ceiling)
+        self.assertIn('proxy_prompt_ceiling(slim.get("served_model_name"))', block)
+        helper = cockpit[cockpit.index("def proxy_prompt_ceiling(served)"):]
+        helper = helper[:helper.index("\n\n\n")]
+        self.assertIn('_oc_fit().ceiling_from_env(env or "", served)', helper)
+        self.assertEqual(cockpit.count("ceiling_from_env("), 1, "one reading of the ceiling")
 
 
 class ASwitchLeavesThatProxyAlone(unittest.TestCase):
