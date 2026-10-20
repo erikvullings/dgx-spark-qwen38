@@ -246,7 +246,9 @@ def omp_thinking(tiers):
     compat = {"thinkingFormat": "qwen-chat-template"}
     if not levels:
         return None, compat
-    if "lean" in tiers and "minimal" in levels:
+    if tiers and tiers[0] == "xhigh":
+        default = "xhigh"             # a template left at Qwen's own default, listed first (oc-flash-local.py)
+    elif "lean" in tiers and "minimal" in levels:
         default = "minimal"           # the patched Qwen template's own default
     elif "none" in tiers and "high" in levels:
         default = "high"              # Kolibri reasons at high unasked (EFFORT_FIELD)

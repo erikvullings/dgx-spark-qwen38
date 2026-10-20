@@ -191,6 +191,32 @@ class PiGen(unittest.TestCase):
         pi_entry = {k: v for k, v in entry.items() if k not in ("compat", "thinkingLevelMap")}
         self.assertEqual(omp_entry, pi_entry, "one build, two serializations; omp has no thinkingLevelMap")
 
+    def test_the_flash_local_lane_starts_at_xhigh_in_omp(self):
+        # its template's default is Qwen's own, xhigh (Hasan's choice for this lane, 2026-10-19), which
+        # its provider lists first: omp took "lean" in its tiers for the patched template's default
+        # and started it at minimal, sent as lean (found in review, 2026-10-20)
+        import importlib.util
+        spec = importlib.util.spec_from_file_location("oc_flash_local", REPO / "oc-flash-local.py")
+        ocf = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(ocf)
+        art = json.loads(json.dumps(ARTIFACT))
+        art["provider"]["flash-local"] = ocf.provider("http://127.0.0.1:30001/v1", "/keys/api-key", 205000, 32000,
+                                                      "Qwen3.8-Flash-Next FP4-Local (local, 262K)")
+        art["model"] = "flash-local/qwen3.8-flash-next-fp4"
+        with open(self.art, "w") as f:
+            f.write(json.dumps(art))
+        self.gen()
+        _, settings = self.read_pi()
+        # pi sends no effort, so the template's own default, xhigh
+        self.assertEqual(settings["modelThinkingLevels"]["flash-local/qwen3.8-flash-next-fp4"], "off")
+        omp_models, _ = self.read_omp()
+        entry = omp_models["providers"]["flash-local"]["models"][0]
+        self.assertEqual(entry["thinking"], {"mode": "effort", "efforts": ["xhigh", "minimal", "low", "medium"],
+                                             "defaultLevel": "xhigh"})
+        self.assertEqual(entry["compat"]["reasoningEffortMap"], {"minimal": "lean"})
+        self.assertEqual(omp_models["providers"]["qwen38"]["models"][0]["thinking"]["defaultLevel"], "minimal",
+                         "the patched template's default, lean, for the lanes that keep it")
+
     def test_nemotron_is_sent_its_effort_starts_at_high_and_takes_images(self):
         # Bolt reasons at its full depth unasked, as Kolibri does at high; the proxy turns the effort
         # field into the template's words (keepalive-proxy.py, nemotron_effort), and Bolt reads images
