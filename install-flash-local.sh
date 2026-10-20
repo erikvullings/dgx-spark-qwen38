@@ -224,10 +224,14 @@ install_service(){
 if [ "$MODE" = stage ]; then
   lane_template >&2
   lane_table copy >&2
-  vlane_service_files "$CONFIG_DIR/flash-local-cache/vllm" "$CONFIG_DIR/flash-local-cache/flashinfer" \
-                      "$CONFIG_DIR/flash-local-cache/b12x" "$CONFIG_DIR/flash-local-cache/triton"
-  cmp -s "$HERE/seccomp-io-uring.json" "$CONFIG_DIR/seccomp-io-uring.json" \
-    || install -m 644 "$HERE/seccomp-io-uring.json" "$CONFIG_DIR/seccomp-io-uring.json"
+  # This lane's own files only, as the other lanes' switches touch nothing but their unit: the start
+  # scripts every lane runs (vlane_service_files) are ./install.sh's to put in, and a Load that put
+  # them in from a checkout moved past its install ran newer ones under every lane, outside the
+  # record of what is installed (found in review, 2026-10-20). Its caches made as the user, so that
+  # docker does not make them as root, and its filter only when it is missing.
+  mkdir -p "$CONFIG_DIR/flash-local-cache/vllm" "$CONFIG_DIR/flash-local-cache/flashinfer" \
+           "$CONFIG_DIR/flash-local-cache/b12x" "$CONFIG_DIR/flash-local-cache/triton"
+  [ -f "$CONFIG_DIR/seccomp-io-uring.json" ] || install -m 644 "$HERE/seccomp-io-uring.json" "$CONFIG_DIR/seccomp-io-uring.json"
   render_unit "$STAGE_OUT"
   grep -q '__[A-Z][A-Z0-9_]*__' "$STAGE_OUT" && die "the unit template still holds an unsubstituted placeholder"
   exit 0

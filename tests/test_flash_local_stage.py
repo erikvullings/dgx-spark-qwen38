@@ -128,6 +128,21 @@ class TheStagedUnit(unittest.TestCase):
         rc, out = self.box.stage()
         self.assertEqual((rc, self.box.mounts()), (0, []), out)
 
+    def test_it_writes_its_own_files_and_no_other_lanes(self):
+        # the start scripts every lane runs are ./install.sh's: a Load put them in from the checkout,
+        # moved past its install or not (found in review, 2026-10-20). The filter is the lane's own,
+        # and an older one stays until ./install.sh as the scripts do.
+        cfg = self.box.home / ".config" / "qwen38"
+        for name in ("engine-preflight.sh", "engine-secrets.sh", "vllm-auth/vllm_engine_auth.py", "seccomp-io-uring.json"):
+            (cfg / name).parent.mkdir(parents=True, exist_ok=True)
+            (cfg / name).write_text("installed earlier\n")
+        rc, out = self.box.stage(FLASH_LOCAL_PLE_DIR="none")
+        self.assertEqual(rc, 0, out)
+        for name in ("engine-preflight.sh", "engine-secrets.sh", "vllm-auth/vllm_engine_auth.py", "seccomp-io-uring.json"):
+            self.assertEqual((cfg / name).read_text(), "installed earlier\n", name)
+        for cache in ("vllm", "flashinfer", "b12x", "triton"):
+            self.assertTrue((cfg / "flash-local-cache" / cache).is_dir(), cache)
+
     def test_a_folder_refused_is_not_kept(self):
         # kept before it was checked, a folder ple-table.py refuses stayed the choice of every Load
         # after, each failing the same way (found in review, 2026-10-20)
