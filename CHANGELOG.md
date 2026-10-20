@@ -1,5 +1,40 @@
 # Changelog
 
+## v1.37.1 (2026-10-20): every lane's measures on one page, FP4-Local's boot refusals said as they are
+
+**Every lane's headline first.** BENCHMARKS.md opened on its first headline, three engines for the
+27B in August 2026, this repository's v1.0 and v1.1 among them, long since passed. It opens now on
+the headline of each of the eight lanes, measured on the reference box, with the page that gives
+its date, version and method, and keeps the August table below as history. The README's
+table and the benchmarks name that box: an ASUS Ascent GX10.
+
+**The Quickstart shows the standard forms first.** Its one-liner examples opened on the
+abliterated 27B: the standard targets come first now, the abliterated one last.
+
+**The roadmap lists v1.36.** It went from v1.35 to v1.37, and v1.36.0 to v1.36.4, all shipped,
+were not on it.
+
+**FP4-Local's boot: the setting ends the dip, not the driver's refusals.** v1.37.0 said that two
+boots with the allocator's setting met no refusal from the driver. Five more on 2026-10-20: the
+driver refused allocations in three of them, 233, 130 and 5 times, at the moment the dip was,
+while MemAvailable stayed at 14.1 GiB or more. The setting keeps the memory, and the refusals come
+from something else, not known yet. Every one of those boots came up and served, and
+docs/flash-local-lane.md says all of it.
+
+**The README's captures show the cockpit of today.** They were of v1.27.0: four lanes of eight, and a
+card of the flash lane's uncensored target. They are retaken at v1.37.0, with the eight lanes and the
+Flash FP4-Local lane serving, and their alt texts say what each one shows.
+
+**The roadmap says what is in progress.** It listed the mirrors of every pin as in progress since
+2026-09-13, and nothing had moved on them: they are planned, not started.
+
+**sglang#43391 is in a release.** The image lane's doc and its installer said that the three patches
+the lane carries for its Turbo were in no release yet: SGLang v0.5.22 (2026-10-16) has them, the
+release after the one the lane pins.
+
+**What an update does.** The cockpit restarts once, to name the release. No engine and no proxy
+restarts.
+
 ## v1.37.0 (2026-10-20): NVIDIA's FP4-Local build of the flash model, as an eighth lane on vLLM
 
 **What it is.** [Qwen3.8-Flash-Next FP4-Local](https://huggingface.co/nvidia/Qwen3.8-Flash-Next-FP4-Local)
