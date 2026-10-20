@@ -149,10 +149,13 @@ class TheDiskNeedsAreThePreflights(unittest.TestCase):
         # --no-nemotron line, in the README and in the CHANGELOG (found in review, 2026-10-16)
         sh = (REPO / "install.sh").read_text()
         overview = sh[sh.index("A plain run installs the box"):sh.index("  --no-start ")]
-        said = {name.lower().replace(" ", "-"): gb for name, gb in
-                re.findall(r"the (image|video|Kolibri|Nemotron Super|Nemotron) lane \([^)]*?(\d+)\)", overview)}
-        flags = dict(re.findall(r"--no-(image|video|kolibri|nemotron-super|nemotron)\s+leave the .*?\((?:vLLM, )?(\d+) GB\)", sh))
-        self.assertEqual(set(said), {"image", "video", "kolibri", "nemotron", "nemotron-super"}, overview)
+        # a lane's size is the last number in its parenthesis, before what a ";" adds (the Flash
+        # FP4-Local lane's copy of its table, on a cache on another disk)
+        said = {re.sub(r"\s+", "-", name.lower()).replace("flash-fp4-local", "flash-local"):
+                re.findall(r"\d+", inside.split(";")[0])[-1] for name, inside in
+                re.findall(r"the (image|video|Kolibri|Nemotron Super|Nemotron|Flash\s+FP4-Local) lane \(([^)]*)\)", overview)}
+        flags = dict(re.findall(r"--no-(image|video|kolibri|nemotron-super|nemotron|flash-local)\s+leave the .*?\((?:vLLM, )?(\d+) GB\)", sh))
+        self.assertEqual(set(said), {"image", "video", "kolibri", "nemotron", "nemotron-super", "flash-local"}, overview)
         self.assertEqual(said, flags)
 
 

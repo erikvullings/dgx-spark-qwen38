@@ -477,7 +477,7 @@ FLASH_LOCAL_UNIT_NAME="qwen38-flash-local.service"
 # as the other lanes' units are.
 FLL_STAGE="$CONFIG_DIR/qwen38-flash-local.service.switch-stage"
 if [ "$CHOICE" = "flash-local" ]; then
-  [ -f "$FLASH_LOCAL_UNIT" ] || die "the Flash FP4-Local lane is not installed on this box (no $FLASH_LOCAL_UNIT). Install it once: ./install.sh --with-flash-local (about 103 GB)"
+  [ -f "$FLASH_LOCAL_UNIT" ] || die "the Flash FP4-Local lane is not installed on this box (no $FLASH_LOCAL_UNIT). Install it once: ./install.sh --with-flash-local (about 121 GB)"
   # The checkpoint, its pinned revision, the image and the size, from the lane's installer, the one
   # place they are declared.
   eval "$(grep -E '^FLASH_LOCAL_(REPO|REV|IMAGE|GB)=' "$REPO_DIR/install-flash-local.sh" || true)"
