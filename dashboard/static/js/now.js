@@ -121,10 +121,11 @@ function renderRack(){
       + (st === 'failed' || st === 'wedged' || st === 'orphan' ? ' broken' : '') + (!has ? ' absent' : '');
     cap(b.state, !has ? 'not installed' : stateLabel(e), !has ? '' : stateKind(st), !has ? false : stateLive(st));
     const t = laneTarget(unit);
-    // the version after the lane's name, unless the name ends with it, as laneLabel() says it: the Nemotron
-    // lane's card read "Nemotron 3.5 Bolt Bolt" (found on the reference box, 2026-10-16)
+    // the version after the lane's name, unless the name already says it: the Nemotron lane's card read
+    // "Nemotron 3.5 Bolt Bolt" (found on the reference box, 2026-10-16), and the FP4-Local lane's, whose
+    // name says its version without ending with it, "Flash FP4-Local (NVIDIA) FP4-Local" (2026-10-20)
     const title = LANE_META[unit].title, short = t && TARGET_SHORT[t];
-    setText(b.h, title + (short && !['image', 'video', 'flash'].includes(t) && !title.endsWith(short) ? ` ${short}` : ''));
+    setText(b.h, title + (short && !['image', 'video', 'flash'].includes(t) && !` ${title} `.includes(` ${short} `) ? ` ${short}` : ''));
     // the boot bar, when it boots
     if (e && TRANSITIONAL.has(st)){
       b.boot.hidden = false; clear(b.boot);

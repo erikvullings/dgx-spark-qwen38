@@ -925,8 +925,9 @@ class RunningIsWhatTheEngineRuns(unittest.TestCase):
 
 class EachVersionIsNamedOnce(unittest.TestCase):
     """The Now view's card of a lane adds the version it serves to the lane's name, unless the
-    name ends with it, as the top bar does: the Nemotron lane's card read "Nemotron 3.5 Bolt
-    Bolt" on the reference box (2026-10-16)."""
+    name already says it: the Nemotron lane's card read "Nemotron 3.5 Bolt Bolt" on the reference
+    box (2026-10-16), and the FP4-Local lane's "Flash FP4-Local (NVIDIA) FP4-Local" (2026-10-20),
+    its name saying its version without ending with it."""
 
     def test_no_card_repeats_its_version(self):
         r = run(self, r"""
@@ -942,9 +943,10 @@ class EachVersionIsNamedOnce(unittest.TestCase):
         for t, title in r.items():
             with self.subTest(target=t):
                 words = title.split()
-                self.assertTrue(len(words) < 2 or words[-1] != words[-2], title)
-        self.assertEqual((r["nemotron"], r["nemotron-super"], r["kolibri-nvfp4"], r["stock"]),
-                         ("Nemotron 3.5 Bolt", "Nemotron 3.5 Super VL", "Kolibri-1 NVFP4", "Qwen3.8 27B stock"))
+                self.assertEqual(len(words), len(set(words)), title)
+        self.assertEqual((r["nemotron"], r["nemotron-super"], r["kolibri-nvfp4"], r["stock"], r["flash-local"]),
+                         ("Nemotron 3.5 Bolt", "Nemotron 3.5 Super VL", "Kolibri-1 NVFP4", "Qwen3.8 27B stock",
+                          "Flash FP4-Local (NVIDIA)"))
 
 
 class TheLanesViewCountsNoLanes(unittest.TestCase):
