@@ -171,11 +171,12 @@ vlane_service_files(){  # $1... the lane's cache folders
 # proof follows to restart it, whether this run or an earlier update changed them (an update leaves
 # a serving lane serving, and said nothing for the image and video lanes: found in review,
 # 2026-10-14). LANE_FILES is what the proof's restart decision reads too.
-vlane_put_unit(){  # $1 the rendered unit
+vlane_put_unit(){  # $1 the rendered unit, $2... what else the lane's start reads (its own files)
   grep -q '__[A-Z][A-Z0-9_]*__' "$1" \
     && die "the unit template still holds an unsubstituted placeholder: $(grep -o '__[A-Z][A-Z0-9_]*__' "$1" | sort -u | tr '\n' ' ')"
   local put
   put="$(unit_put "$1" "$INSTALLED")"
+  shift
   case "$put" in
     same) echo "unit unchanged" ;;
     deps) sudo systemctl daemon-reload
@@ -184,6 +185,11 @@ vlane_put_unit(){  # $1 the rendered unit
           echo "unit installed at $INSTALLED" ;;
   esac
   LANE_FILES=("$INSTALLED" "$CONFIG_DIR/vllm-auth/vllm_engine_auth.py" "$CONFIG_DIR/engine-preflight.sh" "$CONFIG_DIR/engine-secrets.sh")
+  # A unit that runs no engine-secrets.sh does not read it (the Flash FP4-Local lane's), and the files a
+  # lane's own start reads come before the note: added after it, a change of them alone said nothing
+  # (found in review, 2026-10-20).
+  grep -q 'engine-secrets\.sh' "$INSTALLED" 2>/dev/null || unset 'LANE_FILES[3]'
+  LANE_FILES+=("$@")
   if [ "$SMOKE" -eq 0 ] && lane_serves_older "$UNIT" "${LANE_FILES[@]}"; then
     echo "NOTE: $VLANE_SHORT runs older files than the ones installed now (its unit, its runtime or its start scripts); it runs these after: sudo systemctl restart $UNIT   (or Load it again from the cockpit)"
   fi

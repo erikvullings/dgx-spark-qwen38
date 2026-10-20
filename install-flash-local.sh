@@ -210,10 +210,9 @@ install_service(){
     || install -m 644 "$HERE/seccomp-io-uring.json" "$CONFIG_DIR/seccomp-io-uring.json"
   RENDER="$(mktemp)"; trap 'rm -f "$RENDER"' EXIT
   render_unit "$RENDER"
-  vlane_put_unit "$RENDER"
-  # what the engine reads at its start besides the unit: a lane started before they changed
+  # with what the engine reads at its start besides the unit: a lane started before they changed
   # serves the old ones (vllm-lane.sh)
-  LANE_FILES+=("$CONFIG_DIR/seccomp-io-uring.json" "$TEMPLATE")
+  vlane_put_unit "$RENDER" "$CONFIG_DIR/seccomp-io-uring.json" "$TEMPLATE"
   # Installed, not switched to: the lane this box serves stays the lane it serves.
   echo "installed as a lane of its own. Switch to it like any lane:"
   echo "  the cockpit: Load on Flash FP4-Local (NVIDIA) in the Lanes view"
