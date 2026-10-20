@@ -99,6 +99,25 @@ class TheStagedUnit(unittest.TestCase):
         self.assertEqual((cfg / "seccomp-io-uring.json").read_bytes(), (REPO / "seccomp-io-uring.json").read_bytes())
         self.assertIn("reasoning_effort|default('xhigh')", (cfg / "chat-template-flash-local.jinja").read_text())
 
+    def test_its_boot_leaves_the_box_its_memory(self):
+        # vLLM loads the weights with PyTorch's allocator splitting no block above 20 MiB: the blocks b12x
+        # freed while it laid out the experts' NVFP4 scales went unused, and the allocator's cache grew
+        # until the GPU's driver refused it memory, which on this box is the machine's (the driver refused
+        # 44 to 149 allocations at each of twelve boots, MemAvailable down to 1.05 GiB, 2026-10-20).
+        # PyTorch collects its cached blocks only under a ceiling below the whole GPU, past the share of
+        # it the threshold says: the ceiling above the share vLLM is given, the collection under it and
+        # above what the engine holds in service (0.74 of the GPU at the card's share of 0.8)
+        rc, out = self.box.stage(FLASH_LOCAL_PLE_DIR="none")
+        self.assertEqual(rc, 0, out)
+        cmd = exec_command(self.box.out.read_text())
+        m = re.search(r"-e PYTORCH_CUDA_ALLOC_CONF=(\S+)", cmd)
+        self.assertIsNotNone(m, "the engine's allocator is left as PyTorch sets it")
+        conf = dict(kv.split(":", 1) for kv in m.group(1).split(","))
+        ceiling, threshold = float(conf["per_process_memory_fraction"]), float(conf["garbage_collection_threshold"])
+        share = float(re.search(r"--gpu-memory-utilization (\S+)", cmd).group(1))
+        self.assertTrue(share < ceiling < 1.0, (share, ceiling))
+        self.assertTrue(share - 0.05 <= ceiling * threshold < share, (ceiling, threshold, share))
+
     def test_copies_of_the_table_are_mounted_over_the_caches_files(self):
         folder = self.box.t / "copies"
         rc, out = self.box.stage(FLASH_LOCAL_PLE_DIR=str(folder))
