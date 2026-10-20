@@ -2744,7 +2744,7 @@ render_tpl() {  # $1 template file; substituted result on stdout
   esc() { printf '%s' "$1" | sed -e 's/[\\/&|]/\\&/g'; }
   sed -e "s|__HOME__|$(esc "$HOME")|g" \
       -e "s|__USER__|$(esc "$(id -un)")|g" \
-      -e "s|__GROUP__|$(esc "$(id -gn)")|g" \
+      -e "s|__GROUP__|$(esc "$(id -gn "$(id -un)")")|g" \
       -e "s|__PORT__|$(esc "$PORT")|g" \
       -e "s|__ENGINE_BIND__|$(esc "$ENGINE_BIND")|g" \
       -e "s|__IMAGE__|$(esc "$SERVE_IMAGE_FINAL")|g" \
@@ -2887,7 +2887,7 @@ cmp -s "$REPO_DIR/keepalive-proxy.py" "$CONFIG_DIR/keepalive-proxy.py" \
 TMP_KA="$(mktemp)"; RENDERED+=("$TMP_KA")
 sed -e "s|__HOME__|$HOME|g" \
     -e "s|__USER__|$(id -un)|g" \
-    -e "s|__GROUP__|$(id -gn)|g" \
+    -e "s|__GROUP__|$(id -gn "$(id -un)")|g" \
     -e "s|__PORT__|$PORT|g" \
     -e "s|__PROXY_PORT__|$PROXY_PORT|g" \
     -e "s|__PROXY_BIND__|$PROXY_BIND|g" \

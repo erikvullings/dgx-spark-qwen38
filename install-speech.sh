@@ -262,7 +262,7 @@ PY
 step "5/6 Service"
 mkdir -p "$CONFIG_DIR"
 render(){  # $1 template: every placeholder this lane fills
-  sed -e "s|__USER__|$(id -un)|g" -e "s|__GROUP__|$(id -gn)|g" -e "s|__HOME__|$HOME|g" \
+  sed -e "s|__USER__|$(id -un)|g" -e "s|__GROUP__|$(id -gn "$(id -un)")|g" -e "s|__HOME__|$HOME|g" \
       -e "s|__SPEECH_LANE_DIR__|$LANE_DIR|g" -e "s|__SPEECH_VENV__|$VENV|g" \
       -e "s|__SPEECH_PORT__|$PORT|g" -e "s|__SPEECH_BIND__|$BIND|g" -e "s|__ASR_PORT__|$ASR_PORT|g" \
       -e "s|__SPEECH_VOICE__|$VOICE|g" -e "s|__SPEECH_CPUS__|$UNIT_CPUS|g" \

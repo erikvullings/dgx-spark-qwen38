@@ -82,7 +82,7 @@ TMP_UNIT="$(mktemp)"
 # below left the rendered unit in /tmp, once for every test run that took such a path (2026-10-03)
 trap 'rm -f "$TMP_UNIT"' EXIT
 sed -e "s|__PORT__|$PORT|g" -e "s|__BIND__|$BIND|g" -e "s|__USER__|$(id -un)|g" \
-    -e "s|__GROUP__|$(id -gn)|g" -e "s|__REPO_DIR__|$REPO_DIR|g" \
+    -e "s|__GROUP__|$(id -gn "$(id -un)")|g" -e "s|__REPO_DIR__|$REPO_DIR|g" \
     -e "s|__HOME__|$HOME|g" \
     -e "s|__AGENT_PORT__|$AGENT_PORT|g" -e "s|__AGENT_BIND__|$AGENT_BIND|g" \
     -e "s|__AGENT_UPSTREAM__|$AGENT_UPSTREAM|g" \

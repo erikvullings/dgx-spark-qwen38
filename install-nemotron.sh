@@ -133,7 +133,7 @@ install_service(){
   # vLLM's compile cache, FlashInfer's kernels built at their first use and b12x's
   vlane_service_files "$CONFIG_DIR/nemotron-cache/vllm" "$CONFIG_DIR/nemotron-cache/flashinfer" "$CONFIG_DIR/nemotron-cache/b12x"
   RENDER="$(mktemp)"; trap 'rm -f "$RENDER"' EXIT
-  sed -e "s|__USER__|$(id -un)|g" -e "s|__GROUP__|$(id -gn)|g" -e "s|__HOME__|$HOME|g" \
+  sed -e "s|__USER__|$(id -un)|g" -e "s|__GROUP__|$(id -gn "$(id -un)")|g" -e "s|__HOME__|$HOME|g" \
       -e "s|__IMAGE__|$LOCAL_IMAGE|g" -e "s|__MODEL_DIR__|${MODEL//\//--}|g" -e "s|__MODEL__|$MODEL|g" \
       -e "s|__REV__|$MODEL_REV|g" -e "s|__DRAFT__|$DRAFT|g" -e "s|__DREV__|$DRAFT_REV|g" \
       -e "s|__GMU__|$GMU|g" -e "s|__HF_CACHE__|$HF_CACHE|g" \
