@@ -143,6 +143,18 @@ class TheStagedUnit(unittest.TestCase):
         for cache in ("vllm", "flashinfer", "b12x", "triton"):
             self.assertTrue((cfg / "flash-local-cache" / cache).is_dir(), cache)
 
+    def test_its_room_is_checked_before_the_switch_and_the_install_fetch(self):
+        r = subprocess.run(["bash", str(REPO / "install-flash-local.sh"), "--room"], capture_output=True, text=True,
+                           timeout=120, env={"PATH": "/usr/bin:/bin", "HOME": str(self.box.home), "HF_CACHE": str(self.box.hf),
+                                             "LANES_UNIT_DIR": str(self.box.units), "FLASH_LOCAL_PLE_DIR": str(self.box.t / "c")})
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        self.assertIn("room for the table's copies under", r.stdout)
+        installer = (REPO / "install-flash-local.sh").read_text()
+        self.assertLess(installer.rindex("\nlane_table_room\n"), installer.index('vlane_fetch "$MODEL" "$MODEL_REV"'))
+        switch = (REPO / "switch-model.sh").read_text()
+        block = switch[switch.index('if [ "$CHOICE" = "flash-local" ]; then'):]
+        self.assertLess(block.index("install-flash-local.sh\" --room"), block.index("/opt/qwen38/ckpt-fetch.py"))
+
     def test_a_folder_refused_is_not_kept(self):
         # kept before it was checked, a folder ple-table.py refuses stayed the choice of every Load
         # after, each failing the same way (found in review, 2026-10-20)

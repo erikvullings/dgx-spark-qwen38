@@ -16,6 +16,8 @@ over the cache's own, file by file. The cache itself is never touched.
     ple-table.py HF_CACHE REPO REV --home HOME [--dir DIR] copy     make the copies whole
     ple-table.py HF_CACHE REPO REV --home HOME [--dir DIR] mounts   the unit's -v arguments, one line
     ple-table.py HF_CACHE REPO REV --home HOME [--dir DIR] check    the folder refused or not, no checkpoint needed
+    ple-table.py HF_CACHE REPO REV --home HOME [--dir DIR] --need-gb N room
+                                                                   the copies' room on their disk, before any download
 
 --dir is FLASH_LOCAL_PLE_DIR: a folder for the copies whatever disk the cache is on, or "none" to
 read the table where the cache is, never a folder inside the cache, and its path one a unit can carry
@@ -108,6 +110,37 @@ def sha256(path: pathlib.Path) -> str:
     return h.hexdigest()
 
 
+def existing(path: pathlib.Path) -> pathlib.Path:
+    while not path.exists():
+        path = path.parent
+    return path
+
+
+def room(args, repo_dir: pathlib.Path) -> None:
+    """The room the copies need on their folder's disk, said before anything is downloaded: the copy
+    refused only after the checkpoint's 103 GB were fetched (found in review, 2026-10-20). With the
+    checkpoint in the cache, the copies missing; before it, --need-gb, the table's size."""
+    folder = where(args, existing(repo_dir / "blobs"))
+    if folder is None:
+        print("the table is read where the cache is: no copy to make room for")
+        return
+    need = args.need_gb * 10 ** 9
+    snapshot = repo_dir / "snapshots" / args.rev
+    if (snapshot / "model.safetensors.index.json").is_file():
+        try:
+            need = sum(b.stat().st_size for _, b in table_files(snapshot)
+                       if not ((folder / b.name).is_file() and (folder / b.name).stat().st_size == b.stat().st_size))
+        except SystemExit:
+            pass              # not whole yet: the table's size, as before the download
+    free = shutil.disk_usage(existing(folder)).free
+    if free < need + (1 << 30):
+        raise SystemExit(f"{free // 10 ** 9} GB free under {folder}, and the copies of the n-gram table need about"
+                         f" {need // 10 ** 9 + 1} GB there: free some space, set FLASH_LOCAL_PLE_DIR to a folder on a"
+                         " disk with the room, or FLASH_LOCAL_PLE_DIR=none to read the table where the cache is"
+                         " (slower, docs/external-disk.md)")
+    print(f"room for the table's copies under {folder}: {free // 10 ** 9} GB free, about {need // 10 ** 9 + 1} GB needed")
+
+
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     ap.add_argument("hf_cache")
@@ -115,13 +148,17 @@ def main() -> None:
     ap.add_argument("rev")
     ap.add_argument("--home", required=True)
     ap.add_argument("--dir", default="")
-    ap.add_argument("action", choices=("plan", "copy", "mounts", "check"))
+    ap.add_argument("--need-gb", type=int, default=0)
+    ap.add_argument("action", choices=("plan", "copy", "mounts", "check", "room"))
     args = ap.parse_args()
     repo_dir = pathlib.Path(args.hf_cache) / "hub" / ("models--" + args.repo.replace("/", "--"))
     if args.action == "check":
         # the folder chosen, refused before the installer keeps it for the runs after; no checkpoint needed
         if args.dir and args.dir != "none":
             where(args, repo_dir / "blobs")
+        return
+    if args.action == "room":
+        room(args, repo_dir)
         return
     snapshot = repo_dir / "snapshots" / args.rev
     if not (snapshot / "model.safetensors.index.json").is_file():

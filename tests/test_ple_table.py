@@ -199,6 +199,30 @@ class TableFiles(unittest.TestCase):
                 r = self.run_it("check", "--dir", good)
                 self.assertEqual(r.returncode, 0, r.stderr)
 
+    def room(self, folder, free):
+        mod = load()
+        args = ["ple-table.py", str(self.cache.root), NAME, REV, "--home", str(self.home), "--dir", str(folder),
+                "--need-gb", "33", "room"]
+        with mock.patch.object(sys, "argv", args), \
+             mock.patch.object(mod.shutil, "disk_usage", lambda p: types.SimpleNamespace(free=free)):
+            mod.main()
+
+    def test_room_is_said_before_any_download(self):
+        # the copy refused only after the checkpoint's 103 GB were fetched (found in review, 2026-10-20)
+        folder = self.d / "copies"
+        # with the checkpoint there, what is missing of the copies: a few KB here
+        self.room(folder, free=2 * 2 ** 30)
+        with self.assertRaises(SystemExit):
+            self.room(folder, free=2 ** 29)
+        # before it, the table's size
+        shutil.rmtree(self.cache.snap)
+        with self.assertRaises(SystemExit) as e:
+            self.room(folder, free=20 * 10 ** 9)
+        self.assertIn("need about 34 GB", str(e.exception))
+        self.room(folder, free=40 * 10 ** 9)
+        # read where the cache is, nothing to make room for
+        self.room("none", free=0)
+
     def test_mounts_refuse_while_a_copy_is_missing(self):
         r = self.run_it("mounts", "--dir", str(self.d / "empty"))
         self.assertEqual(r.returncode, 1)

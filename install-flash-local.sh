@@ -11,6 +11,7 @@
 #   ./install-flash-local.sh --units-only    the unit alone: no image, no checkpoint (install.sh, on demand)
 #   ./install-flash-local.sh --prepare       its image, pulled with no sudo: the cockpit's first Load
 #                                            runs it (./prepare-lane.sh flash-local)
+#   ./install-flash-local.sh --room          the room its table's copies need, said before a download
 #   ./install-flash-local.sh --stage FILE    the unit for the checkpoint in the cache, written to FILE
 #                                            with no sudo, its chat template and its table made ready
 #                                            first: switch-model.sh flash-local installs FILE
@@ -64,6 +65,7 @@ for a in "$@"; do case "$a" in
   --units-only) [ "$MODE" = full ] || die "--units-only and --prepare are the two halves of an install: one at a time"; MODE=units ;;
   --prepare) [ "$MODE" = full ] || die "--units-only and --prepare are the two halves of an install: one at a time"; MODE=prepare ;;
   --stage) [ "$MODE" = full ] || die "--stage is a mode of its own"; MODE=stage ;;
+  --room) [ "$MODE" = full ] || die "--room is a mode of its own"; MODE=room ;;
   -h|--help) awk 'NR > 1 && !/^#/ { exit } NR > 1' "$0"; exit 0 ;;
   *) if [ "$MODE" = stage ] && [ -z "${STAGE_OUT:-}" ]; then STAGE_OUT="$a"; else die "unknown option: $a"; fi ;;
 esac; done
@@ -90,6 +92,9 @@ FLASH_LOCAL_IMAGE="eugr/spark-vllm-b12x@sha256:03a956544e9f9b4b7ba91690469fbe784
 FLASH_LOCAL_GMU="0.8"
 FLASH_LOCAL_GB="103"
 FLASH_LOCAL_SEQS="8"
+# the seven files that hold the n-gram table at this revision, 32.31 GB, rounded up: what their copies
+# take on the disk of the home directory when the cache is on another (ple-table.py room)
+FLASH_LOCAL_TABLE_GB="33"
 MODEL="$FLASH_LOCAL_REPO"; MODEL_REV="$FLASH_LOCAL_REV"
 GMU="$FLASH_LOCAL_GMU"; WEIGHTS_GB="$FLASH_LOCAL_GB"; SEQS="$FLASH_LOCAL_SEQS"
 # The image is pulled as published, by digest: nothing is built on the box. vlane_fetch fetches
@@ -219,6 +224,16 @@ install_service(){
   echo "  a terminal : ./switch-model.sh flash-local, then the commands it prints"
 }
 
+# The room the table's copies need on their folder's disk, said before anything is downloaded: the
+# copy refused only after the 103 GB of the checkpoint were fetched, and the Load failed then (found
+# in review, 2026-10-20). --room is that alone, for switch-model.sh before its fetch.
+lane_table_room(){
+  python3 "$HERE/ple-table.py" "$HF_CACHE" "$MODEL" "$MODEL_REV" --home "$HOME" "${TABLE_DIR_ARG[@]}" \
+    --need-gb "$FLASH_LOCAL_TABLE_GB" room \
+    || die "the copies of the n-gram table would not fit (the line above says why): nothing was downloaded"
+}
+if [ "$MODE" = room ]; then lane_table_room; exit 0; fi
+
 # --stage: the unit for the checkpoint in the cache, for switch-model.sh, with no sudo: its template
 # and its table first, as the unit names them. The checkpoint must be whole (the switch fetched it).
 if [ "$MODE" = stage ]; then
@@ -271,6 +286,7 @@ if [ "$MODE" = prepare ]; then
 fi
 
 step "3/5 Checkpoint ($MODEL @ ${MODEL_REV:0:12}, resumable), its chat template and its n-gram table"
+lane_table_room
 vlane_fetch "$MODEL" "$MODEL_REV"
 lane_template
 lane_table copy

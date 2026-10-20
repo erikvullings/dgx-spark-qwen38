@@ -489,6 +489,8 @@ if [ "$CHOICE" = "flash-local" ]; then
     || die "the Flash FP4-Local lane's image (${FLASH_LOCAL_IMAGE:0:40}...) is missing: ./prepare-lane.sh flash-local pulls it (no sudo; its first Load from the cockpit runs it), then switch again"
   FLL_HF="$(unit_hf_cache "$FLASH_LOCAL_UNIT")"
   FLL_HF="${FLL_HF:-$HF_CACHE}"
+  # the room its table's copies need on their disk, before the download (install-flash-local.sh)
+  HF_CACHE="$FLL_HF" bash "$REPO_DIR/install-flash-local.sh" --room || exit 1
   printf '\n\033[1;36m── Verifying %s @ %s in the cache (resumable)\033[0m\n' "$FLASH_LOCAL_REPO" "${FLASH_LOCAL_REV:0:12}"
   FLL_TOKEN_ARGS=()
   # by name: docker takes the value from its own environment, so the token is in no argv

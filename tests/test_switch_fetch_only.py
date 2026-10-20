@@ -49,7 +49,9 @@ class Box:
             assert old in text, f"switch-model.sh no longer names {unit} that way"
             text = text.replace(old, f'"{units}/{unit}"')
         (repo / "switch-model.sh").write_text(text)
-        for f in ("lanes.sh", "ckpt-fetch.py", "install-nemotron.sh", "install-nemotron-super.sh", "install-flash-local.sh"):
+        # install-flash-local.sh --room runs before its fetch, with what it sources and its table's tool
+        for f in ("lanes.sh", "ckpt-fetch.py", "install-nemotron.sh", "install-nemotron-super.sh", "install-flash-local.sh",
+                  "vllm-lane.sh", "ple-table.py"):
             (repo / f).write_text((REPO / f).read_text())
         # the Nemotron lane's unit, as install-nemotron.sh writes it: its image, its cache, the
         # checkpoint and the memory share on lines of their own
