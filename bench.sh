@@ -47,7 +47,11 @@ def served_model():
 
 
 MODEL = served_model()
-LANE = "flash" if "flash" in MODEL else "27b"
+# Each lane by the name its engine serves under. "flash" in the name made the FP4-Local lane the
+# SGLang flash lane, its header, reference and warm-up note above its own numbers, and any other
+# name the 27B lane, whose 71.4 headed Kolibri's and the Nemotron lanes' (found in review, 2026-10-20).
+LANE = {"qwen3.8-27b": "27b", "qwen3.8-flash-next": "flash",
+        "qwen3.8-flash-next-fp4": "flash-local"}.get(MODEL, "other")
 HEADERS = {
     # The median is the v1.14 campaign on the official release image (README, CHANGELOG
     # v1.14.0); the per-probe figures are the last ones published, v1.9's, whose median was
@@ -64,6 +68,11 @@ HEADERS = {
               "  the abliterated target measures 45.4-46.4 / 43.7-46.6 / 27.3-27.7\n"
               "  DISCARD THE FIRST BATCH on this lane: one batch right after a boot came in\n"
               "  at 38.8 / 39.1 / 24.8 and the next three at 47.7-49.1 (BENCHMARKS.md)"),
+    # NVIDIA's FP4-Local build on vLLM with b12x and its MTP head, at the lane's default effort:
+    # two runs on the reference box, 2026-10-20 (docs/flash-local-lane.md)
+    "flash-local": ("Qwen3.8-Flash-Next FP4-Local (NVIDIA, vLLM b12x, MTP) benchmark (batch 1 decode)",
+                    "reference box (2026-10-20, the lane's default effort, xhigh): greedy median 55.1-55.4\n"
+                    "  code 56.2-57.4 / reasoning 52.8-54.3 / math peak 46.5-49.2 / free prose 33.4-35.5"),
 }
 
 
@@ -104,7 +113,8 @@ def stream(prompt, temp, max_tokens):
     out = usage.get("completion_tokens") or n
     return (out - 1) / (t_last - t_first) if t_first and t_last > t_first else -1
 
-title, reference = HEADERS[LANE]
+title, reference = HEADERS.get(LANE) or (f"{MODEL or 'unknown model'} benchmark (batch 1 decode)",
+                                         "no reference measured with bench.sh for this lane")
 print(title)
 print(f"served model: {MODEL or 'unknown (the engine did not name it)'}")
 print(f"{reference}\n")
@@ -131,6 +141,8 @@ print("  (numbers vary with content: acceptance length drives everything;")
 if LANE == "27b":
     print("   math/code accept ~3.3-5.6 tokens/step, free prose ~1.5-2.2 in any")
     print("   language, see BENCHMARKS.md)")
+elif LANE == "other":
+    print("   no profile of this lane is measured here)")
 else:
     print("   free prose costs this lane about a third of its code rate, on any")
     print("   engine and drafter measured here, see BENCHMARKS.md)")

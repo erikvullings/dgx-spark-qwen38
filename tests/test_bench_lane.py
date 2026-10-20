@@ -108,6 +108,25 @@ def main():
     if set(SERVED) != {"qwen3.8-27b"}:
         fails.append(f"the 27B lane sent {set(SERVED)}")
 
+    # The FP4-Local lane serves a name with "flash" in it, and got the SGLang flash lane's header,
+    # reference and warm-up note above its own numbers; Kolibri and the Nemotron lanes got the 27B's
+    # header and its 71.4 (found in review, 2026-10-20). Each lane is named by what it serves.
+    out = run_bench("qwen3.8-flash-next-fp4")
+    if "FP4-Local" not in out:
+        fails.append(f"the FP4-Local lane is not named in the header:\n{out[:400]}")
+    for other in ("NVFP4+NEXTN", "token map 65536", "DISCARD THE FIRST BATCH", "Qwen3.8-27B NVFP4+DFlash2"):
+        if other in out:
+            fails.append(f"the FP4-Local lane printed another lane's line: {other!r}")
+    if set(SERVED) != {"qwen3.8-flash-next-fp4"}:
+        fails.append(f"the FP4-Local lane sent {set(SERVED)}")
+    for model in ("kolibri-1", "nemotron-3.5-bolt", "nemotron-3.5-super-vl"):
+        out = run_bench(model)
+        for other in ("Qwen3.8-27B NVFP4+DFlash2", "71.4", "Flash-Next"):
+            if other in out:
+                fails.append(f"{model} printed another lane's line: {other!r}")
+        if model not in out.splitlines()[0]:
+            fails.append(f"{model} is not named in the header: {out.splitlines()[0]!r}")
+
     # An engine that does not answer /v1/models, or answers it with no name, must not stop
     # the benchmark. Only the second was simulated (a 200 with an empty id), so the path
     # that catches the error never ran (found in review, 2026-09-24).
