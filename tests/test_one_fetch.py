@@ -37,7 +37,7 @@ CALLS = {
     "switch-model.sh, the video lane":
         ("switch-model.sh", '"$VID_PY" "$REPO_DIR/ckpt-fetch.py" "$VID_MODEL" "$VID_REV" --allow "$VID_ALLOW" '
                             '--offline-first --refs-main fill'),
-    "vllm-lane.sh, the checkpoints of the three vLLM lanes' installers":
+    "vllm-lane.sh, the checkpoints of the four vLLM lanes' installers":
         ("vllm-lane.sh", '"$LOCAL_IMAGE" /opt/qwen38/ckpt-fetch.py "$1" "$2" --offline-first'),
     "switch-model.sh, the Kolibri lane":
         ("switch-model.sh", '"$KOL_IMAGE" /opt/qwen38/ckpt-fetch.py "$KOL_MODEL" "$KOL_REV" --offline-first \\\n'
@@ -45,10 +45,13 @@ CALLS = {
     "switch-model.sh, the Nemotron lane":
         ("switch-model.sh", '"$NEM_IMAGE" /opt/qwen38/ckpt-fetch.py "$NEM_R" "$NEM_V" --offline-first \\\n'
                             '      --need-gb "$NEM_ASK" --free-gb "$(dl_free_gb "$NEM_HF")"'),
+    "switch-model.sh, the Flash FP4-Local lane":
+        ("switch-model.sh", '"$FLASH_LOCAL_IMAGE" /opt/qwen38/ckpt-fetch.py "$FLASH_LOCAL_REPO" "$FLASH_LOCAL_REV" --offline-first \\\n'
+                            '    --need-gb "$FLASH_LOCAL_GB" --free-gb "$(dl_free_gb "$FLL_HF")"'),
 }
 SCRIPTS = ("install.sh", "switch-model.sh", "install-image.sh", "install-video.sh", "install-kolibri.sh",
-           "install-nemotron.sh", "install-nemotron-super.sh", "vllm-lane.sh")
-VLLM_INSTALLERS = ("install-kolibri.sh", "install-nemotron.sh", "install-nemotron-super.sh")
+           "install-nemotron.sh", "install-nemotron-super.sh", "install-flash-local.sh", "vllm-lane.sh")
+VLLM_INSTALLERS = ("install-kolibri.sh", "install-nemotron.sh", "install-nemotron-super.sh", "install-flash-local.sh")
 
 
 class EveryLaneFetchesThroughIt(unittest.TestCase):
@@ -57,7 +60,7 @@ class EveryLaneFetchesThroughIt(unittest.TestCase):
             with self.subTest(what):
                 self.assertEqual(text(script).count(call), 1, f"{script} no longer runs it this way")
         self.assertEqual(text("switch-model.sh").count("ckpt-fetch.py\" \"$") + text("switch-model.sh").count(
-            "/opt/qwen38/ckpt-fetch.py \"$"), 5, "switch-model.sh fetches for five lanes, each through it")
+            "/opt/qwen38/ckpt-fetch.py \"$"), 6, "switch-model.sh fetches for six lanes, each through it")
 
     def test_no_script_keeps_a_fetch_of_its_own(self):
         for script in SCRIPTS:

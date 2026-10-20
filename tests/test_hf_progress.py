@@ -307,8 +307,8 @@ class EveryFetchCountsItsBytes(unittest.TestCase):
     def test_a_container_gets_the_file_only_when_it_is_there(self):
         # beside ckpt-fetch.py in /opt/qwen38, where the docker callers mount both
         self.assertIn('if [ -f "$REPO_DIR/hf-progress.py" ]; then', SWITCH)
-        self.assertEqual(SWITCH.count('-v "$REPO_DIR/hf-progress.py:/opt/qwen38/hf-progress.py:ro")'), 3,
-                         "the text lanes', Kolibri's and Nemotron's")
+        self.assertEqual(SWITCH.count('-v "$REPO_DIR/hf-progress.py:/opt/qwen38/hf-progress.py:ro")'), 4,
+                         "the text lanes', Kolibri's, Nemotron's and Flash FP4-Local's")
         self.assertIn('"${DL_TOKEN_ARGS[@]}" "${DL_PROGRESS_ARGS[@]}"', SWITCH)
         self.assertNotIn("QWEN38_REPO_DIR", SWITCH, "the script finds it beside itself")
         install = (REPO / "install.sh").read_text()
@@ -322,7 +322,7 @@ class EveryFetchCountsItsBytes(unittest.TestCase):
         self.assertIn('[ -f "$HERE/hf-progress.py" ] && progress_args=(-v "$HERE/hf-progress.py:/opt/qwen38/hf-progress.py:ro")', text)
         self.assertIn('-v "$HERE/ckpt-fetch.py:/opt/qwen38/ckpt-fetch.py:ro" "${progress_args[@]}"', text)
         self.assertEqual(text.count("hf-progress.py:/opt/qwen38/hf-progress.py"), 1, "one mount, the guarded one")
-        for script in ("install-kolibri.sh", "install-nemotron.sh", "install-nemotron-super.sh"):
+        for script in ("install-kolibri.sh", "install-nemotron.sh", "install-nemotron-super.sh", "install-flash-local.sh"):
             with self.subTest(script=script):
                 inst = (REPO / script).read_text()
                 self.assertNotIn("hf-progress.py", inst, "no mount of its own")
@@ -330,8 +330,9 @@ class EveryFetchCountsItsBytes(unittest.TestCase):
 
     def test_bars_go_only_without_a_terminal(self):
         self.assertIn('DL_NO_BARS=""; [ -t 1 ] || DL_NO_BARS=1', SWITCH)
-        # the text lanes', the image lane's, the video lane's, the Kolibri lane's and the Nemotron lane's
-        self.assertEqual(SWITCH.count('HF_HUB_DISABLE_PROGRESS_BARS="$DL_NO_BARS"'), 5, "all five fetches")
+        # the text lanes', the image lane's, the video lane's, the Kolibri lane's, the Nemotron lane's
+        # and the Flash FP4-Local lane's
+        self.assertEqual(SWITCH.count('HF_HUB_DISABLE_PROGRESS_BARS="$DL_NO_BARS"'), 6, "all six fetches")
 
 
 @contextlib.contextmanager

@@ -15,6 +15,7 @@
 #   ./switch-model.sh kolibri-nvfp4   # Quantinine/Kolibri-1-NVFP4A16-FP8, its experts in NVFP4
 #   ./switch-model.sh nemotron        # nvidia/NVIDIA-Nemotron-3.5-Bolt-74B-A9B-24GB and its drafter (vLLM nightly + b12x)
 #   ./switch-model.sh nemotron-super  # nvidia/NVIDIA-Nemotron-3.5-Super-VL-120B-A12B-NVFP4 and its drafter (the same image)
+#   ./switch-model.sh flash-local     # nvidia/Qwen3.8-Flash-Next-FP4-Local, NVIDIA's FP4 build of the flash model (vLLM + b12x)
 #   ./switch-model.sh <target> --fetch  # that target's checkpoint only, into the cache; nothing else changes
 #
 # Within the 27B lane (stock, uncensored, fp8, uncensored-fp8) it does what it
@@ -52,7 +53,7 @@ _ENV_HF_CACHE="${HF_CACHE:-}"      # before the pins below give it install.sh's 
 # 27B lane and restarting what follows it, where the usage was all anyone wanted (found
 # in review, 2026-09-24). MODEL_CHOICE= still names one, as install.sh takes it.
 CHOICE="${1:-${MODEL_CHOICE:-}}"
-case "$CHOICE" in stock|uncensored|fp8|uncensored-fp8|flash|flash-nvda|flash-uncensored|image|image-turbo|video|kolibri|kolibri-nvfp4|nemotron|nemotron-super) ;; *) printf 'usage: ./switch-model.sh <stock|uncensored|fp8|uncensored-fp8|flash|flash-nvda|flash-uncensored|image|image-turbo|video|kolibri|kolibri-nvfp4|nemotron|nemotron-super> [--fetch]\n' >&2; [ -z "$CHOICE" ] && exit 2; die "unknown target: $CHOICE" ;; esac
+case "$CHOICE" in stock|uncensored|fp8|uncensored-fp8|flash|flash-nvda|flash-uncensored|image|image-turbo|video|kolibri|kolibri-nvfp4|nemotron|nemotron-super|flash-local) ;; *) printf 'usage: ./switch-model.sh <stock|uncensored|fp8|uncensored-fp8|flash|flash-nvda|flash-uncensored|image|image-turbo|video|kolibri|kolibri-nvfp4|nemotron|nemotron-super|flash-local> [--fetch]\n' >&2; [ -z "$CHOICE" ] && exit 2; die "unknown target: $CHOICE" ;; esac
 # --fetch: the target's checkpoint only, fetched as a switch fetches it (the cache first,
 # resumable, its room checked), and nothing else: no unit, no boot, no engine, no record.
 # Library's Download runs it, and a lane installed without its weights gets them so.
@@ -186,7 +187,7 @@ if [ "$CHOICE" = "kolibri" ] || [ "$CHOICE" = "kolibri-nvfp4" ]; then
   done
   # The loop variable ends in UNIT_NAME on purpose: CI checks every
   # `sudo systemctl <verb> "$..UNIT_NAME"` against the cockpit's sudoers allowlist.
-  for TEXT_UNIT_NAME in qwen38-sglang.service qwen38-flash.service qwen38-image.service qwen38-video.service qwen38-nemotron.service qwen38-nemotron-super.service; do
+  for TEXT_UNIT_NAME in qwen38-sglang.service qwen38-flash.service qwen38-image.service qwen38-video.service qwen38-nemotron.service qwen38-nemotron-super.service qwen38-flash-local.service; do
     if systemctl is-enabled --quiet "$TEXT_UNIT_NAME" 2>/dev/null; then
       echo "disabling $TEXT_UNIT_NAME at boot (unit file kept for switching back)"
       sudo systemctl disable "$TEXT_UNIT_NAME"
@@ -195,7 +196,7 @@ if [ "$CHOICE" = "kolibri" ] || [ "$CHOICE" = "kolibri-nvfp4" ]; then
   sudo systemctl enable "$KOLIBRI_UNIT_NAME" >/dev/null 2>&1 || sudo systemctl enable "$KOLIBRI_UNIT_NAME"
   sudo systemctl daemon-reload
   RUNNING=""
-  for u in qwen38-sglang.service qwen38-flash.service qwen38-image.service qwen38-video.service qwen38-nemotron.service qwen38-nemotron-super.service; do
+  for u in qwen38-sglang.service qwen38-flash.service qwen38-image.service qwen38-video.service qwen38-nemotron.service qwen38-nemotron-super.service qwen38-flash-local.service; do
     systemctl is-active --quiet "$u" 2>/dev/null && RUNNING="$u"
   done
   printf '\n\033[1;32mSwitch queued: %s (%s)\033[0m\n' "$KOL_MODEL" "$KOLIBRI_UNIT_NAME"
@@ -390,7 +391,7 @@ if [ "$CHOICE" = "nemotron" ] || [ "$CHOICE" = "nemotron-super" ]; then
   done
   # The loop variable ends in UNIT_NAME on purpose: CI checks every
   # `sudo systemctl <verb> "$..UNIT_NAME"` against the cockpit's sudoers allowlist.
-  for TEXT_UNIT_NAME in qwen38-sglang.service qwen38-flash.service qwen38-image.service qwen38-video.service qwen38-kolibri.service qwen38-nemotron.service qwen38-nemotron-super.service; do
+  for TEXT_UNIT_NAME in qwen38-sglang.service qwen38-flash.service qwen38-image.service qwen38-video.service qwen38-kolibri.service qwen38-nemotron.service qwen38-nemotron-super.service qwen38-flash-local.service; do
     [ "$TEXT_UNIT_NAME" = "$NEM_UNIT_NAME" ] && continue
     if systemctl is-enabled --quiet "$TEXT_UNIT_NAME" 2>/dev/null; then
       echo "disabling $TEXT_UNIT_NAME at boot (unit file kept for switching back)"
@@ -404,7 +405,7 @@ if [ "$CHOICE" = "nemotron" ] || [ "$CHOICE" = "nemotron-super" ]; then
   fi
   sudo systemctl daemon-reload
   RUNNING=""
-  for u in qwen38-sglang.service qwen38-flash.service qwen38-image.service qwen38-video.service qwen38-kolibri.service qwen38-nemotron.service qwen38-nemotron-super.service; do
+  for u in qwen38-sglang.service qwen38-flash.service qwen38-image.service qwen38-video.service qwen38-kolibri.service qwen38-nemotron.service qwen38-nemotron-super.service qwen38-flash-local.service; do
     [ "$u" = "$NEM_UNIT_NAME" ] && continue
     systemctl is-active --quiet "$u" 2>/dev/null && RUNNING="$u"
   done
@@ -459,6 +460,137 @@ if [ "$CHOICE" = "nemotron" ] || [ "$CHOICE" = "nemotron-super" ]; then
   fi
   echo "Clients reach it through the proxy on :30001 with the box's key, as model $NEM_SERVED."
   echo "Switch back:      ./switch-model.sh stock   (or any other target)"
+  exit 0
+fi
+
+# ── The Flash FP4-Local lane: NVIDIA's FP4 build of the flash model, on vLLM ─────────
+# A text lane for the proxy, served by vLLM with b12x like the Nemotron lanes, under the same
+# contract: verify the checkpoint (the first switch fetches it), put the unit for it in place, make
+# it the one unit enabled at boot, never start or stop anything, print the exact commands. The unit
+# is rendered by the lane's installer (install-flash-local.sh --stage, no sudo), which first makes
+# its chat template and, when the cache is on another disk than the home directory's, the copies of
+# its n-gram table the unit mounts (ple-table.py says why): one renderer, so a switch after the pins
+# moved, or after the cache moved, puts in the unit an install would.
+FLASH_LOCAL_UNIT="/etc/systemd/system/qwen38-flash-local.service"
+FLASH_LOCAL_UNIT_NAME="qwen38-flash-local.service"
+# Rewritten with sudo, so staged at a fixed path the cockpit's exact-argv sudoers allowlist names,
+# as the other lanes' units are.
+FLL_STAGE="$CONFIG_DIR/qwen38-flash-local.service.switch-stage"
+if [ "$CHOICE" = "flash-local" ]; then
+  [ -f "$FLASH_LOCAL_UNIT" ] || die "the Flash FP4-Local lane is not installed on this box (no $FLASH_LOCAL_UNIT). Install it once: ./install.sh --with-flash-local (about 103 GB)"
+  # The checkpoint, its pinned revision, the image and the size, from the lane's installer, the one
+  # place they are declared.
+  eval "$(grep -E '^FLASH_LOCAL_(REPO|REV|IMAGE|GB)=' "$REPO_DIR/install-flash-local.sh" || true)"
+  for _v in FLASH_LOCAL_REPO FLASH_LOCAL_REV FLASH_LOCAL_IMAGE FLASH_LOCAL_GB; do
+    eval "[ -n \"\${$_v:-}\" ]" || die "install-flash-local.sh no longer defines $_v (repo layout changed?)"
+  done
+  unset _v
+  docker image inspect "$FLASH_LOCAL_IMAGE" >/dev/null 2>&1 \
+    || die "the Flash FP4-Local lane's image (${FLASH_LOCAL_IMAGE:0:40}...) is missing: ./prepare-lane.sh flash-local pulls it (no sudo; its first Load from the cockpit runs it), then switch again"
+  FLL_HF="$(unit_hf_cache "$FLASH_LOCAL_UNIT")"
+  FLL_HF="${FLL_HF:-$HF_CACHE}"
+  printf '\n\033[1;36m── Verifying %s @ %s in the cache (resumable)\033[0m\n' "$FLASH_LOCAL_REPO" "${FLASH_LOCAL_REV:0:12}"
+  FLL_TOKEN_ARGS=()
+  # by name: docker takes the value from its own environment, so the token is in no argv
+  if [ -n "${HF_TOKEN:-}" ]; then export HF_TOKEN; FLL_TOKEN_ARGS=(-e HF_TOKEN); fi
+  FLL_PROGRESS_ARGS=()
+  if [ -f "$REPO_DIR/hf-progress.py" ]; then
+    FLL_PROGRESS_ARGS=(-v "$REPO_DIR/hf-progress.py:/opt/qwen38/hf-progress.py:ro")
+  fi
+  # In the lane's own image, as the other vLLM lanes fetch theirs; --init so that a cockpit job
+  # stopped past its timeout stops this too. ckpt-fetch.py is the one fetch of every lane's
+  # checkpoint (it says why).
+  docker run --rm --init --network host --user "$(id -u):$(id -g)" --entrypoint python3 \
+    -e HF_HOME=/hf -e HF_HUB_DOWNLOAD_TIMEOUT=30 -e HF_HUB_DISABLE_XET=1 \
+    -e HF_HUB_DISABLE_PROGRESS_BARS="$DL_NO_BARS" \
+    "${FLL_TOKEN_ARGS[@]}" "${FLL_PROGRESS_ARGS[@]}" \
+    -v "$REPO_DIR/ckpt-fetch.py:/opt/qwen38/ckpt-fetch.py:ro" \
+    -v "$FLL_HF":/hf "$FLASH_LOCAL_IMAGE" /opt/qwen38/ckpt-fetch.py "$FLASH_LOCAL_REPO" "$FLASH_LOCAL_REV" --offline-first \
+    --need-gb "$FLASH_LOCAL_GB" --free-gb "$(dl_free_gb "$FLL_HF")" \
+    || die "the Flash FP4-Local checkpoint could not be verified or fetched (re-run to resume; set HF_TOKEN if it stalls)"
+  fetched "$FLASH_LOCAL_REPO @ ${FLASH_LOCAL_REV:0:12}"
+  # its chat template, its n-gram table where the engine reads it, and its unit for this checkpoint
+  HF_CACHE="$FLL_HF" bash "$REPO_DIR/install-flash-local.sh" --stage "$FLL_STAGE" \
+    || { rm -f "$FLL_STAGE"; die "the Flash FP4-Local unit could not be prepared (the lines above say why)"; }
+  FLL_REWRITTEN=""
+  if ! cmp -s "$FLL_STAGE" "$FLASH_LOCAL_UNIT"; then
+    diff "$FLL_STAGE" "$FLASH_LOCAL_UNIT" || true   # show exactly what changes
+    sudo install -m 644 "$FLL_STAGE" "$FLASH_LOCAL_UNIT"
+    FLL_REWRITTEN=1
+  fi
+  rm -f "$FLL_STAGE"
+  # Which lane this box served at boot, written down before it is disabled: removing this lane
+  # later gives the boot back to it (its installer's --uninstall).
+  for TEXT_UNIT_NAME in qwen38-sglang.service qwen38-flash.service; do
+    if systemctl is-enabled --quiet "$TEXT_UNIT_NAME" 2>/dev/null; then
+      text_lane_note "$TEXT_UNIT_NAME"; break   # both enabled: the 27B, as install.sh follows it
+    fi
+  done
+  # The loop variable ends in UNIT_NAME on purpose: CI checks every
+  # `sudo systemctl <verb> "$..UNIT_NAME"` against the cockpit's sudoers allowlist.
+  for TEXT_UNIT_NAME in qwen38-sglang.service qwen38-flash.service qwen38-image.service qwen38-video.service qwen38-kolibri.service qwen38-nemotron.service qwen38-nemotron-super.service; do
+    if systemctl is-enabled --quiet "$TEXT_UNIT_NAME" 2>/dev/null; then
+      echo "disabling $TEXT_UNIT_NAME at boot (unit file kept for switching back)"
+      sudo systemctl disable "$TEXT_UNIT_NAME"
+    fi
+  done
+  sudo systemctl enable "$FLASH_LOCAL_UNIT_NAME" >/dev/null 2>&1 || sudo systemctl enable "$FLASH_LOCAL_UNIT_NAME"
+  sudo systemctl daemon-reload
+  RUNNING=""
+  for u in qwen38-sglang.service qwen38-flash.service qwen38-image.service qwen38-video.service qwen38-kolibri.service qwen38-nemotron.service qwen38-nemotron-super.service; do
+    systemctl is-active --quiet "$u" 2>/dev/null && RUNNING="$u"
+  done
+  printf '\n\033[1;32mSwitch queued: %s (%s)\033[0m\n' "$FLASH_LOCAL_REPO" "$FLASH_LOCAL_UNIT_NAME"
+  if [ -n "$RUNNING" ]; then
+    echo "Effective after:  sudo systemctl stop $RUNNING && sudo systemctl start $FLASH_LOCAL_UNIT_NAME   (or next reboot)"
+  elif systemctl is-active --quiet "$FLASH_LOCAL_UNIT_NAME" 2>/dev/null; then
+    if [ -n "$FLL_REWRITTEN" ]; then
+      echo "Effective after:  sudo systemctl restart $FLASH_LOCAL_UNIT_NAME   (it serves the previous unit until then)"
+    else
+      echo "Its unit already named this checkpoint. Started before it did, the lane serves what it loaded: sudo systemctl restart $FLASH_LOCAL_UNIT_NAME"
+    fi
+  else
+    echo "Effective after:  sudo systemctl start $FLASH_LOCAL_UNIT_NAME   (or next reboot; ready in about 6 min, 17 at its first boot)"
+  fi
+  # opencode follows the lane, as on a text switch: the lane's provider becomes the default of the
+  # generated config and of the one opencode reads, and the server that reads them restarts when
+  # they changed. A box installed with --no-opencode is left alone.
+  if [ -f "$CONFIG_DIR/opencode.off" ]; then
+    echo "opencode integration is off on this box (./install.sh --no-opencode): default model left alone"
+  else
+    FLL_OC_SUM="$({ cat "$CONFIG_DIR/opencode.json" "$HOME/.config/opencode/opencode.json" 2>/dev/null || true; } | sha256sum)"
+    FLL_PAIR="$("$REPO_DIR/oc-limits.sh" flash-local)" || FLL_PAIR=""
+    FLL_NAME="$(python3 "$REPO_DIR/oc-point-default.py" --label flash-local 262144 || true)"
+    FLL_PORT="$({ grep -m1 -oE 'PROXY_PORT=[0-9]+|keepalive-proxy.py [0-9]+' /etc/systemd/system/qwen38-keepalive.service 2>/dev/null || true; } | grep -oE '[0-9]+$' || true)"
+    FLL_SRC="$(mktemp)"
+    if [ -n "$FLL_PAIR" ] && python3 "$REPO_DIR/oc-flash-local.py" "http://127.0.0.1:${FLL_PORT:-30001}/v1" "$CONFIG_DIR/api-key" \
+         "${FLL_PAIR%% *}" "$(echo "$FLL_PAIR" | cut -d' ' -f2)" "${FLL_NAME:-Qwen3.8-Flash-Next FP4-Local (local, 262K)}" > "$FLL_SRC"; then
+      # The compaction block is global: sized from this lane's window as every text switch sizes
+      # it from its own. pi's keepRecentTokens follows (pi-gen).
+      FLL_KEEP="$("$REPO_DIR/oc-limits.sh" --preserve "${FLL_PAIR%% *}")" || FLL_KEEP=""
+      for OC_JSON in "$CONFIG_DIR/opencode.json" "$HOME/.config/opencode/opencode.json"; do
+        [ -f "$OC_JSON" ] || continue
+        python3 "$REPO_DIR/oc-merge-limits.py" "$OC_JSON" --add-providers "$FLL_SRC" >/dev/null || true
+        python3 "$REPO_DIR/oc-point-default.py" "$OC_JSON" flash-local flash-local 262144 \
+          || echo "NOTE: could not update $OC_JSON (hand-edited?); set its \"model\" field yourself"
+        [ -n "$FLL_KEEP" ] && { python3 "$REPO_DIR/oc-merge-limits.py" "$OC_JSON" --compaction "$FLL_KEEP" \
+          || echo "NOTE: could not update the compaction block in $OC_JSON; check it by hand ($FLL_KEEP)"; }
+      done
+    fi
+    rm -f "$FLL_SRC"
+    if [ -d "$CONFIG_DIR/pi" ] || [ -d "$CONFIG_DIR/omp" ]; then
+      python3 "$REPO_DIR/pi-gen.py" --config "$CONFIG_DIR/opencode.json" --out "$CONFIG_DIR" \
+        || echo "NOTE: could not regenerate the pi/omp artifacts; run ./pi-gen.py by hand"
+    fi
+    if [ "$FLL_OC_SUM" != "$({ cat "$CONFIG_DIR/opencode.json" "$HOME/.config/opencode/opencode.json" 2>/dev/null || true; } | sha256sum)" ] \
+       && systemctl list-unit-files opencode-web.service >/dev/null 2>&1 && systemctl is-active --quiet opencode-web.service; then
+      sudo systemctl restart opencode-web.service \
+        && echo "opencode-web.service restarted so it reads the new default" \
+        || echo "NOTE: could not restart opencode-web.service; restart it by hand"
+    fi
+  fi
+  echo "Clients reach it through the proxy on :30001 with the box's key, as model qwen3.8-flash-next-fp4."
+  echo "Switch back:      ./switch-model.sh flash   (or any other target)"
   exit 0
 fi
 
@@ -563,7 +695,7 @@ if [ "$CHOICE" = "image" ] || [ "$CHOICE" = "image-turbo" ]; then
   # The loop variable ends in UNIT_NAME on purpose: CI checks every
   # `sudo systemctl <verb> "$..UNIT_NAME"` against the cockpit's sudoers allowlist,
   # and a variable called $u would have walked straight past it.
-  for TEXT_UNIT_NAME in qwen38-sglang.service qwen38-flash.service qwen38-video.service qwen38-kolibri.service qwen38-nemotron.service qwen38-nemotron-super.service; do
+  for TEXT_UNIT_NAME in qwen38-sglang.service qwen38-flash.service qwen38-video.service qwen38-kolibri.service qwen38-nemotron.service qwen38-nemotron-super.service qwen38-flash-local.service; do
     if systemctl is-enabled --quiet "$TEXT_UNIT_NAME" 2>/dev/null; then
       echo "disabling $TEXT_UNIT_NAME at boot (unit file kept for switching back)"
       sudo systemctl disable "$TEXT_UNIT_NAME"
@@ -572,7 +704,7 @@ if [ "$CHOICE" = "image" ] || [ "$CHOICE" = "image-turbo" ]; then
   sudo systemctl enable "$IMAGE_UNIT_NAME" >/dev/null 2>&1 || sudo systemctl enable "$IMAGE_UNIT_NAME"
   sudo systemctl daemon-reload
   RUNNING=""
-  for u in qwen38-sglang.service qwen38-flash.service qwen38-video.service qwen38-kolibri.service qwen38-nemotron.service qwen38-nemotron-super.service; do
+  for u in qwen38-sglang.service qwen38-flash.service qwen38-video.service qwen38-kolibri.service qwen38-nemotron.service qwen38-nemotron-super.service qwen38-flash-local.service; do
     systemctl is-active --quiet "$u" 2>/dev/null && RUNNING="$u"
   done
   printf '\n\033[1;32mSwitch queued: %s (%s)\033[0m\n' "$IMG_MODEL" "$IMAGE_UNIT_NAME"
@@ -700,7 +832,7 @@ if [ "$CHOICE" = "video" ]; then
   # The loop variable ends in UNIT_NAME on purpose: CI checks every
   # `sudo systemctl <verb> "$..UNIT_NAME"` against the cockpit's sudoers allowlist,
   # and a variable called $u would have walked straight past it.
-  for OTHER_UNIT_NAME in qwen38-sglang.service qwen38-flash.service qwen38-image.service qwen38-kolibri.service qwen38-nemotron.service qwen38-nemotron-super.service; do
+  for OTHER_UNIT_NAME in qwen38-sglang.service qwen38-flash.service qwen38-image.service qwen38-kolibri.service qwen38-nemotron.service qwen38-nemotron-super.service qwen38-flash-local.service; do
     if systemctl is-enabled --quiet "$OTHER_UNIT_NAME" 2>/dev/null; then
       echo "disabling $OTHER_UNIT_NAME at boot (unit file kept for switching back)"
       sudo systemctl disable "$OTHER_UNIT_NAME"
@@ -709,7 +841,7 @@ if [ "$CHOICE" = "video" ]; then
   sudo systemctl enable "$VIDEO_UNIT_NAME" >/dev/null 2>&1 || sudo systemctl enable "$VIDEO_UNIT_NAME"
   sudo systemctl daemon-reload
   RUNNING=""
-  for u in qwen38-sglang.service qwen38-flash.service qwen38-image.service qwen38-kolibri.service qwen38-nemotron.service qwen38-nemotron-super.service; do
+  for u in qwen38-sglang.service qwen38-flash.service qwen38-image.service qwen38-kolibri.service qwen38-nemotron.service qwen38-nemotron-super.service qwen38-flash-local.service; do
     systemctl is-active --quiet "$u" 2>/dev/null && RUNNING="$u"
   done
   printf '\n\033[1;32mSwitch queued: %s (%s)\033[0m\n' "$VID_MODEL" "$VIDEO_UNIT_NAME"
@@ -1058,6 +1190,11 @@ fi
 if [ -f "$NEMOTRON_SUPER_UNIT" ] && systemctl is-enabled --quiet "$NEMOTRON_SUPER_UNIT_NAME" 2>/dev/null; then
   echo "disabling $NEMOTRON_SUPER_UNIT_NAME at boot (unit file kept for switching back)"
   sudo systemctl disable "$NEMOTRON_SUPER_UNIT_NAME"
+fi
+# The Flash FP4-Local lane is the eighth: the same reason.
+if [ -f "$FLASH_LOCAL_UNIT" ] && systemctl is-enabled --quiet "$FLASH_LOCAL_UNIT_NAME" 2>/dev/null; then
+  echo "disabling $FLASH_LOCAL_UNIT_NAME at boot (unit file kept for switching back)"
+  sudo systemctl disable "$FLASH_LOCAL_UNIT_NAME"
 fi
 sudo systemctl enable "$TARGET_UNIT_NAME" >/dev/null 2>&1 || sudo systemctl enable "$TARGET_UNIT_NAME"
 text_lane_note "$TARGET_UNIT_NAME"
