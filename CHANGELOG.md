@@ -1,5 +1,75 @@
 # Changelog
 
+## v1.37.7 (2026-10-21): a text lane left out stays out on a box booting a side lane
+
+**A text lane left out gets its units only beside a side lane at boot** (issue #57, reported by
+EmilianoAndres on an ASUS Ascent GX10). A box booting Flash FP4-Local, whose record named the flash
+lane it served before (`~/.config/qwen38/text-lane`), took that lane for the text lane of every run
+whatever `--no-flash` or its marker said: the run pulled the flash image and fetched its checkpoint
+again (35 and 136 GB) under "Leaving the flash lane out". `--help` leaves a lane out "when it is not
+the one serving". The lane left out now stays the run's text lane, read as the box has it, and gets
+its units only, at this release's pins, as a lane installed on demand does: none of its downloads,
+nothing started, the box's port, cache and binds kept, and its steps say so ("not pulled, as the
+flash lane is left out"). The other text lane follows its own rule (whole once prepared, its units
+otherwise), and the rest of the box is updated, with both text lanes left out too. The same holds
+for `--no-27b`. The end of the run says where both text lanes stand and the way back: a Load from
+the cockpit, which fetches what the lane lacks once the room is checked (or `./prepare-lane.sh`,
+then `./switch-model.sh`, on a box without it; the installer for a custom model, which no Load
+prepares); `./install.sh --with-<lane>` takes it back into every update, a run that fetches it whole
+at once. `--no-service` with that lane left out is refused: it prepares the lane for `./run.sh`,
+which would have found no checkpoint. A run whose own serving lane has a marker says it is the one
+this run serves and how to drop the marker, instead of "Leaving it out"; the 27B lane is named so
+in every line that names it.
+
+**The boot a side lane gives back goes to a text lane that can start.** The uninstall of a side
+lane at boot (the image, video, Kolibri, Nemotron, Super VL and Flash FP4-Local lanes) gave the boot
+to the text lane noted, or to any installed, ready or not: a lane installed on demand and never
+loaded, or left out as above, pulled its image at boot or started again every 15 s without its
+checkpoint. It now goes to the lane noted when its image and its checkpoint are on the box
+(lanes.sh `text_lane_prepared`, moved there from install.sh), else to the other one that can start,
+else to none, and the uninstall then says to Load one, or names the `prepare-lane.sh` of a text lane
+the box has, rather than `systemctl enable` a lane that may not start. "As it was before" is said
+only of the lane noted. The three uninstalls share these lines now (lanes.sh `text_lane_give_back`).
+opencode's default follows the lane given the boot, or with none the lane the box comes back to
+(`text_lane_home`): it went to the 27B on a box that has none.
+
+Two fixes before this one were stopped by their review, before any release. The first took the
+other text lane in the place of the one left out, by its unit file alone: a 27B left out would have
+installed whole a flash lane there with its units only (223 GB), and a box with no 27B unit would
+have lost its port, its cache and its proxy bind. The second gave the way back as
+`./install.sh --with-<lane>`, whose run fetches the lane whole at once, and on a disk too small dies
+at its step 1 with the marker already gone, as every update after it then does; at a side lane's
+uninstall it gave the boot to the other text lane, whether that one could start or not; and its
+tests stopped after the rule, so a step 2 that pulled again passed them all. A second review of
+this one found five small defects, all fixed here, and four holes in its tests, filled.
+
+**What an update does.** The cockpit restarts once, to name the release; the proxy and the engines
+keep running. On a box like the issue's, the update gives the flash lane its units only and fetches
+nothing for it.
+
+**Tests.** `tests/test_install_left_out_lane.py` runs install.sh as written on the issue's box
+(Flash FP4-Local at boot, its port, cache and proxy bind its own and read, not given), past its
+first step up to a wall after the new rule, and to the end of the run with docker refusing every
+pull, run and build: the flash lane left out by its marker and by its flag, with and without a 27B
+unit, the 27B left out (never the flash installed in its place), both left out, a lane not left
+out, contradicting flags, a box serving the lane it marked (both lanes), and `--plan`; the whole
+runs check that nothing is pulled or fetched at any step, the units at this release's pins on the
+box's port, cache and bind, and the end's words, which are also run extracted for each state of the
+other text lane. `tests/test_text_lane.py` holds the boot given back to a lane that can start
+(image, then checkpoint) and what the uninstall says, and the uninstall tests of the vLLM and image
+lanes write text lanes that can start (`tests/text_lane_fixture.py`). 16 of the 19 cases of
+`test_install_left_out_lane.py` fail on v1.37.6; the other three hold what v1.37.6 already did (a lane
+not left out, contradicting flags refused first, `--plan` listing). The four new cases of
+`test_text_lane.py` and the new one of `test_kolibri_uninstall_chain.py` fail there too. 23 mutants
+fail them, against an unmutated copy that passes: step 2 pulling again for a lane left out (the issue
+back), the rule never taken or read from Flash FP4-Local alone, the end's branch never reached, the
+old way back, the way back of a custom model, a lane as its own target, the step 3 of a run on
+demand, the other text lane missing from the end, the end's old claim, `--no-service` let through,
+the 27B named raw in any of three lines, a run for the other text lane taking a side lane at boot,
+the boot given back without the lane noted or the other checked, without its unit or its
+checkpoint, "as it was before" of any lane, the old `systemctl` advice or a 27B the box lacks, and
+opencode's default with no lane to follow.
+
 ## v1.37.6 (2026-10-21): a second ASUS Ascent GX10, set up from scratch with the one command
 
 **A second ASUS Ascent GX10, set up from scratch.** The project is developed and measured on an ASUS

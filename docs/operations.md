@@ -123,6 +123,13 @@ from the cockpit; `--all-weights` builds them all on that run and proves each, t
 stopped meanwhile and proved again after. To keep a box as it is,
 say so on that run and later runs remember it: `./install.sh --no-flash --no-image --no-video`
 (or `--no-27b` on a flash box). A lane already installed is updated and not proved again.
+On a box that boots a side lane (images, video, Kolibri, a Nemotron lane, Flash FP4-Local), a run
+brings up to date the text lane the box served last; left out, that lane gets its units only, at
+the release's pins, none of its downloads, and the box keeps its port, cache and binds, while the
+other text lane follows its own rule (since v1.37.7). Its way back is a Load from the cockpit;
+`./install.sh --with-<lane>` takes it back into every update, and that run fetches it whole at
+once. The uninstall of a side lane gives the boot back only to a text lane that can start, its
+image and its checkpoint on the box.
 
 Since v1.36.0 a run lists, before its first step, what it keeps and what it moves against what
 the release recommends (`./install.sh --plan` prints the list alone and changes nothing), and
