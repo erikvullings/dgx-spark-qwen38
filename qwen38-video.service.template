@@ -21,6 +21,13 @@ WorkingDirectory=__VIDEO_LANE_DIR__
 Environment=HF_HOME=__HF_CACHE__
 Environment=HF_HUB_OFFLINE=1
 Environment=PYTHONUNBUFFERED=1
+# The venv's bin first, as an activated venv has it, before the directories a unit gets otherwise
+# (snapd's generator adds /snap/bin to them): SGLang Diffusion compiles kernels at their first use
+# (sglang/kernels/jit, which this lane's layernorm, elementwise and attention layers go through)
+# and runs ninja by name, which the venv has (flashinfer, modelopt and sglang require it) and a new
+# box does not: the image lane, on the same runtime, failed its first image on an ASUS Ascent GX10
+# with DGX OS 7.6.0 on "No such file or directory: 'ninja'" (2026-10-21).
+Environment=PATH=__VIDEO_VENV__/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/snap/bin
 # The decode sits close enough to the cap that fragmentation tips it over (cookbook).
 Environment=PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
 # The memory the last engine held has to be back before this one starts: a start piled on

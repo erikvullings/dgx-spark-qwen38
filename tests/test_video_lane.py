@@ -59,6 +59,22 @@ def exec_start():
 
 
 class TheUnit(unittest.TestCase):
+    def test_the_venv_bin_leads_the_path(self):
+        """SGLang Diffusion compiles kernels at their first use and runs ninja by name: the venv
+        has it, a new box does not, and the image lane, on the same runtime, failed its first image
+        on an ASUS Ascent GX10 with DGX OS 7.6.0 on "No such file or directory: 'ninja'" (2026-10-21; the reference box had a ninja
+        of its own in /usr/bin). The venv's bin comes first, the directories a unit has otherwise after."""
+        # in [Service], where systemd reads it, and not taken back
+        service = UNIT_TPL.read_text().split("\n[Service]\n", 1)[1].split("\n[", 1)[0]
+        paths = re.findall(r"(?m)^Environment=PATH=(.*)$", service)
+        self.assertEqual(len(paths), 1, "one PATH, set by the unit")
+        self.assertNotRegex(service, r"(?m)^UnsetEnvironment=.*\bPATH\b")
+        dirs = paths[0].split(":")
+        self.assertEqual(dirs[0], "__VIDEO_VENV__/bin")
+        # every directory a unit has otherwise follows it (snapd's generator adds /snap/bin)
+        for d in ("/usr/local/sbin", "/usr/local/bin", "/usr/sbin", "/usr/bin", "/snap/bin"):
+            self.assertIn(d, dirs[1:])
+
     def test_every_placeholder_is_one_the_installer_substitutes(self):
         rendered = UNIT_TPL.read_text()
         for ph in sorted(set(re.findall(r"__[A-Z][A-Z0-9_]*__", rendered))):

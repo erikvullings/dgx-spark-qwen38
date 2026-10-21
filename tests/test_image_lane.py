@@ -62,6 +62,22 @@ class TheUnit(unittest.TestCase):
         sub = set(re.findall(r'-e "s\|(__[A-Z][A-Z0-9_]*__)\|', INSTALLER.read_text()))
         self.assertEqual(used - sub, set(), "the installer does not substitute these")
 
+    def test_the_venv_bin_leads_the_path(self):
+        """SGLang Diffusion compiles kernels at their first use and runs ninja by name: the venv
+        has it, a new box does not, and the first image on an ASUS Ascent GX10 with DGX OS 7.6.0
+        failed on "No such file or directory: 'ninja'" (2026-10-21; the reference box had a ninja
+        of its own in /usr/bin). The venv's bin comes first, the directories a unit has otherwise after."""
+        # in [Service], where systemd reads it, and not taken back
+        service = UNIT_TPL.read_text().split("\n[Service]\n", 1)[1].split("\n[", 1)[0]
+        paths = re.findall(r"(?m)^Environment=PATH=(.*)$", service)
+        self.assertEqual(len(paths), 1, "one PATH, set by the unit")
+        self.assertNotRegex(service, r"(?m)^UnsetEnvironment=.*\bPATH\b")
+        dirs = paths[0].split(":")
+        self.assertEqual(dirs[0], "__IMAGE_VENV__/bin")
+        # every directory a unit has otherwise follows it (snapd's generator adds /snap/bin)
+        for d in ("/usr/local/sbin", "/usr/local/bin", "/usr/sbin", "/usr/bin", "/snap/bin"):
+            self.assertIn(d, dirs[1:])
+
     def test_one_engine_at_a_time_is_declared_not_documented(self):
         """31 GB of image weights do not fit beside a serving LLM, and a wrapper script
         that stops the other lane can be bypassed by typing systemctl start."""

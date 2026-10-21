@@ -20,6 +20,12 @@ WorkingDirectory=__IMAGE_LANE_DIR__
 Environment=HF_HOME=__HF_CACHE__
 Environment=HF_HUB_OFFLINE=1
 Environment=PYTHONUNBUFFERED=1
+# The venv's bin first, as an activated venv has it, before the directories a unit gets otherwise
+# (snapd's generator adds /snap/bin to them): SGLang Diffusion compiles kernels at their first use
+# (sglang/kernels/jit) and runs ninja by name, which the venv has (flashinfer, modelopt and sglang
+# require it) and a new box does not: the first image on an ASUS Ascent GX10 with DGX OS 7.6.0
+# failed on "No such file or directory: 'ninja'" (2026-10-21).
+Environment=PATH=__IMAGE_VENV__/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/snap/bin
 # The memory the last engine held has to be back before this one starts: a start piled on
 # memory the driver kept is how sglang#40948 froze a DGX Spark (see engine-preflight.sh).
 ExecStartPre=/bin/bash __HOME__/.config/qwen38/engine-preflight.sh qwen38-image.service

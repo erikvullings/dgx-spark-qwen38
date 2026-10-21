@@ -97,16 +97,17 @@ of patched around:
   test video and prints it, with a note past half a core: the patch is then not in
   effect, for example on a new pin it no longer fits. The lane serves either way.
 
-`sglang serve --model-path MiniMaxAI/MiniMax-H3 --model-variant fl2va --host 127.0.0.1
---port 30022`, with `PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True` (the cookbook:
-the decode sits close enough to the cap that fragmentation otherwise tips it over),
-`HF_HUB_OFFLINE=1`, `PYTHONUNBUFFERED=1`, `--output-path` naming the lane's own
-`outputs/` directory, and `--input-save-path ""`. No `--api-key` and no `--sleep-on-idle`: the
-diffusion parser has neither, so the loopback bind is the only thing standing in front
-of the lane's API, and the cockpit is the authenticated door. The process's own
-coordination ports are another matter: PyTorch's store listens on `*:30005` and gloo on
-four ports of the LAN address (measured 2026-09-29 and 2026-09-30), with no setting to narrow them, like
-every engine here; SECURITY.md says what they expose and how to firewall them.
+`sglang serve --model-path MiniMaxAI/MiniMax-H3 --model-variant fl2va --host 127.0.0.1 --port 30022`,
+with `PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True` (the cookbook: the decode sits close enough to
+the cap that fragmentation otherwise tips it over), `HF_HUB_OFFLINE=1`, `PYTHONUNBUFFERED=1`, the venv's
+`bin` first on `PATH` (the runtime compiles kernels at their first use with the venv's `ninja`, which a
+new box does not have elsewhere), `--output-path` naming the lane's own `outputs/` directory, and
+`--input-save-path ""`. No `--api-key` and no `--sleep-on-idle`: the diffusion parser has neither, so
+the loopback bind is the only thing standing in front of the lane's API, and the cockpit is the
+authenticated door. The process's own coordination ports are another matter: PyTorch's store listens on
+`*:30005` and gloo on four ports of the LAN address (measured 2026-09-29 and 2026-09-30), with no
+setting to narrow them, like every engine here; SECURITY.md says what they expose and how to firewall
+them.
 
 One deliberate difference from the image lane: the lane's own `outputs/` directory
 instead of an emptied one. Left empty, the server answers into a
