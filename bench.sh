@@ -73,11 +73,12 @@ HEADERS = {
     "flash-local": ("Qwen3.8-Flash-Next FP4-Local (NVIDIA, vLLM b12x, MTP) benchmark (batch 1 decode)",
                     "reference box (2026-10-20, the lane's default effort, xhigh): greedy median 55.1-55.4\n"
                     "  code 56.2-57.4 / reasoning 52.8-54.3 / math peak 46.5-49.2 / free prose 33.4-35.5"),
-    # Ornith AI's NVFP4 build on vLLM with b12x and its MTP head drafting 2 tokens: two runs on the
-    # reference box, 2026-10-21 (docs/ornith-lane.md), and 43.6 / 43.5 on a second GX10
-    "ornith-122b": ("Ornith 1.5 122B NVFP4 (vLLM b12x, MTP 2) benchmark (batch 1 decode)",
-                    "reference box (2026-10-21): greedy median 42.4-42.6\n"
-                    "  code 42.6 / reasoning 41.6-42.8 / math peak 40.4-43.2 / free prose 32.3-33.1"),
+    # Ornith AI's NVFP4 build on vLLM with b12x and its MTP head drafting 2 tokens, at the lane's
+    # window of a million: two runs on the reference box, 2026-10-22 (docs/ornith-lane.md), the
+    # native window's speed (42.0-42.6 there), and 43.6 / 43.5 on a second GX10 at the native window
+    "ornith-122b": ("Ornith 1.5 122B NVFP4 (vLLM b12x, MTP 2, window 1M) benchmark (batch 1 decode)",
+                    "reference box (2026-10-22): greedy median 42.2-42.4\n"
+                    "  code 41.0-43.4 / reasoning 42.4-43.7 / math peak 41.7-43.3 / free prose 31.9-33.1"),
 }
 
 

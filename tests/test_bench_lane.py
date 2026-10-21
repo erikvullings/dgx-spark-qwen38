@@ -126,7 +126,7 @@ def main():
     for other in ("NVFP4+NEXTN", "FP4-Local", "71.4", "Qwen3.8-27B NVFP4+DFlash2"):
         if other in out:
             fails.append(f"the Ornith lane printed another lane's line: {other!r}")
-    if "42.4-42.6" not in out:
+    if "42.2-42.4" not in out:
         fails.append(f"the Ornith lane's reference is not printed:\n{out[:400]}")
     for model in ("kolibri-1", "nemotron-3.5-bolt", "nemotron-3.5-super-vl"):
         out = run_bench(model)
