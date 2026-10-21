@@ -47,7 +47,7 @@ vlane_uninstall_unit(){
   # what a box switched before v1.30 has in its links becomes the record first (lanes.sh)
   text_lane_migrate
   [ -f "$INSTALLED" ] || return 0
-  local was_boot=0 back
+  local was_boot=0
   systemctl is-enabled --quiet "$UNIT" 2>/dev/null && was_boot=1
   sudo systemctl disable --now "$UNIT" 2>/dev/null || true
   sudo rm -f "$INSTALLED"; sudo systemctl daemon-reload
@@ -55,14 +55,7 @@ vlane_uninstall_unit(){
   [ "$was_boot" -eq 1 ] || return 0
   # The text lane noted (lanes.sh), or the one installed: a side lane's own link, followed past a
   # side lane removed since, was v1.29's way (found in review, 2026-10-14), and one record needs none.
-  back="$(text_lane_back "$VLANE")"
-  if [ -n "$back" ]; then
-    sudo systemctl enable "$back"
-    echo "$back is enabled at boot again, as it was before $VLANE_SHORT; start it now with: sudo systemctl start $back   (or the cockpit)"
-  else
-    echo "NOTE: no engine is enabled at boot any more. Start a lane from the cockpit, or:"
-    echo "      sudo systemctl enable --now qwen38-sglang.service"
-  fi
+  text_lane_give_back "$VLANE" "$VLANE_SHORT"
 }
 
 # opencode and pi: the lane's provider goes, and a default that named it follows the text lane this
@@ -70,8 +63,10 @@ vlane_uninstall_unit(){
 # were, opencode offered and defaulted to a model nothing served, and its small-model calls sent
 # Kolibri's level "none" to the Qwen template, which refused it (found in review, 2026-10-14).
 vlane_uninstall_clients(){
-  local oc_lane oc_json was_default oc_sum_before oc_def_ctx oc_def_keep
-  case "$(text_lane_back "$VLANE")" in
+  local oc_lane oc_json was_default oc_sum_before oc_def_ctx oc_def_keep back
+  # the lane given the boot, or, with none that can start, the one the box comes back to all the same
+  back="$(text_lane_back "$VLANE")"; [ -n "$back" ] || back="$(text_lane_home "$VLANE")"
+  case "$back" in
     qwen38-flash.service) oc_lane=flash ;;
     *) oc_lane=27b ;;
   esac

@@ -378,7 +378,7 @@ class TheInstaller(unittest.TestCase):
         self.assertIn("installed WorkingDirectory", self.text)
 
     def test_uninstall_restores_the_lane_it_replaced_at_boot(self):
-        self.assertIn('BACK="$(text_lane_back video)"', self.text)
+        self.assertIn('text_lane_give_back video "the video lane"', self.text)   # lanes.sh, since v1.37.7
 
 
 PATCHED = "python/sglang/multimodal_gen/runtime/managers/scheduler.py"

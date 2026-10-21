@@ -14,8 +14,12 @@ import json
 import os
 import pathlib
 import subprocess
+import sys
 import tempfile
 import unittest
+
+sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
+import text_lane_fixture as fixture  # noqa: E402
 
 REPO = pathlib.Path(__file__).resolve().parents[1]
 
@@ -59,11 +63,16 @@ class UninstallHarness(unittest.TestCase):
         d = pathlib.Path(tempfile.mkdtemp(prefix="nem-uninstall-"))
         sd = d / "systemd"
         sd.mkdir()
-        for u in units:
-            (sd / u).write_text((unit_texts or {}).get(u, "[Service]\n"))
         self.home = d / "home"
         cfg = self.cfg = d / "cfg"
         cfg.mkdir()
+        # its text lanes able to start, as a box's are once loaded (text_lane_fixture), but those
+        # unit_texts writes
+        text = {"qwen38-sglang.service": "27b", "qwen38-flash.service": "flash"}
+        fixture.put_ready(sd, cfg, d / "hf", [text[u] for u in units if u in text and u not in (unit_texts or {})])
+        for u in units:
+            if u not in text or u in (unit_texts or {}):
+                (sd / u).write_text((unit_texts or {}).get(u, "[Service]\n"))
         (self.home / ".config" / "opencode").mkdir(parents=True)
         (cfg / "vllm-auth").mkdir()
         (cfg / "nemotron-cache" / "vllm").mkdir(parents=True)

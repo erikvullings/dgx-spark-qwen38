@@ -13,8 +13,12 @@ The script's own lines run here with its /etc paths moved to a temporary directo
 """
 import pathlib
 import subprocess
+import sys
 import tempfile
 import unittest
+
+sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
+import text_lane_fixture as fixture  # noqa: E402
 
 REPO = pathlib.Path(__file__).resolve().parents[1]
 TEXT = (REPO / "install-image.sh").read_text()
@@ -128,7 +132,9 @@ class RemovingTheLaneThatBooted(unittest.TestCase):
         units = d / "etc"
         units.mkdir()
         (units / "qwen38-image.service").write_text("[Service]\n")
-        (units / "qwen38-sglang.service").write_text("[Service]\n")
+        # a 27B lane that can start, as a box's is once loaded: since v1.37.7 the boot goes back only to
+        # one whose image and checkpoint are on the box (lanes.sh text_unit_ready, text_lane_fixture)
+        fixture.put_ready(units, d, d / "hf-text", ["27b"])
         (d / "lane-before-image").write_text(before + "\n")
         stub = d / "bin"
         stub.mkdir()
@@ -141,6 +147,7 @@ class RemovingTheLaneThatBooted(unittest.TestCase):
             "#!/bin/sh\ncase \"$1\" in is-enabled) for u in %s; do [ \"$3\" = \"$u\" ] && exit 0; done; exit 1;; esac\n"
             "echo \"systemctl $*\" >> \"%s/calls\"\n" % (" ".join(enabled) or "none", d))
         (stub / "sudo").write_text("#!/bin/sh\n\"$@\"\n")
+        (stub / "docker").write_text("#!/bin/bash\n" + fixture.DOCKER_HAS_IT + "exit 1\n")
         for f in stub.iterdir():
             f.chmod(0o755)
         text = self.UNINSTALL.replace("/etc/systemd/system", str(units))

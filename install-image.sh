@@ -145,15 +145,7 @@ if [ "$ACTION" = uninstall ]; then
       # The text lane noted (lanes.sh), or the one installed: it read a link of its own, and a
       # lane it named that was removed since left the box with no lane at boot (found in review,
       # 2026-10-14).
-      BACK="$(text_lane_back image)"
-      if [ -n "$BACK" ]; then
-        sudo systemctl enable "$BACK"
-        echo "the text lane $BACK is enabled at boot again, as it was before the image lane;"
-        echo "start it now with: sudo systemctl start $BACK   (or the cockpit)"
-      else
-        echo "NOTE: no engine is enabled at boot any more. Start a text lane from the cockpit, or:"
-        echo "      sudo systemctl enable --now qwen38-sglang.service"
-      fi
+      text_lane_give_back image "the image lane"
     fi
   fi
   # Only what this script put there: LANE_DIR can be a directory shared with other work,

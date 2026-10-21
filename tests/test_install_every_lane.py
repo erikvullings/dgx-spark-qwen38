@@ -560,7 +560,6 @@ class TheParentStartsIt(unittest.TestCase):
     install.sh that prints what it was given."""
     BLOCK = between('SECOND_LANE=""; SECOND_UNIT=""; SECOND_FRESH=0; SECOND_NEW=0; SECOND_STATE=""; SECOND_UNITS=0; SECOND_CANNOT=""\n',
                     '\nif [ -n "$SECONDARY" ]; then\n  step "7/10')
-    PREPARED = between("text_lane_prepared(){", "\n}\n") + "\n}\n"
     IMG_FLASH, IMG_27B = "lmsysorg/sglang@sha256:" + "a" * 64, "lmsysorg/sglang:v0.5.21"
 
     def parent(self, lane, want, unit_there, child_rc=0, no_service=0, flash_ready=False, all_weights=0, with_flash=0,
@@ -627,8 +626,7 @@ class TheParentStartsIt(unittest.TestCase):
                   f'SECONDARY=""; NO_SERVICE={no_service}; LANE={lane}; REPO_DIR="{repo}"; CONFIG_DIR="{t}/cfg"\n'
                   f'SGL_UNIT_PATH="{units}/qwen38-sglang.service"\n'
                   f"WANT_FLASH={want}; WANT_27B={want}; ALL_WEIGHTS={all_weights}; WITH_FLASH={with_flash}; WITH_27B={with_27b}\n"
-                  f'. "{REPO}/lanes.sh"\n'
-                  + self.PREPARED +
+                  f'. "{REPO}/lanes.sh"\n' +   # text_lane_prepared with it, since v1.37.7
                   'PORT=31000; HF_CACHE=/data/hf; ENGINE_BIND=127.0.0.1; PROXY_BIND=0.0.0.0; PROXY_PORT=31001\n'
                   + block + '\necho "AFTER FRESH=$SECOND_FRESH STATE=$SECOND_STATE"\necho "NEW=$SECOND_NEW"\n')
         env = {"PATH": f"{t}/bin:/usr/bin:/bin", "MODEL_CHOICE": "stock", "MODEL_REV": "main", "CONTEXT_MODE": "1m"}

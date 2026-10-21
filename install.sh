@@ -871,6 +871,7 @@ if [ -z "$SECONDARY" ] && systemctl is-enabled --quiet qwen38-flash-local.servic
     echo "without making one of them the boot lane again. Switch from the cockpit when you want another."
   fi
 fi
+SIDE_BOOT=$((IMAGE_BOOT + VIDEO_BOOT + KOLIBRI_BOOT + NEMOTRON_BOOT + NEMOTRON_SUPER_BOOT + FLASH_LOCAL_BOOT))
 # Which text lane to bring up to date on that path. Both text units can be on disk with
 # neither enabled, since a switch to a side lane disables both, so enablement cannot say which
 # one was in use; switch-model.sh writes it down instead (lanes.sh: one record since v1.30, the
@@ -884,8 +885,7 @@ if [ "$FLASH_READABLE" -eq 1 ] && [ "$FLASH_ENABLED" -eq 1 ] && [ "$SGL_ENABLED"
 fi
 if [ "$FLASH_READABLE" -eq 1 ] && [ "$FLASH_ENABLED" -eq 1 ] && [ "$SGL_ENABLED" -eq 0 ]; then
   INSTALLED_CHOICE=flash
-elif [ $((IMAGE_BOOT + VIDEO_BOOT + KOLIBRI_BOOT + NEMOTRON_BOOT + NEMOTRON_SUPER_BOOT + FLASH_LOCAL_BOOT)) -gt 0 ] && [ "$TEXT_LANE_LAST" = "qwen38-flash.service" ] \
-     && [ "$FLASH_READABLE" -eq 1 ]; then
+elif [ "$SIDE_BOOT" -gt 0 ] && [ "$TEXT_LANE_LAST" = "qwen38-flash.service" ] && [ "$FLASH_READABLE" -eq 1 ]; then
   INSTALLED_CHOICE=flash          # the text lane this box used before it switched to a side lane
 elif [ "$SGL_READABLE" -eq 1 ]; then
   INSTALLED_CHOICE=27b
@@ -1287,7 +1287,9 @@ fi
 # the other text lane is installed beside it, ready to load, and so are the image and
 # the video lanes. Each one can be left out, and that choice persists like the
 # cockpit's, in a marker file: --no-<lane> writes it, --with-<lane> removes it. A lane
-# already on the box when it is left out stays where it is, and is no longer updated.
+# already on the box when it is left out stays where it is, and is no longer updated; but the
+# text lane a box booting a side lane served last, which gets this release's units and none of
+# its downloads (issue #57, below: LEFT_OUT).
 lane_wanted(){  # $1 lane (image, video, flash, 27b), $2 --no-$1 given, $3 --with-$1 given: sets WANT
   local mark="$CONFIG_DIR/$1.off"
   WANT=1
@@ -1297,16 +1299,25 @@ lane_wanted(){  # $1 lane (image, video, flash, 27b), $2 --no-$1 given, $3 --wit
       mkdir -p "$CONFIG_DIR"
       [ -f "$mark" ] || printf 'left out with ./install.sh --no-%s on %s\n' "$1" "$(date -u +%Y-%m-%dT%H:%MZ)" > "$mark"
     fi
+    ! serves_anyway "$1" || serves_said "$1"
   elif [ "$3" -eq 1 ]; then
     [ "$PLAN_ONLY" -eq 1 ] || rm -f "$mark"
   elif [ -f "$mark" ] && [ "$RECOMMENDED" -eq 1 ]; then
     [ "$PLAN_ONLY" -eq 1 ] || rm -f "$mark"
-    echo "--recommended: the $1 lane comes back (your earlier --no-$1), as on a new box."
+    echo "--recommended: the ${1/27b/27B} lane comes back (your earlier --no-$1), as on a new box."
   elif [ -f "$mark" ]; then
     WANT=0
-    echo "Leaving the $1 lane out (your earlier --no-$1). Pass --with-$1 to bring it back."
+    if serves_anyway "$1"; then serves_said "$1"
+    else echo "Leaving the ${1/27b/27B} lane out (your earlier --no-$1). Pass --with-$1 to bring it back."; fi
   fi
 }
+# The text lane this run serves is brought up to date whatever its flag or marker says: ./install.sh
+# --help leaves a lane out "when it is not the one serving". It said "Leaving the flash lane out"
+# over the run that updated it (issue #57). True, and said, when $1 is that lane.
+serves_anyway(){ [ "$1" = "$LANE" ] && [ "$SIDE_BOOT" -eq 0 ]; }   # $1 a lane left out
+# Said of it, without "brought up to date": on a GPU outside its ATS mode the flash lane that serves
+# gets its units only, and the run then says so (issue #54; both said, found in review, 2026-10-21).
+serves_said(){ echo "The ${1/27b/27B} lane is the one this run serves: --no-$1 leaves it out once another lane serves. Pass --with-$1 to drop that."; }
 WANT_IMAGE=0; WANT_VIDEO=0; WANT_FLASH=0; WANT_27B=0; WANT_KOLIBRI=0; WANT_NEMOTRON=0; WANT_NEMOTRON_SUPER=0; WANT_FLASH_LOCAL=0
 if [ -z "$SECONDARY" ]; then
   lane_wanted image "$NO_IMAGE" "$WITH_IMAGE"; WANT_IMAGE="$WANT"
@@ -1376,31 +1387,7 @@ side_begun(){  # $1 lane (image, video, kolibri, nemotron, nemotron-super, flash
     *) return 1 ;;
   esac
 }
-# The other text lane, installed beside the lane that serves, is on demand too: an update builds
-# it whole only when it is installed as its launcher (flash) or unit (27B) names it, the image
-# it runs on the box, the draft vocabulary the flash launcher waits for when it waits for one,
-# the 27B's DFlash2 draft, and the checkpoint it serves whole in the cache it mounts (every box
-# installed before this is). An update builds a lane whole on that target: the image alone read
-# as prepared, and a first Load of flash-nvda stopped after its pull was finished on the default;
-# with the vocabulary, a Load stopped before its switch (the page closed, then an update) still
-# was, a checkpoint of 135 GB nobody chose, and a 27B Load of fp8 stopped in its download was
-# finished on stock (found in review, 2026-10-15).
-text_lane_prepared(){  # $1 flash|27b
-  local f img map model rev hf
-  if [ "$1" = flash ]; then f="$CONFIG_DIR/launch-flash.sh"; else f="$SGL_UNIT_PATH"; fi
-  img="$(engine_image "$f")"
-  if [ -z "$img" ] || ! docker image inspect "$img" >/dev/null 2>&1; then return 1; fi
-  if [ "$1" = flash ]; then
-    map="$({ grep -m1 -oE '\[ -s "[^"]+" \] && TIER\+=\(--speculative-token-map' "$f" 2>/dev/null || true; } | head -1 | cut -d'"' -f2)"
-    [ -z "$map" ] || [ -s "$map" ] || return 1
-  else
-    draft_in_cache "$f" || return 1
-  fi
-  model="$({ grep -m1 -oE -- '--model-path [^ ]+' "$f" 2>/dev/null || true; } | head -1 | cut -d' ' -f2)"
-  rev="$({ grep -m1 -oE -- '--revision [^ ]+' "$f" 2>/dev/null || true; } | head -1 | cut -d' ' -f2)"
-  hf="$(unit_hf_cache "$f")"
-  [ -n "$model" ] && ckpt_cached "${hf:-$HF_CACHE}/hub/models--${model//\//--}" "${rev:-main}"
-}
+# The other text lane is on demand too: text_lane_prepared (lanes.sh) says when it is prepared.
 side_mode(){  # $1 lane, $2 --with-<lane> given: the installer's option for this run
   if [ "$ALL_WEIGHTS" -eq 1 ] || [ "$2" -eq 1 ] || side_begun "$1"; then echo --no-smoke; else echo --units-only; fi
 }
@@ -1534,6 +1521,23 @@ if [ "$LANE" = "flash" ] && ATS_CANNOT="$(flash_cannot_start)"; then
   fi
   [ -n "$SECONDARY" ] || echo "NOTE: the flash lane cannot start on this box: $ATS_CANNOT. Its units only, none of its downloads, and this run starts nothing."
   UNITS_ONLY=1
+fi
+# Beside a side lane at boot, the text lane above is the one the box served last. Left out (its flag,
+# or the marker an earlier one wrote), it gets its units only, as the case above: none of its
+# downloads, nothing started, the box's port, cache and binds kept, read from that same lane. The other
+# text lane follows its own rule (step 6, whole only once prepared), and the rest of the box is updated.
+# Issue #57 (2026-10-21): a box booting Flash FP4-Local fetched the flash lane it had left out again,
+# 35 and 136 GB, under "Leaving the flash lane out".
+LEFT_OUT=0
+if [ "$SIDE_BOOT" -gt 0 ] && { { [ "$LANE" = flash ] && [ "$WANT_FLASH" -eq 0 ]; } || { [ "$LANE" = 27b ] && [ "$WANT_27B" -eq 0 ]; }; }; then
+  LEFT_OUT=1
+  # --no-service prepares this lane for ./run.sh in the foreground: with its downloads left out, the run
+  # said "Prepared" and run.sh then stopped on a checkpoint not found (found in review, 2026-10-21)
+  [ "$NO_SERVICE" -eq 0 ] || die "--no-service prepares the ${LANE/27b/27B} lane for ./run.sh, and that lane is left out (--no-$LANE or its marker): nothing would run. Pass --with-$LANE to prepare it whole, or run without --no-service"
+  if [ "$UNITS_ONLY" -eq 0 ]; then
+    echo "NOTE: the ${LANE/27b/27B} lane is left out: its units only, none of its downloads, and this run starts nothing."
+    UNITS_ONLY=1
+  fi
 fi
 # Measured where the weights actually land: HF_CACHE may live on another disk,
 # and then free space under $HOME says nothing (the error message used to send
@@ -1686,6 +1690,8 @@ fi
 
 if [ "$UNITS_ONLY" -eq 1 ]; then
   if [ -n "$ATS_CANNOT" ]; then step "2/10 The Flash-Next image: not pulled, as this GPU cannot start the flash lane"
+  elif [ "$LEFT_OUT" -eq 1 ] && [ "$LANE" = "flash" ]; then step "2/10 The Flash-Next image: not pulled, as the flash lane is left out (its next Load pulls what it lacks)"
+  elif [ "$LEFT_OUT" -eq 1 ]; then step "2/10 The SGLang image: not pulled, as the 27B lane is left out (its next Load pulls what it lacks)"
   elif [ "$LANE" = "flash" ]; then step "2/10 The Flash-Next image: pulled at the lane's first Load (~16 GB to download, 35 GB on disk)"
   else step "2/10 The SGLang image: pulled at the lane's first Load (~15 GB to download)"; fi
   PULLED_IMAGE="$PULL_TARGET"
@@ -1709,6 +1715,8 @@ if [ "$LANE" = "flash" ]; then unpin_stale 27b "$IMAGE" || true; else unpin_stal
 
 if [ -n "$ATS_CANNOT" ]; then
   step "3/10 The GPU from a container: not asked, as this GPU cannot start the flash lane"
+elif [ "$LEFT_OUT" -eq 1 ]; then
+  step "3/10 The GPU from a container: not asked, as the ${LANE/27b/27B} lane is left out"
 elif [ "$UNITS_ONLY" -eq 1 ]; then
   step "3/10 The GPU from a container: seen by the run that serves (this lane's image comes later)"
 else
@@ -1724,6 +1732,8 @@ fi
 
 if [ "$UNITS_ONLY" -eq 1 ]; then
   if [ -n "$ATS_CANNOT" ]; then step "4/10 The Flash-Next checkpoint: not fetched, as this GPU cannot start the flash lane"
+  elif [ "$LEFT_OUT" -eq 1 ] && [ "$LANE" = "flash" ]; then step "4/10 The Flash-Next checkpoint: not fetched, as the flash lane is left out (its next Load fetches what it lacks)"
+  elif [ "$LEFT_OUT" -eq 1 ]; then step "4/10 The checkpoints (the target and its DFlash2 draft): not fetched, as the 27B lane is left out (its next Load fetches what it lacks)"
   elif [ "$LANE" = "flash" ]; then step "4/10 The Flash-Next checkpoint: fetched at the lane's first Load (~136 GB)"
   else step "4/10 The checkpoints (the target and its DFlash2 draft): fetched at the lane's first Load (~24 GB, ~33 for an FP8 target)"; fi
 elif [ "$LANE" = "flash" ]; then
@@ -1775,7 +1785,7 @@ dl_fetch(){  # $1 repo, $2 revision; an empty repo is a kept custom model (alrea
     || die "Checkpoint download failed. Causes: no internet, HuggingFace throttling of unauthenticated downloads (set HF_TOKEN=<your token>, or re-run: downloads resume), a pinned revision removed (try MODEL_REV=main DRAFT2_REV=main ./install.sh), or a permission error: if your $HF_CACHE contains root-owned files from other tools, fix with: sudo chown -R \$(id -u):\$(id -g) $HF_CACHE"
 }
 if [ "$UNITS_ONLY" -eq 1 ]; then
-  [ -n "$ATS_CANNOT" ] || echo "no checkpoint now: the lane's first Load fetches it"
+  [ -n "$ATS_CANNOT" ] || [ "$LEFT_OUT" -eq 1 ] || echo "no checkpoint now: the lane's first Load fetches it"
 else
   dl_fetch "$DL_MODEL_REPO" "$MODEL_REV"
   dl_fetch "$DL_DRAFT2_REPO" "$DRAFT2_REV"
@@ -1859,7 +1869,7 @@ if [ "$KEEP_MODEL_VERBATIM" -eq 1 ]; then
     || die "custom model kept, but no patched template at $TEMPLATE_OUT. Pass MODEL_CHOICE=stock, uncensored, fp8 or uncensored-fp8 to regenerate it."
   echo "custom target model kept: existing patched template left untouched"
 elif [ "$UNITS_ONLY" -eq 1 ]; then
-  [ -n "$ATS_CANNOT" ] || echo "the chat template comes from the checkpoint: the lane's first Load writes it (its switch)"
+  [ -n "$ATS_CANNOT" ] || echo "the chat template comes from the checkpoint: the lane's $([ "$LEFT_OUT" -eq 1 ] && echo next || echo first) Load writes it (its switch)"
 else
   python3 "$REPO_DIR/patch-template.py" "$HF_CACHE" "$TEMPLATE_OUT" "$MODEL_REV" "$MODEL_REPO" \
     || die "Template patch failed (see message above). If the upstream template changed, please open an issue on this repo."
@@ -3000,6 +3010,36 @@ else
       failed)    echo "  the 27B lane can serve on this GPU, but it did not install (see its NOTE above): ./install.sh --with-27b installs it whole" ;;
       off)       if [ -f "$SGL_UNIT_PATH" ]; then echo "  the 27B lane can serve on this GPU: left out by --no-27b, so not updated; ./install.sh --with-27b brings it back"
                  else echo "  the 27B lane can serve on this GPU: ./install.sh --with-27b adds it (58 GB)"; fi ;;
+    esac
+  elif [ "$LEFT_OUT" -eq 1 ]; then
+    # Its way back is a Load, which fetches what it lacks and checks the room first. It said
+    # ./install.sh --with-<lane>, whose run fetches the lane whole at once (35 and 136 GB for the
+    # flash), and on a disk too small dies at its step 1 with the marker already gone, as every
+    # update after it then does (found in review, 2026-10-21). The other text lane is said as on
+    # the path above.
+    if [ "$SECOND_STATE" = failed ]; then
+      step "Done, but the ${SECOND_LANE/27b/27B} lane did not install (see its NOTE above); the ${LANE/27b/27B} lane is left out, so it got its units only, none of its downloads"
+    else
+      step "Done: the ${LANE/27b/27B} lane is left out, so it got its units only, none of its downloads"
+    fi
+    echo "  the $SERVING_LANE lane stays this box's serving lane"
+    if [ "$MODEL_CHOICE" = custom ]; then
+      # a kept custom model has no switch target, and no Load prepares it: the installer is the way back
+      echo "  back to it: ./install.sh --with-$LANE, which installs it whole with the custom model it keeps"
+    else
+      if [ "$COCKPIT" -eq 1 ]; then
+        echo "  back to it: Load it from the cockpit's Lanes view, which fetches what it lacks; it then serves, and runs bring it up to date until another lane serves"
+      else
+        echo "  back to it: ./prepare-lane.sh $LANE $MODEL_CHOICE fetches what it lacks, then ./switch-model.sh $MODEL_CHOICE switches to it"
+      fi
+      echo "  ./install.sh --with-$LANE takes it back into every update: that run fetches it whole at once"
+    fi
+    case "$SECOND_STATE" in
+      installed) echo "  the ${SECOND_LANE/27b/27B} lane is up to date, ready to Load" ;;
+      units)     echo "  the ${SECOND_LANE/27b/27B} lane got its units: its first Load fetches its image and weights" ;;
+      cannot)    echo "  the flash lane got its units only: this GPU cannot start it ($SECOND_CANNOT)" ;;
+      failed)    echo "  the ${SECOND_LANE/27b/27B} lane: ./install.sh --with-$SECOND_LANE installs it whole" ;;
+      off)       echo "  the ${SECOND_LANE/27b/27B} lane is left out too: ./install.sh --with-$SECOND_LANE brings it back" ;;
     esac
   else
     step "Done: the text lane is up to date; the $SERVING_LANE lane stays this box's serving lane"

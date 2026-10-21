@@ -14,9 +14,13 @@ import json
 import os
 import pathlib
 import subprocess
+import sys
 import tempfile
 import time
 import unittest
+
+sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
+import text_lane_fixture as fixture  # noqa: E402
 
 REPO = pathlib.Path(__file__).resolve().parents[1]
 TEXT = (REPO / "install-kolibri.sh").read_text()
@@ -29,16 +33,21 @@ VLANE = next(ln for ln in TEXT.splitlines() if ln.startswith("VLANE="))
 
 class TheUninstallKeepsTheChain(unittest.TestCase):
     def run_block(self, files, kolibri_at_boot=False, opencode=None, units=("qwen38-flash.service",
-                                                                          "qwen38-sglang.service")):
-        """units: the engine units the fake /etc/systemd/system holds."""
+                                                                          "qwen38-sglang.service"), unready=()):
+        """units: the engine units the fake /etc/systemd/system holds; unready: the text lanes among them that
+        cannot start (their unit names nothing)."""
         d = pathlib.Path(tempfile.mkdtemp(prefix="kol-uninstall-"))
         sd = d / "systemd"
         sd.mkdir()
-        for u in units:
-            (sd / u).write_text("[Service]\n")
         self.home = d / "home"
         cfg = d / "cfg"
         cfg.mkdir()
+        # its text lanes able to start, as a box's are once loaded (text_lane_fixture)
+        text = {"qwen38-sglang.service": "27b", "qwen38-flash.service": "flash"}
+        fixture.put_ready(sd, cfg, d / "hf", [text[u] for u in units if u in text and text[u] not in unready])
+        for u in units:
+            if u not in text or text[u] in unready:
+                (sd / u).write_text("[Service]\n")
         (self.home / ".config" / "opencode").mkdir(parents=True)
         if opencode is not None:
             (cfg / "opencode.json").write_text(json.dumps(opencode, indent=2))
@@ -132,6 +141,23 @@ class TheUninstallKeepsTheChain(unittest.TestCase):
                              ("flashnext/qwen3.8-flash-next",) * 2, path)
             self.assertEqual(left["provider"]["flashnext"]["models"]["qwen3.8-flash-next"]["name"],
                              "qwen3.8-flash-next", "no name changed")
+
+    def test_with_no_text_lane_that_can_start_the_default_follows_the_lane_the_box_has(self):
+        """A box with the flash lane alone, its checkpoint gone: no lane gets the boot, and opencode's default
+        went to the 27B, which the box does not have, so the default was dropped (review of 2026-10-21)."""
+        conf = {"$schema": "https://opencode.ai/config.json", "model": "kolibri/kolibri-1",
+                "small_model": "kolibri/kolibri-1",
+                "provider": {p: {"options": {"baseURL": "http://127.0.0.1:30001/v1",
+                                             "apiKey": "{file:/k/api-key}"},
+                                 "models": {m: {"name": m}}}
+                             for p, m in (("flashnext", "qwen3.8-flash-next"), ("kolibri", "kolibri-1"))}}
+        self.run_block({"text-lane": "qwen38-flash.service"}, kolibri_at_boot=True, opencode=conf,
+                       units=("qwen38-flash.service",), unready=("flash",))
+        self.assertEqual(self.enabled(), [])
+        self.assertIn("or: ./prepare-lane.sh flash flash, then ./switch-model.sh flash", self.out)
+        for path in (self.cfg / "opencode.json", self.home / ".config/opencode/opencode.json"):
+            left = json.loads(path.read_text())
+            self.assertEqual((left.get("model"), left.get("small_model")), ("flashnext/qwen3.8-flash-next",) * 2, path)
 
     def test_a_default_that_was_not_kolibri_is_left_where_it_was(self):
         conf = {"model": "qwen38/qwen3.8-27b",

@@ -16,8 +16,12 @@ import pathlib
 import re
 import subprocess
 import tempfile
+import sys
 import time
 import unittest
+
+sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
+import text_lane_fixture as fixture  # noqa: E402
 
 REPO = pathlib.Path(__file__).resolve().parents[1]
 LANES = REPO / "lanes.sh"
@@ -52,19 +56,26 @@ RESOLVE = INSTALL[_r:INSTALL.index("\n", INSTALL.index("TEXT_LANE_LAST=", _r)) +
 
 class Box:
     """A config directory, a units directory and a systemctl that answers which unit is
-    enabled at boot from a file."""
+    enabled at boot from a file. Its text lanes can start (text_lane_fixture) but those named
+    in unready, whose unit is there and names nothing; sudo writes down what it is given."""
 
-    def __init__(self, units=("27b", "flash", "image", "video", "kolibri", "nemotron", "nemotron-super")):
+    def __init__(self, units=("27b", "flash", "image", "video", "kolibri", "nemotron", "nemotron-super"), unready=()):
         self.d = pathlib.Path(tempfile.mkdtemp(prefix="text-lane-"))
         self.cfg, self.units, self.bin = self.d / "cfg", self.d / "units", self.d / "bin"
         for p in (self.cfg, self.units, self.bin):
             p.mkdir()
+        ready = [lane for lane in units if lane in ("27b", "flash") and lane not in unready]
         for lane in units:
-            (self.units / UNIT[lane]).write_text("[Service]\n")
+            if lane not in ready:
+                (self.units / UNIT[lane]).write_text("[Service]\n")
+        fixture.put_ready(self.units, self.cfg, self.d / "hf", ready)
         (self.d / "enabled").write_text("")
         (self.bin / "systemctl").write_text(
             f'#!/bin/bash\n[ "$1" = is-enabled ] && grep -qx -- "${{@: -1}}" "{self.d}/enabled"\n')
-        (self.bin / "systemctl").chmod(0o755)
+        (self.bin / "docker").write_text("#!/bin/bash\n" + fixture.DOCKER_HAS_IT + "exit 1\n")
+        (self.bin / "sudo").write_text(f'#!/bin/bash\necho "sudo $*" >> "{self.d}/sudo"\n')
+        for f in self.bin.iterdir():
+            f.chmod(0o755)
 
     def run(self, body):
         script = (f'set -euo pipefail\nCONFIG_DIR="{self.cfg}"; LANES_UNIT_DIR="{self.units}"\n'
@@ -216,6 +227,68 @@ class TheLibrary(unittest.TestCase):
         self.assertEqual(b.run("text_lane_back image"), "qwen38-sglang.service", "the flash is gone")
         self.assertEqual(Box(units=("flash",)).run("text_lane_back"), "qwen38-flash.service")
         self.assertEqual(Box(units=("image",)).run("text_lane_back image"), "")
+
+    def test_the_boot_goes_back_only_to_a_text_lane_that_can_start(self):
+        """Its image and its checkpoint on the box: a lane installed on demand and never loaded,
+        or left out beside a side lane at boot (its units, none of its downloads: issue #57), got
+        the boot, and pulled its image at boot or started again every 15 s without its checkpoint
+        (found in review, 2026-10-21)."""
+        noted = Box(units=("27b", "flash", "image"), unready=("flash",)).files(text_lane="qwen38-flash.service")
+        self.assertEqual(noted.run("text_lane_back image"), "qwen38-sglang.service", "the flash cannot start")
+        self.assertEqual(Box(units=("27b", "flash"), unready=("27b",)).run("text_lane_back"), "qwen38-flash.service")
+        self.assertEqual(Box(units=("27b", "flash"), unready=("27b", "flash")).run("text_lane_back"), "")
+        # left out (its marker) and able to start, the lane noted keeps the boot: nothing else is wrong with it
+        b = Box(units=("27b", "flash", "image")).files(text_lane="qwen38-flash.service")
+        (b.cfg / "flash.off").write_text("left out with ./install.sh --no-flash\n")
+        self.assertEqual(b.run("text_lane_back image"), "qwen38-flash.service")
+        # each half of "can start": the image, then the checkpoint
+        b = Box(units=("27b", "flash"), unready=("27b",)).files(text_lane="qwen38-flash.service")
+        (b.bin / "docker").write_text("#!/bin/bash\nexit 1\n")
+        self.assertEqual(b.run("text_lane_back image"), "", "no image on the box")
+        b = Box(units=("27b", "flash"), unready=("27b",)).files(text_lane="qwen38-flash.service")
+        for f in (b.d / "hf").rglob("model.safetensors"):
+            f.unlink()
+        self.assertEqual(b.run("text_lane_back image"), "", "no checkpoint in its cache")
+
+    def test_what_the_uninstall_says_of_the_boot_it_gives_back(self):
+        """'as it was before' only of the lane it noted; with none that can start, nothing is
+        enabled, and the way to get one is a Load, not `systemctl enable --now qwen38-sglang`."""
+        b = Box(units=("27b", "flash", "image")).files(text_lane="qwen38-flash.service")
+        out = b.run('text_lane_give_back image "the image lane"')
+        self.assertEqual(out, "qwen38-flash.service is enabled at boot again, as it was before the image lane; "
+                              "start it now with: sudo systemctl start qwen38-flash.service   (or the cockpit)")
+        self.assertEqual((b.d / "sudo").read_text(), "sudo systemctl enable qwen38-flash.service\n")
+        b = Box(units=("27b", "flash", "image"), unready=("flash",)).files(text_lane="qwen38-flash.service")
+        out = b.run('text_lane_give_back image "the image lane"')
+        self.assertIn("qwen38-sglang.service is enabled at boot, a text lane that can start (the one before the "
+                      "image lane, qwen38-flash.service, cannot:", out)
+        self.assertNotIn("again", out)
+        b = Box(units=("27b", "flash", "image"), unready=("27b", "flash"))
+        out = b.run('text_lane_give_back image "the image lane"')
+        self.assertIn("NOTE: no engine is enabled at boot any more: no text lane on this box can start", out)
+        self.assertIn("Load one from the cockpit's Lanes view, or: ./prepare-lane.sh 27b stock, then ./switch-model.sh stock", out)
+        self.assertNotIn("enable --now", out)
+        self.assertFalse((b.d / "sudo").exists(), "nothing enabled")
+        # the way it names is a lane the box has: prepare-lane.sh refuses a 27B the box does not have
+        out = Box(units=("flash", "image"), unready=("flash",)).run('text_lane_give_back image "the image lane"')
+        self.assertIn("or: ./prepare-lane.sh flash flash, then ./switch-model.sh flash", out)
+        out = Box(units=("image",)).run('text_lane_give_back image "the image lane"')
+        self.assertIn("or: ./install.sh installs one", out)
+
+    def test_the_lane_the_box_comes_back_to_ready_or_not(self):
+        """What opencode's default follows when no text lane can start (vllm-lane.sh): the lane noted, else one
+        installed, as text_lane_back said before v1.37.7; the 27B on a box without one was a default to nothing."""
+        b = Box(units=("flash", "image"), unready=("flash",)).files(text_lane="qwen38-flash.service")
+        self.assertEqual(b.run("text_lane_back image"), "")
+        self.assertEqual(b.run("text_lane_home image"), "qwen38-flash.service")
+        self.assertEqual(Box(units=("27b", "flash"), unready=("27b", "flash")).run("text_lane_home"), "qwen38-sglang.service")
+        self.assertEqual(Box(units=("image",)).run("text_lane_home image"), "")
+
+    def test_a_lane_whose_unit_is_gone_gets_no_boot_however_ready_its_files(self):
+        b = Box(units=("27b", "image"), unready=("27b",)).files(text_lane="qwen38-flash.service")
+        fixture.put_ready(b.units, b.cfg, b.d / "hf", ["flash"])        # its launcher and checkpoint stay
+        (b.units / "qwen38-flash.service").unlink()                      # its unit went
+        self.assertEqual(b.run("text_lane_back image"), "")
 
     def test_a_lane_serving_older_files_is_told(self):
         b = Box()

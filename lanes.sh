@@ -75,12 +75,88 @@ text_lane_migrate(){  # once, on a box switched before v1.30: what its links say
 text_lane_back(){  # [$1 the side lane at boot]: the text unit to give the boot back to, or nothing
   local u
   u="$(text_lane_last "${1:-}")"
+  if [ -n "$u" ] && [ -f "$LANES_UNIT_DIR/$u" ] && text_unit_ready "$u"; then echo "$u"; return 0; fi
+  # the one noted is gone, cannot start, or nothing was noted: whichever text lane is installed and
+  # can start, the 27B first
+  for u in qwen38-sglang.service qwen38-flash.service; do
+    [ -f "$LANES_UNIT_DIR/$u" ] && text_unit_ready "$u" && { echo "$u"; return 0; }
+  done
+  return 0
+}
+# The text unit the box comes back to, whether it can start or not: the one noted, else one installed,
+# the 27B first (text_lane_back before v1.37.7). What opencode's default follows when no text lane can
+# start (vllm-lane.sh): a lane the box has, not the 27B on a box without one (found in review, 2026-10-21).
+text_lane_home(){  # [$1 the side lane at boot]
+  local u
+  u="$(text_lane_last "${1:-}")"
   if [ -n "$u" ] && [ -f "$LANES_UNIT_DIR/$u" ]; then echo "$u"; return 0; fi
-  # the one noted is gone (or nothing was noted): whichever text lane is installed, the 27B first
   for u in qwen38-sglang.service qwen38-flash.service; do
     [ -f "$LANES_UNIT_DIR/$u" ] && { echo "$u"; return 0; }
   done
   return 0
+}
+# A text lane given the boot has to start: its image and its checkpoint on the box. A lane installed
+# on demand and never loaded has neither, and a lane left out beside a side lane at boot gets its
+# units at the release's pins and none of its downloads (issue #57): given the boot, it pulled its
+# image at boot, or started again every 15 s with no checkpoint (found in review, 2026-10-21).
+text_unit_ready(){  # $1 a text unit
+  case "$1" in
+    qwen38-flash.service) text_lane_prepared flash ;;
+    qwen38-sglang.service) text_lane_prepared 27b ;;
+    *) return 1 ;;
+  esac
+}
+
+# The uninstall of a side lane at boot gives the boot back (text_lane_back) and says so, "as it was
+# before" only of the lane it noted; with none that can start it enables none and says how to get one.
+# Each uninstall had its own copy, which said "as it was before" of any lane, and with none advised
+# `systemctl enable --now qwen38-sglang.service`, a lane that may not be there or may not start
+# (found in review, 2026-10-21).
+text_lane_give_back(){  # $1 the side lane (text_lane_back's argument), $2 that lane in words
+  local back noted
+  back="$(text_lane_back "$1")"; noted="$(text_lane_last "$1")"
+  if [ -z "$back" ]; then
+    local how="./install.sh installs one"
+    case "$(text_lane_home "$1")" in
+      qwen38-sglang.service) how="./prepare-lane.sh 27b stock, then ./switch-model.sh stock" ;;
+      qwen38-flash.service) how="./prepare-lane.sh flash flash, then ./switch-model.sh flash" ;;
+    esac
+    echo "NOTE: no engine is enabled at boot any more: no text lane on this box can start (its image and its checkpoint)."
+    echo "      Load one from the cockpit's Lanes view, or: $how"
+    return 0
+  fi
+  sudo systemctl enable "$back"
+  if [ "$back" = "$noted" ]; then
+    echo "$back is enabled at boot again, as it was before $2; start it now with: sudo systemctl start $back   (or the cockpit)"
+  else
+    echo "$back is enabled at boot, a text lane that can start${noted:+ (the one before $2, $noted, cannot: it is gone, or its image or its checkpoint is not on the box)}; start it now with: sudo systemctl start $back   (or the cockpit)"
+  fi
+}
+
+# The other text lane, installed beside the lane that serves, is on demand too: an update builds
+# it whole only when it is installed as its launcher (flash) or unit (27B) names it, the image
+# it runs on the box, the draft vocabulary the flash launcher waits for when it waits for one,
+# the 27B's DFlash2 draft, and the checkpoint it serves whole in the cache it mounts (every box
+# installed before this is). An update builds a lane whole on that target: the image alone read
+# as prepared, and a first Load of flash-nvda stopped after its pull was finished on the default;
+# with the vocabulary, a Load stopped before its switch (the page closed, then an update) still
+# was, a checkpoint of 135 GB nobody chose, and a 27B Load of fp8 stopped in its download was
+# finished on stock (found in review, 2026-10-15).
+text_lane_prepared(){  # $1 flash|27b
+  local f img map model rev hf
+  if [ "$1" = flash ]; then f="$CONFIG_DIR/launch-flash.sh"; else f="${SGL_UNIT_PATH:-$LANES_UNIT_DIR/qwen38-sglang.service}"; fi
+  img="$(engine_image "$f")"
+  if [ -z "$img" ] || ! docker image inspect "$img" >/dev/null 2>&1; then return 1; fi
+  if [ "$1" = flash ]; then
+    map="$({ grep -m1 -oE '\[ -s "[^"]+" \] && TIER\+=\(--speculative-token-map' "$f" 2>/dev/null || true; } | head -1 | cut -d'"' -f2)"
+    [ -z "$map" ] || [ -s "$map" ] || return 1
+  else
+    draft_in_cache "$f" || return 1
+  fi
+  model="$({ grep -m1 -oE -- '--model-path [^ ]+' "$f" 2>/dev/null || true; } | head -1 | cut -d' ' -f2)"
+  rev="$({ grep -m1 -oE -- '--revision [^ ]+' "$f" 2>/dev/null || true; } | head -1 | cut -d' ' -f2)"
+  hf="$(unit_hf_cache "$f")"
+  [ -n "$model" ] && ckpt_cached "${hf:-${HF_CACHE:-$HOME/.cache/huggingface}}/hub/models--${model//\//--}" "${rev:-main}"
 }
 
 # A lane's unit, put in place. The [Unit] lines that name the other lanes (Conflicts=, After= and
