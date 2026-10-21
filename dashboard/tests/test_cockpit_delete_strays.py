@@ -44,10 +44,14 @@ class Delete(unittest.TestCase):
         spec.loader.exec_module(cls.cp)
         cls.cp.run = lambda argv, timeout=5.0, merge_err=False: ""    # no docker, no systemctl
         cls.unit = cls.tmp / "qwen38-kolibri.service"
-        # every lane's unit, the Nemotron lane's too: the box's own, once installed, named its real
-        # cache and the scan read it (found on the reference box, 2026-10-16)
-        for name in ("KOLIBRI_UNIT_PATH", "NEMOTRON_UNIT_PATH", "NEMOTRON_SUPER_UNIT_PATH", "IMAGE_UNIT_PATH", "VIDEO_UNIT_PATH"):
-            setattr(cls.cp, name, cls.unit)
+        # every unit the module reads, whatever its lanes: the box's own, once installed, named its real
+        # cache and the scan read it (found on the reference box, 2026-10-16). A list of names here
+        # missed the Flash FP4-Local lane's (v1.37.0): on a box with that lane its unit named the box's
+        # real cache, and the delete took a real checkpoint of 77.6 GB the moment a pin moved past it
+        # (found on the reference box, 2026-10-22).
+        for name, value in list(vars(cls.cp).items()):
+            if name.endswith("_UNIT_PATH") and isinstance(value, Path):
+                setattr(cls.cp, name, cls.unit)
         cls.cp.UNIT_PATHS = {k: cls.unit for k in cls.cp.UNIT_PATHS}
         cls.pinned = cls.cp.registry_snapshot(max_age=0.0)["pins"]["DRAFT_REV"]
 
@@ -67,6 +71,10 @@ class Delete(unittest.TestCase):
         self.cache = str(self.tmp / ".cache" / "huggingface")
 
     def act(self, params=None):
+        # nothing is deleted unless every cache the cockpit would scan is this test's own
+        own = os.path.realpath(self.tmp) + os.sep
+        outside = [c for c in self.cp.lane_caches() if not os.path.realpath(c).startswith(own)]
+        self.assertEqual(outside, [], "the delete would scan a cache outside the test's own: nothing was run")
         code, body = self.cp.start_action("delete_strays", params or {})
         if code == 202:
             job = self.cp.JOBS[body["job"]]
