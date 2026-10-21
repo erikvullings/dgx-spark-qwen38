@@ -211,9 +211,9 @@ A box that runs an old release does not know it. The answer existed from v1.6 in
 Library view, printed after a button press, which means it reached whoever already
 suspected there was news. Since v1.15.2 the cockpit volunteers it: every six hours it
 asks GitHub whether a newer release is published, and if there is one the banner strip
-says so with the command that installs it. The Settings view carries the same line
-permanently, next to the repo's own version, and the command with a button that copies it:
-the one command of the README, run from the checkout so that it updates that clone
+says so with the command that installs it, and a button that copies it. The Settings view
+carries the same line permanently, next to the repo's own version, and the command with its
+button: the one command of the README, run from the checkout so that it updates that clone
 (`./install.sh` alone fetches nothing: it installs the release already there again).
 
 Two details decide whether this is useful or irritating. It compares version **numbers**,
@@ -229,6 +229,21 @@ v1.36.0 or later recorded says so ("before v1.36.0"), and a clone that moved on 
 last run is said to be ahead of what its services run. A box with no network says "latest
 release unknown" rather than raising an alarm, and stops asking for a while instead of
 spending a request every collection.
+
+An install that runs is said as one (since v1.37.5). `./install.sh` keeps a file in
+`~/.config/qwen38` while it lasts (`install-running.<pid>.json`: its process, the time that
+process started, and the release it installs), and the cockpit believes it while that very
+process lives, so a pid the system gives again later is not taken for it. The strip then says
+"Installing v1.37.5." and since when, and holds back, while the run lasts, the banners that ask
+for an update, for a run of the installer or for a restart of the cockpit; once it ends, the page
+says what is left. An update of 1 h 45 on a new box, 144 GB of video to fetch, had run under the
+orange banner that asked to run the installer. The next run removes the file of a run killed
+outright.
+
+Every command a banner asks to run sits apart from its sentence, with a button that copies it
+(since v1.37.5). The Copy buttons work over plain HTTP too: a box opened by its LAN or Tailscale
+address is no secure context for the browser, which gives such a page no clipboard API, and
+every Copy button there said the browser refused. They copy through a selected text field there.
 
 The same strip carries the other staleness a running cockpit can have: a `git pull`
 under a live process leaves it serving new HTML against the Python it imported at start,

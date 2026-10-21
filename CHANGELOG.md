@@ -1,5 +1,67 @@
 # Changelog
 
+## v1.37.5 (2026-10-21): the cockpit says an install is running, and every command it asks to run has a Copy button that works over plain HTTP
+
+**An install that runs is said as one.** An update of 1 h 45 on an ASUS Ascent GX10 (v1.37.2 to
+v1.37.4, 144 GB of video to fetch) ran under the orange banner that asked to run the installer:
+get.sh had moved the clone, and the services were still the release before. `./install.sh` now
+keeps `~/.config/qwen38/install-running.<pid>.json` while it lasts. The run writes it once past the
+docker step, from the process that runs the steps (a run started again under the docker group
+included, the run it starts for the other text lane being part of it), and its EXIT trap removes it
+however the run ends. It holds that process's pid, the start time /proc gives it and the release
+the clone is. The cockpit believes it while that very process lives, so a pid the system gives
+again later is not taken for it, takes the first of two runs at once, and the next run removes the
+file of a run killed outright. The banner strip then says "Installing v1.37.5." and since when, on
+an update, a first install and a run again alike, and holds back, while the run lasts, the banners
+that ask for an update, for a run of the installer (a clone ahead of its services), for the
+defaults of an older release and for a restart of the cockpit; once it ends, the page says what is
+left. The Update line of Settings says the same. The cockpit reads the file with its update state,
+every 30 s.
+
+**Every command a banner asks to run has a Copy button, and every Copy button works over plain
+HTTP.** The command sat inside a sentence, to be selected by hand (Hasan, 2026-10-21). The update
+banner, the three of a clone ahead of its services, the one of a cockpit older than its files and
+the one of an engine outside systemd now show their command apart, with a button that copies it.
+The six Copy buttons the cockpit had (an image's, System One's and a video's request, the logs, the
+update command and the recommended settings) used the browser's clipboard API, which a page gets in
+a secure context only: on a box opened by its LAN or Tailscale address, plain HTTP, each said "The
+browser refused the clipboard; select the text instead." There they now copy through a selected
+text field and the browser's copy command, inside the click; the field is 16 px, under which iOS
+Safari zooms the whole page, and the focus goes back to the button. Every Copy button is drawn as a
+button: the ghost one read as plain text at rest.
+
+**Durations no longer read "1 h 60".** The cockpit's duration of a plan (a video's estimate, a boot,
+and now the time an install has run) rounded its minutes after it split the hours off: 7,170 s read
+"1 h 60", for 30 s of every hour, and 3,599 s "60 min" (found in review). It rounds the minutes
+first.
+
+**GSM8K: 1,314 questions, not "all 1,319".** README.md and BENCHMARKS.md gave the flash lane's
+97.41% and 97.56% over "all 1,319" questions. `run_eval`'s GSM8K asks the test set's 1,319 less the
+five it shows as examples in every prompt, 1,314: 97.41% is 1,280 of 1,314, and no count out of
+1,319 rounds to it (found comparing a new box's 97.72%, 1,284 of 1,314, with them). The pages now
+say 1,314, and evals/README.md says why. No score changes.
+
+**What an update does.** The cockpit restarts once, on its new page and its new Python, before the
+side lanes install: from there on, this very update shows as running. The proxy and the engines keep
+running.
+
+**Tests.** `tests/test_install_run_mark.py` holds 14 cases, all failing on v1.37.4: the file names
+the run's process and goes with it; a place it cannot be written leaves the run going; the files of
+runs gone go and a live one stays; install.sh, run as written up to a wall past the mark, shows the
+file and leaves none, and its run for the other text lane writes none; every EXIT trap after the
+mark removes it; the mark comes after every refusal and the docker step; the cockpit believes a live
+run only, not a pid given again, a process gone or a file half written, takes the first of two, and
+its update state carries it. Four mutants fail them: a later trap without the removal, a cockpit
+that believes the pid alone, no removal of the files of runs gone, and a removal that does nothing.
+`dashboard/tests/update-banner-check.mjs` has 26 checks, each drawing its state in the evaluation
+that reads it; 10 of them fail on v1.37.4: the command apart with its button, every Copy button
+drawn as a button, what the button copies with the clipboard API and without it, the banner of an
+install running and of a run whose clone names no release, the banners it holds back, the Update
+line of Settings, and, in the cockpit opened over plain HTTP by a name that is not the machine's,
+the browser's own click on Copy, whose command a secure page then reads back from the clipboard.
+Against the copyText of v1.37.4, that click says the browser refused. `tests/test_page_behaviour.py`
+reads fmtMin across the hour, and `tests/test_docs_facts.py` holds the 1,314: both fail on v1.37.4.
+
 ## v1.37.4 (2026-10-21): the image and video lanes run on a new box, their venv's ninja on their PATH
 
 **The image and video lanes find their ninja.** SGLang Diffusion compiles some of its kernels at
