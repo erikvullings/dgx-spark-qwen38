@@ -1,5 +1,41 @@
 # Changelog
 
+## v1.37.3 (2026-10-21): the MMLU driver runs on the pinned images again, and a run sg would ask a password in says so
+
+**The MMLU driver runs again.** `evals/mmlu.py` called the `MMLUEval` class of the SGLang image,
+which SGLang removed (sgl-project/sglang#41215, 2026-09-25): neither image this repo pins has it
+(the 27B lane's v0.5.21, the flash lane's nightly), and the documented command stopped on
+`ModuleNotFoundError` before it asked a question. Its tests passed all along, against a stub of the
+very module the images lack. The driver now carries the class as SGLang v0.5.19 had it (Apache-2.0,
+adapted there from openai/simple-evals, MIT: both licenses beside it in `evals/`), with the sampler
+and the helpers the images still ship, unchanged since v0.5.19 in both: the same dataset, the same
+questions drawn with the same seed, the same prompt and answer pattern. On the reference box, in
+both pinned images and against the FP4-Local lane, it ran 8 questions where the published driver
+stopped on its import; `run_eval --eval-name gsm8k` still runs in them (3 questions). BENCHMARKS.md
+said the class was still in the image, and that five greedy samples are one answer five times, which
+LEAN.md measured otherwise.
+
+**A run sg would ask a password in says so.** The installer and the scripts go on with the docker
+group through `sg`, which takes the group's members from /etc/gshadow. An account added to
+/etc/group alone, by hand, running from a terminal opened before that, was asked the group's
+password, and the run ended on "Invalid password." (flagged by the last review of v1.37.2, then
+measured in a container with Ubuntu 24.04's login 1:4.13; `usermod`, which the installer runs,
+writes both files and is never asked). `sg` is now tried once first, away from the
+terminal (`setsid`), where it cannot ask: where it would, the run says to log in again, as it does
+wherever it cannot start again. The check, the try included, takes 11 ms on the reference box.
+
+**What an update does.** The cockpit restarts once, to name the release; the proxy and the engines
+keep running.
+
+**Tests.** 6 of the 60 cases of `tests/test_fresh_machine.py` fail on v1.37.2, 4 of them new: an
+account sg asks a password of, from a terminal older than the group and once added; the try kept
+from the terminal and from its input, in a real one (`script`), where a mutant without `setsid` or
+without its `/dev/null` input fails; and a box without `setsid`. The other 2 hold that sg is tried
+once where the run goes on. `tests/test_eval_drivers.py` lays its stub tree out as the pinned images
+are, without `simple_eval_mmlu`, and hands the class a small dataset through a stub pandas: 6 of its
+10 cases fail on v1.37.2, 5 of them on the same `ModuleNotFoundError` as the images and one on
+BENCHMARKS.md's greedy claim, which it now reads too.
+
 ## v1.37.2 (2026-10-20): a new DGX Spark or GX10 installs in one go, the Traffic view on the vLLM lanes, and what a review of v1.37.0 found
 
 **A new box installs in one go.** NVIDIA's first-boot setup puts the account it creates in adm, sudo,
