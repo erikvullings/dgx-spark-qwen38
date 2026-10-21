@@ -569,3 +569,55 @@ host_packages(){
   echo "NOTE: apt-get could not install $*; run sudo apt-get install -y $* yourself." >&2
   return 1
 }
+
+# run_mark CONFIG_DIR: while this run lasts, a file that tells the cockpit an update runs
+# ($CONFIG_DIR/install-running.<pid>.json: the pid, its start time as /proc has it, when it started,
+# and the release this clone is). A long update showed the banner that asks to run the installer,
+# under the installer running (an ASUS Ascent GX10, 2026-10-21: an update of 1 h 45, 144 GB of
+# video). The cockpit believes the file while this very process lives (the same pid with the same
+# start time: a pid used again is not it), and forget_run_mark, run by the caller's EXIT trap,
+# takes it away however the run ends; the next run removes one a run killed outright left. A file
+# that cannot be written leaves the run as it was.
+RUN_MARK=""
+run_mark(){
+  local f="$1/install-running.$$.json"
+  mkdir -p "$1" 2>/dev/null || return 0
+  python3 -I - "$$" "$f" "${REPO_DIR:-.}/CHANGELOG.md" <<'PY' 2>/dev/null && RUN_MARK="$f"
+import json, os, re, sys, time
+pid, out, changelog = int(sys.argv[1]), sys.argv[2], sys.argv[3]
+stat = open(f"/proc/{pid}/stat").read()
+to = None
+try:
+    with open(changelog, encoding="utf-8") as f:
+        for line in f:
+            m = re.match(r"^## (v\d+\.\d+(?:\.\d+)?)\b", line)
+            if m:
+                to = m.group(1)
+                break
+except OSError:
+    pass
+with open(out + ".tmp", "w") as f:
+    json.dump({"pid": pid, "start": stat[stat.rindex(")") + 2:].split()[19], "started": int(time.time()), "to": to}, f)
+os.replace(out + ".tmp", out)
+# and the files of runs gone without their trap (a SIGKILL, a power cut): what no process is now
+d = os.path.dirname(out)
+for name in os.listdir(d):
+    m = re.fullmatch(r"install-running\.(\d+)\.json", name)
+    if not m or os.path.join(d, name) == out:
+        continue
+    try:
+        with open(os.path.join(d, name)) as f:
+            start = str(json.load(f)["start"])
+        live = open(f"/proc/{int(m.group(1))}/stat").read()
+        if live[live.rindex(")") + 2:].split()[19] == start:
+            continue
+    except (OSError, ValueError, KeyError, TypeError, IndexError):
+        pass
+    try:
+        os.remove(os.path.join(d, name))
+    except OSError:
+        pass
+PY
+  return 0
+}
+forget_run_mark(){ [ -z "$RUN_MARK" ] || rm -f -- "$RUN_MARK"; return 0; }

@@ -130,6 +130,25 @@ def release_state():
 def installed_release():
     """The release the services run (release_state)."""
     return release_state()["installed"]
+
+
+def install_running():
+    """The ./install.sh running on this box now, from the file it keeps while it lasts
+    (lanes.sh, run_mark: CONFIG_DIR/install-running.<pid>.json): {started, to} while that very
+    process lives (the same pid with the same start time, so a pid used again is not it), else
+    None. The banners that ask to run the installer wait for it (an ASUS Ascent GX10, 2026-10-21:
+    an update of 1 h 45 under the banner that asked for it)."""
+    for f in sorted(CONFIG_DIR.glob("install-running.*.json")):
+        try:
+            mark = json.loads(f.read_text())
+            stat = (Path("/proc") / str(int(mark["pid"])) / "stat").read_text()
+            if stat[stat.rindex(")") + 2:].split()[19] == str(mark["start"]):
+                return {"started": int(mark["started"]), "to": mark.get("to")}
+        except (OSError, ValueError, KeyError, IndexError, TypeError):
+            continue
+    return None
+
+
 # Dry run: every mutating action and every automatic belt is logged, audited and
 # shown exactly as usual, but nothing is executed. This is how the click-storm test
 # (tests/monkey-check.mjs) exercises the whole UI against a second cockpit instance.
@@ -1779,10 +1798,14 @@ def conformity_state():
 
 @guard
 def collect_update():
-    """{installed, clone, behind_clone, latest, behind, stale_code, stale_engines, conformity}.
+    """{installed, clone, behind_clone, latest, behind, install_running, stale_code, stale_engines,
+    conformity}.
     Every field past the first three is optional: a box with no network, or one that opted out,
     reports what it knows and claims nothing else."""
     out = release_state()
+    running = install_running()
+    if running:
+        out["install_running"] = running
     stale = code_is_stale()
     if stale:
         out["stale_code"] = stale

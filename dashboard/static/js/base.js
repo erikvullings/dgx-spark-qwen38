@@ -1015,12 +1015,19 @@ function renderBanners(state, errors){
   if (F.memFloor && F.memFloor.aborts && F.memFloor.last_abort && Date.now() / 1000 - F.memFloor.last_abort < 600)
     add('warn', 'The memory floor fired.', `Memory fell under ${F.memFloor.gib} GiB with requests running: every generation was aborted ${fmtDur(Date.now() / 1000 - F.memFloor.last_abort)} ago to keep the box out of a livelock.`);
   const upd = F.update || {};
-  if (upd.behind) add('info', `Version ${upd.latest} is out; this box runs ${upd.installed}.`, 'The update keeps your choices, and moves a default an older release left to today\'s: it lists both before its first step. Update with:', updateCmd(F.config));
+  // An update that runs now (install.sh keeps a file while it lasts, the cockpit checks its process):
+  // the banners that ask for one wait, since one runs (an ASUS Ascent GX10, 2026-10-21: an update of
+  // 1 h 45, a checkpoint of 144 GB, under the orange banner that asked for it), and so does the one
+  // that asks to restart this cockpit, which the update restarts
+  const run = upd.install_running;
+  if (run) add('info', run.to && run.to !== upd.installed ? `An update to ${run.to} is running.` : 'The installer is running.',
+    `It started ${fmtMin(Math.max(0, Date.now() / 1000 - run.started))} ago. There is nothing to run meanwhile: this page says what is left to do once it ends.`);
+  if (upd.behind && !run) add('info', `Version ${upd.latest} is out; this box runs ${upd.installed}.`, 'The update keeps your choices, and moves a default an older release left to today\'s: it lists both before its first step. Update with:', updateCmd(F.config));
   // The services behind their own clone (v1.36.0): installed.json names the release and the
   // commit the last run that ended well installed. A git pull with no ./install.sh moves the
   // clone and not the services, and a run stopped at --no-start updated neither the side lanes,
   // nor the proxy, nor the cockpit; a box no run of v1.36.0 or later recorded is said once.
-  if (upd.behind_clone){
+  if (upd.behind_clone && !run){
     const why = upd.behind_clone_why;
     if (why === 'commit') add('orange', `The clone moved on since the last install: the services run ${upd.installed}, the clone is ${upd.clone || 'newer'}.`,
       'A git pull changes the files, not what runs. Run the installer so the services follow it:', updateCmd(F.config));
@@ -1035,13 +1042,13 @@ function renderBanners(state, errors){
   // the banner for good); Settings lists each difference.
   const cf = (upd.conformity || {}).items || [];
   const moves = cf.filter(i => i.group === 'moves');
-  if (moves.length){
+  if (moves.length && !run){
     const rel = upd.conformity.release || 'this release', kept = cf.length - moves.length;
     add('orange', `This box runs ${moves.length === 1 ? 'a default' : moves.length + ' defaults'} of an older release.`,
       `${moves.map(i => `${cfName(i)} ${i.value}`).join(', ')}: the next update moves ${moves.length === 1 ? 'it' : 'them'} to what ${rel} recommends`
       + (kept ? `, and keeps ${kept === 1 ? 'one setting' : kept + ' settings'} of yours` : '') + '. Settings lists each difference, and the variable that keeps it.');
   }
-  if ((upd.stale_code || []).length) add('warn', 'This cockpit runs older code than the files on disk.', `${upd.stale_code.join(', ')} changed under it. Restart it:`, 'sudo systemctl restart qwen38-dashboard.service');
+  if ((upd.stale_code || []).length && !run) add('warn', 'This cockpit runs older code than the files on disk.', `${upd.stale_code.join(', ')} changed under it. Restart it:`, 'sudo systemctl restart qwen38-dashboard.service');
   const ocf = F.ocfit;
   if (ocf && !ocf.ok) add('warn', 'opencode asks for more than this engine can hold.', `${ocf.why}: opencode declares ${fmtN(ocf.asked)} tokens, and ${ocf.served} can serve ${fmtN(ocf.limit)}. A session would break when the proxy refuses the prompt. ` + (ocf.autofit === 'started' ? 'The cockpit is fitting the limits now.' : 'Settings has "Fit the limits to this engine".'));
   ((F.life || {}).orphans || []).forEach(o => add('warn', `${LANE_NAME[o.unit] || o.unit} is running outside systemd.`,

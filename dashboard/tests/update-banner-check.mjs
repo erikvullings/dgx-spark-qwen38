@@ -149,6 +149,18 @@ try {
   ok('which it does not leave in the page', await evalJs("document.querySelectorAll('textarea[data-copy]').length") === 0);
   const cmd = await evalJs("document.getElementById('st-update').textContent");
   ok('Settings gives the same command', /^cd \S+ && /.test(cmd) && cmd.endsWith(` && ${ONE}`), cmd);
+  // an update that runs (install.sh keeps a file while it lasts): the banner says so, and the ones
+  // that ask to run it, or to restart this cockpit, which it restarts, wait for its end (2026-10-21)
+  const running = { started: Math.round(Date.now() / 1000) - 750, to: 'v1.99.0' };
+  s = await banners({ installed: 'v1.15.0', latest: 'v1.99.0', behind: true, behind_clone: true, behind_clone_why: 'commit',
+                      clone: 'v1.99.0', stale_code: ['static/js/base.js'], install_running: running });
+  ok('an update running: the banner says so, and since when', /An update to v1\.99\.0 is running\./.test(s) && /It started 1[23] min ago/.test(s), s);
+  ok('and asks for nothing it does', !/is out; this box runs/.test(s) && !/clone moved on/.test(s) && !/older code/.test(s)
+     && !/Run the installer/.test(s), s);
+  s = await banners({ installed: 'v1.15.1', latest: 'v1.15.1', behind: false, install_running: { started: running.started, to: 'v1.15.1' } });
+  ok('a run of the same release is the installer running', /The installer is running\./.test(s) && !/An update to/.test(s), s);
+  s = await banners({ installed: 'v1.15.0', latest: 'v1.99.0', behind: true });
+  ok('once it ends, the update banner is back', /is out; this box runs/.test(s) && !/is running/.test(s), s);
   s = await banners({ installed: 'v1.15.1', stale_code: ['static/js/base.js'] });
   ok('older code than its files: the banner says so', /runs older code than the files on disk/.test(s), s);
   ok('and names the file and the remedy', /static\/js\/base\.js/.test(s) && /systemctl restart qwen38-dashboard/.test(s), s);
@@ -156,6 +168,8 @@ try {
   ok('up to date again: the banner goes', !/is out; this box runs/.test(s) && !/older code/.test(s), s);
   let line = await setupLine({ installed: 'v1.15.0', latest: 'v1.99.0', behind: true });
   ok('Setup line, behind', /v1\.15\.0/.test(line) && /v1\.99\.0 is out/.test(line) && !/git pull/.test(line), line);
+  line = await setupLine({ installed: 'v1.15.0', latest: 'v1.99.0', behind: true, install_running: { started: 1, to: 'v1.99.0' } });
+  ok('Setup line, an update running', /an update to v1\.99\.0 is running/.test(line) && !/command below/.test(line), line);
   line = await setupLine({ installed: 'v1.15.1', latest: null });
   ok('Setup line, offline', /unknown/.test(line), line);
   line = await setupLine({ installed: 'v1.15.1', checked: false });
