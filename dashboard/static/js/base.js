@@ -1069,7 +1069,7 @@ function renderBanners(state, errors){
     b.append(el('span', 'lamp ' + (kind === 'err' ? 'err' : kind === 'warn' ? 'warn' : kind === 'orange' ? 'orange' : '')));
     const p = el('div'); p.append(el('b', null, strong + ' '), el('span', 't', text));
     if (cmd){
-      const pre = el('pre', 'cmd', cmd), btn = el('button', 'btn sm ghost', 'Copy'), row = el('div', 'btn-row'), c = el('div', 'bcmd');
+      const pre = el('pre', 'cmd', cmd), btn = el('button', 'btn sm', 'Copy'), row = el('div', 'btn-row'), c = el('div', 'bcmd');
       btn.type = 'button'; btn.addEventListener('click', () => copyText(pre.textContent));
       row.append(btn); c.append(pre, row); p.append(c);
     }

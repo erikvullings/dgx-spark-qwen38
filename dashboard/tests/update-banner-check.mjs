@@ -133,6 +133,13 @@ try {
   const blk = JSON.parse(block);
   ok('and gives the command, apart, with a Copy button', /^cd \S+ && /.test(blk.cmd || '') && (blk.cmd || '').endsWith(` && ${ONE}`)
      && blk.btn === 'Copy' && !/git pull/.test(s), block);
+  // every Copy button of the page, the banner's included, is drawn as a button: a ghost one read as
+  // plain text at rest (Hasan, 2026-10-21: "visible partout")
+  const looks = await evalJs(`JSON.stringify([...document.querySelectorAll('button')].filter(b => b.textContent.trim() === 'Copy')
+    .map(b => ({ id: b.id || 'banner', ghost: b.classList.contains('ghost'), border: getComputedStyle(b).borderTopColor })))`);
+  const drawn = JSON.parse(looks);
+  ok('every Copy button is drawn as a button, its border seen at rest', drawn.length === 7
+     && drawn.every(c => !c.ghost && !/^rgba\(.*,\s*0\)$/.test(c.border) && c.border !== 'transparent'), looks);
   // what the button copies, by the clipboard API where the page is a secure context and by a
   // selected textarea where it is not (plain HTTP on the box's LAN or Tailscale address)
   const copied = viaApi => evalJs(`(async () => {
