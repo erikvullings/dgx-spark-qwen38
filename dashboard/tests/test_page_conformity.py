@@ -78,8 +78,8 @@ class TheBannerSaysWhatTheNextUpdateMoves(unittest.TestCase):
         upd = [b["text"] for b in r["banners"] if "is out" in b["text"]]
         self.assertEqual(len(upd), 1, r["banners"])
         self.assertNotIn("It keeps your target, context mode, port and cache", upd[0])
-        self.assertIn("It keeps your choices, and moves a default an older release left to today's: it lists both "
-                      "before its first step.", upd[0])
+        self.assertIn("The update keeps your choices, and moves a default an older release left to today's: it "
+                      "lists both before its first step.", upd[0])
 
 
 class TheServicesBehindTheirClone(unittest.TestCase):

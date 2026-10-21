@@ -123,7 +123,30 @@ try {
   // the update is the one command, run from this checkout: install.sh alone fetches nothing,
   // and a git pull skips get.sh's guards (found in review, 2026-10-14)
   const ONE = 'curl -fsSL https://raw.githubusercontent.com/hasso5703/dgx-spark-qwen38/main/get.sh | bash';
-  ok('and gives the command', s.includes(`Update with: cd `) && s.includes(` && ${ONE}.`) && !/git pull/.test(s), s);
+  // the command apart from the sentence, with a Copy button (2026-10-21)
+  const block = await evalJs(`(() => { const b = [...document.querySelectorAll('#banners .banner')].find(e => /is out; this box runs/.test(e.textContent));
+    const c = b && b.querySelector('.bcmd .cmd'), btn = b && b.querySelector('.bcmd button');
+    return JSON.stringify({ cmd: c ? c.textContent : null, btn: btn ? btn.textContent : null }); })()`);
+  const blk = JSON.parse(block);
+  ok('and gives the command, apart, with a Copy button', /^cd \S+ && /.test(blk.cmd || '') && (blk.cmd || '').endsWith(` && ${ONE}`)
+     && blk.btn === 'Copy' && !/git pull/.test(s), block);
+  // what the button copies, by the clipboard API where the page is a secure context and by a
+  // selected textarea where it is not (plain HTTP on the box's LAN or Tailscale address)
+  const copied = viaApi => evalJs(`(async () => {
+    let got = null;
+    const api = navigator.clipboard, exec = document.execCommand.bind(document);
+    Object.defineProperty(navigator, 'clipboard', { configurable: true, get: () => ${viaApi} ? { writeText: async t => { got = 'api:' + t; } } : undefined });
+    document.execCommand = c => { if (c === 'copy') { const ta = document.querySelector('textarea[data-copy]'); got = 'exec:' + (ta ? ta.value.slice(ta.selectionStart, ta.selectionEnd) : ''); return true; } return exec(c); };
+    const b = [...document.querySelectorAll('#banners .banner')].find(e => /is out; this box runs/.test(e.textContent));
+    b.querySelector('.bcmd button').click();
+    await new Promise(r => setTimeout(r, 50));
+    Object.defineProperty(navigator, 'clipboard', { configurable: true, get: () => api }); document.execCommand = exec;
+    return got; })()`);
+  let got = await copied(true);
+  ok('Copy puts the exact command on the clipboard', got === 'api:' + blk.cmd, got);
+  got = await copied(false);
+  ok('and without the clipboard API, by a selected textarea', got === 'exec:' + blk.cmd, got);
+  ok('which it does not leave in the page', await evalJs("document.querySelectorAll('textarea[data-copy]').length") === 0);
   const cmd = await evalJs("document.getElementById('st-update').textContent");
   ok('Settings gives the same command', /^cd \S+ && /.test(cmd) && cmd.endsWith(` && ${ONE}`), cmd);
   s = await banners({ installed: 'v1.15.1', stale_code: ['static/js/base.js'] });

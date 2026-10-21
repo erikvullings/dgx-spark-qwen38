@@ -409,9 +409,20 @@ function recommendedCmd(cfg){
   return (c.terminal_only || {}).recommended
     || `cd ${c.repo_dir || '~/dgx-spark-qwen38'} && curl -fsSL https://raw.githubusercontent.com/hasso5703/dgx-spark-qwen38/main/get.sh | bash -s -- --recommended`;
 }
+// The clipboard API exists in a secure context only: on the box's LAN or Tailscale address, plain
+// HTTP, every Copy button said the browser refused (found 2026-10-21, a GX10's cockpit opened by its
+// Tailscale address). A selected textarea and execCommand('copy'), still inside the click, copy there.
 async function copyText(txt){
-  try { await navigator.clipboard.writeText(txt); toast('Copied.', 'ok', 1800); }
-  catch { toast('The browser refused the clipboard; select the text instead.', 'warn'); }
+  if (navigator.clipboard && window.isSecureContext){
+    try { await navigator.clipboard.writeText(txt); toast('Copied.', 'ok', 1800); return; } catch { /* the textarea below */ }
+  }
+  const ta = el('textarea'); ta.value = txt; ta.readOnly = true; ta.dataset.copy = '';
+  ta.style.cssText = 'position:fixed; top:-1000px; left:0; opacity:0';
+  document.body.append(ta); ta.select(); ta.setSelectionRange(0, txt.length);
+  let done = false;
+  try { done = document.execCommand('copy'); } catch { done = false; }
+  ta.remove();
+  if (done) toast('Copied.', 'ok', 1800); else toast('The browser refused the clipboard; select the text instead.', 'warn');
 }
 
 // ── actions: one sheet, the exact command, the warnings, one job at a time ─────
@@ -956,7 +967,9 @@ function wedgeNext(){
 function renderBanners(state, errors){
   const box = $('banners'); if (!box) return;
   const want = [];
-  const add = (kind, strong, text) => want.push([kind, strong, text]);
+  // cmd: a command the banner asks to run, shown apart with a Copy button (Hasan, 2026-10-21:
+  // selecting it by hand out of a sentence was the only way)
+  const add = (kind, strong, text, cmd) => want.push([kind, strong, text, cmd]);
   const otherUp = n => Object.entries(engines()).some(([m, x]) => m !== n && (!UNIT_DOWN.has(x.state) || x.restarting));
   if (offline) add('err', 'Connection lost.', `No data from the cockpit for ${fmtDur((Date.now() - lastMsgAt) / 1000)}: what is on screen is frozen and actions wait.`);
   if (F.config && F.config.dry_run) add('info', 'Dry run.', 'Every action is confirmed, logged and audited as usual, but nothing is executed. This instance exists for tests.');
@@ -1002,7 +1015,7 @@ function renderBanners(state, errors){
   if (F.memFloor && F.memFloor.aborts && F.memFloor.last_abort && Date.now() / 1000 - F.memFloor.last_abort < 600)
     add('warn', 'The memory floor fired.', `Memory fell under ${F.memFloor.gib} GiB with requests running: every generation was aborted ${fmtDur(Date.now() / 1000 - F.memFloor.last_abort)} ago to keep the box out of a livelock.`);
   const upd = F.update || {};
-  if (upd.behind) add('info', `Version ${upd.latest} is out; this box runs ${upd.installed}.`, `Update with: ${updateCmd(F.config)}. It keeps your choices, and moves a default an older release left to today's: it lists both before its first step.`);
+  if (upd.behind) add('info', `Version ${upd.latest} is out; this box runs ${upd.installed}.`, 'The update keeps your choices, and moves a default an older release left to today\'s: it lists both before its first step. Update with:', updateCmd(F.config));
   // The services behind their own clone (v1.36.0): installed.json names the release and the
   // commit the last run that ended well installed. A git pull with no ./install.sh moves the
   // clone and not the services, and a run stopped at --no-start updated neither the side lanes,
@@ -1010,11 +1023,11 @@ function renderBanners(state, errors){
   if (upd.behind_clone){
     const why = upd.behind_clone_why;
     if (why === 'commit') add('orange', `The clone moved on since the last install: the services run ${upd.installed}, the clone is ${upd.clone || 'newer'}.`,
-      `A git pull changes the files, not what runs. Run the installer so the services follow it: ${updateCmd(F.config)}.`);
+      'A git pull changes the files, not what runs. Run the installer so the services follow it:', updateCmd(F.config));
     else if (why === 'no-start') add('orange', 'The last install stopped at --no-start.',
-      `The side lanes, the proxy and the cockpit were not updated with it. Run it again without --no-start: ${updateCmd(F.config)}.`);
+      'The side lanes, the proxy and the cockpit were not updated with it. Run it again without --no-start:', updateCmd(F.config));
     else add('orange', `No install of v1.36.0 or later recorded what this box runs.`,
-      `The services run a release before it, or one an install that did not end well left. Run the installer once: ${updateCmd(F.config)}.`);
+      'The services run a release before it, or one an install that did not end well left. Run the installer once:', updateCmd(F.config));
   }
   // This box against what its clone recommends (v1.36.0, 2026-10-17): an orange banner when the
   // next update moves something, so that nobody runs behind in silence. The operator's own
@@ -1028,23 +1041,32 @@ function renderBanners(state, errors){
       `${moves.map(i => `${cfName(i)} ${i.value}`).join(', ')}: the next update moves ${moves.length === 1 ? 'it' : 'them'} to what ${rel} recommends`
       + (kept ? `, and keeps ${kept === 1 ? 'one setting' : kept + ' settings'} of yours` : '') + '. Settings lists each difference, and the variable that keeps it.');
   }
-  if ((upd.stale_code || []).length) add('warn', 'This cockpit runs older code than the files on disk.', `${upd.stale_code.join(', ')} changed under it. Restart it: sudo systemctl restart qwen38-dashboard.service`);
+  if ((upd.stale_code || []).length) add('warn', 'This cockpit runs older code than the files on disk.', `${upd.stale_code.join(', ')} changed under it. Restart it:`, 'sudo systemctl restart qwen38-dashboard.service');
   const ocf = F.ocfit;
   if (ocf && !ocf.ok) add('warn', 'opencode asks for more than this engine can hold.', `${ocf.why}: opencode declares ${fmtN(ocf.asked)} tokens, and ${ocf.served} can serve ${fmtN(ocf.limit)}. A session would break when the proxy refuses the prompt. ` + (ocf.autofit === 'started' ? 'The cockpit is fitting the limits now.' : 'Settings has "Fit the limits to this engine".'));
   ((F.life || {}).orphans || []).forEach(o => add('warn', `${LANE_NAME[o.unit] || o.unit} is running outside systemd.`,
-    `The container ${o.container} serves, but its unit is not running, so no other engine may start and a reboot will not bring it back. Start it from Lanes to replace it, or remove it: docker rm -f ${o.container}.`));
+    `The container ${o.container} serves, but its unit is not running, so no other engine may start and a reboot will not bring it back. Start it from Lanes to replace it, or remove it:`, `docker rm -f ${o.container}`));
   if (errors.lifecycle) add('warn', 'Engine state unknown.', 'The lifecycle collector failed: ' + String(errors.lifecycle).slice(0, 120));
   // drawn only when it changed: a live region re-read twice a second is noise
-  const sig = JSON.stringify(want.map(w => [w[0], w[1]]));
+  const sig = JSON.stringify(want.map(w => [w[0], w[1], !!w[3]]));
   if (box.dataset.sig === sig){
-    [...box.children].forEach((b, i) => { const t = b.querySelector('.t'); if (t) setText(t, want[i][2]); });
+    [...box.children].forEach((b, i) => {
+      const t = b.querySelector('.t'); if (t) setText(t, want[i][2]);
+      const c = b.querySelector('.bcmd .cmd'); if (c) setText(c, want[i][3]);
+    });
     return;
   }
   box.dataset.sig = sig; clear(box);
-  want.forEach(([kind, strong, text]) => {
+  want.forEach(([kind, strong, text, cmd]) => {
     const b = el('div', 'banner ' + kind);
     b.append(el('span', 'lamp ' + (kind === 'err' ? 'err' : kind === 'warn' ? 'warn' : kind === 'orange' ? 'orange' : '')));
-    const p = el('div'); p.append(el('b', null, strong + ' '), el('span', 't', text)); b.append(p); box.append(b);
+    const p = el('div'); p.append(el('b', null, strong + ' '), el('span', 't', text));
+    if (cmd){
+      const pre = el('pre', 'cmd', cmd), btn = el('button', 'btn sm ghost', 'Copy'), row = el('div', 'btn-row'), c = el('div', 'bcmd');
+      btn.type = 'button'; btn.addEventListener('click', () => copyText(pre.textContent));
+      row.append(btn); c.append(pre, row); p.append(c);
+    }
+    b.append(p); box.append(b);
   });
 }
 afterApply(renderBanners);

@@ -240,6 +240,9 @@ img,svg,video,canvas{display:block; max-width:100%}
    finger, every tap landing 30 px below its target (found by the touch check, 2026-10-17) */
 .banner > div{min-width:0; overflow-wrap:anywhere}
 .banner b{font-weight:640}
+/* a command a banner asks to run, apart from its sentence, with its Copy button */
+.banner .bcmd{display:flex; flex-direction:column; gap:var(--s-2); margin-top:var(--s-2)}
+.banner .bcmd .cmd{margin:0}
 .banner.err{border-color:color-mix(in srgb, var(--bad) 50%, transparent); background:color-mix(in srgb, var(--bad) 10%, var(--ink-1))}
 .banner.info{border-color:var(--rule-2); background:rgba(255,255,255,.06); color:var(--fg-2)}
 .banner.orange{border-color:color-mix(in srgb, var(--orange) 50%, transparent); background:color-mix(in srgb, var(--orange) 10%, var(--ink-1))}
