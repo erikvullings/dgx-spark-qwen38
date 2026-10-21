@@ -584,9 +584,12 @@ run_mark(){
   mkdir -p "$1" 2>/dev/null || return 0
   python3 -I - "$$" "$f" "${REPO_DIR:-.}/CHANGELOG.md" <<'PY' 2>/dev/null && RUN_MARK="$f"
 import json, os, re, sys, time
+def start_of(pid):  # the 22nd field of /proc/<pid>/stat, after the name in parentheses
+    with open(f"/proc/{pid}/stat") as f:
+        stat = f.read()
+    return stat[stat.rindex(")") + 2:].split()[19]
 pid, out, changelog = int(sys.argv[1]), sys.argv[2], sys.argv[3]
-stat = open(f"/proc/{pid}/stat").read()
-to = None
+start, to = start_of(pid), None
 try:
     with open(changelog, encoding="utf-8") as f:
         for line in f:
@@ -597,7 +600,7 @@ try:
 except OSError:
     pass
 with open(out + ".tmp", "w") as f:
-    json.dump({"pid": pid, "start": stat[stat.rindex(")") + 2:].split()[19], "started": int(time.time()), "to": to}, f)
+    json.dump({"pid": pid, "start": start, "started": int(time.time()), "to": to}, f)
 os.replace(out + ".tmp", out)
 # and the files of runs gone without their trap (a SIGKILL, a power cut): what no process is now
 d = os.path.dirname(out)
@@ -607,9 +610,8 @@ for name in os.listdir(d):
         continue
     try:
         with open(os.path.join(d, name)) as f:
-            start = str(json.load(f)["start"])
-        live = open(f"/proc/{int(m.group(1))}/stat").read()
-        if live[live.rindex(")") + 2:].split()[19] == start:
+            theirs = str(json.load(f)["start"])
+        if start_of(int(m.group(1))) == theirs:
             continue
     except (OSError, ValueError, KeyError, TypeError, IndexError):
         pass

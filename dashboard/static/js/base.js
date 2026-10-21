@@ -25,9 +25,15 @@ const fmtDur = s => {
   return r < 90 ? r + ' s' : r < 3600 ? Math.floor(r / 60) + ' min ' + String(r % 60).padStart(2, '0')
     : Math.floor(r / 3600) + ' h ' + String(Math.floor((r % 3600) / 60)).padStart(2, '0');
 };
-// minutes for a plan, not a stopwatch: "about 13 min"
-const fmtMin = s => s == null ? '?' : s < 90 ? Math.round(s) + ' s' : s < 3600 ? Math.round(s / 60) + ' min'
-  : Math.floor(s / 3600) + ' h ' + String(Math.round((s % 3600) / 60)).padStart(2, '0');
+// minutes for a plan, not a stopwatch: "about 13 min". The minutes are rounded before the hours
+// are split off: rounded after, 7,170 s read "1 h 60" and 3,599 s "60 min" (found in review,
+// 2026-10-21)
+const fmtMin = s => {
+  if (s == null) return '?';
+  if (s < 90) return Math.round(s) + ' s';
+  const m = Math.round(s / 60);
+  return m < 60 ? m + ' min' : Math.floor(m / 60) + ' h ' + String(m % 60).padStart(2, '0');
+};
 // a time of day is ambiguous once the page reloads events written on another day
 const clockTime = ts => {
   const d = new Date(ts * 1000), now = new Date();
@@ -416,12 +422,16 @@ async function copyText(txt){
   if (navigator.clipboard && window.isSecureContext){
     try { await navigator.clipboard.writeText(txt); toast('Copied.', 'ok', 1800); return; } catch { /* the textarea below */ }
   }
+  // 16 px: under it, iOS Safari zooms the whole page on the field's focus and never zooms back
+  // (cockpit.css); and the focus goes back where it was, on the button for a keyboard
+  const back = document.activeElement;
   const ta = el('textarea'); ta.value = txt; ta.readOnly = true; ta.dataset.copy = '';
-  ta.style.cssText = 'position:fixed; top:-1000px; left:0; opacity:0';
+  ta.style.cssText = 'position:fixed; top:-1000px; left:0; opacity:0; font-size:16px';
   document.body.append(ta); ta.select(); ta.setSelectionRange(0, txt.length);
   let done = false;
   try { done = document.execCommand('copy'); } catch { done = false; }
   ta.remove();
+  if (back && back !== document.body && back.focus) back.focus({ preventScroll: true });
   if (done) toast('Copied.', 'ok', 1800); else toast('The browser refused the clipboard; select the text instead.', 'warn');
 }
 
@@ -1020,7 +1030,7 @@ function renderBanners(state, errors){
   // 1 h 45, a checkpoint of 144 GB, under the orange banner that asked for it), and so does the one
   // that asks to restart this cockpit, which the update restarts
   const run = upd.install_running;
-  if (run) add('info', run.to && run.to !== upd.installed ? `An update to ${run.to} is running.` : 'The installer is running.',
+  if (run) add('info', run.to ? `Installing ${run.to}.` : 'The installer is running.',
     `It started ${fmtMin(Math.max(0, Date.now() / 1000 - run.started))} ago. There is nothing to run meanwhile: this page says what is left to do once it ends.`);
   if (upd.behind && !run) add('info', `Version ${upd.latest} is out; this box runs ${upd.installed}.`, 'The update keeps your choices, and moves a default an older release left to today\'s: it lists both before its first step. Update with:', updateCmd(F.config));
   // The services behind their own clone (v1.36.0): installed.json names the release and the

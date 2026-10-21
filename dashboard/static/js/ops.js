@@ -533,7 +533,7 @@ on('update', d => {
   const parts = [];
   if (d.installed) parts.push(d.installed);
   const run = d.install_running;
-  if (run) parts.push(run.to && run.to !== d.installed ? `an update to ${run.to} is running` : 'the installer is running');
+  if (run) parts.push(run.to ? `installing ${run.to}` : 'the installer is running');
   else if (d.checked === false) parts.push('the update check is off');
   else if (!d.latest) parts.push('latest release unknown (offline)');
   else if (d.behind) parts.push(`${d.latest} is out: the command below updates this box`);

@@ -136,17 +136,19 @@ def install_running():
     """The ./install.sh running on this box now, from the file it keeps while it lasts
     (lanes.sh, run_mark: CONFIG_DIR/install-running.<pid>.json): {started, to} while that very
     process lives (the same pid with the same start time, so a pid used again is not it), else
-    None. The banners that ask to run the installer wait for it (an ASUS Ascent GX10, 2026-10-21:
-    an update of 1 h 45 under the banner that asked for it)."""
-    for f in sorted(CONFIG_DIR.glob("install-running.*.json")):
+    None; of two runs at once, the one that started first. The banners that ask to run the
+    installer wait for it (an ASUS Ascent GX10, 2026-10-21: an update of 1 h 45 under the banner
+    that asked for it)."""
+    live = []
+    for f in CONFIG_DIR.glob("install-running.*.json"):
         try:
             mark = json.loads(f.read_text())
             stat = (Path("/proc") / str(int(mark["pid"])) / "stat").read_text()
             if stat[stat.rindex(")") + 2:].split()[19] == str(mark["start"]):
-                return {"started": int(mark["started"]), "to": mark.get("to")}
+                live.append({"started": int(mark["started"]), "to": mark.get("to")})
         except (OSError, ValueError, KeyError, IndexError, TypeError):
             continue
-    return None
+    return min(live, key=lambda r: r["started"]) if live else None
 
 
 # Dry run: every mutating action and every automatic belt is logged, audited and

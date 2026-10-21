@@ -1513,8 +1513,9 @@ TOTAL_GB=$(awk '/^MemTotal/{print int($2/1048576)}' /proc/meminfo)
 DOCKER_GRANT=yes; [ "$NO_SERVICE" -eq 0 ] || DOCKER_GRANT=no
 docker_grant bash "$REPO_DIR/${BASH_SOURCE[0]##*/}" "$@"
 [ -z "$DOCKER_SAID" ] || exec 1>&3 3>&-
-# this run, said to the cockpit while it lasts (lanes.sh, run_mark)
-run_mark "$CONFIG_DIR"; trap forget_run_mark EXIT
+# this run, said to the cockpit while it lasts (lanes.sh, run_mark); the run it starts for the other
+# text lane is part of it
+[ -n "$SECONDARY" ] || run_mark "$CONFIG_DIR"; trap forget_run_mark EXIT
 # A GPU outside its ATS addressing mode cannot start the flash lane (issue #54), and a flash install
 # fetches its image and its checkpoint (223 GB in all). A new flash install stops here, before the
 # first byte. A run for a box whose flash lane is installed gives it its units only, which say why at

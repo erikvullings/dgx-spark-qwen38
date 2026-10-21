@@ -126,51 +126,66 @@ try {
   // the update is the one command, run from this checkout: install.sh alone fetches nothing,
   // and a git pull skips get.sh's guards (found in review, 2026-10-14)
   const ONE = 'curl -fsSL https://raw.githubusercontent.com/hasso5703/dgx-spark-qwen38/main/get.sh | bash';
+  // the checks below put the state in and draw it in the very evaluation that reads it, b the update
+  // banner, and the page's own stream leaves F.update alone until that evaluation ends: it draws the
+  // real state, a message a second, and took the banner and its button away in between (found in
+  // review, 2026-10-21)
+  const BEHIND = { installed: 'v1.15.0', latest: 'v1.99.0', behind: true };
+  const onBehind = body => evalJs(`(async () => { const keep = HANDLERS.update; HANDLERS.update = [];
+    try { F.update = ${JSON.stringify(BEHIND)}; renderBanners(lastState || {}, lastErrors || {});
+      const b = [...document.querySelectorAll('#banners .banner')].find(e => /is out; this box runs/.test(e.textContent));
+      ${body} } finally { HANDLERS.update = keep; } })()`);
   // the command apart from the sentence, with a Copy button (2026-10-21)
-  const block = await evalJs(`(() => { const b = [...document.querySelectorAll('#banners .banner')].find(e => /is out; this box runs/.test(e.textContent));
-    const c = b && b.querySelector('.bcmd .cmd'), btn = b && b.querySelector('.bcmd button');
-    return JSON.stringify({ cmd: c ? c.textContent : null, btn: btn ? btn.textContent : null }); })()`);
+  const block = await onBehind(`const c = b && b.querySelector('.bcmd .cmd'), btn = b && b.querySelector('.bcmd button');
+    return JSON.stringify({ cmd: c ? c.textContent : null, btn: btn ? btn.textContent : null });`);
   const blk = JSON.parse(block);
   ok('and gives the command, apart, with a Copy button', /^cd \S+ && /.test(blk.cmd || '') && (blk.cmd || '').endsWith(` && ${ONE}`)
      && blk.btn === 'Copy' && !/git pull/.test(s), block);
   // every Copy button of the page, the banner's included, is drawn as a button: a ghost one read as
   // plain text at rest (Hasan, 2026-10-21: "visible partout")
-  const looks = await evalJs(`JSON.stringify([...document.querySelectorAll('button')].filter(b => b.textContent.trim() === 'Copy')
-    .map(b => ({ id: b.id || 'banner', ghost: b.classList.contains('ghost'), border: getComputedStyle(b).borderTopColor })))`);
+  const looks = await onBehind(`return JSON.stringify([...document.querySelectorAll('button')].filter(x => x.textContent.trim() === 'Copy')
+    .map(x => ({ id: x.id || 'banner', ghost: x.classList.contains('ghost'), border: getComputedStyle(x).borderTopColor })));`);
   const drawn = JSON.parse(looks);
-  ok('every Copy button is drawn as a button, its border seen at rest', drawn.length === 7
+  ok('every Copy button is drawn as a button, its border seen at rest', drawn.length >= 7 && drawn.some(c => c.id === 'banner')
      && drawn.every(c => !c.ghost && !/^rgba\(.*,\s*0\)$/.test(c.border) && c.border !== 'transparent'), looks);
   // what the button copies, by the clipboard API where the page is a secure context and by a
   // selected textarea where it is not (plain HTTP on the box's LAN or Tailscale address)
-  const copied = viaApi => evalJs(`(async () => {
-    const b = [...document.querySelectorAll('#banners .banner')].find(e => /is out; this box runs/.test(e.textContent));
+  const copied = viaApi => onBehind(`
     const btn = b && b.querySelector('.bcmd button');
     if (!btn) return 'no Copy button';
     let got = null;
     const api = navigator.clipboard, exec = document.execCommand.bind(document);
     Object.defineProperty(navigator, 'clipboard', { configurable: true, get: () => ${viaApi} ? { writeText: async t => { got = 'api:' + t; } } : undefined });
     document.execCommand = c => { if (c === 'copy') { const ta = document.querySelector('textarea[data-copy]'); got = 'exec:' + (ta ? ta.value.slice(ta.selectionStart, ta.selectionEnd) : ''); return true; } return exec(c); };
-    btn.click();
+    btn.focus(); btn.click();
+    const focus = document.activeElement === btn;
     await new Promise(r => setTimeout(r, 50));
     Object.defineProperty(navigator, 'clipboard', { configurable: true, get: () => api }); document.execCommand = exec;
-    return got; })()`);
-  let got = await copied(true);
-  ok('Copy puts the exact command on the clipboard', got === 'api:' + blk.cmd, got);
-  got = await copied(false);
-  ok('and without the clipboard API, by a selected textarea', got === 'exec:' + blk.cmd, got);
+    return JSON.stringify({ got, focus });`);
+  const copiedJson = async viaApi => { const r = await copied(viaApi); try { return JSON.parse(r); } catch { return { got: r }; } };
+  let got = await copiedJson(true);
+  ok('Copy puts the exact command on the clipboard', got.got === 'api:' + blk.cmd, got.got);
+  got = await copiedJson(false);
+  ok('and without the clipboard API, by a selected textarea', got.got === 'exec:' + blk.cmd, got.got);
+  ok('and gives the focus back to the button, for a keyboard', got.focus === true, JSON.stringify(got));
   ok('which it does not leave in the page', await evalJs("document.querySelectorAll('textarea[data-copy]').length") === 0);
   const cmd = await evalJs("document.getElementById('st-update').textContent");
   ok('Settings gives the same command', /^cd \S+ && /.test(cmd) && cmd.endsWith(` && ${ONE}`), cmd);
-  // an update that runs (install.sh keeps a file while it lasts): the banner says so, and the ones
-  // that ask to run it, or to restart this cockpit, which it restarts, wait for its end (2026-10-21)
+  // an install that runs (install.sh keeps a file while it lasts): the banner says so, and the ones
+  // that ask for an update, a run of the installer, the defaults it moves or a restart of this
+  // cockpit wait for its end (2026-10-21)
   const running = { started: Math.round(Date.now() / 1000) - 750, to: 'v1.99.0' };
+  const moves = { release: 'v1.99.0', items: [{ group: 'moves', knob: 'ENGINE_BIND', value: '0.0.0.0', recommended: '127.0.0.1',
+                                                why: 'box-before', old: 'v1.17.0' }] };
   s = await banners({ installed: 'v1.15.0', latest: 'v1.99.0', behind: true, behind_clone: true, behind_clone_why: 'commit',
-                      clone: 'v1.99.0', stale_code: ['static/js/base.js'], install_running: running });
-  ok('an update running: the banner says so, and since when', /An update to v1\.99\.0 is running\./.test(s) && /It started 1[23] min ago/.test(s), s);
+                      clone: 'v1.99.0', stale_code: ['static/js/base.js'], conformity: moves, install_running: running });
+  ok('an install running: the banner says so, and since when', /Installing v1\.99\.0\./.test(s) && /It started 1[23] min ago/.test(s), s);
   ok('and asks for nothing it does', !/is out; this box runs/.test(s) && !/clone moved on/.test(s) && !/older code/.test(s)
-     && !/Run the installer/.test(s), s);
-  s = await banners({ installed: 'v1.15.1', latest: 'v1.15.1', behind: false, install_running: { started: running.started, to: 'v1.15.1' } });
-  ok('a run of the same release is the installer running', /The installer is running\./.test(s) && !/An update to/.test(s), s);
+     && !/Run the installer/.test(s) && !/recommends/.test(s), s);
+  s = await banners({ installed: 'v1.15.1', conformity: moves });
+  ok('which the defaults banner says once it ends', /recommends/.test(s), s);
+  s = await banners({ installed: 'v1.15.1', latest: 'v1.15.1', behind: false, install_running: { started: running.started, to: null } });
+  ok('a run of a clone that names no release is the installer running', /The installer is running\./.test(s) && !/Installing/.test(s), s);
   s = await banners({ installed: 'v1.15.0', latest: 'v1.99.0', behind: true });
   ok('once it ends, the update banner is back', /is out; this box runs/.test(s) && !/is running/.test(s), s);
   s = await banners({ installed: 'v1.15.1', stale_code: ['static/js/base.js'] });
@@ -181,7 +196,7 @@ try {
   let line = await setupLine({ installed: 'v1.15.0', latest: 'v1.99.0', behind: true });
   ok('Setup line, behind', /v1\.15\.0/.test(line) && /v1\.99\.0 is out/.test(line) && !/git pull/.test(line), line);
   line = await setupLine({ installed: 'v1.15.0', latest: 'v1.99.0', behind: true, install_running: { started: 1, to: 'v1.99.0' } });
-  ok('Setup line, an update running', /an update to v1\.99\.0 is running/.test(line) && !/command below/.test(line), line);
+  ok('Setup line, an install running', /installing v1\.99\.0/.test(line) && !/command below/.test(line), line);
   line = await setupLine({ installed: 'v1.15.1', latest: null });
   ok('Setup line, offline', /unknown/.test(line), line);
   line = await setupLine({ installed: 'v1.15.1', checked: false });

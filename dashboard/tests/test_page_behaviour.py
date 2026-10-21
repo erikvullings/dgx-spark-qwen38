@@ -2134,6 +2134,17 @@ class TheBackdropStepsAsideWhereItCannotDraw(unittest.TestCase):
         self.assertTrue({"#backdrop", "body::before"} <= {x.strip() for s in hidden for x in s.split(",")}, hidden)
 
 
+
+class DurationsRoundTheirMinutesFirst(unittest.TestCase):
+    """fmtMin, the duration of a plan (a video's estimate, a boot, the time an install has run),
+    rounded the minutes after it split the hours off: 7,170 s read "1 h 60", for 30 s of every
+    hour, and 3,599 s "60 min" (found in review, 2026-10-21)."""
+
+    def test_an_hour_is_never_sixty_minutes(self):
+        r = run(self, "report({out: [null, 45, 89, 90, 3569, 3599, 3600, 5400, 7170, 7199, 7230].map(fmtMin)});")
+        self.assertEqual(r["out"], ["?", "45 s", "89 s", "2 min", "59 min", "1 h 00", "1 h 00", "1 h 30", "2 h 00",
+                                    "2 h 00", "2 h 01"])
+
 class TheStillBackdropIsAlwaysDrawn(unittest.TestCase):
     """Under reduced motion the backdrop draws one frame. That frame went through the 8 fps
     gate, so a first frame earlier than 125 ms after the page started was skipped and never

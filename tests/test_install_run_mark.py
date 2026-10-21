@@ -24,7 +24,7 @@ import installer_wall as wall  # noqa: E402
 from test_fresh_machine import box_for_step_1, walled_with_memory  # noqa: E402
 
 REPO = pathlib.Path(__file__).resolve().parents[1]
-MARK_LINE = 'run_mark "$CONFIG_DIR"; trap forget_run_mark EXIT\n'
+MARK_LINE = '[ -n "$SECONDARY" ] || run_mark "$CONFIG_DIR"; trap forget_run_mark EXIT\n'
 FIRST = re.search(r"^## (v\d+\.\d+(?:\.\d+)?)\b", (REPO / "CHANGELOG.md").read_text(), re.M).group(1)
 
 
@@ -98,24 +98,35 @@ class TheRunMark(unittest.TestCase):
 class TheInstaller(unittest.TestCase):
     """install.sh, run as written up to a wall past its mark."""
 
-    def test_the_run_keeps_its_mark_and_takes_it_away(self):
+    def run_to_the_mark(self, **extra):
+        """(result, home): install.sh run up to a wall past its mark, the wall showing what marks
+        it finds before it exits as a die would."""
         box = box_for_step_1(docker_err="", docker_rc=0, member=True, in_session=True)
         copy = pathlib.Path(walled_with_memory(at=MARK_LINE, after=True))
         text = copy.read_text()
-        # the wall shows the mark it finds, then exits as a die would
-        copy.write_text(text.replace(f'echo "{wall.WALL}"', 'cat "$HOME"/.config/qwen38/install-running.*.json; echo; '
-                                     f'echo "{wall.WALL}"', 1))
+        copy.write_text(text.replace(f'echo "{wall.WALL}"', 'cat "$HOME"/.config/qwen38/install-running.*.json 2>/dev/null '
+                                     f'|| true; echo; echo "{wall.WALL}"', 1))
         home = wall._tmp("home-")
-        env, record = wall.fenced_env(home=home, first=str(box.bin))
+        env, record = wall.fenced_env(home=home, first=str(box.bin), **extra)
         r = subprocess.run(["bash", str(copy)], capture_output=True, text=True, env=env, cwd=wall.cwd(),
                            timeout=60, stdin=subprocess.DEVNULL, start_new_session=True)
+        self.assertIn(wall.WALL, r.stdout + r.stderr, (r.stdout + r.stderr)[-800:])
+        return r, home
+
+    def test_the_run_keeps_its_mark_and_takes_it_away(self):
+        r, home = self.run_to_the_mark()
         out = r.stdout + r.stderr
-        self.assertIn(wall.WALL, out, out[-800:])
         mark = json.loads(re.search(r'^\{"pid".*\}$', r.stdout, re.M).group(0))
         self.assertEqual(mark["to"], FIRST)
         self.assertEqual(r.returncode, 97, out[-800:])
         self.assertEqual(list((home / ".config/qwen38").glob("install-running*")), [],
                          "the run ended and its mark stayed")
+
+    def test_the_run_for_the_other_text_lane_is_part_of_its_parents(self):
+        """install.sh runs itself again for the other text lane (QWEN38_SECONDARY): a second mark
+        would be a second run, whose start the banner could take for the update's."""
+        r, home = self.run_to_the_mark(QWEN38_SECONDARY="27b")
+        self.assertNotRegex(r.stdout, r'(?m)^\{"pid"', "the run of the other lane wrote a mark of its own")
 
     def test_every_exit_trap_after_the_mark_takes_it_away(self):
         """bash keeps one EXIT trap: a later `trap ... EXIT` that forgot forget_run_mark would
@@ -146,8 +157,10 @@ class TheCockpit(unittest.TestCase):
         cls.cfg = pathlib.Path(tempfile.mkdtemp(prefix="cockpit-run-"))
         (cls.cfg / "api-key").write_text("k\n")
         cls.env = dict(os.environ)
+        # its own units directory, empty: the update state reads no unit of the box the suite runs on
         os.environ.update(COCKPIT_DRY_RUN="1", COCKPIT_CONFIG_DIR=str(cls.cfg), COCKPIT_REPO_DIR=str(REPO),
-                          COCKPIT_PORT="0", COCKPIT_AGENT_PORT="0", COCKPIT_AUTOHEAL="0", COCKPIT_UPDATE_CHECK="0")
+                          COCKPIT_PORT="0", COCKPIT_AGENT_PORT="0", COCKPIT_AUTOHEAL="0", COCKPIT_UPDATE_CHECK="0",
+                          COCKPIT_UNIT_DIR=str(cls.cfg / "units"))
         sys.path.insert(0, str(REPO / "dashboard"))
         spec = importlib.util.spec_from_file_location("cockpit_run_mark", REPO / "dashboard" / "cockpit.py")
         cls.cp = importlib.util.module_from_spec(spec)
@@ -165,7 +178,7 @@ class TheCockpit(unittest.TestCase):
 
     def mark(self, pid, start, **more):
         (self.cfg / f"install-running.{pid}.json").write_text(
-            json.dumps({"pid": pid, "start": start, "started": 1761040000, "to": "v9.8.7", **more}))
+            json.dumps({"pid": pid, "start": start, **{"started": 1761040000, "to": "v9.8.7", **more}}))
 
     def test_no_mark_no_run(self):
         self.assertIsNone(self.cp.install_running())
@@ -184,6 +197,15 @@ class TheCockpit(unittest.TestCase):
         (self.cfg / "install-running.13.json").write_text(json.dumps({"pid": "x", "start": 1}))
         (self.cfg / "install-running.14.json").write_text(json.dumps([1, 2]))
         self.assertIsNone(self.cp.install_running())
+
+    def test_of_two_runs_the_one_that_started_first(self):
+        """Two live marks: this process's and its parent's, whatever their names sort to."""
+        me, parent = os.getpid(), os.getppid()
+        self.mark(me, start_of(me), started=1761040500, to="v9.8.8")
+        self.mark(parent, start_of(parent), started=1761040000, to="v9.8.7")
+        self.assertEqual(self.cp.install_running(), {"started": 1761040000, "to": "v9.8.7"})
+        self.mark(me, start_of(me), started=1761039000, to="v9.8.8")
+        self.assertEqual(self.cp.install_running(), {"started": 1761039000, "to": "v9.8.8"})
 
     def test_the_update_state_carries_it_and_only_then(self):
         self.assertNotIn("install_running", self.cp.collect_update())
