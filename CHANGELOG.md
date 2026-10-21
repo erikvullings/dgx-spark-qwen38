@@ -1,5 +1,17 @@
 # Changelog
 
+## v1.37.6 (2026-10-21): a second ASUS Ascent GX10, set up from scratch with the one command
+
+**A second ASUS Ascent GX10, set up from scratch.** The project is developed and measured on an ASUS
+Ascent GX10. `docs/asus-gx10.md` gives what a second one measured after a fresh DGX OS, its own update
+and the one command: 97 minutes to the first token, downloads included; the 27B and Flash FP4-Local
+lanes against the reference GX10; GSM8K, MMLU and HumanEval; a prompt of 400,025 tokens answered
+exactly; a coding agent, images and a video with sound; the heat; and the three things a new box
+taught the installer (v1.37.2, v1.37.4, v1.37.5). The README links it under its speed table.
+
+**What an update does.** The cockpit restarts once, to name the release; the proxy and the engines
+keep running.
+
 ## v1.37.5 (2026-10-21): the cockpit says an install is running, and every command it asks to run has a Copy button that works over plain HTTP
 
 **An install that runs is said as one.** An update of 1 h 45 on an ASUS Ascent GX10 (v1.37.2 to
