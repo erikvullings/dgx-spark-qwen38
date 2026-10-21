@@ -383,15 +383,19 @@ docker_in_group(){  # the account is in the docker group, as its next login will
 }
 
 # docker_relaunch_ok CMD...: docker_relaunch below can start CMD again here: not done already; sg,
-# env and /proc there; the account's own group with a name (sg takes no number); the account named
-# in the docker group's own member list (sg reads that list, and an account a directory service puts
-# in the group without it is asked a group password there); and no word of CMD, of the paths of sg
-# and env, of the account's group, or of a value to hand back past sg, holding a character sg's
-# `sh -c` would read as its own.
+# env, setsid and /proc there; the account's own group with a name (sg takes no number); the account
+# named in the docker group's own member list (an account a directory service puts in the group
+# without it is asked a group password by sg); no word of CMD, of the paths of sg and env, of the
+# account's group, or of a value to hand back past sg, holding a character sg's `sh -c` would read as
+# its own; and sg going to docker without a password, tried with no terminal to ask one on. sg takes
+# the members from /etc/gshadow, which usermod writes as well: an account added to /etc/group alone,
+# by hand, is asked the group's password there, and the run ended on "Invalid password." (measured
+# with Ubuntu 24.04's login 1:4.13, 2026-10-21).
 docker_relaunch_ok(){
   local v line own
   [ -z "${QWEN38_DOCKER_RELAUNCHED:-}" ] || return 1
-  command -v sg >/dev/null 2>&1 && command -v env >/dev/null 2>&1 && [ -r "/proc/$$/environ" ] || return 1
+  command -v sg >/dev/null 2>&1 && command -v env >/dev/null 2>&1 && command -v setsid >/dev/null 2>&1 \
+    && [ -r "/proc/$$/environ" ] || return 1
   own="$(id -gn "$(id -un)" 2>/dev/null)" || return 1
   line="$(getent group docker 2>/dev/null)" || return 1
   case ",${line##*:}," in *",$(id -un),"*) ;; *) return 1 ;; esac
@@ -404,6 +408,10 @@ docker_relaunch_ok(){
         case "$v" in *[!A-Za-z0-9._/:=@+,-]*) return 1 ;; esac ;;
     esac
   done < "/proc/$$/environ"
+  # tried once: docker_relaunch asks this function again, and sg's answer holds for the run
+  [ -n "${_docker_sg_tried:-}" ] && return 0
+  setsid -w "$(command -v sg)" docker -c true < /dev/null > /dev/null 2>&1 || return 1
+  _docker_sg_tried=1
   return 0
 }
 

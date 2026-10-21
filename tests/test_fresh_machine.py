@@ -40,6 +40,7 @@ DOWN = ("failed to connect to the docker API at unix:///var/run/docker.sock; che
 DOWN_OLD = ("Cannot connect to the Docker daemon at unix:///var/run/docker.sock. "
             "Is the docker daemon running?")
 MEMINFO = "MemTotal:       127541200 kB\nMemAvailable:   121000000 kB\n"
+PROBE = "sg [docker] [-c] [true]"  # docker_relaunch_ok's try of sg, as the stand-in records it
 
 
 class Box:
@@ -50,12 +51,15 @@ class Box:
     and a granted usermod adds it there. `id -gn` alone answers docker, as in a shell after
     `newgrp docker`; asked about alice, it answers her own group. sudo and sg print a marker on
     stdout when they run, so that the order of what was said around them can be read. sg records its
-    argv and the environment it got, then exits 0: a relaunch ends the run there."""
+    argv, the environment it got and whether a terminal could ask through it, then exits 0: a relaunch
+    ends the run there. `sg_asks` makes it ask the group's password instead, and fail, as the real one
+    does for an account added to /etc/group alone."""
 
     def __init__(self, docker_err=DENIED, docker_rc=1, member=False, in_session=False,
                  sock_group="docker", sudo_n=1, usermod_rc=0, usermod_adds=True,
                  apt_rcs=(0,), docker_group=True, with_sg=True, sudo_refuses_env=False,
-                 listed=True, apt_err="", apt_err_fr="", group_nameless=False):
+                 listed=True, apt_err="", apt_err_fr="", group_nameless=False, sg_asks=False,
+                 with_setsid=True):
         self.d = wall._tmp("fresh-")
         self.bin = self.d / "bin"
         self.bin.mkdir()
@@ -64,7 +68,7 @@ class Box:
         self.tools = self.d / "tools"
         self.tools.mkdir()
         for t in ("cat", "head", "sed", "basename", "dirname", "tr", "cut", "awk", "printenv", "grep", "xargs",
-                  "mktemp", "rm"):
+                  "mktemp", "rm") + (("setsid",) if with_setsid else ()):
             (self.tools / t).symlink_to(shutil.which(t))
         self.calls = self.d / "calls"
         self.calls.touch()
@@ -111,7 +115,12 @@ class Box:
         }
         if with_sg:
             stubs["sg"] = (f'{{ printf "sg"; printf " [%s]" "$@"; echo; }} >> "{self.calls}"\n'
-                           f'echo "[sg]"\n{shutil.which("env")} > "{self.d}/sg.env"\nexit 0\n')
+                           # a terminal it could ask a password through, or none, and its input
+                           'if { : > /dev/tty; } 2>/dev/null; then t=tty; else t=none; fi\n'
+                           'if [ -t 0 ]; then i=tty; else i=none; fi\n'
+                           f'echo "$*: $t, stdin $i" >> "{self.d}/sg.tty"\n'
+                           + ('echo "Password: Invalid password." >&2\nexit 1\n' if sg_asks else
+                              f'echo "[sg]"\n{shutil.which("env")} > "{self.d}/sg.env"\nexit 0\n'))
         for name, body in stubs.items():
             f = self.bin / name
             f.write_text("#!/bin/bash\n" + body)
@@ -134,11 +143,31 @@ class Box:
                            start_new_session=True)
         return r.returncode, r.stdout, r.stderr
 
+    def bash_in_terminal(self, body, **extra):
+        """body as bash() runs it, in a terminal of its own (script), as an install from one runs; its
+        stdout and stderr are the terminal's one output."""
+        f = self.d / "body.sh"
+        f.write_text("set -euo pipefail\n"
+                     "die(){ printf 'ERROR: %s\\n' \"$*\" >&2; exit 1; }\n"
+                     f". '{LANES}'\n" + body)
+        r = subprocess.run([shutil.which("script"), "-qec", f"/bin/bash {f}", "/dev/null"],
+                           capture_output=True, text=True, timeout=60, env=self.env(**extra),
+                           stdin=subprocess.DEVNULL, cwd=str(self.d), start_new_session=True)
+        return r.returncode, r.stdout.replace("\r", "")
+
     def called(self):
         return self.calls.read_text().splitlines()
 
     def sg_calls(self):
-        return [c for c in self.called() if c.startswith("sg ")]
+        """The relaunches: every sg call but docker_relaunch_ok's try."""
+        return [c for c in self.called() if c.startswith("sg ") and c != PROBE]
+
+    def sg_probes(self):
+        return [c for c in self.called() if c == PROBE]
+
+    def sg_ttys(self):
+        p = self.d / "sg.tty"
+        return p.read_text().splitlines() if p.exists() else []
 
     def env_calls(self):
         return [c for c in self.called() if c.startswith("env ")]
@@ -170,6 +199,7 @@ class TheDockerGroup(unittest.TestCase):
         self.assertEqual(rc, 0, err)
         self.assertNotIn("CONTINUED", out, "the run went on without the group")
         self.assertIn("sudo usermod -aG docker alice", box.sudo_calls())
+        self.assertEqual(box.sg_probes(), [PROBE], "sg is tried once, whoever asks again")
         # said, with why, before sudo runs: on the one stream, the lines come before its marker
         self.assertLess(out.index("is not in the docker group"), out.index("[sudo usermod]"))
         self.assertLess(out.index("which makes it root on this machine"), out.index("[sudo usermod]"))
@@ -296,6 +326,16 @@ class TheDockerGroup(unittest.TestCase):
         self.assertNotIn("this run goes on with it", out)
         self.assertFalse(box.sg_calls())
 
+    def test_added_and_asked_a_password_by_sg_is_told_the_way_out(self):
+        box = Box(sg_asks=True)
+        rc, out, err = box.bash(GRANT)
+        self.assertEqual(rc, 1)
+        self.assertIn("[sudo usermod]", out)
+        self.assertIn("is in the docker group now, and this run cannot start again with it here", err)
+        self.assertNotIn("this run goes on with it", out)
+        self.assertEqual(box.sg_probes(), [PROBE])
+        self.assertFalse(box.sg_calls())
+
     def test_an_account_whose_own_group_has_no_name_is_told_the_way_out(self):
         # id answers a number and fails: sg takes no number, and the run may not end without a word
         box = Box(group_nameless=True)
@@ -386,10 +426,40 @@ class ATerminalOlderThanTheGroup(unittest.TestCase):
         rc, out, err = box.bash(SESSION)
         self.assertEqual(rc, 0, err)
         self.assertNotIn("CONTINUED", out)
+        self.assertEqual(box.sg_probes(), [PROBE], "sg is tried once, whoever asks again")
         sg, = box.sg_calls()
         self.assertRegex(sg, r"/sg alice -c 'exec \S+/env bash /opt/q/switch-model\.sh flash'\]$")
         self.assertFalse(box.sudo_calls() + [c for c in box.called() if c.startswith("docker")],
                          "the session's relaunch needs neither sudo nor docker")
+
+    def test_a_member_sg_would_ask_a_password_of_is_told_the_way_out(self):
+        # added to /etc/group alone, by hand: sg takes the members from /etc/gshadow and asks the
+        # group's password, and the run ended on "Invalid password."; the try says it first
+        box = Box(member=True, sg_asks=True)
+        rc, out, err = box.bash(SESSION)
+        self.assertEqual(rc, 1)
+        self.assertIn("this run cannot start again with it here. Log out and back in", err)
+        self.assertNotIn("going on with the group", out)
+        self.assertEqual(box.sg_probes(), [PROBE])
+        self.assertFalse(box.sg_calls())
+
+    def test_the_try_has_no_terminal_to_ask_a_password_on(self):
+        # from a terminal, as an install runs: the try away from it (setsid) and from its input
+        # (an sg that read a password from stdin without a terminal would wait there, its prompt
+        # thrown away), the relaunch in it, once
+        box = Box(member=True)
+        rc, out = box.bash_in_terminal(SESSION)
+        self.assertEqual(rc, 0, out)
+        try_, relaunch = box.sg_ttys()
+        self.assertEqual(try_, "docker -c true: none, stdin none")
+        self.assertRegex(relaunch, r"^docker -c exec \S+/sg alice -c .*: tty, stdin tty$")
+
+    def test_no_setsid_on_the_box_is_told_the_way_out(self):
+        box = Box(member=True, with_setsid=False)
+        rc, out, err = box.bash(SESSION)
+        self.assertEqual(rc, 1)
+        self.assertIn("this run cannot start again with it here. Log out and back in", err)
+        self.assertFalse(box.sg_probes() + box.sg_calls())
 
     def test_no_docker_group_on_the_box_is_nothing_to_do_here(self):
         # a box whose Docker came without its group: no account is in it, nothing to relaunch
