@@ -532,13 +532,14 @@ first published on PyPI 2026-09-12) that the image does not ship, and dies with 
 `human_eval` package that is not there either, and once that is mounted from the official
 tree it dies inside `os.fork`, because the image's filelock (3.32.5) installs an audit
 hook that refuses one. Both failures logged an empty score, which reads exactly like a
-model that scored nothing. So MMLU here drives the `MMLUEval` class still vendored in the
-image, against the same `openaipublic` dataset the old path used, and HumanEval runs the
-official openai/human-eval tree (pinned at `6d43fb98`) with the multiprocessing start
-method set to `spawn`, one sample per task instead of the harness default of five (at
-temperature 0 those five are the same answer five times). GSM8K needed none of this: its
-path in the image still runs in process. Both drivers are ~50 lines and live in `evals/`
-(`mmlu.py`, `humaneval.py`); the two quirks above are what they exist for.
+model that scored nothing. So MMLU here drove the `MMLUEval` class the image then carried
+(SGLang has since removed it, and `evals/mmlu.py` carries it itself), against the same
+`openaipublic` dataset the old path used, and HumanEval runs the official
+openai/human-eval tree (pinned at `6d43fb98`) with the multiprocessing start method set to
+`spawn`, one sample per task instead of the harness default of five (at temperature 0
+those five would mostly repeat one answer). GSM8K needed none of this: its path in the
+image still runs in process. Both drivers live in `evals/` (`mmlu.py`, `humaneval.py`);
+the two quirks above are what they exist for.
 
 So the lane keeps `flash` as its default. Not because the other one is worse,
 which nothing here shows, but because the only measurement outside the noise

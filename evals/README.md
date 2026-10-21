@@ -16,8 +16,10 @@ model that scored nothing. That is how this repo's first two runs were lost
 (2026-09-18). GSM8K needs none of this: its path in the image still runs in process,
 so `run_eval --eval-name gsm8k` is fine.
 
-`mmlu.py` drives the `MMLUEval` class still vendored in the image, against the same
-`openaipublic` dataset the old path used. `humaneval.py` runs the official
+`mmlu.py` carries the `MMLUEval` class SGLang shipped through v0.5.20 and then removed
+(sgl-project/sglang#41215), under its licenses (`LICENSE-SGLANG`, `LICENSE-SIMPLE-EVALS`),
+and drives it against the same `openaipublic` dataset the old path used, the same questions
+drawn with the same seed. `humaneval.py` runs the official
 openai/human-eval tree with the multiprocessing start method set to `spawn`, and one
 sample per task instead of the harness default of five: at temperature 0 those five
 would mostly repeat one answer, not always (this engine is not batch-invariant: LEAN.md

@@ -11,11 +11,19 @@ lost on 2026-09-18.
 
 So three things have to stay true, and none of them is visible from reading a
 score: the drivers print a line a caller can grep, HumanEval never forks and
-asks for one sample per task (at temperature 0 the harness default of five is
-the same answer five times), and MMLU pulls the dataset the published numbers
+asks for one sample per task (at temperature 0 the harness default of five would
+mostly repeat one answer), and MMLU pulls the dataset the published numbers
 were measured against. A stub `sglang` on the path lets all three be checked
 here, with no image, no network and no engine.
+
+The stub tree is laid out as the pinned images are: `simple_eval_common` and
+`simple_eval_humaneval`, and no `simple_eval_mmlu`, which SGLang removed
+(sgl-project/sglang#41215) after the MMLU driver was written against it. A stub
+of that module kept these tests green while the driver died on its import in
+both pinned images (found 2026-10-20): the class now lives in the driver, and a
+stub pandas hands it a small dataset.
 """
+import random
 import json
 import os
 import pathlib
@@ -37,26 +45,90 @@ class ChatCompletionSampler:
         self.kw = kw
         with open(os.environ["STUB_SAMPLER_LOG"], "w") as f:
             json.dump(kw, f, default=str)
+
+    def _pack_message(self, content, role):
+        return {"content": content, "role": role}
+
+    def __call__(self, messages):
+        # answers A, and keeps what it was asked, in order
+        with open(os.environ["STUB_ASKED"], "a") as f:
+            f.write(messages[0]["content"] + "\\n")
+        return "Answer: A"
+
+
+# simple-evals' own pattern and the result types the MMLU class reads
+ANSWER_PATTERN_MULTICHOICE = r"(?i)Answer[ \\t]*:[ \\t]*([A-D])"
+HTML_JINJA = ""
+SamplerBase = object
+
+
+class Eval:
+    pass
+
+
+class EvalResult:
+    def __init__(self, score, metrics):
+        self.score, self.metrics = score, metrics
+
+
+class SingleEvalResult:
+    def __init__(self, html, score, metrics, convo):
+        self.score, self.metrics = score, metrics
+
+
+def format_multichoice_question(row):
+    return row["Question"]
+
+
+class _Template:
+    def render(self, **kw):
+        return ""
+
+
+class _Env:
+    def from_string(self, text):
+        return _Template()
+
+
+jinja_env = _Env()
+
+
+def map_with_progress(fn, xs, num_threads):
+    call = json.load(open(os.environ["STUB_LOG"]))
+    call.update(num_examples=len(xs), num_threads=num_threads)
+    json.dump(call, open(os.environ["STUB_LOG"], "w"))
+    return [fn(x) for x in xs]
+
+
+def aggregate_results(results):
+    return EvalResult(sum(r.score for r in results) / len(results), {})
 '''
 
-STUB_MMLU = '''
+# MMLU's dataset as the class reads it: forty questions of four subjects, every
+# other one answered A
+STUB_PANDAS = '''
 import json, os
 
-
-class _Result:
-    score = 0.5
-    metrics = {"stem": 0.5}
+ROWS = [{"Question": "q%d" % i, "Answer": "AB"[i % 2],
+         "Subject": ["anatomy", "astronomy", "philosophy", "sociology"][i % 4]} for i in range(40)]
 
 
-class MMLUEval:
-    def __init__(self, filename, num_examples, num_threads):
-        with open(os.environ["STUB_LOG"], "w") as f:
-            json.dump({"filename": filename, "num_examples": num_examples,
-                       "num_threads": num_threads}, f)
+class _Row(dict):
+    def to_dict(self):
+        return dict(self)
 
-    def __call__(self, sampler):
-        return _Result()
+
+class _Frame:
+    def iterrows(self):
+        return enumerate(_Row(r) for r in ROWS)
+
+
+def read_csv(filename, **kw):
+    json.dump({"filename": filename}, open(os.environ["STUB_LOG"], "w"))
+    return _Frame()
 '''
+ROWS = [{"Question": "q%d" % i, "Answer": "AB"[i % 2],
+         "Subject": ["anatomy", "astronomy", "philosophy", "sociology"][i % 4]} for i in range(40)]
 
 STUB_HUMANEVAL = '''
 import json, multiprocessing, os
@@ -89,24 +161,34 @@ class EvalDrivers(unittest.TestCase):
         (self.tmp / "sglang" / "__init__.py").write_text("")
         (pkg / "__init__.py").write_text("")
         (pkg / "simple_eval_common.py").write_text(STUB_COMMON)
-        (pkg / "simple_eval_mmlu.py").write_text(STUB_MMLU)
         (pkg / "simple_eval_humaneval.py").write_text(STUB_HUMANEVAL)
+        (self.tmp / "pandas.py").write_text(STUB_PANDAS)
         self.log = self.tmp / "call.json"
         self.sampler_log = self.tmp / "sampler.json"
+        self.asked = self.tmp / "asked.txt"
 
     def run_driver(self, name, *args):
         r = subprocess.run([sys.executable, str(EVALS / name), *args],
                            capture_output=True, text=True, timeout=120,
                            env=dict(os.environ, PYTHONPATH=str(self.tmp),
                                     STUB_LOG=str(self.log), STUB_SAMPLER_LOG=str(self.sampler_log),
-                                    OPENAI_API_KEY="k"))
+                                    STUB_ASKED=str(self.asked), OPENAI_API_KEY="k"))
         self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
         return r.stdout, json.loads(self.log.read_text())
 
     def test_mmlu_prints_a_score_a_caller_can_grep(self):
-        """Every caller of these drivers reads one line: `'score': <value>`."""
+        """Every caller of these drivers reads one line: `'score': <value>`, here the share of
+        the questions asked whose answer is A, the stub sampler's."""
         out, _ = self.run_driver("mmlu.py", "m", "7", "3")
-        self.assertIn("'score': 0.5", out)
+        drawn = random.Random(0).sample(ROWS, 7)
+        self.assertIn(f"'score': {sum(r['Answer'] == 'A' for r in drawn) / 7}", out)
+
+    def test_mmlu_asks_the_questions_the_published_numbers_were_asked(self):
+        """The questions SGLang's class drew, with its seed and in its order: another draw is
+        another 500 questions behind the same name."""
+        self.run_driver("mmlu.py", "m", "7", "3")
+        self.assertEqual(self.asked.read_text().split(),
+                         [r["Question"] for r in random.Random(0).sample(ROWS, 7)])
 
     def test_mmlu_asks_for_the_dataset_the_numbers_were_measured_against(self):
         """A different CSV is a different benchmark wearing the same name."""
@@ -173,7 +255,7 @@ class TheReadme(unittest.TestCase):
         driver and this README said the five were the same answer (found in review,
         2026-09-24)."""
         self.assertIn("two distinct outputs", (REPO / "LEAN.md").read_text())
-        for f in ("evals/humaneval.py", "evals/README.md"):
+        for f in ("evals/humaneval.py", "evals/README.md", "BENCHMARKS.md"):
             text = " ".join((REPO / f).read_text().split())
             self.assertNotIn("five are the same answer", text, f)
             self.assertNotIn("the same answer five times", text, f)
