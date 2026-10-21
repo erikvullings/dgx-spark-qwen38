@@ -5,8 +5,8 @@ Requires=docker.service
 # One engine at a time on this box, said to systemd: starting this lane stops the others
 # and starting another stops this one, the stop finishing before the start in both
 # directions (Conflicts= alone orders nothing, hence After= on the same units).
-Conflicts=qwen38-sglang.service qwen38-flash.service qwen38-image.service qwen38-video.service qwen38-kolibri.service qwen38-nemotron.service qwen38-flash-local.service
-After=network-online.target docker.service qwen38-sglang.service qwen38-flash.service qwen38-image.service qwen38-video.service qwen38-kolibri.service qwen38-nemotron.service qwen38-flash-local.service
+Conflicts=qwen38-sglang.service qwen38-flash.service qwen38-image.service qwen38-video.service qwen38-kolibri.service qwen38-nemotron.service qwen38-flash-local.service qwen38-ornith-122b.service
+After=network-online.target docker.service qwen38-sglang.service qwen38-flash.service qwen38-image.service qwen38-video.service qwen38-kolibri.service qwen38-nemotron.service qwen38-flash-local.service qwen38-ornith-122b.service
 
 [Service]
 Type=simple

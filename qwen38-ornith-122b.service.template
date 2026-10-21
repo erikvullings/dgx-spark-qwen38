@@ -1,0 +1,115 @@
+[Unit]
+Description=Ornith 1.5 122B NVFP4 (ornith-ai, vLLM b12x), OpenAI+Anthropic API :__PORT__
+Wants=network-online.target
+Requires=docker.service
+# One engine at a time on this box, said to systemd: starting this lane stops the others
+# and starting another stops this one, the stop finishing before the start in both
+# directions (Conflicts= alone orders nothing, hence After= on the same units).
+Conflicts=qwen38-sglang.service qwen38-flash.service qwen38-image.service qwen38-video.service qwen38-kolibri.service qwen38-nemotron.service qwen38-nemotron-super.service qwen38-flash-local.service
+After=network-online.target docker.service qwen38-sglang.service qwen38-flash.service qwen38-image.service qwen38-video.service qwen38-kolibri.service qwen38-nemotron.service qwen38-nemotron-super.service qwen38-flash-local.service
+
+[Service]
+Type=simple
+User=__USER__
+Group=__GROUP__
+ExecStartPre=-/usr/bin/docker rm -f qwen38-ornith-122b
+# The memory the last engine held has to be back before this one starts (see engine-preflight.sh).
+ExecStartPre=/bin/bash __HOME__/.config/qwen38/engine-preflight.sh qwen38-ornith-122b.service
+# Ornith 1.5 122B (ornith-ai, MIT), a mixture of experts of the Qwen3.5 family with vision, in the
+# NVFP4 build its authors published: the experts and the output head in NVFP4 read as W4A16, the
+# attention and linear-attention projections in FP8, the MTP layer unquantized. Served by the
+# Flash FP4-Local lane's image (the community b12x vLLM build NVIDIA's card names for a DGX Spark),
+# which reads this mixed precision (modelopt_mixed) with the same b12x kernels and loader: the
+# KV cache in FP8, a window of 1,048,576 tokens (below), MTP drafting __SPEC_TOKENS__ tokens,
+# __SEQS__ requests at a time, a memory share of __GMU__, prefix caching with the Mamba states aligned
+# to it (an agent's next turn starts from the cache), the reasoning and tool parsers of the Qwen
+# family, and the chat template of the checkpoint as published. docs/ornith-lane.md says what was
+# measured, and why these settings.
+# Not the Flash FP4-Local lane's GDN kernel (--gdn-decode-kernel b12x): it wants 3 value heads to
+# each key head in the linear attention, and Ornith has 64 to 16; vLLM's own choice (FlashInfer on
+# this GPU) serves it.
+# The window: the model's own 262,144 tokens stretched four times with YaRN, as its model card does,
+# but in the one form this vLLM reads. The card's --hf-overrides '{"rope_scaling": ...}' sets a field
+# at the top of the config while the layers read text_config.rope_parameters, and changed no
+# probability (measured on the reference box, 2026-10-21): the seven --hf-overrides below write
+# text_config.rope_parameters whole, the checkpoint's own values (MRoPE sections, the quarter of
+# each head that rotates, theta) with YaRN added, and vLLM gives the MTP head the same. It costs
+# short texts 0.4 % of perplexity (KL 0.027 nats per token against the native window, the engine's
+# own noise 0.014), and GSM8K and a code hidden at 900,055 tokens held (docs/ornith-lane.md).
+# VLLM_ALLOW_LONG_MAX_MODEL_LEN: vLLM derives the window from max_position_embeddings without
+# reading that YaRN, and refuses a longer one otherwise. The KV cache is fixed at __KV_BYTES__ bytes
+# (17 GiB, 1,301,680 tokens: the window 1.24 times over), where a share of the memory gave from
+# 829,030 to 1,149,938 tokens from one boot to the next, less than the window at some.
+# PYTORCH_CUDA_ALLOC_CONF: the Flash FP4-Local lane's, for the same loader (its unit says why).
+# --security-opt seccomp=seccomp-io-uring.json: b12x's loader reads the checkpoint over io_uring,
+# whose three calls Docker's default seccomp profile refuses ("io_uring bounce initialization
+# failed: Operation not permitted", measured on the reference box, 2026-10-21): Docker's own default
+# profile plus those three calls and nothing else, the Flash FP4-Local lane's file.
+# Its own caches, so that a boot after the first builds nothing again: vLLM's compile cache and its
+# AOT artifacts, FlashInfer's and Triton's kernels, and b12x's kernel choices, made at its first boot.
+# PYTHONDONTWRITEBYTECODE and HF_MODULES_CACHE: nothing root-owned lands in the user's HF cache.
+# The sampling defaults (temperature 0.6, top_k 20, top_p 0.95) are the checkpoint's
+# generation_config.json, which vLLM applies to any request that does not set them.
+# VLLM_NO_USAGE_STATS and DO_NOT_TRACK: vLLM reports anonymous usage to its authors by default; a
+# box that serves its owner's data sends nothing anywhere.
+# Of the config directory, the one file the engine reads, read-only, and nothing else: its key. The
+# image is a community build, and the directory holds the cockpit's own secret and the other
+# services' keys, which a read-only mount still shows (the Flash FP4-Local lane's rule). --mount, not
+# -v: a source that is not there fails the start, where -v made a directory in its place, owned by root.
+# vllm_engine_auth.RequireKey asks the key on every route but /health and /metrics, as on the
+# other lanes. No --api-key and no --config: this build would put /metrics behind the key, which
+# the cockpit and the proxy read without one, and the middleware already asks it everywhere else.
+# Media only inside the request: no local file and no URL fetched (the one domain allowed does not exist).
+ExecStart=/bin/bash -c 'exec /usr/bin/docker run --rm --name qwen38-ornith-122b --gpus all \
+  --memory 110g --memory-swap 110g --shm-size 16g --network host --ipc=host \
+  --ulimit memlock=-1 --ulimit stack=67108864 \
+  --security-opt seccomp=__HOME__/.config/qwen38/seccomp-io-uring.json \
+  -e HF_HUB_OFFLINE=1 -e VLLM_NO_USAGE_STATS=1 -e DO_NOT_TRACK=1 \
+  -e PYTHONDONTWRITEBYTECODE=1 -e HF_MODULES_CACHE=/tmp/hf-modules \
+  -e PYTHONPATH=/opt/qwen38-auth -e QWEN38_KEY_FILE=/out/api-key \
+  -e CUTE_DSL_ARCH=sm_121a -e SAFETENSORS_FAST_GPU=1 \
+  -e VLLM_WORKER_MULTIPROC_METHOD=spawn -e VLLM_SSM_CONV_STATE_LAYOUT=DS \
+  -e VLLM_ALLOW_LONG_MAX_MODEL_LEN=1 \
+  -e VLLM_USE_AOT_COMPILE=1 -e VLLM_USE_MEGA_AOT_ARTIFACT=1 \
+  -e VLLM_USE_V2_MODEL_RUNNER=1 -e B12X_POLICY_MODE=auto \
+  -e VLLM_B12X_MOE_FP4_LAYER_MAX_INPUT_SCALE=w13 \
+  -e VLLM_B12X_MOE_FP4_FORCE_A16=1 -e B12X_W4A16_A4_PREFILL=1 \
+  -e PYTORCH_CUDA_ALLOC_CONF=per_process_memory_fraction:0.95,garbage_collection_threshold:0.8 \
+  -v __HOME__/.config/qwen38/ornith-122b-cache/vllm:/root/.cache/vllm \
+  -v __HOME__/.config/qwen38/ornith-122b-cache/flashinfer:/root/.cache/flashinfer \
+  -v __HOME__/.config/qwen38/ornith-122b-cache/b12x:/root/.cache/b12x \
+  -v __HOME__/.config/qwen38/ornith-122b-cache/triton:/root/.triton \
+  -v __HF_CACHE__:/root/.cache/huggingface \
+  --mount type=bind,source=__HOME__/.config/qwen38/api-key,target=/out/api-key,readonly \
+  -v __HOME__/.config/qwen38/vllm-auth:/opt/qwen38-auth:ro \
+  __IMAGE__ \
+  vllm serve __MODEL__ --revision __REV__ \
+    --served-model-name ornith-1.5-122b \
+    --quantization modelopt_mixed --load-format b12x \
+    --dtype bfloat16 --kv-cache-dtype fp8 --block-size 16 \
+    --mamba-cache-mode align --enable-prefix-caching --enable-chunked-prefill \
+    --max-model-len 1048576 --max-num-seqs __SEQS__ --max-num-batched-tokens 4096 \
+    --gpu-memory-utilization __GMU__ --kv-cache-memory-bytes __KV_BYTES__ \
+    --hf-overrides.text_config.rope_parameters.mrope_interleaved true \
+    --hf-overrides.text_config.rope_parameters.mrope_section "[11,11,10]" \
+    --hf-overrides.text_config.rope_parameters.partial_rotary_factor 0.25 \
+    --hf-overrides.text_config.rope_parameters.rope_theta 10000000 \
+    --hf-overrides.text_config.rope_parameters.rope_type yarn \
+    --hf-overrides.text_config.rope_parameters.factor 4.0 \
+    --hf-overrides.text_config.rope_parameters.original_max_position_embeddings 262144 \
+    --speculative-config.method mtp --speculative-config.num_speculative_tokens __SPEC_TOKENS__ \
+    --linear-backend b12x --moe-backend b12x \
+    --no-enable-flashinfer-autotune --mm-encoder-tp-mode data \
+    --compilation-config.pass_config.fuse_act_quant true \
+    --reasoning-parser qwen3 --tool-call-parser qwen3_xml --enable-auto-tool-choice \
+    --allowed-media-domains media.invalid \
+    --middleware vllm_engine_auth.RequireKey \
+    --host __ENGINE_BIND__ --port __PORT__'
+ExecStop=-/usr/bin/docker stop -t 20 qwen38-ornith-122b
+Restart=always
+# docker stops vLLM with SIGTERM (143) or SIGKILL (137) on a plain stop: a clean stop, not a failure
+SuccessExitStatus=137 143
+RestartSec=15
+
+[Install]
+WantedBy=multi-user.target

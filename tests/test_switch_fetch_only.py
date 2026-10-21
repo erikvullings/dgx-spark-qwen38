@@ -186,11 +186,11 @@ class FetchOnly(unittest.TestCase):
         self.assertEqual((runs, calls), ([], []))
 
     def test_every_lane_stops_right_after_its_own_download(self):
-        # the six branches that fetch (Kolibri, Nemotron, Flash FP4-Local, image, video, the text lanes): each
+        # the seven branches that fetch (Kolibri, Nemotron, Flash FP4-Local, Ornith, image, video, the text lanes): each
         # one's fetch command is followed at once by the --fetch stop, before anything it writes;
         # the Nemotron lane's loop over its model and its drafter ends first, with nothing else in it
         calls = [m.start() for m in re.finditer(r"ckpt-fetch\.py\"? \"\$", SWITCH)]
-        self.assertEqual(len(calls), 6)
+        self.assertEqual(len(calls), 7)
         for at in calls:
             rest = SWITCH[at:]
             die = rest.index("|| die ")

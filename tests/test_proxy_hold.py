@@ -581,7 +581,7 @@ class WhereItIsSwitchedOn(unittest.TestCase):
         the Flash FP4-Local lane."""
         tpl = (HERE.parents[1] / "qwen38-keepalive.service.template").read_text()
         self.assertIn(f'Environment="PROXY_HOLD_UNITS={UNITS} qwen38-kolibri.service qwen38-nemotron.service '
-                      f'qwen38-nemotron-super.service qwen38-flash-local.service"\n', tpl)
+                      f'qwen38-nemotron-super.service qwen38-flash-local.service qwen38-ornith-122b.service"\n', tpl)
 
     def test_its_startup_line_says_what_it_holds(self):
         box = Box(self)

@@ -484,27 +484,31 @@ TRANSITIONAL = BUSY_STATES - {"ready", "degraded", "orphan", "wedged"}
 # docs/video-lane.md), for the same reason. So is the Kolibri lane: 73.6 GiB of weights
 # (42.8 for its NVFP4 variant) and a KV cache beside them; the Nemotron lane, 24.1 GiB of
 # weights and a KV cache set by its memory share, 85 GiB in all; the Nemotron Super lane,
-# 70 GiB of weights, 91 in all at its share; and the Flash FP4-Local lane, 70 GiB of weights
-# and the rest of its share, 97 GiB, in KV cache.
+# 70 GiB of weights, 91 in all at its share; the Flash FP4-Local lane, 70 GiB of weights and the
+# rest of its share, 97 GiB, in KV cache; and the Ornith 1.5 122B lane, 72.6 GiB of weights at a
+# share of 97 GiB too.
 ENGINE_UNITS = ("qwen38-sglang.service", "qwen38-flash.service",
                 "qwen38-image.service", "qwen38-video.service", "qwen38-kolibri.service",
-                "qwen38-nemotron.service", "qwen38-nemotron-super.service", "qwen38-flash-local.service")
+                "qwen38-nemotron.service", "qwen38-nemotron-super.service", "qwen38-flash-local.service",
+                "qwen38-ornith-122b.service")
 IMAGE_UNIT = "qwen38-image.service"
 VIDEO_UNIT = "qwen38-video.service"
 KOLIBRI_UNIT = "qwen38-kolibri.service"
 NEMOTRON_UNIT = "qwen38-nemotron.service"
 NEMOTRON_SUPER_UNIT = "qwen38-nemotron-super.service"
 FLASH_LOCAL_UNIT = "qwen38-flash-local.service"
+ORNITH_UNIT = "qwen38-ornith-122b.service"
 # The SGLang engines that serve text on ENGINE_BASE. Every probe, guard and belt that talks
 # to that port (the generation canary, the pool guard, the wedge autoheal) is about these
 # and only these: with a diffusion lane serving, :30000 is closed, and asking "is an
 # engine ready" instead sent the canary a chat completion to a dead port every 90 s. The
 # Kolibri lane serves text on that port too, from vLLM, which none of those belts know
 # (its routes, its log and its model names are not SGLang's): the cockpit follows it on
-# its own facts, as it does the image and the video lanes. So do the Nemotron lanes and the Flash
-# FP4-Local lane, vLLM too.
+# its own facts, as it does the image and the video lanes. So do the Nemotron lanes, the Flash
+# FP4-Local lane and the Ornith lane, vLLM too.
 TEXT_UNITS = tuple(u for u in ENGINE_UNITS
-                   if u not in (IMAGE_UNIT, VIDEO_UNIT, KOLIBRI_UNIT, NEMOTRON_UNIT, NEMOTRON_SUPER_UNIT, FLASH_LOCAL_UNIT))
+                   if u not in (IMAGE_UNIT, VIDEO_UNIT, KOLIBRI_UNIT, NEMOTRON_UNIT, NEMOTRON_SUPER_UNIT, FLASH_LOCAL_UNIT,
+                                ORNITH_UNIT))
 
 
 def blocked_reasons(action: str, params: dict, states: dict) -> list[str]:
@@ -1039,7 +1043,7 @@ def guard_verdict(zombies: dict, guard: dict, override_env: bool | None) -> tupl
 LANE_PROVIDER = {"qwen38-sglang.service": "qwen38", "qwen38-flash.service": "flashnext",
                  "qwen38-kolibri.service": "kolibri", "qwen38-nemotron.service": "nemotron",
                  "qwen38-nemotron-super.service": "nemotron-super",
-                 "qwen38-flash-local.service": "flash-local"}
+                 "qwen38-flash-local.service": "flash-local", "qwen38-ornith-122b.service": "ornith-122b"}
 
 
 def opencode_default_follows(default_model, states: dict) -> tuple:

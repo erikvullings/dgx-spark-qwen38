@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Every list of the lanes names them all.
 
-Eight engine lanes share the box, one at a time, and each script that stops, starts, lists or
+Nine engine lanes share the box, one at a time, and each script that stops, starts, lists or
 removes them carries its own list of them: some thirty lists in a dozen files, shell, Python and the
 page's JavaScript. A lane added and forgotten in one of them was a box left with no engine: the image
 and video installers' lists did not name the eighth lane (found in review, 2026-10-20). The lanes are
@@ -11,7 +11,7 @@ read from what it is about: the lanes that keep a lane-before link, the units co
 the lanes whose unit mounts the Hugging Face cache, the lanes that are not SGLang's text lanes, and
 the vLLM lanes that run b12x. A list names a lane by its unit, with or without ".service", or by the constant that holds it
 (FLASH_LOCAL_UNIT, lc.KOLIBRI_UNIT): read by units alone, the lists made of names were never checked
-(found in review, 2026-10-20). A ninth lane added to the templates and missed in one list fails here,
+(found in review, 2026-10-20). A tenth lane added to the templates and missed in one list fails here,
 with the file and the line, and so does a list that lost a lane, unless what it kept is itself a
 family: a list of the other lanes in the image installer that lost the video lane is the text
 lanes, which the same file lists for good (found in review, 2026-10-20). Telling those apart takes
@@ -62,7 +62,8 @@ HF_UNITS = {("qwen38-flash.service" if t.name == "qwen38-flash-launch.sh.templat
 # switch-model.sh's targets, by the lane each block switches to
 CHOICE_LANE = {"kolibri": "qwen38-kolibri.service", "kolibri-nvfp4": "qwen38-kolibri.service",
                "nemotron": "qwen38-nemotron.service", "nemotron-super": "qwen38-nemotron-super.service",
-               "flash-local": "qwen38-flash-local.service", "image": "qwen38-image.service",
+               "flash-local": "qwen38-flash-local.service", "ornith-122b": "qwen38-ornith-122b.service",
+               "image": "qwen38-image.service",
                "image-turbo": "qwen38-image.service", "video": "qwen38-video.service"}
 
 
@@ -98,7 +99,7 @@ def whole(named: set, own: set, name=None) -> bool:
 
 def missing(named: set, name=None, own=frozenset()) -> list:
     """What a list that is not whole misses: of its family when its name says one, else of the
-    smallest family it falls short of (the vLLM lanes for one that lost Kolibri, not all eight),
+    smallest family it falls short of (the vLLM lanes for one that lost Kolibri, not all nine),
     all but its own lane counted among them: a list of the other lanes that lost one named its
     own lane too, which it must leave out (found in review, 2026-10-20)."""
     named = named & ENGINE
@@ -290,13 +291,14 @@ def js_literals(text: str):
 
 class TheLanesAreWhatTheTemplatesSay(unittest.TestCase):
     def test_the_lanes_and_their_families_are_found(self):
-        self.assertGreaterEqual(len(ENGINE), 8, ENGINE)
+        self.assertGreaterEqual(len(ENGINE), 9, ENGINE)
         for family in (LANE_BEFORE, CONFORMITY, HF_UNITS):
             self.assertGreaterEqual(len(family), 3, family)
             self.assertTrue(family < ENGINE, family)
         self.assertTrue(DIFFUSION <= ENGINE)
         self.assertEqual(VLLM, {"qwen38-kolibri.service", "qwen38-nemotron.service",
-                                "qwen38-nemotron-super.service", "qwen38-flash-local.service"})
+                                "qwen38-nemotron-super.service", "qwen38-flash-local.service",
+                                "qwen38-ornith-122b.service"})
         self.assertEqual(B12X, VLLM - {"qwen38-kolibri.service"})
 
     def test_each_lane_conflicts_with_every_other_and_starts_after_them(self):

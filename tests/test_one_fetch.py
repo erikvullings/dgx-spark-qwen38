@@ -60,7 +60,7 @@ class EveryLaneFetchesThroughIt(unittest.TestCase):
             with self.subTest(what):
                 self.assertEqual(text(script).count(call), 1, f"{script} no longer runs it this way")
         self.assertEqual(text("switch-model.sh").count("ckpt-fetch.py\" \"$") + text("switch-model.sh").count(
-            "/opt/qwen38/ckpt-fetch.py \"$"), 6, "switch-model.sh fetches for six lanes, each through it")
+            "/opt/qwen38/ckpt-fetch.py \"$"), 7, "switch-model.sh fetches for seven lanes, each through it")
 
     def test_no_script_keeps_a_fetch_of_its_own(self):
         for script in SCRIPTS:

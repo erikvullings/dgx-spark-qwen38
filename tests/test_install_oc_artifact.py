@@ -20,7 +20,7 @@ INSTALL = REPO / "install.sh"
 
 def block() -> str:
     text = INSTALL.read_text()
-    start = text.index("OC_27B=0; OC_FLASH=0; OC_KOLIBRI=0; OC_NEMOTRON=0; OC_NEMOTRON_SUPER=0; OC_FLASH_LOCAL=0\n")
+    start = text.index("OC_27B=0; OC_FLASH=0; OC_KOLIBRI=0; OC_NEMOTRON=0; OC_NEMOTRON_SUPER=0; OC_FLASH_LOCAL=0; OC_ORNITH_122B=0\n")
     end = text.index("\nPYEOF\n", start) + len("\nPYEOF\n")
     return text[start:end]
 
@@ -33,7 +33,7 @@ PINS = "\n".join(line for line in INSTALL.read_text().splitlines()
 def generate(lane, mode, unit_ctx=None, flash_unit=False, model="RadixArk/Qwen3.8-27B-NVFP4",
              pair=None, names=False, flash_running=None, kolibri_unit=False, kolibri_boot=False, doc=False,
              nemotron_unit=False, nemotron_boot=False, super_unit=False, super_boot=False,
-             flocal_unit=False, flocal_boot=False):
+             flocal_unit=False, flocal_boot=False, ornith_unit=False, ornith_boot=False):
     t = pathlib.Path(tempfile.mkdtemp(prefix="oc-art-"))
     kolibri = t / "qwen38-kolibri.service"
     if kolibri_unit:
@@ -47,6 +47,9 @@ def generate(lane, mode, unit_ctx=None, flash_unit=False, model="RadixArk/Qwen3.
     flocal = t / "qwen38-flash-local.service"
     if flocal_unit:
         flocal.write_text("ExecStart=... nvidia/Qwen3.8-Flash-Next-FP4-Local --revision b9ce18a6 ...\n")
+    ornith = t / "qwen38-ornith-122b.service"
+    if ornith_unit:
+        ornith.write_text("ExecStart=... ornith-ai/Ornith-1.5-122B-NVFP4 --revision f049036f ...\n")
     if flash_running:
         (t / "launch-flash.sh").write_text(
             "docker run img python3 -m sglang.launch_server --model-path RadixArk/Qwen3.8-Flash-Next-NVFP4 "
@@ -64,6 +67,7 @@ def generate(lane, mode, unit_ctx=None, flash_unit=False, model="RadixArk/Qwen3.
               f'NEMOTRON_UNIT_PATH="{nemotron}"; NEMOTRON_BOOT={1 if nemotron_boot else 0}\n'
               f'NEMOTRON_SUPER_UNIT_PATH="{nsuper}"; NEMOTRON_SUPER_BOOT={1 if super_boot else 0}\n'
               f'FLASH_LOCAL_UNIT_PATH="{flocal}"; FLASH_LOCAL_BOOT={1 if flocal_boot else 0}\n'
+              f'ORNITH_122B_UNIT_PATH="{ornith}"; ORNITH_122B_BOOT={1 if ornith_boot else 0}\n'
               f'MODEL_CHOICE={"flash" if lane == "flash" else "stock"}\n'
               f'REPO_DIR="{REPO}"; CONFIG_DIR="{t}"; OC_PORT=30001; OC_CTX={ctx}; OC_OUT={out}\n'
               'OC_LABEL=local; OPENCODE_PIN=1\n' + block())
@@ -292,6 +296,52 @@ class ABoxBootingFlashLocal(unittest.TestCase):
     def test_without_its_unit_there_is_no_flash_local_provider(self):
         d = generate("27b", "1m", unit_ctx=1010000, pair=("551000", "160000"), nemotron_unit=True, doc=True)
         self.assertNotIn("flash-local", d["provider"])
+
+
+class ABoxBootingOrnith(unittest.TestCase):
+    """The Ornith 1.5 122B lane, its own provider (its own served model): serving at boot it is
+    opencode's default, its compaction sized from its window; installed beside another lane it is
+    offered; with no unit, absent. Its template reads enable_thinking and no effort: two variants,
+    its full reasoning first, then none (decided 2026-10-21)."""
+
+    def test_the_default_the_compaction_and_the_provider_are_orniths(self):
+        d = generate("27b", "1m", unit_ctx=1010000, flash_unit=True, pair=("551000", "160000"),
+                     ornith_unit=True, ornith_boot=True, doc=True)
+        self.assertEqual(d["model"], "ornith-122b/ornith-1.5-122b")
+        ctx, out, *_ = subprocess.run([str(REPO / "oc-limits.sh"), "ornith-122b"], capture_output=True,
+                                      text=True, check=True).stdout.split()
+        keep = int(subprocess.run([str(REPO / "oc-limits.sh"), "--preserve", ctx], capture_output=True,
+                                  text=True, check=True).stdout)
+        self.assertEqual(d["compaction"]["preserve_recent_tokens"], keep)
+        m = d["provider"]["ornith-122b"]["models"]["ornith-1.5-122b"]
+        self.assertEqual(m["limit"], {"context": int(ctx), "input": int(ctx), "output": int(out)})
+        self.assertTrue(m["name"].startswith("Ornith 1.5 122B NVFP4 + MTP (local, "), m["name"])
+        self.assertTrue(m["attachment"])
+        self.assertEqual(m["modalities"]["input"], ["text", "image"])
+        self.assertEqual(list(m["variants"]), ["high", "none"])
+        self.assertEqual(m["variants"]["none"], {"chat_template_kwargs": {"enable_thinking": False}})
+        self.assertEqual(m["variants"]["high"], {"chat_template_kwargs": {"enable_thinking": True}})
+        self.assertEqual(d["provider"]["ornith-122b"]["name"], "Ornith 1.5 122B (DGX Spark)")
+
+    def test_its_pair_compacts_late_and_still_fits_its_window(self):
+        # its window is 1,048,576 tokens (YaRN, four times its own), the Nemotron Super lane's, and the
+        # same rule decides: the compaction threshold, one worst step and the answer fit inside it
+        ctx, out, label = subprocess.run([str(REPO / "oc-limits.sh"), "ornith-122b"], capture_output=True,
+                                         text=True, check=True).stdout.split(" ", 2)
+        ctx, out = int(ctx), int(out)
+        self.assertLessEqual(ctx - 20000 + 43863 + out, 1048576, "threshold + worst step + answer fit the window")
+        self.assertGreater(ctx, 262144, "a pair of the native window would leave three quarters of it unused")
+        self.assertEqual(label.strip(), "local, 1M")
+
+    def test_installed_but_not_at_boot_it_is_offered_and_the_27b_keeps_its_own(self):
+        d = generate("27b", "1m", unit_ctx=1010000, pair=("551000", "160000"), ornith_unit=True, doc=True)
+        self.assertEqual(d["model"], "qwen38/qwen3.8-27b")
+        self.assertIn("ornith-122b", d["provider"])
+        self.assertEqual(d["compaction"]["preserve_recent_tokens"], 132000)
+
+    def test_without_its_unit_there_is_no_ornith_provider(self):
+        d = generate("27b", "1m", unit_ctx=1010000, pair=("551000", "160000"), flocal_unit=True, doc=True)
+        self.assertNotIn("ornith-122b", d["provider"])
 
 
 if __name__ == "__main__":

@@ -10,3 +10,7 @@ the same set's colour NVIDIA icon (`icons/nvidia-color.svg`), the same three att
 removed. The marks themselves belong to their owners (Qwen to Alibaba Cloud, MiniMax to
 MiniMax, Aleph Alpha to Aleph Alpha, NVIDIA to NVIDIA); the cockpit shows them only to say
 which model a lane runs.
+
+`ornith.svg` is no one's mark: a plain red ring drawn for this repo, since Lobe Icons has no
+Ornith icon (checked in 1.97.0, 2026-10-21) and the cockpit shows no logo it has no licence to
+show. It stands for the Ornith 1.5 122B lane only.

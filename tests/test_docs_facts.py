@@ -153,9 +153,11 @@ class TheDiskNeedsAreThePreflights(unittest.TestCase):
         # FP4-Local lane's copy of its table, on a cache on another disk)
         said = {re.sub(r"\s+", "-", name.lower()).replace("flash-fp4-local", "flash-local"):
                 re.findall(r"\d+", inside.split(";")[0])[-1] for name, inside in
-                re.findall(r"the (image|video|Kolibri|Nemotron Super|Nemotron|Flash\s+FP4-Local) lane \(([^)]*)\)", overview)}
-        flags = dict(re.findall(r"--no-(image|video|kolibri|nemotron-super|nemotron|flash-local)\s+leave the .*?\((?:vLLM, )?(\d+) GB\)", sh))
-        self.assertEqual(set(said), {"image", "video", "kolibri", "nemotron", "nemotron-super", "flash-local"}, overview)
+                re.findall(r"the (image|video|Kolibri|Nemotron Super|Nemotron|Flash\s+FP4-Local|Ornith\s+122B) lane \(([^)]*)\)",
+                           overview)}
+        flags = dict(re.findall(r"--no-(image|video|kolibri|nemotron-super|nemotron|flash-local|ornith-122b)\s+leave the .*?\((?:vLLM, )?(\d+) GB\)", sh))
+        self.assertEqual(set(said), {"image", "video", "kolibri", "nemotron", "nemotron-super", "flash-local", "ornith-122b"},
+                         overview)
         self.assertEqual(said, flags)
 
 

@@ -304,9 +304,17 @@ unpin_stale() {   # $1 lane, $2 the image the lane is pinned to now
       done
 }
 pin_untag() {   # $1 lane: its tags go (its uninstall); the image is then merely dangling
-  local tag id
+  local tag id left
   pin_tags_of "$1" | while read -r tag id; do
-    docker rmi "$tag" >/dev/null 2>&1 && echo "untagged $tag: a docker image prune can reclaim it"
+    docker rmi "$tag" >/dev/null 2>&1 || continue
+    # The Flash FP4-Local and Ornith lanes pin one image, each with its own tag: the other lane's
+    # tag keeps it, and no prune reclaims it while that lane is installed.
+    left="$(docker image inspect "$id" --format '{{range .RepoTags}}{{println .}}{{end}}' 2>/dev/null | grep -m1 '^qwen38-pinned:' || true)"
+    if [ -n "$left" ]; then
+      echo "untagged $tag: the image stays, $left still names it"
+    else
+      echo "untagged $tag: a docker image prune can reclaim it"
+    fi
   done
   return 0
 }

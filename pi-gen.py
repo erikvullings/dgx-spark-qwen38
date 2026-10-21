@@ -50,7 +50,7 @@ import re
 import shlex
 import sys
 
-OURS = ("qwen38", "flashnext", "kolibri", "nemotron", "nemotron-super", "flash-local")
+OURS = ("qwen38", "flashnext", "kolibri", "nemotron", "nemotron-super", "flash-local", "ornith-122b")
 RESIZE = {"maxWidth": 1568, "maxHeight": 1568, "maxBytes": 524288, "jpegQuality": 75}
 
 
@@ -154,9 +154,13 @@ PI_COMPAT = {"supportsDeveloperRole": False}
 # the proxy translates the field for it (keepalive-proxy.py, nemotron_effort): pi sends it the same
 # way, and Bolt reasons at its full depth unasked, so pi starts at high there too. Super VL's
 # template reads the same two, with the same three levels (its model card): the same, again.
+# Ornith's template reads enable_thinking alone, and the proxy translates the field for it too
+# (keepalive-proxy.py, ornith_effort): none turns it off, every other level keeps it whole, and it
+# reasons at its full depth unasked, so pi starts at high.
 EFFORT_FIELD = {"kolibri": ({"off": "none", "minimal": "low", "xhigh": "high"}, "high"),
                 "nemotron": ({"off": "none", "minimal": "low", "xhigh": "high"}, "high"),
-                "nemotron-super": ({"off": "none", "minimal": "low", "xhigh": "high"}, "high")}
+                "nemotron-super": ({"off": "none", "minimal": "low", "xhigh": "high"}, "high"),
+                "ornith-122b": ({"off": "none", "minimal": "low", "xhigh": "high"}, "high")}
 
 
 def model_meta(mid, m):

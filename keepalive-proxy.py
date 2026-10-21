@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Keepalive proxy in front of SGLang or vLLM (v6.44). No content logging, and the only
+"""Keepalive proxy in front of SGLang or vLLM (v6.45). No content logging, and the only
 rewriting is the tool-schema guard (role 4); one route, POST /v1/systemone, is answered
 here instead of relayed (role 5).
 
@@ -40,6 +40,10 @@ Six roles, nothing else:
    PROXY_HOLD_MAX_S, instead of failing at once. A streamed one hears from the proxy at
    once (200, then the keepalives of role 1); see "Holding a request" below.
 
+v6.45: the Ornith 1.5 122B lane (Ornith AI's model on vLLM) takes a reasoning effort as its chat
+template reads it, enable_thinking alone: none and minimal turn the reasoning off, every other
+level keeps it whole, as the box decided (2026-10-21). Its template reads no effort, and a "none"
+handed to it as it came left the reasoning on.
 v6.44: the corruption tripwire reads vLLM's reasoning too. vLLM streams the thinking as
 delta.reasoning, which the guard did not read: on the Flash FP4-Local lane, a Qwen lane on vLLM
 whose token id 0 is "!", a decode that lost its state while it reasoned went unseen (found in
@@ -1023,6 +1027,48 @@ def nemotron_effort(body, path):
         kw["enable_thinking"] = want != "off"
         if want == "medium":
             kw["medium_effort"] = True
+    j["chat_template_kwargs"] = kw
+    try:
+        return json.dumps(j).encode(), level
+    except Exception:
+        return body, None
+
+
+# v6.45: Ornith's chat template (the Ornith 1.5 122B lane) reads enable_thinking and no reasoning
+# effort: the box maps the levels onto it (2026-10-21), none and minimal off as on the Nemotron lane,
+# every other level its full reasoning, its default.
+ORNITH_EFFORTS = {"none": "off", "minimal": "off", "low": "full", "medium": "full",
+                  "high": "full", "xhigh": "full", "max": "full"}
+
+
+def ornith_effort(body, path):
+    """(the body to forward, the level translated or None). v6.45: on the Ornith lane (vLLM, a served
+    name starting ornith-), a reasoning effort, top-level or in chat_template_kwargs, becomes what its
+    template reads: enable_thinking false for none and minimal, true for the others. The effort fields
+    go, as on the Nemotron lane. A request that names enable_thinking itself keeps its choice. Any
+    other level, any other lane, any doubt: the body goes as it came."""
+    if not body or path.split("?", 1)[0] != "/v1/chat/completions" or b'"reasoning_effort"' not in body:
+        return body, None
+    if _SERVED["engine"] != "vllm" or not any(str(n).startswith("ornith-") for n in _SERVED["names"]):
+        return body, None
+    try:
+        j = json.loads(body)
+    except Exception:
+        return body, None
+    if not isinstance(j, dict):
+        return body, None
+    kw = j.get("chat_template_kwargs")
+    if kw is None:
+        kw = {}
+    elif not isinstance(kw, dict):
+        return body, None
+    level = kw["reasoning_effort"] if kw.get("reasoning_effort") is not None else j.get("reasoning_effort")
+    if not isinstance(level, str) or level not in ORNITH_EFFORTS:
+        return body, None
+    kw.pop("reasoning_effort", None)
+    j.pop("reasoning_effort", None)
+    if "enable_thinking" not in kw:
+        kw["enable_thinking"] = ORNITH_EFFORTS[level] != "off"
     j["chat_template_kwargs"] = kw
     try:
         return json.dumps(j).encode(), level
@@ -4453,8 +4499,8 @@ class H(BaseHTTPRequestHandler):
         return False
 
     def _served_name(self, body):
-        """The body as the engine that serves now takes it (route_model_name, qwen_effort_none, nemotron_effort),
-        each change said once."""
+        """The body as the engine that serves now takes it (route_model_name, qwen_effort_none, nemotron_effort,
+        ornith_effort), each change said once."""
         body, renamed = route_model_name(body, self.path)
         if renamed and _model_rename_logged.first(renamed):   # once per name, not per request
             shown = repr(renamed[:60]) + ("..." if len(renamed) > 60 else "")
@@ -4472,6 +4518,11 @@ class H(BaseHTTPRequestHandler):
                 NEMOTRON_EFFORTS[level], "enable_thinking alone")
             log(f"{self._peer} reasoning_effort {level} is not what the Nemotron template reads: "
                 f"relayed as {how}, unless the request names enable_thinking itself")
+        body, level = ornith_effort(body, self.path)
+        if level and _effort_off_logged.first("ornith " + level):
+            log(f"{self._peer} reasoning_effort {level} is not what the Ornith template reads: relayed as "
+                f"enable_thinking {'false' if ORNITH_EFFORTS[level] == 'off' else 'true'}, unless the request "
+                f"names enable_thinking itself")
         return body
 
     def _forward(self, body, count_only):
@@ -4984,7 +5035,7 @@ if __name__ == "__main__":
     holds = (f"holds requests up to {HOLD_MAX_S:.0f}s while {' or '.join(HOLD_UNITS)} comes back"
              if HOLD_UNITS and HOLD_MAX_S > 0 else "holds nothing")
     # one f-string: the cockpit's tests render this line from the source
-    log(f"v6.44 on {BIND}:{port} -> {UPSTREAM} (keepalive {KEEPALIVE_S:.0f}s, max silence {MAX_SILENCE_S:.0f}s, {holds})")
+    log(f"v6.45 on {BIND}:{port} -> {UPSTREAM} (keepalive {KEEPALIVE_S:.0f}s, max silence {MAX_SILENCE_S:.0f}s, {holds})")
     if FLASH_PROMPT_CEILING_TOKENS > 0:
         log(f"one-prompt ceiling {FLASH_PROMPT_CEILING_TOKENS} tokens while the flash lane serves"
             + (f", {PROMPT_CEILING_TOKENS} on any lane" if PROMPT_CEILING_TOKENS > 0 else ""))

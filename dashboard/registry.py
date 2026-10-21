@@ -38,13 +38,14 @@ PIN_MODELS = {
     "NEMOTRON_SUPER_REV": "nvidia/NVIDIA-Nemotron-3.5-Super-VL-120B-A12B-NVFP4",
     "NEMOTRON_SUPER_DRAFT_REV": "nvidia/NVIDIA-Nemotron-3.5-Super-VL-120B-A12B-NVFP4-LiLiCorr",
     "FLASH_LOCAL_REV": "nvidia/Qwen3.8-Flash-Next-FP4-Local",
+    "ORNITH_122B_REV": "ornith-ai/Ornith-1.5-122B-NVFP4",
 }
 
 # Where the pins are written: the text lanes' in the switch and the installer, every other
 # lane's in its own installer.
 PIN_FILES = ("switch-model.sh", "run.sh", "install.sh",
              "install-image.sh", "install-video.sh", "install-kolibri.sh", "install-nemotron.sh",
-             "install-nemotron-super.sh", "install-flash-local.sh")
+             "install-nemotron-super.sh", "install-flash-local.sh", "install-ornith-122b.sh")
 
 PIN_RE = re.compile(r'^\s*([A-Z][A-Z0-9_]*REV)="?\$?\{?[A-Z0-9_:-]*?([0-9a-f]{40})',
                     re.MULTILINE)

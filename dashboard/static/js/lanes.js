@@ -215,6 +215,7 @@ on('canary', d => {
   setText('px-last', d.skipped && (servingEngine() || [])[0] === KOLIBRI_UNIT ? 'none on the Kolibri lane'
     : d.skipped && isNemotron((servingEngine() || [])[0]) ? 'none on the Nemotron lanes'
     : d.skipped && (servingEngine() || [])[0] === FLASH_LOCAL_UNIT ? 'none on the Flash FP4-Local lane'
+    : d.skipped && (servingEngine() || [])[0] === ORNITH_UNIT ? 'none on the Ornith lane'
     : d.last_ok ? clockTime(d.last_ok) : 'never in this cockpit’s life');
 });
 function renderProxy(){

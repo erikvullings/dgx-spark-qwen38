@@ -127,8 +127,13 @@ if [ "$ACTION" = uninstall ]; then
   # would have untagged every lane's pin, none of which a unit names by that tag.
   vlane_uninstall_runtime qwen38-flash-local "$FLASH_LOCAL_IMAGE" "$FLASH_LOCAL_REPO"
   pin_untag flash-local
-  rm -f "$CONFIG_DIR/chat-template-flash-local.jinja" "$CONFIG_DIR/seccomp-io-uring.json" "$CONFIG_DIR/flash-local-ple-dir" \
-        "$CONFIG_DIR/flash-local-files.sh"
+  rm -f "$CONFIG_DIR/chat-template-flash-local.jinja" "$CONFIG_DIR/flash-local-ple-dir" "$CONFIG_DIR/flash-local-files.sh"
+  # The seccomp profile is the Ornith lane's too: it stays while that lane's unit reads it.
+  if [ -f "$LANES_UNIT_DIR/qwen38-ornith-122b.service" ]; then
+    echo "seccomp-io-uring.json kept: the Ornith 1.5 122B lane reads it too"
+  else
+    rm -f "$CONFIG_DIR/seccomp-io-uring.json"
+  fi
   while IFS= read -r d; do
     [ -f "$d/.qwen38-ple-copies" ] || continue
     # the copies by name (blobs named by their sha256), the list, then their folder if nothing else is in it

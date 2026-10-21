@@ -269,6 +269,16 @@ case "$CHOICE" in
     #     205,000 - 20,000 + 43,863 + 32,000 = 260,863  <=  262,144
     CTX=205000; OUT=32000; LABEL="local, 262K"
     ;;
+  ornith-122b)
+    # The Ornith 1.5 122B lane serves a window of 1,048,576 tokens (the model's own 262,144 four
+    # times over, with YaRN), and vLLM refuses any request whose prompt + max_tokens passes it. Its KV
+    # cache is fixed at 17 GiB, 1,301,680 tokens (measured 2026-10-21), the window 1.24 times over, so
+    # the window decides, by the Nemotron Super lane's rule and numbers (Ornith's tokenizer counts text
+    # as Qwen's does: the same vocabulary, merges and pre-tokenizer, seven audio tokens fewer; checked
+    # 2026-10-21):
+    #     990,000 - 20,000 + 43,863 + 32,000 = 1,045,863  <=  1,048,576
+    CTX=990000; OUT=32000; LABEL="local, 1M"
+    ;;
   *) printf 'oc-limits: unknown target "%s"\n' "$CHOICE" >&2; exit 2 ;;
 esac
 

@@ -51,7 +51,7 @@ MODEL = served_model()
 # SGLang flash lane, its header, reference and warm-up note above its own numbers, and any other
 # name the 27B lane, whose 71.4 headed Kolibri's and the Nemotron lanes' (found in review, 2026-10-20).
 LANE = {"qwen3.8-27b": "27b", "qwen3.8-flash-next": "flash",
-        "qwen3.8-flash-next-fp4": "flash-local"}.get(MODEL, "other")
+        "qwen3.8-flash-next-fp4": "flash-local", "ornith-1.5-122b": "ornith-122b"}.get(MODEL, "other")
 HEADERS = {
     # The median is the v1.14 campaign on the official release image (README, CHANGELOG
     # v1.14.0); the per-probe figures are the last ones published, v1.9's, whose median was
@@ -73,6 +73,11 @@ HEADERS = {
     "flash-local": ("Qwen3.8-Flash-Next FP4-Local (NVIDIA, vLLM b12x, MTP) benchmark (batch 1 decode)",
                     "reference box (2026-10-20, the lane's default effort, xhigh): greedy median 55.1-55.4\n"
                     "  code 56.2-57.4 / reasoning 52.8-54.3 / math peak 46.5-49.2 / free prose 33.4-35.5"),
+    # Ornith AI's NVFP4 build on vLLM with b12x and its MTP head drafting 2 tokens: two runs on the
+    # reference box, 2026-10-21 (docs/ornith-lane.md), and 43.6 / 43.5 on a second GX10
+    "ornith-122b": ("Ornith 1.5 122B NVFP4 (vLLM b12x, MTP 2) benchmark (batch 1 decode)",
+                    "reference box (2026-10-21): greedy median 42.4-42.6\n"
+                    "  code 42.6 / reasoning 41.6-42.8 / math peak 40.4-43.2 / free prose 32.3-33.1"),
 }
 
 
