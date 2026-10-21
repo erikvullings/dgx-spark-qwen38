@@ -22,6 +22,8 @@ one-liner does ([Quickstart](#quickstart)).
 | Qwen3.8-Flash-Next 176B, on **one** box | **47.9 tok/s** on code (`FLASH_TIER=context`), 262K context |
 | Qwen-Image 2.1, 1024×1024 | **7.5 s** with its Turbo, 34 s without |
 
+A second ASUS Ascent GX10, set up from scratch with that one command: [what it measured](docs/asus-gx10.md).
+
 **Why this rather than a recipe.** A recipe starts one model. On a Spark the hard part comes
 after: eight lanes take turns in one 128 GB pool, SGLang's memory accounting misses 25-40 GB of
 transient allocations in it, and a pool pushed to zero freezes the box until a power cycle
