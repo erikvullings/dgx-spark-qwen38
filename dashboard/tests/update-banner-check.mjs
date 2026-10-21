@@ -52,6 +52,9 @@ for (const cmd of ['docker', 'systemctl', 'journalctl', 'nvidia-smi', 'sudo', 'g
 }
 const PORT = await freePort();
 const BASE = `http://127.0.0.1:${PORT}`;
+// the same cockpit by a name that is not this machine's, as a box's LAN or Tailscale address is:
+// plain HTTP there is no secure context, and the browser has no clipboard API
+const FAR_NAME = 'cockpit.test', FAR = `http://${FAR_NAME}:${PORT}`;
 const CLOSED = 'http://127.0.0.1:1';
 server = spawn('python3', [COCKPIT], {
   env: { ...process.env, COCKPIT_DRY_RUN: '1', COCKPIT_PORT: String(PORT), COCKPIT_CONFIG_DIR: cfgDir,
@@ -77,7 +80,7 @@ try {
     '--disable-background-networking', '--disable-component-update', '--disable-sync', '--disable-extensions',
     '--disable-default-apps', '--no-default-browser-check', '--disable-domain-reliability', '--no-pings',
     '--disable-client-side-phishing-detection', '--disable-features=OptimizationHints,Translate,MediaRouter',
-    '--host-resolver-rules=MAP * ~NOTFOUND , EXCLUDE 127.0.0.1', 'about:blank'], { stdio: ['ignore', 'ignore', 'ignore', 'pipe', 'pipe'] });
+    `--host-resolver-rules=MAP ${FAR_NAME} 127.0.0.1, MAP * ~NOTFOUND , EXCLUDE 127.0.0.1`, 'about:blank'], { stdio: ['ignore', 'ignore', 'ignore', 'pipe', 'pipe'] });
   let id = 0; const pending = new Map(); let events = [];
   let inbox = '';
   chrome.stdio[4].on('data', d => {
@@ -133,12 +136,14 @@ try {
   // what the button copies, by the clipboard API where the page is a secure context and by a
   // selected textarea where it is not (plain HTTP on the box's LAN or Tailscale address)
   const copied = viaApi => evalJs(`(async () => {
+    const b = [...document.querySelectorAll('#banners .banner')].find(e => /is out; this box runs/.test(e.textContent));
+    const btn = b && b.querySelector('.bcmd button');
+    if (!btn) return 'no Copy button';
     let got = null;
     const api = navigator.clipboard, exec = document.execCommand.bind(document);
     Object.defineProperty(navigator, 'clipboard', { configurable: true, get: () => ${viaApi} ? { writeText: async t => { got = 'api:' + t; } } : undefined });
     document.execCommand = c => { if (c === 'copy') { const ta = document.querySelector('textarea[data-copy]'); got = 'exec:' + (ta ? ta.value.slice(ta.selectionStart, ta.selectionEnd) : ''); return true; } return exec(c); };
-    const b = [...document.querySelectorAll('#banners .banner')].find(e => /is out; this box runs/.test(e.textContent));
-    b.querySelector('.bcmd button').click();
+    btn.click();
     await new Promise(r => setTimeout(r, 50));
     Object.defineProperty(navigator, 'clipboard', { configurable: true, get: () => api }); document.execCommand = exec;
     return got; })()`);
@@ -174,6 +179,35 @@ try {
   ok('Setup line, offline', /unknown/.test(line), line);
   line = await setupLine({ installed: 'v1.15.1', checked: false });
   ok('Setup line, check switched off', /check is off/.test(line), line);
+  // A real click there, the browser's own input and no stand-in, puts the command on the clipboard,
+  // which a secure page then reads back (the Copy buttons said the browser refused on every box
+  // opened by its address, 2026-10-21)
+  await send('Network.setCookie', { name: 'cockpit', value: cookie, url: FAR, httpOnly: true, sameSite: 'Strict' }, sessionId);
+  await send('Emulation.setFocusEmulationEnabled', { enabled: true }, sessionId);
+  await send('Page.navigate', { url: FAR + '/' }, sessionId);
+  ok('the page by another name, over plain HTTP, is live', await waitFor("document.getElementById('conn-lbl').textContent === 'live'"),
+     await evalJs("document.getElementById('conn-lbl').textContent"));
+  const ctx = await evalJs("JSON.stringify({ secure: window.isSecureContext, api: !!navigator.clipboard })");
+  ok('and is no secure context: the browser gives it no clipboard API', ctx === JSON.stringify({ secure: false, api: false }), ctx);
+  // the page's own stream keeps its hands off the state put in for the click
+  const at = JSON.parse(await evalJs(`(() => { HANDLERS.update = []; F.update = { installed: 'v1.15.0', latest: 'v1.99.0', behind: true };
+    renderBanners(lastState || {}, lastErrors || {});
+    const b = [...document.querySelectorAll('#banners .banner')].find(e => /is out; this box runs/.test(e.textContent));
+    const btn = b && b.querySelector('.bcmd button');
+    if (!btn) return '{}';
+    btn.scrollIntoView({ block: 'center' });
+    const r = btn.getBoundingClientRect();
+    return JSON.stringify({ x: r.x + r.width / 2, y: r.y + r.height / 2, cmd: b.querySelector('.bcmd .cmd').textContent }); })()`));
+  if (at.x != null) for (const type of ['mousePressed', 'mouseReleased'])
+    await send('Input.dispatchMouseEvent', { type, x: at.x, y: at.y, button: 'left', clickCount: 1 }, sessionId);
+  await sleep(400);
+  const said = await evalJs("[...document.querySelectorAll('#toasts .toast')].map(e => e.textContent).join(' | ')");
+  ok('a real click on Copy there says Copied', /^Copied\.$/.test(said), said);
+  await send('Browser.grantPermissions', { origin: BASE, permissions: ['clipboardReadWrite', 'clipboardSanitizedWrite'] });
+  await send('Page.navigate', { url: BASE + '/' }, sessionId);
+  await waitFor("document.readyState === 'complete'");
+  const held = await evalJs("navigator.clipboard.readText()");
+  ok('and the clipboard holds the exact command', held === at.cmd && /^cd \S+ && curl -fsSL /.test(held), held);
   ok('no exception', jsErrors().length === 0, jsErrors().join(' | '));
 } finally {
   const gone = child => (!child || child.exitCode !== null || child.signalCode !== null) ? null
