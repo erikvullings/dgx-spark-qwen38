@@ -1,5 +1,29 @@
 # Changelog
 
+## v1.37.4 (2026-10-21): the image and video lanes run on a new box, their venv's ninja on their PATH
+
+**The image and video lanes find their ninja.** SGLang Diffusion compiles some of its kernels at
+their first use (`sglang/kernels/jit`) and runs `ninja` by name. The lanes' venvs have it
+(flashinfer, modelopt and sglang require it), but their units left the venv's `bin` out of PATH, and
+a new box has no `ninja` of its own: the first image on an ASUS Ascent GX10 with DGX OS 7.6.0,
+loaded from the cockpit after a fresh install of v1.37.2, failed with HTTP 500 and "No such file or
+directory: 'ninja'". The reference box had a `ninja` in /usr/bin (ninja-build, installed by hand on
+2026-02-11 with cmake), which hid it. Both units now put the venv's `bin` first on PATH, as an
+activated venv has it, before every directory a unit had (/snap/bin included). On that GX10, the
+venv's `bin` put first on PATH by hand made the engine's warm-up pass, and seven 1024x1024 images at
+40 steps took 42.1 to 42.9 s each. The video lane runs the same runtime, whose layernorm,
+elementwise and attention layers compile through the same path, and its unit had the same PATH.
+
+**What an update does.** The image and video units are written again: a lane that serves keeps
+running, and the cockpit says it runs what it started with until its next start; elsewhere the line
+applies at the lane's next Load. The proxy and the text engines keep running, and the cockpit
+restarts once, to name the release.
+
+**Tests.** `tests/test_image_lane.py` and `tests/test_video_lane.py` each hold that the unit sets
+one PATH in its [Service] section, never unset, the venv's `bin` first and every directory a unit
+has otherwise after it; both fail on v1.37.3, and so do mutants that move the line out of [Service]
+or unset it.
+
 ## v1.37.3 (2026-10-21): the MMLU driver runs on the pinned images again, and a run sg would ask a password in says so
 
 **The MMLU driver runs again.** `evals/mmlu.py` called the `MMLUEval` class of the SGLang image,
