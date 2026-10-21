@@ -159,5 +159,17 @@ class TheDiskNeedsAreThePreflights(unittest.TestCase):
         self.assertEqual(said, flags)
 
 
+
+class TheGsm8kCountIsTheOneRunEvalAsks(unittest.TestCase):
+    def test_our_scores_name_the_questions_they_were_asked(self):
+        """run_eval's GSM8K asks the test set's 1,319 questions less the five it shows as examples in
+        every prompt: 1,314. The README and BENCHMARKS.md gave scores "over all 1,319" that only
+        1,314 can give: 97.41% is 1,280 of 1,314, and no count out of 1,319 rounds to it (found
+        2026-10-21)."""
+        self.assertEqual(round(100 * 1280 / 1314, 2), 97.41)
+        self.assertFalse([k for k in range(1300) if round(100 * k / 1319, 2) == 97.41])
+        for name in ("README.md", "BENCHMARKS.md"):
+            self.assertNotRegex((REPO / name).read_text(), r"(?i)gsm8k[^|\n]*all 1,319", name)
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

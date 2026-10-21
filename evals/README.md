@@ -14,7 +14,8 @@ this repo's flash lane serves:
 Both failures print a traceback and then an empty score, which reads exactly like a
 model that scored nothing. That is how this repo's first two runs were lost
 (2026-09-18). GSM8K needs none of this: its path in the image still runs in process,
-so `run_eval --eval-name gsm8k` is fine.
+so `run_eval --eval-name gsm8k` is fine. It asks 1,314 questions: the test set's 1,319 less the five
+it shows as examples in every prompt.
 
 `mmlu.py` carries the `MMLUEval` class SGLang shipped through v0.5.20 and then removed
 (sgl-project/sglang#41215), under its licenses (`LICENSE-SGLANG`, `LICENSE-SIMPLE-EVALS`),

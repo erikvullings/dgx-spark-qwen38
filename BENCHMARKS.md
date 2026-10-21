@@ -8,7 +8,7 @@ stock DGX OS), with the page that measured it and gives its date, version and me
 | Lane | Headline | Measured in |
 |---|---|---|
 | Qwen3.8-27B, NVFP4 + DFlash2 | **71.4 tok/s** greedy median (`./bench.sh`, the v1.14.0 campaign), 135-148 tok/s at 8 streams (v1.2 battery), 1M context; GSM8K 94.0% (200 problems, v1.2.1) | [README](README.md#what-speed-and-quality-to-expect), [the boot lottery](#the-boot-lottery-and-how-we-killed-it-2026-08-20) |
-| Qwen3.8-Flash-Next 176B, NVFP4 + NEXTN, on one box | **47.9 tok/s** on code at the `context` tier; GSM8K 97.41% (1,319), MMLU 90.8% (500), HumanEval 95.73% (164) | [docs/flash-lane.md](docs/flash-lane.md), [RadixArk against NVIDIA](#radixark-against-nvidia-head-to-head-2026-09-18) |
+| Qwen3.8-Flash-Next 176B, NVFP4 + NEXTN, on one box | **47.9 tok/s** on code at the `context` tier; GSM8K 97.41% (1,314), MMLU 90.8% (500), HumanEval 95.73% (164) | [docs/flash-lane.md](docs/flash-lane.md), [RadixArk against NVIDIA](#radixark-against-nvidia-head-to-head-2026-09-18) |
 | Flash FP4-Local, NVIDIA's FP4 build of the flash model on vLLM | **55.4 tok/s** greedy median (`./bench.sh`, at its default effort, `xhigh`); at the `lean` effort, 47.4 tok/s alone and 106.6 in all at 8 streams on real text, GSM8K 97.64% (1,314), HumanEval 98.17% (164) | [docs/flash-local-lane.md](docs/flash-local-lane.md) |
 | Kolibri-1, Aleph Alpha's FP8 on vLLM | **48.0 / 121.9 / 165.8 / 202.0 tok/s** at 1 / 4 / 8 / 16 streams | [docs/kolibri-lane.md](docs/kolibri-lane.md) |
 | Nemotron 3.5 Bolt 74B on vLLM, with its drafter | **140 tok/s** rewriting code, one request, reasoning off; 74.8 / 113.4 / 163.6 / 201.2 tok/s at 1 / 4 / 8 / 16 streams | [docs/nemotron-lane.md](docs/nemotron-lane.md) |
@@ -475,7 +475,7 @@ are not are exactly that head.
 | `conc-check.py`, serial and 4 concurrent | **40/40 and 80/80 exact**, no false or cross-contaminated answer | **40/40 and 80/80 exact**, same |
 | needle at 120K and 200K prompt tokens | 2/2 exact | 2/2 exact |
 | GSM8K, 200 questions | 0.985 | 0.985 |
-| GSM8K, all 1,319 | 97.41% | **97.56%** |
+| GSM8K, 1,314 (the 1,319 test questions less the 5 few-shot examples) | 97.41% | **97.56%** |
 | MMLU, 500 questions | **90.8%** | 90.6% |
 | MMLU, STEM alone | 95.58% | 95.58% |
 | HumanEval, 164, pass@1 at temperature 0 | 95.73% (157/164) | **96.95%** (159/164) |
@@ -485,7 +485,7 @@ are not are exactly that head.
 
 **Read the close ones as ties, because they are.** 500 MMLU questions carry a
 standard error near 1.3 points at this accuracy, 164 HumanEval problems near
-1.5, and 1,319 GSM8K questions near 0.44. The gaps measured are 0.2 points on
+1.5, and 1,314 GSM8K questions near 0.44. The gaps measured are 0.2 points on
 MMLU (one question), 1.2 on HumanEval (two problems) and 0.15 on GSM8K (two
 questions). On MMLU's STEM split the two exports score identically to the digit
 on the same 113 questions. Nothing here separates them on quality.

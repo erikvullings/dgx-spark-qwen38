@@ -280,7 +280,7 @@ And the flash lane (`flash`, the RadixArk export), measured on this box on 2026-
 
 | Quality check | Result |
 |---|---|
-| GSM8K, all 1,319 questions | **97.41%** |
+| GSM8K, 1,314 questions (its 1,319 less the 5 shown as examples) | **97.41%** |
 | MMLU, 500 questions | **90.8%** (STEM 95.6, other 94.2, social sciences 89.2, humanities 86.1) |
 | HumanEval, 164 problems, pass@1 at temperature 0 | **95.73%** (157/164) |
 | Tool calling, `./tools-check.py`, 15 cases | **15/15** with reasoning off, **15/15** with reasoning on |
