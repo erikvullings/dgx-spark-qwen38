@@ -41,13 +41,12 @@ class Prepare(unittest.TestCase):
         spec.loader.exec_module(cls.cp)
         cls.units = cls.tmp / "units"
         cls.units.mkdir()
-        cls.cp.IMAGE_UNIT_PATH = cls.units / "qwen38-image.service"
-        cls.cp.VIDEO_UNIT_PATH = cls.units / "qwen38-video.service"
-        cls.cp.KOLIBRI_UNIT_PATH = cls.units / "qwen38-kolibri.service"
-        # the box's own Nemotron unit, once installed, read as this test's (found on the reference box, 2026-10-16)
-        cls.cp.NEMOTRON_UNIT_PATH = cls.units / "qwen38-nemotron.service"
-        cls.cp.NEMOTRON_SUPER_UNIT_PATH = cls.units / "qwen38-nemotron-super.service"
-        cls.cp.FLASH_LOCAL_UNIT_PATH = cls.units / "qwen38-flash-local.service"
+        # Every unit the cockpit reads, this test's: a list of them missed the box's own Nemotron unit
+        # once (found on the reference box, 2026-10-16), and the cockpit under test reads every cache a
+        # unit it reads mounts (its jobs run as a dry run here, delete_strays among them).
+        for name, value in list(vars(cls.cp).items()):
+            if name.endswith("_UNIT_PATH") and isinstance(value, Path):
+                setattr(cls.cp, name, cls.units / value.name)
         cls.cp.UNIT_PATHS = {"qwen38-sglang.service": cls.units / "qwen38-sglang.service",
                              "qwen38-flash.service": cls.units / "launch-flash.sh"}
 
@@ -443,6 +442,9 @@ class Prepare(unittest.TestCase):
                 self.cp.REGISTRY_CACHE.update(ts=__import__("time").time(), data={"stale": True})
                 with self.cp.STATE_LOCK:
                     self.cp.STATE.pop("lanes_startable", None)
+                own = os.path.realpath(self.tmp) + os.sep
+                outside = [c for c in self.cp.lane_caches() if not os.path.realpath(c).startswith(own)]
+                self.assertEqual(outside, [], "the job would scan a cache outside the test's own: nothing was run")
                 code, body = self.cp.start_action(action, params)
                 self.assertEqual(code, 202, body)
                 self.wait(body["job"])

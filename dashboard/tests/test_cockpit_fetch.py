@@ -39,13 +39,11 @@ class Fetch(unittest.TestCase):
         cls.cp.run = lambda argv, timeout=5.0, merge_err=False: ""
         cls.units = cls.tmp / "units"
         cls.units.mkdir()
-        cls.cp.KOLIBRI_UNIT_PATH = cls.units / "qwen38-kolibri.service"
-        # the box's own Nemotron unit, once installed, named its real cache (found on the reference box, 2026-10-16)
-        cls.cp.NEMOTRON_UNIT_PATH = cls.units / "qwen38-nemotron.service"
-        cls.cp.NEMOTRON_SUPER_UNIT_PATH = cls.units / "qwen38-nemotron-super.service"
-        cls.cp.FLASH_LOCAL_UNIT_PATH = cls.units / "qwen38-flash-local.service"
-        cls.cp.IMAGE_UNIT_PATH = cls.units / "qwen38-image.service"
-        cls.cp.VIDEO_UNIT_PATH = cls.units / "qwen38-video.service"
+        # Every unit the cockpit reads, this test's: the box's own Nemotron unit, once installed, named
+        # its real cache (found on the reference box, 2026-10-16), and a fixed list misses the next lane's.
+        for name, value in list(vars(cls.cp).items()):
+            if name.endswith("_UNIT_PATH") and isinstance(value, Path):
+                setattr(cls.cp, name, cls.units / value.name)
         cls.cp.UNIT_PATHS = {"qwen38-sglang.service": cls.units / "qwen38-sglang.service",
                              "qwen38-flash.service": cls.units / "launch-flash.sh"}
         cls.pins = cls.cp.registry_snapshot(max_age=0.0)["pins"]

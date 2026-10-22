@@ -98,6 +98,7 @@ class Base(unittest.TestCase):
         # the Nemotron lanes' units, not installed here: their panel is not this lane's
         cls.ck.NEMOTRON_UNIT_PATH = cls.box / "absent-nemotron.service"
         cls.ck.NEMOTRON_SUPER_UNIT_PATH = cls.box / "absent-nemotron-super.service"
+        cls.ck.ORNITH_UNIT_PATH = cls.box / "absent-ornith-122b.service"
         cls.real_run = cls.ck.run
 
     @classmethod
