@@ -50,7 +50,7 @@ def run(tags, used=(), current="lmsysorg/sglang@sha256:new", lane="27b", script_
         (d / "used").write_text("".join(f"{u}\n" for u in used))
         script = script_of or f"set -euo pipefail\n{FUNC}\nunpin_stale {lane} '{current}' || true\necho END\n"
         r = subprocess.run(["bash", "-c", script], capture_output=True, text=True, timeout=30,
-                           env={"PATH": f"{d}:/usr/bin:/bin"})
+                           env={"PATH": f"{d}:/usr/bin:/bin", "LANES_UNIT_DIR": str(d / "units")})
         removed = (d / "removed").read_text().split() if (d / "removed").exists() else []
         return r.stdout + r.stderr, removed
     finally:

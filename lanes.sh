@@ -317,7 +317,7 @@ pin_untag() {   # $1 lane: its tags go (its uninstall); the image is then merely
     # A lane loaded from the cockpit after the other had pulled the image found it there, and its
     # preparation, which tags, was not run: an installed unit that runs the image by its digest gets
     # its lane's tag now (found in review, 2026-10-22).
-    for unit in "$LANES_UNIT_DIR"/qwen38-*.service; do
+    for unit in "${LANES_UNIT_DIR:-/etc/systemd/system}"/qwen38-*.service; do
       other="${unit##*/qwen38-}"; other="${other%.service}"
       [ "$other" != "$1" ] && grep -qsE "@sha256:${tag##*-}[0-9a-f]{52}" "$unit" || continue
       if docker tag "$id" "qwen38-pinned:$other-${tag##*-}" >/dev/null 2>&1; then
