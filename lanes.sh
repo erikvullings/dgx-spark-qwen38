@@ -620,6 +620,32 @@ docker_grant(){
   die "Docker: $who is in the docker group now, and this run cannot start again with it here. Log out and back in (or open a new SSH session), then the same command again."
 }
 
+# docker_snap_engine: what says the Docker engine this account reaches is the Snap package, on
+# stdout, and 1 when it is not. Its data root and the paths of its runtimes say it, not which docker
+# binary or service the box has: a box with Docker CE beside the Snap engine reached the Snap one
+# (issue #58, 2026-10-21).
+docker_snap_engine(){
+  local root runtimes r
+  root="$(docker info --format '{{.DockerRootDir}}' 2>/dev/null || true)"
+  case "$root" in /var/snap/docker/*) echo "its data in $root"; return 0 ;; esac
+  runtimes="$(docker info --format '{{range $k, $v := .Runtimes}}{{$v.Path}} {{end}}' 2>/dev/null || true)"
+  for r in $runtimes; do case "$r" in /snap/*) echo "a runtime at $r"; return 0 ;; esac; done
+  return 1
+}
+# host_nvidia_toolkit: the NVIDIA Container Toolkit installed on the host as Ubuntu packages, as DGX
+# OS installs it
+host_nvidia_toolkit(){
+  dpkg-query -W -f='${Status}\n' nvidia-container-toolkit nvidia-container-toolkit-base 2>/dev/null | grep -qx 'install ok installed'
+}
+# docker_engine_line: the engine this account reaches, in one line, for a failure to show
+docker_engine_line(){
+  printf 'Docker %s, data in %s, endpoint %s, runtimes %s' \
+    "$(docker info --format '{{.ServerVersion}}' 2>/dev/null || echo '?')" \
+    "$(docker info --format '{{.DockerRootDir}}' 2>/dev/null || echo '?')" \
+    "$(docker context inspect --format '{{.Endpoints.docker.Host}}' 2>/dev/null || echo '?')" \
+    "$(docker info --format '{{range $k, $v := .Runtimes}}{{$k}}={{$v.Path}} {{end}}' 2>/dev/null || echo '?')"
+}
+
 # host_packages WHY PKG...: Ubuntu packages a lane builds or runs with, which the caller found
 # missing, installed with sudo, named first. Only where sudo can ask (a terminal) or need not (a
 # ticket): the cockpit's Loads have neither, so install.sh puts these in while its terminal is there

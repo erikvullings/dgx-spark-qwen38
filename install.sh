@@ -1642,6 +1642,15 @@ fi
 # fetches (prepare-lane.sh, then its switch).
 [ "$UNITS_ONLY" -eq 0 ] || NEED_GB=0
 [ -n "$FREE_DISK_GB" ] && [ "$FREE_DISK_GB" -ge "$NEED_GB" ] || die "Need ~${NEED_GB} GB free for the checkpoints and caches under $HF_CACHE; found ${FREE_DISK_GB:-unknown} GB. Free some space or set HF_CACHE to another disk."
+# Docker from the Snap package, beside the NVIDIA Container Toolkit DGX OS installs on the host, fails to
+# start a container with the GPU (canonical/docker-snap#357). Step 3 found it only after the image was
+# pulled, and said the toolkit was missing (issue #58, 2026-10-21). Canonical's two ways round it remove
+# DGX OS packages or change every container's GPU option, and the Snap engine sees only the home: the
+# lanes run on Docker CE, and this stops before the first byte.
+if SNAP_DOCKER="$(docker_snap_engine)" && host_nvidia_toolkit; then
+  die "This box's Docker engine is the Snap package ($SNAP_DOCKER), and the NVIDIA Container Toolkit is installed on the host, as DGX OS installs it. Canonical documents that the Snap engine then fails to start containers with the GPU: https://github.com/canonical/docker-snap#nvidia-container-toolkit-compatibility
+The lanes run on DGX OS's own Docker CE. Nothing was changed. Make it the engine this account reaches, after moving what you keep from the Snap engine (its images and containers live under /var/snap/docker): sudo snap stop --disable docker, then sudo systemctl enable --now docker. Then run this again."
+fi
 DOCKER_ROOT=$(docker info --format '{{.DockerRootDir}}' 2>/dev/null || echo /var/lib/docker)
 DOCKER_FREE_GB=$({ df -BG --output=avail "$DOCKER_ROOT" 2>/dev/null || true; } | tail -1 | tr -dc '0-9')
 # What step 2 pulls, decided here because the room it needs depends on it.
@@ -1773,9 +1782,20 @@ else
   # --entrypoint: the image ships NVIDIA's own entrypoint script
   # (/opt/nvidia/nvidia_entrypoint.sh), which prints a banner and runs its argument;
   # overriding it is what makes this a plain nvidia-smi call with plain output.
-  GPU_SEEN="$(docker run --rm --gpus all --entrypoint nvidia-smi "$PULLED_IMAGE" -L 2>/dev/null | grep -m1 '^GPU' || true)"
-  [ -n "$GPU_SEEN" ] \
-    || die "'docker run --gpus all' cannot see the GPU (no GPU line from nvidia-smi -L in the container). The NVIDIA Container Toolkit is missing or unconfigured. Fix: sudo nvidia-ctk runtime configure --runtime=docker && sudo systemctl restart docker"
+  # What Docker said is kept and shown: the check named the toolkit whatever had failed, Docker's own
+  # error thrown away (issue #58, 2026-10-21).
+  GPU_OUT="$(docker run --rm --gpus all --entrypoint nvidia-smi "$PULLED_IMAGE" -L 2>&1)" && GPU_RC=0 || GPU_RC=$?
+  GPU_SEEN="$(printf '%s\n' "$GPU_OUT" | grep -m1 '^GPU' || true)"
+  if [ -z "$GPU_SEEN" ]; then
+    GPU_HINT="If the NVIDIA Container Toolkit is missing or unconfigured: sudo nvidia-ctk runtime configure --runtime=docker && sudo systemctl restart docker"
+    if SNAP_DOCKER="$(docker_snap_engine)"; then
+      GPU_HINT="This box's Docker engine is the Snap package ($SNAP_DOCKER): https://github.com/canonical/docker-snap#nvidia-container-toolkit-compatibility. The lanes run on DGX OS's own Docker CE."
+    fi
+    die "The GPU check failed: 'docker run --gpus all' with nvidia-smi -L exited $GPU_RC and listed no GPU. Docker said:
+$(printf '%s\n' "$GPU_OUT" | tail -n 6)
+Engine: $(docker_engine_line)
+$GPU_HINT"
+  fi
   echo "OK, container sees: $GPU_SEEN"
 fi
 

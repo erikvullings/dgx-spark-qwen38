@@ -503,7 +503,7 @@ class TheOtherTextLaneOnDemand(unittest.TestCase):
     def test_each_heavy_step_is_behind_the_on_demand_guard(self):
         for marker in ('docker pull "$PULL_TARGET" || die "docker pull failed. Causes: no internet, Docker Hub rate limit (retry in a few minutes or \'docker login\'), or the pinned digest was removed upstream: try FLASH',
                        'docker pull "$PULL_TARGET" || die "docker pull failed. Causes: no internet, Docker Hub rate limit (retry in a few minutes or \'docker login\'), or the pinned digest was removed upstream: try IMAGE',
-                       'GPU_SEEN="$(docker run', 'dl_fetch "$DL_MODEL_REPO" "$MODEL_REV"',
+                       'GPU_OUT="$(docker run', 'dl_fetch "$DL_MODEL_REPO" "$MODEL_REV"',
                        'flash_token_map "$FLASH_IMAGE"', 'python3 "$REPO_DIR/patch-template.py"'):
             with self.subTest(marker=marker[:40]):
                 self.assertIn("UNITS_ONLY", branch_conditions(marker))
