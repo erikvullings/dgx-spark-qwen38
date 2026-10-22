@@ -32,6 +32,9 @@
 # the relay's address, the AGENT_AUTO choice (0 or 1), and every directory of the
 # service's PATH but what an editor's session put there (see below).
 set -euo pipefail
+# One spelling of the home, without a trailing slash, as install.sh says why: the cockpit's
+# exact-argv sudoers is rendered from it and has to match the cockpit's own calls (2026-10-22).
+while [ -n "${HOME:-}" ] && [ "$HOME" != / ] && [ "${HOME%/}" != "$HOME" ]; do HOME="${HOME%/}"; done; export HOME
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 UNIT=opencode-web.service
 DASH_UNIT_PATH=/etc/systemd/system/qwen38-dashboard.service

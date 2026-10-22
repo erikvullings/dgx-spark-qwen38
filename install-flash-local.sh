@@ -40,6 +40,9 @@
 # ONE ENGINE AT A TIME. The unit says so with Conflicts=: starting it stops whichever lane
 # serves, and starting another lane stops it.
 set -euo pipefail
+# One spelling of the home, without a trailing slash, as install.sh says why: the cockpit's
+# exact-argv sudoers is rendered from it and has to match the cockpit's own calls (2026-10-22).
+while [ -n "${HOME:-}" ] && [ "$HOME" != / ] && [ "${HOME%/}" != "$HOME" ]; do HOME="${HOME%/}"; done; export HOME
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 UNIT=qwen38-flash-local.service
 # where systemd reads the units, the one variable lanes.sh and vllm-lane.sh read the other units by

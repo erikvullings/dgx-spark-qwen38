@@ -17,6 +17,9 @@
 # The sudoers file is validated with visudo -c BEFORE it lands, from a temp
 # path, so a broken render can never brick sudo.
 set -euo pipefail
+# One spelling of the home, without a trailing slash, as install.sh says why: the cockpit's
+# exact-argv sudoers is rendered from it and has to match the cockpit's own calls (2026-10-22).
+while [ -n "${HOME:-}" ] && [ "$HOME" != / ] && [ "${HOME%/}" != "$HOME" ]; do HOME="${HOME%/}"; done; export HOME
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_DIR="$(dirname "$HERE")"
 UNIT=qwen38-dashboard.service

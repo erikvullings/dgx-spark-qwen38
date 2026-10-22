@@ -20,6 +20,13 @@ trap 'printf "\n\033[1;31mInstall failed at line %s (command: %s).\033[0m\nRe-ru
 # (tests/test_install_preflight.py pins that failure mode on the port checks).
 die()  { printf '\n\033[1;31mERROR:\033[0m %s\n' "$*" >&2; exit 1; }
 
+# One spelling of the home, without a trailing slash: a home given as "/home/nvidia/" in /etc/passwd
+# (on a second ASUS Ascent GX10) put a "//" in every path built on it, while systemd hands the cockpit the
+# same home without the slash. The cockpit's exact-argv sudoers, rendered from a login shell, then
+# matched none of the cockpit's own switches, and every Load that installs a unit asked for a password
+# (found on a second ASUS Ascent GX10, 2026-10-22).
+while [ -n "${HOME:-}" ] && [ "$HOME" != / ] && [ "${HOME%/}" != "$HOME" ]; do HOME="${HOME%/}"; done; export HOME
+
 # ── The first wall: this installer does not run as root ──────────────────────
 # Everything it writes is addressed from $HOME, and the units it renders carry
 # those paths plus User=$(id -un). Put sudo in front and $HOME is /root: the

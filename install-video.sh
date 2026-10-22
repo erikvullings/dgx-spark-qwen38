@@ -33,6 +33,9 @@
 # The unit says so with Conflicts=, so starting this stops the other lanes and
 # starting another lane stops this. Nothing here has to be remembered by the operator.
 set -euo pipefail
+# One spelling of the home, without a trailing slash, as install.sh says why: the cockpit's
+# exact-argv sudoers is rendered from it and has to match the cockpit's own calls (2026-10-22).
+while [ -n "${HOME:-}" ] && [ "$HOME" != / ] && [ "${HOME%/}" != "$HOME" ]; do HOME="${HOME%/}"; done; export HOME
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 UNIT=qwen38-video.service
 INSTALLED="/etc/systemd/system/$UNIT"

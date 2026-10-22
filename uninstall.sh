@@ -11,6 +11,9 @@
 #                            the exact reclaim command for each present item is printed
 #   ./uninstall.sh --yes     same, config removed without asking
 set -euo pipefail
+# One spelling of the home, without a trailing slash, as install.sh says why: the cockpit's
+# exact-argv sudoers is rendered from it and has to match the cockpit's own calls (2026-10-22).
+while [ -n "${HOME:-}" ] && [ "$HOME" != / ] && [ "${HOME%/}" != "$HOME" ]; do HOME="${HOME%/}"; done; export HOME
 CONFIG_DIR="$HOME/.config/qwen38"
 SYSTEMD_DIR=/etc/systemd/system
 SUDOERS_FILE=/etc/sudoers.d/qwen38-cockpit

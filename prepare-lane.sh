@@ -23,6 +23,9 @@
 # actions never build one argument out of a parameter (dashboard/tests/test_cockpit_http.py
 # holds them to that).
 set -euo pipefail
+# One spelling of the home, without a trailing slash, as install.sh says why: the cockpit's
+# exact-argv sudoers is rendered from it and has to match the cockpit's own calls (2026-10-22).
+while [ -n "${HOME:-}" ] && [ "$HOME" != / ] && [ "${HOME%/}" != "$HOME" ]; do HOME="${HOME%/}"; done; export HOME
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 usage(){ echo "usage: ./prepare-lane.sh <image|video|kolibri|nemotron|nemotron-super|flash-local|ornith-122b> | <flash|27b> [<target>]" >&2; exit 2; }
 die(){ printf '\n\033[1;31mERROR:\033[0m %s\n' "$*" >&2; exit 1; }

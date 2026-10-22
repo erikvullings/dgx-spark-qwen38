@@ -44,6 +44,9 @@
 set -euo pipefail
 REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 die() { printf '\n\033[1;31mERROR:\033[0m %s\n' "$*" >&2; exit 1; }
+# One spelling of the home, without a trailing slash, as install.sh says why: the cockpit's
+# exact-argv sudoers is rendered from it and has to match the cockpit's own calls (2026-10-22).
+while [ -n "${HOME:-}" ] && [ "$HOME" != / ] && [ "${HOME%/}" != "$HOME" ]; do HOME="${HOME%/}"; done; export HOME
 # A download says its bytes every 10 s (hf-progress.py), and with no terminal on stdout (the
 # cockpit's Load runs this as a job) snapshot_download's own bars go: they count files, a
 # 53 GB safetensors the same as a 2 KB config, and in a job each redraw is one more line.
