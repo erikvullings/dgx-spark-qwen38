@@ -24,6 +24,12 @@ import agent_relay as ar  # noqa: E402
 
 GOOD_AUTH = "Basic " + base64.b64encode(b"cockpit:secret").decode()
 SPA_DOC = b"<!doctype html><html><head><title>Oc</title></head><body><div id=root></div></body></html>"
+
+
+def html_of(n: int) -> bytes:
+    """An HTML document of exactly n bytes, with a head the phone layer can go into."""
+    head, tail = b"<html><head><title>Big</title></head><body>", b"</body></html>"
+    return head + b"x" * (n - len(head) - len(tail)) + tail
 WS_GUID = b"258EAFA5-E914-47DA-95CA-C5AB0DC85B11"
 RELEASE = threading.Event()          # lets the SSE handler send its second event
 SEEN: list = []                       # requests as the upstream saw them
@@ -132,6 +138,35 @@ class FakeOpencode(http.server.BaseHTTPRequestHandler):
             self.send_header("Cache-Control", "max-age=600")
             self.end_headers()
             self.wfile.write(doc)
+            return
+        if path == "/emptychunkspa":
+            self.send_response(200)
+            self.send_header("Content-Type", "text/html")
+            self.send_header("Transfer-Encoding", "chunked")
+            self.end_headers()
+            self.wfile.write(b"0\r\n\r\n")
+            return
+        if path in ("/chunkspa", "/cutchunkspa", "/sizedchunkspa"):
+            # the index the way opencode 1.19.4 sends it: chunked, no Content-Length; cut
+            # after its first piece, or of a given size in 64 KiB pieces
+            if path == "/sizedchunkspa":
+                doc = html_of(int(urllib.parse.parse_qs(urllib.parse.urlsplit(self.path).query)["n"][0]))
+                pieces = [doc[i:i + 65536] for i in range(0, len(doc), 65536)]
+            else:
+                pieces = [SPA_DOC[:20], SPA_DOC[20:50], SPA_DOC[50:]]
+            self.send_response(200)
+            self.send_header("Content-Type", "text/html")
+            self.send_header("Transfer-Encoding", "chunked")
+            self.send_header("Cache-Control", "max-age=600")
+            self.end_headers()
+            for i, piece in enumerate(pieces):
+                self.wfile.write(b"%x\r\n%s\r\n" % (len(piece), piece))
+                if path == "/cutchunkspa":
+                    self.wfile.flush()
+                    self.close_connection = True
+                    self.connection.shutdown(socket.SHUT_RDWR)
+                    return
+            self.wfile.write(b"0\r\n\r\n")
             return
         if path == "/gzspa":
             import gzip
@@ -267,6 +302,15 @@ class RelayTests(unittest.TestCase):
             with e:
                 return e.code, dict(e.headers.items()), e.read()
 
+    def cache_controls(self, path):
+        """Every Cache-Control the relay sends for a page: get() keeps one value of a header
+        sent twice, so an upstream policy passed beside the relay's own went unseen (found in
+        review, 2026-10-22)."""
+        req = urllib.request.Request(self.base + path, headers={"Cookie": "cockpit=good", "Accept": "text/html"})
+        with urllib.request.urlopen(req, timeout=10) as r:
+            r.read()
+            return r.headers.get_all("Cache-Control")
+
     # ---- an answer opencode cuts short ----
     def test_a_cut_fixed_length_answer_ends_the_browsers_connection(self):
         """The relay forwarded the Content-Length, stopped at opencode's early end, and
@@ -364,9 +408,14 @@ class RelayTests(unittest.TestCase):
         self.assertTrue(ar.wants_html_rewrite("GET", 200, **yes))
         self.assertTrue(ar.wants_html_rewrite("GET", 200, content_type="text/html; charset=utf-8",
                                               content_encoding="identity", chunked=False, length=10))
+        self.assertTrue(ar.wants_html_rewrite("GET", 200, content_type="text/html", content_encoding=None,
+                                              chunked=True, length=None),
+                        "chunked: read up to the ceiling, injected only if whole within it")
         for why, kw in {"POST": dict(command="POST"), "redirect": dict(status=304),
                         "json": dict(content_type="application/json"), "gzip": dict(content_encoding="gzip"),
-                        "chunked": dict(chunked=True), "no length": dict(length=None),
+                        "chunked gzip": dict(chunked=True, length=None, content_encoding="gzip"),
+                        "chunked json": dict(chunked=True, length=None, content_type="application/json"),
+                        "ends when the connection closes": dict(length=None),
                         "huge": dict(length=10 * 1024 * 1024)}.items():
             args = {"content_type": "text/html", "content_encoding": None, "chunked": False, "length": 2884}
             args.update(kw)
@@ -391,7 +440,7 @@ class RelayTests(unittest.TestCase):
         self.assertIn(b"/__cockpit/agent-mobile.css", body)
         self.assertIn(b"<title>Oc</title>", body, "the document itself passes untouched")
         self.assertEqual(int(hdr["Content-Length"]), len(body), "the length is recomputed after injection")
-        self.assertEqual(hdr["Cache-Control"], "no-cache",
+        self.assertEqual(self.cache_controls("/spa"), ["no-cache"],
                          "Safari must revalidate, never serve the un-injected document from its cache")
 
     def test_gzipped_document_streams_untouched(self):
@@ -401,6 +450,46 @@ class RelayTests(unittest.TestCase):
         self.assertNotIn(b"/__cockpit/agent-mobile.", body, "compressed bytes are forwarded byte-exact")
         import gzip
         self.assertEqual(gzip.decompress(body), SPA_DOC)
+
+    def test_a_chunked_document_gets_the_mobile_layer(self):
+        """opencode 1.19.4 sends its index chunked, where 1.18.35 sent it with a
+        Content-Length: the relay streamed it untouched, and the Agent tab lost its phone
+        layer (both versions behind a copy of this relay, 2026-10-22)."""
+        code, hdr, body = self.get("/chunkspa", headers={"Accept": "text/html"})
+        self.assertEqual(code, 200)
+        self.assertEqual(body, ar.inject_mobile(SPA_DOC))
+        self.assertEqual(int(hdr["Content-Length"]), len(body), "sent whole, with its new length")
+        self.assertNotIn("Transfer-Encoding", hdr)
+        self.assertEqual(self.cache_controls("/chunkspa"), ["no-cache"],
+                         "Safari must revalidate, never serve the un-injected document from its cache")
+
+    def test_a_cut_chunked_document_is_not_served_as_whole(self):
+        """A chunked document that stops before its last chunk is cut, as a short one with a
+        length is: the browser gets the 502 it can reload from, not a page missing its end."""
+        code, _, body = self.get("/cutchunkspa", headers={"Accept": "text/html"})
+        self.assertEqual(code, 502)
+        self.assertIn("cut its answer short", json.loads(body)["error"])
+
+    def test_a_chunked_document_past_the_ceiling_streams_untouched(self):
+        """Up to INJECT_LIMIT a chunked document gets the layer; one byte past it, it streams
+        as it came, byte-exact and with the upstream's own cache policy."""
+        n = ar.INJECT_LIMIT
+        code, hdr, body = self.get(f"/sizedchunkspa?n={n}", headers={"Accept": "text/html"})
+        self.assertEqual(code, 200)
+        self.assertEqual(body, ar.inject_mobile(html_of(n)))
+        self.assertEqual(self.cache_controls(f"/sizedchunkspa?n={n}"), ["no-cache"])
+        code, hdr, body = self.get(f"/sizedchunkspa?n={n + 1}", headers={"Accept": "text/html"})
+        self.assertEqual(code, 200)
+        self.assertEqual(body, html_of(n + 1), "nothing injected, nothing lost")
+        self.assertEqual(hdr.get("Transfer-Encoding"), "chunked")
+        self.assertEqual(self.cache_controls(f"/sizedchunkspa?n={n + 1}"), ["max-age=600"])
+
+    def test_an_empty_chunked_document_stays_empty(self):
+        """A length must be above 0 for the layer, and a chunked document with nothing in it
+        is no different: it reaches the browser as empty as it came."""
+        code, hdr, body = self.get("/emptychunkspa", headers={"Accept": "text/html"})
+        self.assertEqual(code, 200)
+        self.assertEqual(body, b"")
 
     # ---- header hygiene ----
     def test_request_headers_are_rewritten(self):

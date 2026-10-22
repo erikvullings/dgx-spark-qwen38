@@ -208,13 +208,16 @@ def inject_mobile(html: bytes) -> bytes:
 def wants_html_rewrite(command: str, status: int, content_type: str | None,
                        content_encoding: str | None, chunked: bool,
                        length: int | None) -> bool:
-    """Rewrite only a small, known-length, uncompressed 200 HTML document we
-    were asked to GET; everything else (SSE, images, gzip, redirects) streams
+    """Rewrite only a small, uncompressed 200 HTML document we were asked to GET: one
+    with a length up to INJECT_LIMIT, or a chunked one, which forward reads up to that
+    limit and rewrites only when the whole of it came within (opencode 1.19.4 sends its
+    index chunked, 1.18.35 with a length). Everything else (SSE, images, gzip,
+    redirects, a document that ends only when the connection closes) streams
     byte-exact as before."""
     return (command == "GET" and status == 200
             and "text/html" in (content_type or "").lower()
             and (content_encoding or "").strip().lower() in ("", "identity")
-            and not chunked and length is not None and 0 < length <= INJECT_LIMIT)
+            and (chunked or (length is not None and 0 < length <= INJECT_LIMIT)))
 
 
 def tailscale_ipv4(run=subprocess.run) -> str | None:
@@ -426,6 +429,25 @@ def make_handler(cfg: RelayConfig) -> type[http.server.BaseHTTPRequestHandler]:
                                          resp.getheader("Content-Encoding"),
                                          resp.chunked, resp.length)
             try:
+                doc = b""
+                if rewrite:
+                    # Read before anything is sent: a document opencode ended early (a
+                    # restart mid-answer) would read as whole once injected, so the
+                    # browser gets a 502 it can reload from instead. A document with a
+                    # length is read to it; a chunked one up to one byte past
+                    # INJECT_LIMIT, and gets the layer only when its last chunk came
+                    # within that and it holds something, as a length must be above 0
+                    # (past it, or empty, it streams untouched below, read part first).
+                    want = resp.length if resp.length is not None else INJECT_LIMIT + 1
+                    try:
+                        doc = resp.read(want)
+                        cut = resp.length is not None and len(doc) < want
+                    except (OSError, http.client.HTTPException):
+                        cut = True
+                    if cut:
+                        return self.refuse(502, "the agent server cut its answer short; reload the tab")
+                    if not doc or (resp.length is None and not resp.isclosed()):
+                        rewrite = False
                 self.send_response(resp.status, resp.reason)
                 for k, v in forward_response_headers(resp.getheaders(),
                                                      drop=("cache-control",) if rewrite else ()):
@@ -438,15 +460,7 @@ def make_handler(cfg: RelayConfig) -> type[http.server.BaseHTTPRequestHandler]:
                     self.end_headers()
                     return
                 if rewrite:
-                    want = resp.length
-                    raw = resp.read(want)
-                    if len(raw) < want:
-                        # opencode ended the document early (a restart mid-answer), and
-                        # once injected it would read as whole: nothing has been sent
-                        # yet, so the browser gets a 502 it can reload from instead
-                        self._headers_buffer = []
-                        return self.refuse(502, "the agent server cut its answer short; reload the tab")
-                    payload = inject_mobile(raw)
+                    payload = inject_mobile(doc)
                     self.send_header("Content-Length", str(len(payload)))
                     # opencode sends no Cache-Control (Safari then serves the
                     # document from its heuristic cache and the injection - and
@@ -487,7 +501,8 @@ def make_handler(cfg: RelayConfig) -> type[http.server.BaseHTTPRequestHandler]:
                     self.close_connection = True
                 self.end_headers()
                 while True:
-                    data = resp.read1(CHUNK)
+                    data = doc or resp.read1(CHUNK)
+                    doc = b""
                     if not data:
                         break
                     if chunked:
