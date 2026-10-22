@@ -70,6 +70,8 @@ opencode came (since v1.38.6: before, only an update with a text lane at boot di
 for a binary dated after the server's start, which npm and Homebrew do not give). An update
 that installs no cockpit (`--no-cockpit`, or `--no-start` on a box booting a text lane) leaves
 the server on the opencode it runs until it restarts.
+`dashboard/install-agent.sh` never points it at OpenCode 2, whose server the Agent view is
+not written for yet: it says so and keeps the opencode it runs.
 
 `OPENCODE_PIN=0 ./install.sh` keeps whatever opencode you have and leaves `autoupdate`
 alone. `OPENCODE_VERSION=<x> OPENCODE_SHA256=<its digest>` pins another release (a

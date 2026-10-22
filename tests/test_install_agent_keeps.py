@@ -28,7 +28,8 @@ DASH_CUSTOM = ("[Service]\nEnvironment=COCKPIT_BIND=0.0.0.0\nEnvironment=COCKPIT
                "Environment=COCKPIT_AGENT_UPSTREAM=http://127.0.0.1:4100\n")
 OC_CUSTOM = ("[Service]\nEnvironment=PATH=/opt/agent-tools/bin:/usr/bin\n"
              "ExecStart=/x/opencode serve --hostname 127.0.0.1 --port 4100 --print-logs --log-level INFO\n")
-OPENCODE = "#!/bin/sh\ncase \"$*\" in *--help*) echo '--hostname --port';; *) echo 9.9.9;; esac\n"
+# a 1.x version: from 2.x on the script stops before the render (OpenCode 2, see below)
+OPENCODE = "#!/bin/sh\ncase \"$*\" in *--help*) echo '--hostname --port';; *) echo 1.99.9;; esac\n"
 
 
 def oc_unit(dirs):
@@ -92,6 +93,44 @@ class AReRunKeepsTheInstalledTab(unittest.TestCase):
     def test_a_first_install_takes_the_defaults(self):
         oc, port, bind, _ = run("[Service]\nEnvironment=COCKPIT_BIND=0.0.0.0\nEnvironment=COCKPIT_AGENT_PORT=0\n")
         self.assertEqual((oc, port, bind), ("4096", "30091", "tailscale"))
+
+
+class OpenCode2IsNotServedByTheAgentTab(unittest.TestCase):
+    """OpenCode 2 has a serve of its own that takes --hostname too (2.0.28, read 2026-10-22),
+    which the relay and the health check are not written for: a unit pointed at it lost the
+    Agent tab and the opencode it ran before. The script stops before the render, so the
+    installed unit is never touched."""
+    def run_with(self, version_line):
+        with tempfile.TemporaryDirectory(prefix="agent-oc2-") as d:
+            t = pathlib.Path(d)
+            (t / "qwen38-dashboard.service").write_text(DASH_CUSTOM)
+            (t / "opencode-web.service").write_text(OC_CUSTOM)
+            fake = t / "bin"
+            fake.mkdir()
+            (fake / "opencode").write_text("#!/bin/sh\ncase \"$*\" in *--help*) echo '--hostname --port';; "
+                                           f"*) echo '{version_line}';; esac\n")
+            (fake / "tailscale").write_text("#!/bin/sh\nexit 1\n")
+            for f in fake.iterdir():
+                f.chmod(0o755)
+            script = HEAD.replace("/etc/systemd/system", str(t)) + 'echo "RESULT|rendered"\n'
+            r = subprocess.run(["bash", "-c", script], capture_output=True, text=True, timeout=60,
+                               cwd=REPO / "dashboard", env={"PATH": f"{fake}:/usr/bin:/bin", "HOME": str(t)})
+            return r.returncode, r.stdout + r.stderr, (t / "opencode-web.service").read_text()
+
+    def test_opencode_2_is_refused_before_the_render(self):
+        for line in ("opencode v2.0.28", "2.1.3", "10.0.0"):
+            with self.subTest(line=line):
+                rc, out, unit = self.run_with(line)
+                self.assertNotEqual(rc, 0)
+                self.assertNotIn("RESULT|rendered", out)
+                self.assertIn("OpenCode 2, which the Agent view is not written for yet", out)
+                self.assertEqual(unit, OC_CUSTOM, "the installed unit is left as it was")
+
+    def test_opencode_1_goes_on(self):
+        for line in ("1.19.4", "1.18.35", "opencode v1.99.0"):
+            with self.subTest(line=line):
+                rc, out, _ = self.run_with(line)
+                self.assertIn("RESULT|rendered", out, out)
 
 
 H = "/home/someone"

@@ -84,6 +84,14 @@ OPENCODE_BIN="${OPENCODE_BIN:-$(command -v opencode || true)}"
 SERVE_HELP="$("$OPENCODE_BIN" serve --help 2>&1 || true)"
 case "$SERVE_HELP" in *--hostname*) ;; *) die "this opencode has no 'serve --hostname' option; upgrade it (opencode upgrade)" ;; esac
 OC_VERSION="$("$OPENCODE_BIN" --version 2>/dev/null || true)"; OC_VERSION="${OC_VERSION##*$'\n'}"
+# OpenCode 2 has a serve of its own, --hostname included, which this tab's relay and checks are
+# not written for (its /global/health is the web page, 2.0.28): a unit pointed at it lost the
+# Agent tab, the opencode it ran before with it. Refused before anything is rendered, so the
+# installed unit keeps its opencode (found in review, 2026-10-22).
+OC_MAJOR="$(printf '%s' "$OC_VERSION" | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1 | cut -d. -f1 || true)"
+if [ -n "$OC_MAJOR" ] && [ "$OC_MAJOR" -ge 2 ]; then
+  die "$OPENCODE_BIN is opencode ${OC_VERSION##* }, OpenCode 2, which the Agent view is not written for yet: opencode-web keeps the opencode it runs. Put the opencode 1.x this repo pins first on your PATH (./install.sh installs it in ~/.opencode/bin), or set OPENCODE_BIN to it (docs/opencode.md)."
+fi
 
 # ── where the cockpit listens decides where the relay may listen ───────────
 COCKPIT_BIND="$({ grep -m1 -E '^Environment=COCKPIT_BIND=' "$DASH_UNIT_PATH" || true; } | cut -d= -f3-)"
