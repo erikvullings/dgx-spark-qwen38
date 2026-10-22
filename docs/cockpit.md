@@ -408,4 +408,17 @@ sudo rm -f /etc/systemd/system/opencode-web.service
 DASH_AGENT_PORT=0 dashboard/install-dashboard.sh       # the cockpit without the relay
 ```
 
+A browser check holds the view against a real opencode, in CI: `dashboard/tests/agent-bench.mjs`
+fetches the opencode release `install.sh` pins (checked against its sha256), runs it on loopback with
+a HOME, a config and a password of its own, and drives it through a dry-run cockpit whose relay answers
+on 127.0.0.2, as a box's relay answers on its tailnet address: the relay's gate, the Agent tab, the
+phone layer in the page opencode sends, and a terminal with a command run in it. It needs Chrome, and
+`AGENT_BENCH_TARBALL` lets it use a release already downloaded. `dashboard/tests/agent-check.mjs` runs
+the same kind of checks against a live box:
+
+```bash
+node dashboard/tests/agent-bench.mjs                                          # its own opencode and cockpit
+node dashboard/tests/agent-check.mjs http://<the box's tailnet address>:30090
+```
+
 [Back to the README](../README.md)

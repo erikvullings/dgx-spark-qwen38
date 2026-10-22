@@ -98,6 +98,16 @@ jobs:
           # lands, on five touch screens and a laptop, and reads what the page did.
           node dashboard/tests/touch-check.mjs
 
+      - name: The Agent tab against a real opencode (headless browser, a cockpit and an opencode of its own)
+        run: |
+          # The Agent checks drove the live cockpit of a box, by hand: opencode 1.19 sent its page
+          # chunked, and the relay dropped the phone layer, and it checks the Origin of every terminal
+          # connection; both were found on a box after an update (2026-10-11 and 2026-10-22). This one
+          # fetches the opencode release install.sh pins, checked against its sha256, and drives it
+          # through a dry-run cockpit whose relay answers on 127.0.0.2: the relay's gate, the Agent tab,
+          # the phone layer in the page opencode sends, and a terminal with a command run in it.
+          node dashboard/tests/agent-bench.mjs
+
       - name: Python correctness (ruff F,E9 + compile)
         run: |
           pip install 'ruff==0.5.0'
