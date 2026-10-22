@@ -1076,10 +1076,12 @@ function renderBanners(state, errors){
   if ((upd.stale_code || []).length && !run) add('warn', 'This cockpit runs older code than the files on disk.', `${upd.stale_code.join(', ')} changed under it. Restart it:`, 'sudo systemctl restart qwen38-dashboard.service');
   const ocf = F.ocfit;
   // A Load writes the lane's nominal pair before its engine has a pool, and the cockpit lowers
-  // it once the engine is ready: while its own fit runs that is a note, not a warning (it
-  // warned for ~9 s after every Load of the 27B, second GX10, 2026-10-22)
-  if (ocf && !ocf.ok && (ocf.autofit === 'started' || ocf.autofit === 'fitting'))
-    add('info', 'The cockpit is fitting opencode to this engine.', `opencode's limits were written before ${ocf.served} booted, ${fmtN(ocf.asked)} tokens, and this boot serves ${fmtN(ocf.limit)}: the cockpit lowers them to fit, and the Agent view's server restarts to read them. Nothing to do.`);
+  // it once the engine is ready: while its own fit runs, or waits for the engine to finish
+  // warming up, that is a note, not a warning (it warned for ~9 s after every Load of the 27B,
+  // then for up to 30 s while the engine warmed up, second GX10, 2026-10-22)
+  const ocWaits = ocf && ocf.autofit === 'waiting for the engine';
+  if (ocf && !ocf.ok && (ocf.autofit === 'started' || ocf.autofit === 'fitting' || ocWaits))
+    add('info', 'The cockpit is fitting opencode to this engine.', `opencode's limits were written before ${ocf.served} booted, ${fmtN(ocf.asked)} tokens, and this boot serves ${fmtN(ocf.limit)}: the cockpit lowers them to fit${ocWaits ? ' as soon as the engine is ready' : ''}, and the Agent view's server restarts to read them. Nothing to do.`);
   else if (ocf && !ocf.ok) add('warn', 'opencode asks for more than this engine can hold.', `${ocf.why}: opencode declares ${fmtN(ocf.asked)} tokens, and ${ocf.served} can serve ${fmtN(ocf.limit)}. A session would break when the proxy refuses the prompt. Settings has "Fit the limits to this engine".`);
   ((F.life || {}).orphans || []).forEach(o => add('warn', `${LANE_NAME[o.unit] || o.unit} is running outside systemd.`,
     `The container ${o.container} serves, but its unit is not running, so no other engine may start and a reboot will not bring it back. Start it from Lanes to replace it, or remove it:`, `docker rm -f ${o.container}`));

@@ -302,16 +302,18 @@ class TheCockpitsOwnFitIsANoteNotAWarning(unittest.TestCase):
     """
 
     def test_while_its_own_fit_runs_the_page_says_so_calmly(self):
-        for state in ("'started'", "'fitting'"):
+        for state in ("'started'", "'fitting'", "'waiting for the engine'"):
             r = run(self, self.BODY % state)
             self.assertIn("The cockpit is fitting opencode to this engine.", r["banner"], state)
             self.assertIn("this boot serves 791,259", r["banner"], state)
             self.assertNotIn("would break", r["banner"], state)
             self.assertEqual(r["warn"], 0, state)
+            # while the engine still warms up, the note says the fit comes once it is ready
+            self.assertEqual("as soon as the engine is ready" in r["banner"], state == "'waiting for the engine'", state)
 
     def test_when_nothing_is_fitting_it_it_still_warns(self):
         for state in ("'already handled in this activation'", "'left alone: the fit would raise a declared limit'",
-                      "'not needed'", "null"):
+                      "'not needed'", "'no text engine is ready'", "null"):
             r = run(self, self.BODY % state)
             self.assertIn("opencode asks for more than this engine can hold.", r["banner"], state)
             self.assertIn('Settings has "Fit the limits to this engine".', r["banner"], state)

@@ -1398,6 +1398,24 @@ def _oc_fit():
     return _OC_FIT["mod"]
 
 
+AUTOFIT_RAISES = "left alone: the fit would raise a declared limit"
+
+
+def autofit_pair(fit: dict, ceiling: int) -> tuple[int, int] | str:
+    """The pair maybe_autofit would write for this pool, or why it would write none: the
+    formula could not be loaded, or the fit would raise a declared limit."""
+    try:
+        mod = _oc_fit()
+        window = int(fit.get("window") or 0)
+        cap = mod.lane_cap(fit.get("served") or "") if 0 < window <= mod.NATIVE_WINDOW else None
+        ctx, outp = mod.fit(int(fit["pool"]), int(ceiling or 0), window, cap)
+    except Exception:                               # noqa: BLE001 (the button still works)
+        return "the fit formula could not be loaded"
+    if ctx <= 0 or outp <= 0 or ctx > int(fit["context"]) or outp > int(fit["output"]):
+        return AUTOFIT_RAISES
+    return ctx, outp
+
+
 def maybe_autofit(fit: dict | None, states: dict, ceiling: int) -> str:
     """Fit opencode's limits to the pool of the engine that has just booted, when the ones
     declared do not fit it, through the same action as the Settings tab's button.
@@ -1413,12 +1431,24 @@ def maybe_autofit(fit: dict | None, states: dict, ceiling: int) -> str:
     Only when the declared limits do not fit, never when the fit would raise one of them
     (a number somebody set lower stays theirs), once per activation of the serving unit,
     and as a job, so it shows in the job strip and in the audit log like the button.
-    While that job runs it answers "fitting", which the page shows as a note, not as the
-    warning a person has to act on."""
+    While that job runs it answers "fitting", and while the engine still boots "waiting for the
+    engine", for a fit it will make: the page shows both as a note, not as the warning a person
+    has to act on."""
     if not AUTOFIT or not fit or fit.get("ok"):
         return "not needed"
     unit = next((u for u in lc.TEXT_UNITS if states.get(u) == "ready"), None)
     if not unit:
+        # the engine reports its pool while it warms up, before its health check answers, and
+        # the fit waits for ready: the page warned for those seconds anyway, up to the 30 s of
+        # this collector's tier (second GX10, 2026-10-22). Only for the pool of the 27B or the
+        # flash lane, the ones this fit is for: during a switch the pool read can still be the
+        # last lane's for one tier. And only for a fit it will make: a pair it leaves alone got
+        # the note while the engine booted, and the warning back once it was ready (found in
+        # review, 2026-10-22).
+        if fit.get("served") in ("qwen3.8-27b", "qwen3.8-flash-next") \
+                and any(states.get(u) in lc.TRANSITIONAL - {"stopping"} for u in lc.TEXT_UNITS) \
+                and isinstance(autofit_pair(fit, ceiling), tuple):
+            return "waiting for the engine"
         return "no text engine is ready"
     with LIFE_LOCK:
         enter = (LIFE.get("enter") or {}).get(unit)
@@ -1433,16 +1463,12 @@ def maybe_autofit(fit: dict | None, states: dict, ceiling: int) -> str:
         if any(j.action == "fit_opencode" and j.status == "running" for j in jobs):
             return "fitting"
         return "already handled in this activation"
-    try:
-        mod = _oc_fit()
-        window = int(fit.get("window") or 0)
-        cap = mod.lane_cap(fit.get("served") or "") if 0 < window <= mod.NATIVE_WINDOW else None
-        ctx, outp = mod.fit(int(fit["pool"]), int(ceiling or 0), window, cap)
-    except Exception:                               # noqa: BLE001 (the button still works)
-        return "the fit formula could not be loaded"
-    if ctx <= 0 or outp <= 0 or ctx > int(fit["context"]) or outp > int(fit["output"]):
+    pair = autofit_pair(fit, ceiling)
+    if pair == AUTOFIT_RAISES:
         AUTOFIT_DONE[unit] = enter
-        return "left alone: the fit would raise a declared limit"
+    if isinstance(pair, str):
+        return pair
+    ctx, outp = pair
     code, _ = start_action("fit_opencode", {}, origin="autofit")
     if code != 202:
         return f"not started yet ({code}): another job runs, the next tick tries again"

@@ -679,8 +679,8 @@ class TheAgentLimitsFollowABoot(Base):
         with self.ck.LIFE_LOCK:
             self.ck.LIFE["enter"] = {self.U: "100"}
 
-    def fit(self, ctx=700_000, out=200_000, pool=880_417, ok=False):
-        return {"pool": pool, "context": ctx, "output": out, "worst": ctx + out, "ok": ok}
+    def fit(self, ctx=700_000, out=200_000, pool=880_417, ok=False, served="qwen3.8-27b"):
+        return {"pool": pool, "context": ctx, "output": out, "worst": ctx + out, "ok": ok, "served": served}
 
     def test_a_nominal_pair_over_the_pool_is_fitted_once_per_boot(self):
         ready = {self.U: "ready"}
@@ -697,8 +697,25 @@ class TheAgentLimitsFollowABoot(Base):
         self.assertEqual(self.calls, [])
 
     def test_nothing_is_fitted_while_no_text_engine_is_ready(self):
-        states = {self.U: "capturing-graphs", "qwen38-image.service": "ready"}
-        self.assertEqual(self.ck.maybe_autofit(self.fit(), states, 0), "no text engine is ready")
+        # a text engine still booting: the fit waits for it, and says so (the page shows a note,
+        # where it warned for up to 30 s while the engine warmed up, second GX10, 2026-10-22)
+        for stage in ("starting", "loading-weights", "loading-draft", "allocating-kv", "capturing-graphs",
+                      "warming-up"):
+            states = {self.U: stage, "qwen38-image.service": "ready"}
+            self.assertEqual(self.ck.maybe_autofit(self.fit(), states, 0), "waiting for the engine", stage)
+        # one text lane stopping while the other boots: still the wait
+        states = {self.U: "stopping", "qwen38-flash.service": "starting"}
+        self.assertEqual(self.ck.maybe_autofit(self.fit(served="qwen3.8-flash-next"), states, 0),
+                         "waiting for the engine")
+        # none booting: no engine to fit to, which the page warns about as before
+        for stage in ("stopped", "stopping", "wedged", "failed", "degraded", "orphan"):
+            states = {self.U: stage, "qwen38-image.service": "ready"}
+            self.assertEqual(self.ck.maybe_autofit(self.fit(), states, 0), "no text engine is ready", stage)
+        self.assertEqual(self.ck.maybe_autofit(self.fit(), {}, 0), "no text engine is ready")
+        # a pool read from another lane during a switch, which this fit is not for: no promise
+        states = {self.U: "warming-up"}
+        self.assertEqual(self.ck.maybe_autofit(self.fit(served="ornith-1.5-122b"), states, 0),
+                         "no text engine is ready")
         self.assertEqual(self.calls, [])
 
     def test_a_number_somebody_set_lower_is_never_raised(self):
@@ -706,6 +723,25 @@ class TheAgentLimitsFollowABoot(Base):
         out = self.ck.maybe_autofit(self.fit(ctx=300_000, out=600_000), {self.U: "ready"}, 0)
         self.assertEqual(out, "left alone: the fit would raise a declared limit")
         self.assertEqual(self.calls, [])
+        self.assertEqual(self.ck.AUTOFIT_DONE, {self.U: "100"}, "decided once for this activation")
+
+    def test_no_fit_is_promised_while_the_engine_boots_unless_it_will_be_made(self):
+        """The note says the cockpit lowers the limits as soon as the engine is ready: for a
+        pair it leaves alone, or with no formula to fit by, the page promised that while the
+        engine booted, and the warning took it back once the engine was ready (found in
+        review, 2026-10-22)."""
+        booting = {self.U: "warming-up"}
+        self.assertEqual(self.ck.maybe_autofit(self.fit(ctx=300_000, out=600_000), booting, 0),
+                         "no text engine is ready")
+        real = self.ck._oc_fit
+        self.ck._oc_fit = lambda: (_ for _ in ()).throw(ImportError("no formula"))
+        try:
+            self.assertEqual(self.ck.maybe_autofit(self.fit(), booting, 0), "no text engine is ready")
+        finally:
+            self.ck._oc_fit = real
+        self.assertEqual(self.ck.maybe_autofit(self.fit(), booting, 0), "waiting for the engine")
+        self.assertEqual(self.calls, [])
+        self.assertEqual(self.ck.AUTOFIT_DONE, {}, "a boot decides nothing for the activation to come")
 
     def test_a_flash_boot_is_fitted_to_its_window_and_its_own_pair(self):
         """A big flash pool used to fit to 225,000/116,000: an output above the declared
