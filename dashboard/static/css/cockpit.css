@@ -251,7 +251,9 @@ img,svg,video,canvas{display:block; max-width:100%}
 .panel{position:relative; border:1px solid rgba(255,255,255,.12); border-radius:var(--r-panel);
   background:linear-gradient(180deg, rgba(255,255,255,.075), rgba(255,255,255,.04));
   box-shadow:var(--shadow-1); padding:var(--s-5)}
-.panel > header{display:flex; align-items:baseline; justify-content:space-between; gap:var(--s-3); margin-bottom:var(--s-4)}
+/* wraps: a button that never breaks its line (.btn) beside a title outgrew a 393 px phone, Library's
+   "Delete 1 stray revision, frees 0.0 GiB", and the page zoomed out under the finger (found 2026-10-22) */
+.panel > header{display:flex; flex-wrap:wrap; align-items:baseline; justify-content:space-between; gap:var(--s-3); margin-bottom:var(--s-4)}
 .panel > header h2{font-size:var(--t-17); font-weight:620; letter-spacing:.002em}
 .panel > header .aside{font-size:var(--t-12); color:var(--fg-3); white-space:nowrap}
 .panel.stale{border-style:dashed}
