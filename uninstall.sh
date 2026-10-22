@@ -25,20 +25,21 @@ unit_mount(){  # $1 = the container path; prints the host side of every -v mount
   grep -hoE -- "-v [^ :]+:$1( |\$|:)" "$SYSTEMD_DIR/qwen38-sglang.service" "$CONFIG_DIR/launch-flash.sh" "$SYSTEMD_DIR/qwen38-kolibri.service" "$SYSTEMD_DIR/qwen38-nemotron.service" "$SYSTEMD_DIR/qwen38-nemotron-super.service" "$SYSTEMD_DIR/qwen38-flash-local.service" "$SYSTEMD_DIR/qwen38-ornith-122b.service" 2>/dev/null \
     | sed -e 's/^-v //' -e "s|:$1.*\$||" | tr -s / || true
 }
-# one slash at a time before the list keeps each once, the image and video units' HF_HOME too
+# Each list one slash at a time before it keeps each once: what a unit wrote from a home with a trailing
+# slash, and a folder given from a shell on such a home (PLE_DIR=~/...), say "//".
 HF_CACHES="$( { printf '%s\n' "${HF_CACHE:-}"; unit_mount /root/.cache/huggingface
                { grep -m1 -E '^Environment=HF_HOME=' "$SYSTEMD_DIR/qwen38-image.service" 2>/dev/null || true; } | cut -d= -f3-
                { grep -m1 -E '^Environment=HF_HOME=' "$SYSTEMD_DIR/qwen38-video.service" 2>/dev/null || true; } | cut -d= -f3-
                printf '%s\n' "$HOME/.cache/huggingface"; } | tr -s / | awk 'NF && !seen[$0]++')"
-PLE_DIRS="$( { printf '%s\n' "${PLE_DIR:-}"; unit_mount /ple; printf '%s\n' "$HOME/flashnext-ple"; } | awk 'NF && !seen[$0]++')"
+PLE_DIRS="$( { printf '%s\n' "${PLE_DIR:-}"; unit_mount /ple; printf '%s\n' "$HOME/flashnext-ple"; } | tr -s / | awk 'NF && !seen[$0]++')"
 # The Flash FP4-Local lane's copies of its n-gram table (ple-table.py), where its unit mounts them
 # from, where FLASH_LOCAL_PLE_DIR puts them (given now, or kept by its installer), and their
 # default folder.
 FL_TABLE_DIRS="$( { [ "${FLASH_LOCAL_PLE_DIR:-}" = none ] || printf '%s\n' "${FLASH_LOCAL_PLE_DIR:-}"
                     { head -1 "$CONFIG_DIR/flash-local-ple-dir" 2>/dev/null || true; } | grep -vx none
                     { grep -hoE -- "-v [^ :]+:/root/\.cache/huggingface/hub/[^ :]+/blobs/[0-9a-f]{64}:ro" "$SYSTEMD_DIR/qwen38-flash-local.service" 2>/dev/null || true; } \
-                      | sed -e 's/^-v //' -e 's|:.*$||' | tr -s / | xargs -r -n1 dirname
-                    printf '%s\n' "$HOME/flash-local-ple"; } | awk 'NF && !seen[$0]++')"
+                      | sed -e 's/^-v //' -e 's|:.*$||' | xargs -r -n1 dirname
+                    printf '%s\n' "$HOME/flash-local-ple"; } | tr -s / | awk 'NF && !seen[$0]++')"
 # The diffusion runtime's own caches, written at a lane's first start and reused after,
 # outside every lane's folder: copies of transformed weights (12 GB for the video lane's
 # FL2VA weights) and its cache root (the video decoder's converted weights, 4.6 GB, and the
@@ -132,17 +133,17 @@ done
 [ -f "$PYSPY_WRAPPER" ] && echo "  wrapper   $PYSPY_WRAPPER (cockpit forensics helper)"
 # Read from the unit, not assumed: install-image.sh takes IMAGE_LANE_DIR, so a lane
 # installed elsewhere would be reported clean and left on disk.
-IMAGE_LANE_DIR="${IMAGE_LANE_DIR:-$({ grep -m1 -E '^WorkingDirectory=' "$SYSTEMD_DIR/qwen38-image.service" 2>/dev/null || true; } | cut -d= -f2-)}"
+IMAGE_LANE_DIR="${IMAGE_LANE_DIR:-$({ grep -m1 -E '^WorkingDirectory=' "$SYSTEMD_DIR/qwen38-image.service" 2>/dev/null || true; } | cut -d= -f2- | tr -s /)}"
 IMAGE_LANE_DIR="${IMAGE_LANE_DIR:-$HOME/.local/share/qwen38-image}"
 [ -d "$IMAGE_LANE_DIR" ] && echo "  runtime   $IMAGE_LANE_DIR ($(dir_size "$IMAGE_LANE_DIR"), image lane venv + pinned SGLang checkout)"
 # Read from the unit, not assumed: install-video.sh takes VIDEO_LANE_DIR, so a lane
 # installed elsewhere would be reported clean and left on disk.
-VIDEO_LANE_DIR="${VIDEO_LANE_DIR:-$({ grep -m1 -E '^WorkingDirectory=' "$SYSTEMD_DIR/qwen38-video.service" 2>/dev/null || true; } | cut -d= -f2-)}"
+VIDEO_LANE_DIR="${VIDEO_LANE_DIR:-$({ grep -m1 -E '^WorkingDirectory=' "$SYSTEMD_DIR/qwen38-video.service" 2>/dev/null || true; } | cut -d= -f2- | tr -s /)}"
 VIDEO_LANE_DIR="${VIDEO_LANE_DIR:-$HOME/.local/share/qwen38-video}"
 [ -d "$VIDEO_LANE_DIR" ] && echo "  runtime   $VIDEO_LANE_DIR ($(dir_size "$VIDEO_LANE_DIR"), video lane venv + pinned SGLang checkout)"
 # The speech lane (install-speech.sh, SPEECH_LANE_DIR) keeps its models in its own folder,
 # not in the HF cache: listed apart, since they stay like every other checkpoint.
-SPEECH_LANE_DIR="${SPEECH_LANE_DIR:-$({ grep -m1 -E '^WorkingDirectory=' "$SYSTEMD_DIR/qwen38-speech.service" 2>/dev/null || true; } | cut -d= -f2-)}"
+SPEECH_LANE_DIR="${SPEECH_LANE_DIR:-$({ grep -m1 -E '^WorkingDirectory=' "$SYSTEMD_DIR/qwen38-speech.service" 2>/dev/null || true; } | cut -d= -f2- | tr -s /)}"
 SPEECH_LANE_DIR="${SPEECH_LANE_DIR:-$HOME/.local/share/qwen38-speech}"
 if [ -d "$SPEECH_LANE_DIR/venv" ] || [ -d "$SPEECH_LANE_DIR/llama.cpp" ]; then
   echo "  runtime   $SPEECH_LANE_DIR (speech lane venv + llama.cpp CPU build)"

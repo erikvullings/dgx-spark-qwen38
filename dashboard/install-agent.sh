@@ -35,6 +35,9 @@ set -euo pipefail
 # One spelling of the home, without a trailing slash, as install.sh says why: the cockpit's
 # exact-argv sudoers is rendered from it and has to match the cockpit's own calls (2026-10-22).
 while [ -n "${HOME:-}" ] && [ "$HOME" != / ] && [ "${HOME%/}" != "$HOME" ]; do HOME="${HOME%/}"; done; export HOME
+# The PATH one slash at a time too: a login from such a home put "/home/nvidia//.local/bin" on it, which
+# this script compares with the folders it builds on the home and writes into units (v1.38.1).
+PATH="$(printf '%s' "$PATH" | tr -s /)"; export PATH
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 UNIT=opencode-web.service
 DASH_UNIT_PATH=/etc/systemd/system/qwen38-dashboard.service
@@ -155,8 +158,8 @@ esac
 # three of them into the unit, so opencode-web restarted, and the remote CLI's directory,
 # named after the editor's build, goes at the next VS Code update (the reference box,
 # 2026-10-03).
-# Each folder once, read one slash at a time: a login from a home with a trailing slash spells
-# "/home/nvidia//.local/bin", and the unit v1.38.0 wrote on such a box named opencode's folder twice.
+# Each folder once, the installed PATH read one slash at a time as this script's own is: the unit v1.38.0
+# wrote on a box whose home ends with a slash named opencode's folder in both spellings.
 INSTALLED_PATH="$({ grep -m1 -E '^Environment=PATH=' "$INSTALLED_OC" 2>/dev/null || true; } | cut -d= -f3-)"
 EDITOR_DIRS='/bin/remote-cli(/|$)|/User/globalStorage/|/extensions/[^/]+[.][^/]+-[0-9][^/]*(/|$)'
 SVC_PATH="${AGENT_PATH:-$(printf '%s:%s:%s' "$(dirname "$OPENCODE_BIN")" "$PATH" "$INSTALLED_PATH" | tr ':' '\n' | tr -s / \

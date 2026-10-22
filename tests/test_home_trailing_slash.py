@@ -17,8 +17,10 @@ import unittest
 REPO = pathlib.Path(__file__).resolve().parents[1]
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from test_conformity_classify import HOME, box, classes  # noqa: E402
+import test_install_agent_keeps as keeps  # noqa: E402
 from test_install_agent_keeps import DASH_CUSTOM, oc_unit, run_in  # noqa: E402
 LINE = 'while [ -n "${HOME:-}" ] && [ "$HOME" != / ] && [ "${HOME%/}" != "$HOME" ]; do HOME="${HOME%/}"; done; export HOME'
+PATH_LINE = 'PATH="$(printf \'%s\' "$PATH" | tr -s /)"; export PATH'
 # the entry points that render a unit, the sudoers or a config from the home, or compare one with it
 ENTRY = ("install.sh", "switch-model.sh", "prepare-lane.sh", "uninstall.sh", "get.sh", "install-image.sh",
          "install-video.sh", "install-kolibri.sh", "install-nemotron.sh", "install-nemotron-super.sh",
@@ -144,19 +146,48 @@ class WhatWasWrittenWithTheSlash(unittest.TestCase):
                 self.assertEqual((r.returncode, r.stdout), (0, want), r.stderr)
 
     def test_install_sh_finds_local_bin_on_the_path_such_a_login_gives(self):
-        # its own lines, from the case before its note to the esac: a login from a home with the slash puts
-        # "/home/nvidia//.local/bin" on the PATH, and v1.38.0 said that folder was not on it
+        # its own first lines, through the PATH line, then its note from the case before it to the esac, from a
+        # login on a home with the slash: v1.38.0 said "/home/nvidia//.local/bin" was not on the PATH
         lines = (REPO / "install.sh").read_text().splitlines()
+        head = lines[:lines.index(PATH_LINE) + 1]
         note = next(i for i, ln in enumerate(lines) if "is not in this shell's PATH" in ln)
         start = max(i for i in range(note) if lines[i].lstrip().startswith("case "))
         stop = next(i for i in range(note, len(lines)) if lines[i].strip() == "esac")
         for path, says in (("/home/nvidia//.local/bin:/usr/bin:/bin", False), ("/usr/bin:/bin", True)):
             with self.subTest(path=path):
-                r = subprocess.run(["bash", "-c", 'set -euo pipefail\nOC_BIN="$HOME/.local/bin/oc"\n'
+                r = subprocess.run(["bash", "-c", "\n".join(head) + '\nOC_BIN="$HOME/.local/bin/oc"\n'
                                     + "\n".join(lines[start:stop + 1])],
-                                   capture_output=True, text=True, timeout=10, env={"PATH": path, "HOME": "/home/nvidia"})
+                                   capture_output=True, text=True, timeout=10, env={"PATH": path, "HOME": "/home/nvidia/"})
                 self.assertEqual(r.returncode, 0, r.stderr)
                 self.assertEqual("NOTE" in r.stdout, says, r.stdout)
+
+    def test_the_scripts_that_read_the_path_spell_it_right_after_the_home(self):
+        # install.sh compares what the PATH finds with the folders it builds on the home (its note, its prepend of
+        # opencode's folder, the way it says to start oc), install-agent.sh writes what it finds into a unit
+        for f in ("install.sh", "dashboard/install-agent.sh"):
+            with self.subTest(f):
+                lines = (REPO / f).read_text().splitlines()
+                self.assertEqual(lines.count(PATH_LINE), 1)
+                self.assertEqual(lines.index(PATH_LINE), lines.index(LINE) + 3, "the PATH line follows the home's")
+
+    def test_install_agent_finds_opencode_as_the_home_spells_it(self):
+        # install-agent.sh's own lines up to the render, run alone from a login on a home with the slash, whose PATH
+        # says "<home>//bin": the opencode it puts in opencode-web's ExecStart, which install.sh's runs spelled
+        # without the slash, so that each run after the other restarted the Agent view (found in review)
+        with tempfile.TemporaryDirectory(prefix="agent-slash-") as t:
+            t = pathlib.Path(t)
+            (t / "qwen38-dashboard.service").write_text(DASH_CUSTOM)
+            fake = t / "bin"
+            fake.mkdir()
+            (fake / "opencode").write_text(keeps.OPENCODE)
+            (fake / "tailscale").write_text("#!/bin/sh\nexit 1\n")
+            for f in fake.iterdir():
+                f.chmod(0o755)
+            r = subprocess.run(["bash", "-c", keeps.HEAD.replace("/etc/systemd/system", str(t)) + 'echo "RESULT|$OPENCODE_BIN"\n'],
+                               capture_output=True, text=True, timeout=60, cwd=REPO / "dashboard",
+                               env={"PATH": f"{t}//bin:/usr/bin:/bin", "HOME": f"{t}/"})
+            got = next((ln for ln in r.stdout.splitlines() if ln.startswith("RESULT|")), r.stdout + r.stderr)
+            self.assertEqual(got, f"RESULT|{t}/bin/opencode")
 
     def test_opencode_webs_path_names_each_folder_once(self):
         # the PATH install-agent.sh writes into opencode-web's unit, from such a login and the unit v1.38.0
@@ -169,6 +200,41 @@ class WhatWasWrittenWithTheSlash(unittest.TestCase):
         dirs = path.split(":")
         self.assertEqual([d for d in dirs if "//" in d], [], dirs)
         self.assertEqual((dirs.count(f"{home}/.opencode/bin"), dirs.count(f"{home}/.local/bin")), (1, 1), dirs)
+
+    def test_uninstall_lists_each_folder_once(self):
+        # the folders given from a shell on such a home (PLE_DIR=~/...) beside their defaults, and the side lanes'
+        # folders their units name, as uninstall.sh lists them before it removes anything
+        text = (REPO / "uninstall.sh").read_text()
+        block = text[text.index("unit_mount(){"):text.index("# The diffusion runtime's own caches")]
+        dirs = [ln for ln in text.splitlines() if re.match(r'(IMAGE|VIDEO|SPEECH)_LANE_DIR="\$\{\1_LANE_DIR:-\$\(', ln)]
+        self.assertEqual(len(dirs), 3, dirs)
+        with tempfile.TemporaryDirectory() as t:
+            units = pathlib.Path(t) / "units"
+            units.mkdir()
+            for lane in ("image", "video", "speech"):
+                (units / f"qwen38-{lane}.service").write_text(f"WorkingDirectory=/home/nvidia//.local/share/qwen38-{lane}\n")
+            r = subprocess.run(["bash", "-c", f'set -euo pipefail\nSYSTEMD_DIR="{units}"; CONFIG_DIR="{t}/cfg"\n' + block
+                                + "\n".join(dirs) + '\nprintf "%s|" "$PLE_DIRS" "$FL_TABLE_DIRS" "$IMAGE_LANE_DIR" "$VIDEO_LANE_DIR" "$SPEECH_LANE_DIR"'],
+                               capture_output=True, text=True, timeout=10,
+                               env={"PATH": "/usr/bin:/bin", "HOME": "/home/nvidia", "PLE_DIR": "/home/nvidia//flashnext-ple",
+                                    "FLASH_LOCAL_PLE_DIR": "/home/nvidia//flash-local-ple"})
+        self.assertEqual(r.stdout.split("|")[:5], ["/home/nvidia/flashnext-ple", "/home/nvidia/flash-local-ple"]
+                         + [f"/home/nvidia/.local/share/qwen38-{lane}" for lane in ("image", "video", "speech")], r.stderr)
+
+    def test_flash_local_lists_its_table_folders_once(self):
+        # install-flash-local.sh --uninstall: the folder its installer recorded as given (FLASH_LOCAL_PLE_DIR=~/...
+        # from such a shell) and the default folder are one
+        lines = (REPO / "install-flash-local.sh").read_text().splitlines()
+        start = next(i for i, ln in enumerate(lines) if ln.strip().startswith('TABLE_DIRS="$('))
+        stop = next(i for i in range(start, len(lines)) if "!seen[$0]++')\"" in lines[i])
+        with tempfile.TemporaryDirectory() as t:
+            cfg = pathlib.Path(t) / "cfg"
+            cfg.mkdir()
+            (cfg / "flash-local-ple-dir").write_text("/home/nvidia//flash-local-ple\n")
+            r = subprocess.run(["bash", "-c", f'set -euo pipefail\nINSTALLED="{t}/none.service"; CONFIG_DIR="{cfg}"\n'
+                                + "\n".join(lines[start:stop + 1]) + '\nprintf "%s" "$TABLE_DIRS"'],
+                               capture_output=True, text=True, timeout=10, env={"PATH": "/usr/bin:/bin", "HOME": "/home/nvidia"})
+        self.assertEqual(r.stdout.split(), ["/home/nvidia/flash-local-ple"], r.stderr)
 
     def test_conformity_classes_the_cache_and_the_ple_folder_as_the_default(self):
         units, cfg = box(hf=f"{HOME}//.cache/huggingface", ple=f"{HOME}//flashnext-ple")

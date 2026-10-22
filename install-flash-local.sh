@@ -118,11 +118,12 @@ if [ "$ACTION" = uninstall ]; then
   # The folders the copies of the n-gram table can be in, read before the unit goes: the one the unit
   # mounts them from, the one chosen (FLASH_LOCAL_PLE_DIR, kept) and the default one. In each, the
   # copies ple-table.py lists as its own go, and nothing else (Hasan's choice, 2026-10-20: they go with
-  # the lane; the checkpoint they were copied from stays).
+  # the lane; the checkpoint they were copied from stays). Each once, read one slash at a time: a folder
+  # given from a shell on a home with a trailing slash (FLASH_LOCAL_PLE_DIR=~/...) says "//".
   TABLE_DIRS="$( { { grep -hoE -- "-v [^ :]+:/root/\.cache/huggingface/hub/[^ :]+/blobs/[0-9a-f]{64}:ro" "$INSTALLED" 2>/dev/null || true; } \
                      | sed -e 's/^-v //' -e 's|:.*$||' -e 's|/[0-9a-f]\{64\}$||'
                    { head -1 "$CONFIG_DIR/flash-local-ple-dir" 2>/dev/null || true; } | grep -vx none
-                   printf '%s\n' "$HOME/flash-local-ple"; } | awk 'NF && !seen[$0]++')"
+                   printf '%s\n' "$HOME/flash-local-ple"; } | tr -s / | awk 'NF && !seen[$0]++')"
   vlane_uninstall_unit
   vlane_uninstall_clients
   # The image is pulled, not built: no build of it to prune (qwen38-flash-local names none), and

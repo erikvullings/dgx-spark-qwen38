@@ -26,6 +26,9 @@ die()  { printf '\n\033[1;31mERROR:\033[0m %s\n' "$*" >&2; exit 1; }
 # matched none of the cockpit's own switches, and every Load that installs a unit asked for a password
 # (found on a second ASUS Ascent GX10, 2026-10-22).
 while [ -n "${HOME:-}" ] && [ "$HOME" != / ] && [ "${HOME%/}" != "$HOME" ]; do HOME="${HOME%/}"; done; export HOME
+# The PATH one slash at a time too: a login from such a home put "/home/nvidia//.local/bin" on it, which
+# this script compares with the folders it builds on the home and writes into units (v1.38.1).
+PATH="$(printf '%s' "$PATH" | tr -s /)"; export PATH
 
 # ── The first wall: this installer does not run as root ──────────────────────
 # Everything it writes is addressed from $HOME, and the units it renders carry
@@ -2708,9 +2711,7 @@ exec "\$OPENCODE_BIN" "\$@" --yolo
 OCWRAP
   chmod +x "$OC_BIN"
   echo "installed the oc launcher at $OC_BIN (output ceiling $OC_OUT_CAP, this target's limit $OC_OUT)"
-  # the PATH one slash at a time: a login from a home with a trailing slash put "/home/nvidia//.local/bin"
-  # on it, which is this folder, and the home is spelled without the slash since v1.38.0
-  case ":$(printf '%s' "$PATH" | tr -s /):" in
+  case ":$PATH:" in
     *":$HOME/.local/bin:"*) ;;
     *) echo "NOTE: $HOME/.local/bin is not in this shell's PATH: a new login has it (Ubuntu's ~/.profile"
        echo "      adds it once the folder exists), or call $OC_BIN directly." ;;
