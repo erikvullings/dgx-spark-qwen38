@@ -84,7 +84,7 @@ box, one engine after the other, the same night (2026-10-22), at the native wind
 | one request, `./bench.sh`, greedy: code / reasoning / math / free prose | 42.2 / 42.5-43.3 / 41.1-42.7 / 30.8-32.2 tok/s | 53.7-53.8 / 65.8-67.6 / 69.8-74.5 / 25.2-25.3 tok/s |
 | five real jobs at the model's sampling, in all, 4 / 8 at a time | 64.2 / 88.3 tok/s | 63.0 / 93.2 tok/s |
 | random tokens (1,024 in, 512 out), in all, 1 / 4 / 8 at a time | 37.3-42.1 / 79.1 / 104.5 tok/s | 11.2-11.5 / 24.7 / 37.2 tok/s |
-| a prompt of 40,013 tokens, first token, cold / when it comes back with a new turn | 26.8 s / 5.4 to 5.6 s | 19.3 s / 0.2 to 0.3 s |
+| a prompt of 40,013 tokens, first token, cold / when it comes back with a new turn | 26.8 s / 5.3 to 5.6 s (0.54 to 0.58 s on the second GX10 since v1.38.3, below) | 19.3 s / 0.2 to 0.3 s |
 | KV cache at a window of a million | 1,301,680 tokens | 566,943 tokens |
 | free memory at its lowest, booting / serving up to 8 at a time | 17.1 / 15.8 GiB | 12.7 / 10.7 GiB |
 | a boot, its caches made | 2 min 46 s to 3 min 46 s | 11 min 30 s to 11 min 51 s |
@@ -95,8 +95,10 @@ on random tokens, as eight drafted tokens are paid for at every step and thrown 
 requests the two engines are within 6 % of each other. And SGLang holds half the window: at a window of a million its KV
 cache is 566,943 tokens, and it refused a prompt of 900,000. The lane serves vLLM, for the whole
 window, a speed that holds on any text, a boot four times shorter, more of the box's memory left free,
-and the image the Flash FP4-Local lane already pulls. SGLang's turns of an agent, which come back from
-its cache, are the one thing it does better here (below, and what would close the gap).
+and the image the Flash FP4-Local lane already pulls. SGLang's turns of an agent come back from its
+cache in 0.2 to 0.3 s, the one thing it does better here: an option of this vLLM build brought this
+lane's from 5.3 to 5.6 s down to 0.54 to 0.58 s on the second GX10 (v1.38.3, below), which narrows the
+gap without closing it.
 
 DFlash2 runs on vLLM too, in principle, and the build of the same weights with a BF16 output head
 (above) was made for it. In this image it does not start, with prefix caching or without: "The resolved
@@ -135,25 +137,51 @@ and one drafting depth to the other, so no cost these evaluations can see.
 
 ## An agent's turns: what comes back from the cache
 
-An agent sends its whole conversation again at every turn. On a hybrid model, a prefix cache serves
-only what it kept a recurrent state for, and vLLM keeps one at the boundaries of its blocks, 4,224
-tokens here. Measured through the proxy with a conversation as an agent holds it (`prefix_probe.py`: a
-40,000-token system prompt, then turns, each the whole history and a new question): the first turn
-computed its 40,013 tokens in 26.8 s, and every turn after found 33,792 of them in the cache and
-computed the rest, its first token after 5.4 to 5.6 s. With MTP, vLLM caches up to one block before the
-end of the prompt; the end of the prompt itself, which would leave a turn only its new tokens to
-compute, is what vLLM's fix for MTP (vllm#58368, merged upstream on 2026-09-24) gives back, and this
-image (the latest, of 2026-10-15) does not have it yet. The Flash FP4-Local lane's model, in the same
-image, keeps a state at each request's end, which this build does for three model families and not for
-this one, and its turns come back in 0.3 s. An image with that fix would bring this lane's to the same.
+An agent sends its whole conversation again at every request, and makes two or more a turn: the tool
+call, then its answer once the tool has run. On a hybrid model, a prefix cache serves only what it kept
+a recurrent state for. vLLM keeps one at the boundaries of its blocks, 4,224 tokens here, and with MTP
+it leaves the last of them out: by default a request found in the cache the last whole block before the
+end of what it shared with the one before, less one. Since v1.38.3 the lane passes
+`--prefix-match-unit 16`: the cache keys a prompt every 16 tokens and also keeps a state at each
+prompt's last 16-token boundary, so a request that extends an earlier one, as an agent's next request
+does, starts from the cache at that boundary (16 tokens earlier with MTP). A request that parts from an
+earlier prompt inside it still starts at the last whole block before the point where they part.
 
-What it costs an agent today, measured with the agents themselves on the second GX10 (four turns of
-each in one session, each turn reading or writing a file with a tool): opencode found 85 to 86 % of its
-69,000-token prompts in the cache and computed about 10,000 tokens a turn, 12.6 to 14.6 s a turn.
-Claude Code found 8,448 of its 23,000 (36 %), 10.7 to 14.4 s a turn, and as many with a checkpoint
-kept at every block (`--prefix-cache-retention-interval 4224`, measured too): its prompt, as this
-template renders it, changes from one turn to the next before its 12,672nd token, which no checkpoint
-can serve past. On the Nemotron lanes, whose template is another, its turns found 72 to 98 %.
+Measured through the proxy with a conversation as an agent holds it (`prefix_probe.py`: a 40,000-token
+system prompt, then turns, each the whole history and a new question whose answer is checked), on the
+second GX10 (2026-10-22): every turn after the first found 99.9 % of its 40,042 to 40,126 tokens in the
+cache and computed 46 to 58, its first token after 0.54 to 0.58 s, where without the option, on the
+same box, it found 33,792 (84 %) and its first token came after 5.1 s (5.0 to 5.6 s on the reference
+box). Then with the agents themselves, on the second GX10: four turns of opencode and four of Claude
+Code, each in one session, every turn with a tool (read a file, write one, read it again, list the
+folder), three times over; the medians of the turns after the first:
+
+| | v1.38.0 to v1.38.2 (MTP 2) | MTP off | MTP off, with the option | v1.38.3 (MTP 2, with the option) |
+|---|---|---|---|---|
+| opencode: from the cache / tokens computed / a turn | 84 % / 11,399 / 14.1 to 15.8 s | 95 % / 3,601 / 10.4 to 10.7 s | 100 % / 214 / 5.6 to 8.6 s | 100 % / 249 / 5.6 to 7.9 s |
+| Claude Code | 36 % / 14,810 / 11.7 to 13.3 s | 78 % / 6,369 / 7.2 to 10.7 s | 99 % / 234 / 5.4 to 7.8 s | 99 % / 268 / 3.7 to 6.4 s |
+
+Each column's 24 answers were right. An agent's request writes few tokens, 59 to 76 on average here
+(tool calls and short answers), so a turn's time is mostly the prompt it computes: without the option,
+turning MTP off made a turn about 30 % shorter, its drafting saving less than the block it cost. With
+the option, MTP costs a request 16 tokens of cache instead of a block, and the lane keeps it: a turn is
+as short with MTP as without, often shorter, and the option leaves the writing speed as it was
+(`./bench.sh` gave 40.0 and 40.4 tok/s without it and 39.9 to 40.3 with it, in the same session on the
+second GX10), where turning MTP off writes 29.2 tok/s on any text instead of 41 to 43 on code,
+reasoning and math and 31 to 33 on free prose (the reference box).
+
+What v1.38.0 said here was wrong on two counts, found by measuring (2026-10-22). vLLM's fix for MTP's
+last block (vllm#58368), put into this image, changed nothing on this model (the probe, on the
+reference box); nor did the checkpoints at each request's end that this build keeps for three other
+model families, turned on for this one. And Claude Code's prompt did not change from one turn to the
+next: the 8,448 tokens it found were one block of 4,224 for each of the two requests of a turn, of about
+11,000 to 12,000 tokens each, not two blocks of one prompt. `--enable-mamba-fine-grained-prefix-cache`,
+which this build also has, keeps a state where a request with MTP was seen to leave a prefix it shares
+with another: beside `--prefix-match-unit 16` it changed nothing that came from the cache (99 to 100 %
+either way), the turns' times moved both ways (Claude Code 3.9 to 5.7 s with it against 3.7 to 6.4
+without, opencode 7.3 to 8.9 s against 5.6 to 7.9, its fourth turns writing longer answers in that
+series) and the probe's first token was 0.55 to 0.59 s against 0.54 to 0.58, so the lane leaves it out.
+On the Nemotron lanes, whose template is another, Claude Code's turns found 72 to 98 %.
 
 The correctness of those turns was checked, not only their speed: the fixes vLLM made for MTP and the
 prefix cache of hybrid models (vllm#46384, #51113) are in this image, and the misread prefill that gave

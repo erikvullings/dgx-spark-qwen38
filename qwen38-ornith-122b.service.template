@@ -40,6 +40,12 @@ ExecStartPre=/bin/bash __HOME__/.config/qwen38/engine-preflight.sh qwen38-ornith
 # reading that YaRN, and refuses a longer one otherwise. The KV cache is fixed at __KV_BYTES__ bytes
 # (17 GiB, 1,301,680 tokens: the window 1.24 times over), where a share of the memory gave from
 # 829,030 to 1,149,938 tokens from one boot to the next, less than the window at some.
+# --prefix-match-unit 16: the prefix cache keys a prompt every 16 tokens, not every block of this
+# hybrid model (4,224 tokens), and also keeps a recurrent state at each prompt's last 16-token boundary,
+# so a request that extends an earlier one (an agent's next request) starts from the cache there:
+# opencode and Claude Code then computed 150 to 360 tokens a turn. Without it such a request started at
+# the last whole block before, less the one MTP drops, and they computed 10,000 to 17,000
+# (docs/ornith-lane.md says what was measured).
 # PYTORCH_CUDA_ALLOC_CONF: the Flash FP4-Local lane's, for the same loader (its unit says why).
 # --security-opt seccomp=seccomp-io-uring.json: b12x's loader reads the checkpoint over io_uring,
 # whose three calls Docker's default seccomp profile refuses ("io_uring bounce initialization
@@ -88,6 +94,7 @@ ExecStart=/bin/bash -c 'exec /usr/bin/docker run --rm --name qwen38-ornith-122b 
     --quantization modelopt_mixed --load-format b12x \
     --dtype bfloat16 --kv-cache-dtype fp8 --block-size 16 \
     --mamba-cache-mode align --enable-prefix-caching --enable-chunked-prefill \
+    --prefix-match-unit 16 \
     --max-model-len 1048576 --max-num-seqs __SEQS__ --max-num-batched-tokens 4096 \
     --gpu-memory-utilization __GMU__ --kv-cache-memory-bytes __KV_BYTES__ \
     --hf-overrides.text_config.rope_parameters.mrope_interleaved true \

@@ -106,6 +106,23 @@ class TheStagedUnit(unittest.TestCase):
         # the pool is fixed, not a share of the memory, whose pool fell under the window at some boots
         self.assertEqual(args[args.index("--kv-cache-memory-bytes") + 1], PINS["ORNITH_122B_KV_BYTES"])
 
+    def test_an_agents_next_request_starts_from_the_cache_up_to_where_it_differs(self):
+        # Without it vLLM matched whole blocks of this hybrid model (4,224 tokens) less the one MTP
+        # drops: opencode and Claude Code recomputed 10,000 to 17,000 tokens a turn on the second GX10
+        # (2026-10-22), where with it 99 to 100 % of each prompt came from the cache.
+        rc, out = self.stage()
+        self.assertEqual(rc, 0, out)
+        args = shlex.split(exec_command(self.out.read_text()))
+        args = args[args.index("serve") + 1:]
+        self.assertIn("--prefix-match-unit", args)
+        unit = int(args[args.index("--prefix-match-unit") + 1])
+        # vLLM refuses to start on a unit that does not divide the block it picks for this model
+        self.assertEqual((unit, 4224 % unit), (16, 0))
+        # and it acts only on a prefix cache aligned to the Mamba blocks; MTP drafting stays on
+        self.assertIn("--enable-prefix-caching", args)
+        self.assertEqual(args[args.index("--mamba-cache-mode") + 1], "align")
+        self.assertEqual(args[args.index("--speculative-config.method") + 1], "mtp")
+
     def test_the_engine_sees_its_key_alone_and_runs_no_code_of_the_checkpoint(self):
         # the image is a community build: of the config directory, only the key, read-only; the
         # checkpoint's chat template as published (Hasan's choice, 2026-10-21), and no remote code

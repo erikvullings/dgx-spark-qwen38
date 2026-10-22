@@ -582,7 +582,7 @@ then `./switch-model.sh ornith-122b`. Measured here, at its window of a million:
 | GSM8K (250) / HumanEval (164) | 98.8 % / 93.9 %, against 97.6 % / 95.1 % at its native window on the same box: within the engine's run-to-run noise |
 | KV cache | 1,301,680 tokens, fixed: the whole window 1.24 times over |
 | long context | a code hidden at 499,974 tokens found, its first token after 19 and a half minutes, and one at 900,055 (its drafting off) after 55 |
-| an agent's next turn, at 40,000 tokens | its first token after 5.3 s: vLLM keeps this model's recurrent state only every 4,224 tokens, and the end of the prompt not yet ([why](docs/ornith-lane.md#an-agents-turns-what-comes-back-from-the-cache)) |
+| an agent's next turn, at 40,000 tokens | on the second GX10, its first token after 0.54 to 0.58 s with 99.9 % of the prompt from the cache, where it took 5.1 s before v1.38.3; with opencode and Claude Code, 99 to 100 % from the cache and a turn about twice as fast ([how](docs/ornith-lane.md#an-agents-turns-what-comes-back-from-the-cache)) |
 
 Every number, the engines tried and why this one: **[docs/ornith-lane.md](docs/ornith-lane.md)**.
 
