@@ -719,6 +719,22 @@ class TheAgentLimitsFollowABoot(Base):
         self.assertEqual(self.ck.maybe_autofit(fit, states, 250_000), "started")
         self.assertEqual(self.calls, [("fit_opencode", "autofit")])
 
+    def test_while_its_own_job_runs_it_says_fitting(self):
+        # the page shows "fitting" as a note: the seconds after a Load are not a warning
+        ready = {self.U: "ready"}
+        self.assertEqual(self.ck.maybe_autofit(self.fit(), ready, 0), "started")
+        job = self.ck.Job("fit_opencode", None, 60, origin="autofit")
+        with self.ck.JOBS_MUTEX:
+            self.ck.JOBS[job.id] = job
+        try:
+            self.assertEqual(self.ck.maybe_autofit(self.fit(), ready, 0), "fitting")
+            job.status = "failed"
+            self.assertEqual(self.ck.maybe_autofit(self.fit(), ready, 0), "already handled in this activation")
+        finally:
+            with self.ck.JOBS_MUTEX:
+                self.ck.JOBS.pop(job.id, None)
+        self.assertEqual(self.calls, [("fit_opencode", "autofit")])
+
     def test_a_busy_job_lock_is_retried_on_the_next_tick(self):
         self.ck.start_action = lambda name, params, origin="ui": (409, {"error": "busy"})
         self.assertIn("not started yet", self.ck.maybe_autofit(self.fit(), {self.U: "ready"}, 0))

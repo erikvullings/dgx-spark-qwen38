@@ -288,6 +288,37 @@ class TheFitLineSaysTheFailingPair(unittest.TestCase):
         self.assertIn("900,000 asked, 827,968 servable", r["line"])
 
 
+class TheCockpitsOwnFitIsANoteNotAWarning(unittest.TestCase):
+    """A Load writes opencode's nominal pair (900,000 on the 1M lanes) before the engine has a
+    pool, and the cockpit lowers it once the engine is ready: for those seconds the page showed
+    a yellow warning that a session would break, after every Load of the 27B (second GX10,
+    2026-10-22). While the cockpit's own fit runs, the page says so in a note."""
+
+    BODY = r"""
+    feed({config: CONFIG, units: UNITS, opencode: {enabled: true, fit: {ok: false,
+          why: 'prompt plus answer exceeds the pool', asked: 900000, limit: 791259, worst: 900000,
+          usable: 791259, pool: 860064, served: 'qwen3.8-27b', autofit: %s}}});
+    report({banner: txt('banners'), warn: document.querySelectorAll('#banners .lamp.warn').length});
+    """
+
+    def test_while_its_own_fit_runs_the_page_says_so_calmly(self):
+        for state in ("'started'", "'fitting'"):
+            r = run(self, self.BODY % state)
+            self.assertIn("The cockpit is fitting opencode to this engine.", r["banner"], state)
+            self.assertIn("this boot serves 791,259", r["banner"], state)
+            self.assertNotIn("would break", r["banner"], state)
+            self.assertEqual(r["warn"], 0, state)
+
+    def test_when_nothing_is_fitting_it_it_still_warns(self):
+        for state in ("'already handled in this activation'", "'left alone: the fit would raise a declared limit'",
+                      "'not needed'", "null"):
+            r = run(self, self.BODY % state)
+            self.assertIn("opencode asks for more than this engine can hold.", r["banner"], state)
+            self.assertIn('Settings has "Fit the limits to this engine".', r["banner"], state)
+            self.assertNotIn("fitting opencode", r["banner"], state)
+            self.assertEqual(r["warn"], 1, state)
+
+
 class TheCheckpointSelectorFollowsTheLaneAgain(unittest.TestCase):
     """Touching a target selector froze it for the life of the page: a choice cancelled in
     the confirmation, or one the lane has served since, left it on that choice while the

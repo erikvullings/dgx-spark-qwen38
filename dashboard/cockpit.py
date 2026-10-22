@@ -1412,7 +1412,9 @@ def maybe_autofit(fit: dict | None, states: dict, ceiling: int) -> str:
 
     Only when the declared limits do not fit, never when the fit would raise one of them
     (a number somebody set lower stays theirs), once per activation of the serving unit,
-    and as a job, so it shows in the job strip and in the audit log like the button."""
+    and as a job, so it shows in the job strip and in the audit log like the button.
+    While that job runs it answers "fitting", which the page shows as a note, not as the
+    warning a person has to act on."""
     if not AUTOFIT or not fit or fit.get("ok"):
         return "not needed"
     unit = next((u for u in lc.TEXT_UNITS if states.get(u) == "ready"), None)
@@ -1420,7 +1422,16 @@ def maybe_autofit(fit: dict | None, states: dict, ceiling: int) -> str:
         return "no text engine is ready"
     with LIFE_LOCK:
         enter = (LIFE.get("enter") or {}).get(unit)
-    if not enter or enter == "0" or AUTOFIT_DONE.get(unit) == enter:
+    if not enter or enter == "0":
+        return "already handled in this activation"
+    if AUTOFIT_DONE.get(unit) == enter:
+        # the job is still lowering the numbers: for those seconds the page warned that a
+        # session would break and named the button, after every Load of the 27B (second
+        # GX10, 2026-10-22)
+        with JOBS_MUTEX:
+            jobs = list(JOBS.values())
+        if any(j.action == "fit_opencode" and j.status == "running" for j in jobs):
+            return "fitting"
         return "already handled in this activation"
     try:
         mod = _oc_fit()
