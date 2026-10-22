@@ -13,8 +13,8 @@ import sys
 
 # Ornith's chat template (its checkpoint's, served as published) reads enable_thinking and no
 # reasoning effort: thinking is on by default, at its full depth. The box maps the levels onto it,
-# as decided on 2026-10-21: none turns the reasoning off, every other level keeps it whole. So two
-# variants, the default first, as a picker lists it.
+# as decided on 2026-10-21: none turns the reasoning off, every other level keeps it whole (the proxy
+# turns minimal off too, as on the Nemotron lanes). So two variants, the default first, as a picker lists it.
 VARIANTS = {
     "high": {"chat_template_kwargs": {"enable_thinking": True}},
     "none": {"chat_template_kwargs": {"enable_thinking": False}},

@@ -2,8 +2,9 @@
 """The Ornith 1.5 122B lane (Ornith AI's model on vLLM, proxy v6.45): Ornith's chat template reads
 enable_thinking and no reasoning effort, so a "none" handed to it as it came left the reasoning on.
 The box maps the levels onto it (2026-10-21): none and minimal turn the reasoning off, every other
-level keeps it whole. A request that names enable_thinking keeps its choice, and every other lane,
-route or doubt goes as it came."""
+level keeps it whole. none and minimal win over the request's own enable_thinking, as on the Qwen
+lanes (omp sends enable_thinking true beside its level), a level that keeps it leaves the request's
+own choice, and every other lane, route or doubt goes as it came."""
 import http.server
 import io
 import json
@@ -61,11 +62,27 @@ class TheTranslation(unittest.TestCase):
         self.assertEqual(sent["chat_template_kwargs"], {"enable_thinking": False, "keep": 1})
         self.assertNotIn("reasoning_effort", sent)
 
-    def test_a_request_that_names_enable_thinking_keeps_its_choice(self):
-        sent, got = self.go({"model": ORNITH, "reasoning_effort": "none", "messages": [],
-                             "chat_template_kwargs": {"enable_thinking": True}})
-        self.assertEqual(got, "none")
-        self.assertEqual(sent["chat_template_kwargs"], {"enable_thinking": True})
+    def test_none_and_minimal_win_over_the_requests_own_enable_thinking(self):
+        # omp, as pi-gen.py writes its config, sends enable_thinking true beside its level: its minimal
+        # (none for this lane) reasoned in full (found in review, 2026-10-22)
+        for level in ("none", "minimal"):
+            for where in ("top", "kwargs"):
+                with self.subTest(level=level, where=where):
+                    body = {"model": ORNITH, "messages": [], "chat_template_kwargs": {"enable_thinking": True}}
+                    if where == "top":
+                        body["reasoning_effort"] = level
+                    else:
+                        body["chat_template_kwargs"]["reasoning_effort"] = level
+                    sent, got = self.go(body)
+                    self.assertEqual(got, level)
+                    self.assertEqual(sent["chat_template_kwargs"], {"enable_thinking": False})
+                    self.assertNotIn("reasoning_effort", sent)
+
+    def test_with_a_level_that_keeps_it_the_requests_own_choice_stays(self):
+        sent, got = self.go({"model": ORNITH, "reasoning_effort": "high", "messages": [],
+                             "chat_template_kwargs": {"enable_thinking": False}})
+        self.assertEqual(got, "high")
+        self.assertEqual(sent["chat_template_kwargs"], {"enable_thinking": False})
         self.assertNotIn("reasoning_effort", sent)
 
     def test_another_lane_route_level_or_shape_goes_as_it_came(self):

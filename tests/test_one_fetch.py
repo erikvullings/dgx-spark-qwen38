@@ -37,7 +37,7 @@ CALLS = {
     "switch-model.sh, the video lane":
         ("switch-model.sh", '"$VID_PY" "$REPO_DIR/ckpt-fetch.py" "$VID_MODEL" "$VID_REV" --allow "$VID_ALLOW" '
                             '--offline-first --refs-main fill'),
-    "vllm-lane.sh, the checkpoints of the four vLLM lanes' installers":
+    "vllm-lane.sh, the checkpoints of the five vLLM lanes' installers":
         ("vllm-lane.sh", '"$LOCAL_IMAGE" /opt/qwen38/ckpt-fetch.py "$1" "$2" --offline-first'),
     "switch-model.sh, the Kolibri lane":
         ("switch-model.sh", '"$KOL_IMAGE" /opt/qwen38/ckpt-fetch.py "$KOL_MODEL" "$KOL_REV" --offline-first \\\n'
@@ -48,10 +48,15 @@ CALLS = {
     "switch-model.sh, the Flash FP4-Local lane":
         ("switch-model.sh", '"$FLASH_LOCAL_IMAGE" /opt/qwen38/ckpt-fetch.py "$FLASH_LOCAL_REPO" "$FLASH_LOCAL_REV" --offline-first \\\n'
                             '    --need-gb "$FLASH_LOCAL_GB" --free-gb "$(dl_free_gb "$FLL_HF")"'),
+    "switch-model.sh, the Ornith lane":
+        ("switch-model.sh", '"$FLASH_LOCAL_IMAGE" /opt/qwen38/ckpt-fetch.py "$ORNITH_122B_REPO" "$ORNITH_122B_REV" --offline-first \\\n'
+                            '    --need-gb "$ORNITH_122B_GB" --free-gb "$(dl_free_gb "$ORN_HF")"'),
 }
 SCRIPTS = ("install.sh", "switch-model.sh", "install-image.sh", "install-video.sh", "install-kolibri.sh",
-           "install-nemotron.sh", "install-nemotron-super.sh", "install-flash-local.sh", "vllm-lane.sh")
-VLLM_INSTALLERS = ("install-kolibri.sh", "install-nemotron.sh", "install-nemotron-super.sh", "install-flash-local.sh")
+           "install-nemotron.sh", "install-nemotron-super.sh", "install-flash-local.sh", "install-ornith-122b.sh",
+           "vllm-lane.sh")
+VLLM_INSTALLERS = ("install-kolibri.sh", "install-nemotron.sh", "install-nemotron-super.sh", "install-flash-local.sh",
+                   "install-ornith-122b.sh")
 
 
 class EveryLaneFetchesThroughIt(unittest.TestCase):

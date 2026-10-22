@@ -43,7 +43,8 @@ Six roles, nothing else:
 v6.45: the Ornith 1.5 122B lane (Ornith AI's model on vLLM) takes a reasoning effort as its chat
 template reads it, enable_thinking alone: none and minimal turn the reasoning off, every other
 level keeps it whole, as the box decided (2026-10-21). Its template reads no effort, and a "none"
-handed to it as it came left the reasoning on.
+handed to it as it came left the reasoning on. A level that turns it off wins over the request's own
+enable_thinking, as on the Qwen lanes: omp sends enable_thinking true beside its level.
 v6.44: the corruption tripwire reads vLLM's reasoning too. vLLM streams the thinking as
 delta.reasoning, which the guard did not read: on the Flash FP4-Local lane, a Qwen lane on vLLM
 whose token id 0 is "!", a decode that lost its state while it reasoned went unseen (found in
@@ -1045,8 +1046,11 @@ def ornith_effort(body, path):
     """(the body to forward, the level translated or None). v6.45: on the Ornith lane (vLLM, a served
     name starting ornith-), a reasoning effort, top-level or in chat_template_kwargs, becomes what its
     template reads: enable_thinking false for none and minimal, true for the others. The effort fields
-    go, as on the Nemotron lane. A request that names enable_thinking itself keeps its choice. Any
-    other level, any other lane, any doubt: the body goes as it came."""
+    go, as on the Nemotron lane. none and minimal win over the request's own enable_thinking, as on
+    the Qwen lanes (qwen_effort_none): omp, as pi-gen.py writes its config, sends enable_thinking true
+    beside its level, and its minimal reasoned in full (found in review, 2026-10-22). With a level that
+    keeps the reasoning, a request that names enable_thinking itself keeps its choice. Any other level,
+    any other lane, any doubt: the body goes as it came."""
     if not body or path.split("?", 1)[0] != "/v1/chat/completions" or b'"reasoning_effort"' not in body:
         return body, None
     if _SERVED["engine"] != "vllm" or not any(str(n).startswith("ornith-") for n in _SERVED["names"]):
@@ -1067,8 +1071,10 @@ def ornith_effort(body, path):
         return body, None
     kw.pop("reasoning_effort", None)
     j.pop("reasoning_effort", None)
-    if "enable_thinking" not in kw:
-        kw["enable_thinking"] = ORNITH_EFFORTS[level] != "off"
+    if ORNITH_EFFORTS[level] == "off":
+        kw["enable_thinking"] = False
+    elif "enable_thinking" not in kw:
+        kw["enable_thinking"] = True
     j["chat_template_kwargs"] = kw
     try:
         return json.dumps(j).encode(), level
@@ -4521,8 +4527,8 @@ class H(BaseHTTPRequestHandler):
         body, level = ornith_effort(body, self.path)
         if level and _effort_off_logged.first("ornith " + level):
             log(f"{self._peer} reasoning_effort {level} is not what the Ornith template reads: relayed as "
-                f"enable_thinking {'false' if ORNITH_EFFORTS[level] == 'off' else 'true'}, unless the request "
-                f"names enable_thinking itself")
+                + ("enable_thinking false" if ORNITH_EFFORTS[level] == "off"
+                   else "enable_thinking true, unless the request names enable_thinking itself"))
         return body
 
     def _forward(self, body, count_only):

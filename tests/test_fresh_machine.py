@@ -647,7 +647,7 @@ class TheScriptsRunFromATerminalGoOnWithTheGroup(unittest.TestCase):
     def test_each_asks_before_its_first_docker_command(self):
         for f in ("switch-model.sh", "install-image.sh", "install-video.sh", "install-kolibri.sh",
                   "install-nemotron.sh", "install-nemotron-super.sh", "install-flash-local.sh",
-                  "uninstall.sh", "install.sh"):
+                  "install-ornith-122b.sh", "uninstall.sh", "install.sh"):
             with self.subTest(f):
                 text = (REPO / f).read_text()
                 at = text.index('docker_session bash "$')
@@ -659,7 +659,7 @@ class TheScriptsRunFromATerminalGoOnWithTheGroup(unittest.TestCase):
     def test_each_has_the_die_the_library_calls(self):
         for f in ("switch-model.sh", "install-image.sh", "install-video.sh", "install-kolibri.sh",
                   "install-nemotron.sh", "install-nemotron-super.sh", "install-flash-local.sh",
-                  "uninstall.sh", "install.sh", "prepare-lane.sh", "install-speech.sh"):
+                  "install-ornith-122b.sh", "uninstall.sh", "install.sh", "prepare-lane.sh", "install-speech.sh"):
             with self.subTest(f):
                 text = (REPO / f).read_text()
                 self.assertRegex(text[:text.index('lanes.sh"')], r"\ndie ?\(\) *\{")

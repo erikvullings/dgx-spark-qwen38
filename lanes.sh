@@ -304,7 +304,7 @@ unpin_stale() {   # $1 lane, $2 the image the lane is pinned to now
       done
 }
 pin_untag() {   # $1 lane: its tags go (its uninstall); the image is then merely dangling
-  local tag id left
+  local tag id left unit other
   pin_tags_of "$1" | while read -r tag id; do
     docker rmi "$tag" >/dev/null 2>&1 || continue
     # The Flash FP4-Local and Ornith lanes pin one image, each with its own tag: the other lane's
@@ -312,6 +312,21 @@ pin_untag() {   # $1 lane: its tags go (its uninstall); the image is then merely
     left="$(docker image inspect "$id" --format '{{range .RepoTags}}{{println .}}{{end}}' 2>/dev/null | grep -m1 '^qwen38-pinned:' || true)"
     if [ -n "$left" ]; then
       echo "untagged $tag: the image stays, $left still names it"
+      continue
+    fi
+    # A lane loaded from the cockpit after the other had pulled the image found it there, and its
+    # preparation, which tags, was not run: an installed unit that runs the image by its digest gets
+    # its lane's tag now (found in review, 2026-10-22).
+    for unit in "$LANES_UNIT_DIR"/qwen38-*.service; do
+      other="${unit##*/qwen38-}"; other="${other%.service}"
+      [ "$other" != "$1" ] && grep -qsE "@sha256:${tag##*-}[0-9a-f]{52}" "$unit" || continue
+      if docker tag "$id" "qwen38-pinned:$other-${tag##*-}" >/dev/null 2>&1; then
+        left="qwen38-pinned:$other-${tag##*-}"
+        break
+      fi
+    done
+    if [ -n "$left" ]; then
+      echo "untagged $tag: the image stays, tagged $left, as the $other lane's unit runs it"
     else
       echo "untagged $tag: a docker image prune can reclaim it"
     fi

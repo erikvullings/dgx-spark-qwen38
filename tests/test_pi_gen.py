@@ -261,6 +261,30 @@ class PiGen(unittest.TestCase):
         self.assertEqual(settings["modelThinkingLevels"]["nemotron/nemotron-3.5-bolt"], "high")
         self.assertEqual(settings["modelThinkingLevels"]["qwen38/qwen3.8-27b"], "off", "the Qwen lanes as before")
 
+    def test_ornith_is_sent_its_levels_as_they_are_starts_at_high_and_takes_images(self):
+        # Ornith's template reads enable_thinking alone: the proxy turns none and minimal off and every
+        # other level on (keepalive-proxy.py, ornith_effort), so pi sends its levels as they are, its off
+        # as none; Kolibri's map sent its minimal as low, which the proxy kept whole (found in review,
+        # 2026-10-22)
+        art = json.loads(json.dumps(ARTIFACT))
+        art["provider"]["ornith-122b"] = {
+            "options": {"baseURL": "http://127.0.0.1:30001/v1", "apiKey": "{file:/keys/api-key}"},
+            "models": {"ornith-1.5-122b": {"name": "Ornith 1.5 122B NVFP4 + MTP (local, 1M)",
+                                           "limit": {"context": 990000, "input": 990000, "output": 32000},
+                                           "variants": {"high": {}, "none": {}},
+                                           "attachment": True,
+                                           "modalities": {"input": ["text", "image"], "output": ["text"]}}}}
+        art["model"] = "ornith-122b/ornith-1.5-122b"
+        with open(self.art, "w") as f:
+            f.write(json.dumps(art))
+        self.gen()
+        models, settings = self.read_pi()
+        entry = models["providers"]["ornith-122b"]["models"][0]
+        self.assertEqual(entry["compat"], {"supportsDeveloperRole": False, "supportsReasoningEffort": True})
+        self.assertEqual(entry["thinkingLevelMap"], {"off": "none"})
+        self.assertEqual(entry["input"], ["text", "image"])
+        self.assertEqual(settings["modelThinkingLevels"]["ornith-122b/ornith-1.5-122b"], "high")
+
     def test_idempotent(self):
         self.gen()
         again = self.gen()

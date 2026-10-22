@@ -155,12 +155,14 @@ PI_COMPAT = {"supportsDeveloperRole": False}
 # way, and Bolt reasons at its full depth unasked, so pi starts at high there too. Super VL's
 # template reads the same two, with the same three levels (its model card): the same, again.
 # Ornith's template reads enable_thinking alone, and the proxy translates the field for it too
-# (keepalive-proxy.py, ornith_effort): none turns it off, every other level keeps it whole, and it
-# reasons at its full depth unasked, so pi starts at high.
+# (keepalive-proxy.py, ornith_effort): none and minimal turn it off, every other level keeps it whole,
+# and it reasons at its full depth unasked, so pi starts at high. pi sends its levels as they are, its
+# off as none: Kolibri's map sent its minimal as low, which the proxy keeps whole (found in review,
+# 2026-10-22).
 EFFORT_FIELD = {"kolibri": ({"off": "none", "minimal": "low", "xhigh": "high"}, "high"),
                 "nemotron": ({"off": "none", "minimal": "low", "xhigh": "high"}, "high"),
                 "nemotron-super": ({"off": "none", "minimal": "low", "xhigh": "high"}, "high"),
-                "ornith-122b": ({"off": "none", "minimal": "low", "xhigh": "high"}, "high")}
+                "ornith-122b": ({"off": "none"}, "high")}
 
 
 def model_meta(mid, m):

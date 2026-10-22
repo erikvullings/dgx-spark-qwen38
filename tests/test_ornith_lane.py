@@ -223,10 +223,13 @@ class TheSharedImagesTags(unittest.TestCase):
     can go too. The Flash FP4-Local and Ornith lanes pin one image, each with a tag of its own: with
     the other lane's tag still on it, "a docker image prune can reclaim it" was not true."""
 
-    def untag(self, tags):
+    def untag(self, tags, units=None):
         d = pathlib.Path(tempfile.mkdtemp(prefix="ornith-tags-"))
         try:
             (d / "bin").mkdir()
+            (d / "units").mkdir()   # the box's own units are not this test's
+            for name, text in (units or {}).items():
+                (d / "units" / name).write_text(text)
             state = d / "tags"
             state.write_text("".join(t + "\n" for t in tags))
             # a docker that knows one image, its tags in a file: images lists them, rmi drops one,
@@ -237,12 +240,14 @@ case "$1 $2" in
   "images --no-trunc") while read -r t; do echo "$t sha256:abc"; done < "$S" ;;
   "rmi "*) grep -vx "$2" "$S" > "$S.n"; mv "$S.n" "$S" ;;
   "image inspect") while read -r t; do echo "$t"; done < "$S" ;;
+  "tag "*) echo "$3" >> "$S" ;;
 esac
 exit 0
 """)
             (d / "bin" / "docker").chmod(0o755)
             r = subprocess.run(["bash", "-c", f'. "{REPO}/lanes.sh"; pin_untag ornith-122b'], capture_output=True,
-                               text=True, timeout=30, env={"PATH": f"{d / 'bin'}:/usr/bin:/bin", "HOME": str(d)})
+                               text=True, timeout=30, env={"PATH": f"{d / 'bin'}:/usr/bin:/bin", "HOME": str(d),
+                                    "LANES_UNIT_DIR": str(d / "units")})
             return r.returncode, r.stdout, state.read_text()
         finally:
             shutil.rmtree(d, ignore_errors=True)
@@ -254,6 +259,26 @@ exit 0
         self.assertIn("untagged qwen38-pinned:ornith-122b-03a956544e9f: the image stays, "
                       "qwen38-pinned:flash-local-03a956544e9f still names it", out)
         self.assertNotIn("prune can reclaim it", out)
+
+    def test_the_other_lanes_unit_that_runs_it_gives_it_its_tag(self):
+        # Flash FP4-Local pulled the image, Ornith was loaded from the cockpit after it (no tag of its
+        # own), then Flash FP4-Local went: the Ornith unit runs the image by its digest
+        image = "eugr/spark-vllm-b12x@sha256:03a956544e9f" + "9b4b7ba91690469fbe7848bdbef29a7d2e0f5788368467bb3595"
+        rc, out, left = self.untag(["qwen38-pinned:ornith-122b-03a956544e9f"],
+                                   units={"qwen38-flash-local.service": f"ExecStart=... {image} vllm serve ...\n",
+                                          "qwen38-kolibri.service": "ExecStart=... qwen38-kolibri:local ...\n"})
+        self.assertEqual(rc, 0, out)
+        self.assertEqual(left, "qwen38-pinned:flash-local-03a956544e9f\n")
+        self.assertIn("untagged qwen38-pinned:ornith-122b-03a956544e9f: the image stays, tagged "
+                      "qwen38-pinned:flash-local-03a956544e9f, as the flash-local lane's unit runs it", out)
+        self.assertNotIn("prune can reclaim it", out)
+
+    def test_a_unit_of_another_image_gives_it_nothing(self):
+        other = "eugr/spark-vllm-b12x@sha256:" + "0" * 64
+        rc, out, left = self.untag(["qwen38-pinned:ornith-122b-03a956544e9f"],
+                                   units={"qwen38-flash-local.service": f"ExecStart=... {other} ...\n"})
+        self.assertEqual(left, "")
+        self.assertIn("a docker image prune can reclaim it", out)
 
     def test_alone_on_it_the_image_is_left_to_a_prune(self):
         rc, out, left = self.untag(["qwen38-pinned:ornith-122b-03a956544e9f"])

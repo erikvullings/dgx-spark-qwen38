@@ -322,7 +322,8 @@ class EveryFetchCountsItsBytes(unittest.TestCase):
         self.assertIn('[ -f "$HERE/hf-progress.py" ] && progress_args=(-v "$HERE/hf-progress.py:/opt/qwen38/hf-progress.py:ro")', text)
         self.assertIn('-v "$HERE/ckpt-fetch.py:/opt/qwen38/ckpt-fetch.py:ro" "${progress_args[@]}"', text)
         self.assertEqual(text.count("hf-progress.py:/opt/qwen38/hf-progress.py"), 1, "one mount, the guarded one")
-        for script in ("install-kolibri.sh", "install-nemotron.sh", "install-nemotron-super.sh", "install-flash-local.sh"):
+        for script in ("install-kolibri.sh", "install-nemotron.sh", "install-nemotron-super.sh", "install-flash-local.sh",
+                       "install-ornith-122b.sh"):
             with self.subTest(script=script):
                 inst = (REPO / script).read_text()
                 self.assertNotIn("hf-progress.py", inst, "no mount of its own")

@@ -303,7 +303,7 @@ def full_run(record, off=(), args=()):
     calls = stubs / "calls"
     calls.touch()
     for side in ("install-image.sh", "install-video.sh", "install-kolibri.sh", "install-nemotron.sh",
-                 "install-nemotron-super.sh", "install-flash-local.sh"):
+                 "install-nemotron-super.sh", "install-flash-local.sh", "install-ornith-122b.sh"):
         (script.parent / side).write_text((REPO / side).read_text())
         (script.parent / side).chmod(0o644)
     for runs in ("dashboard/install-dashboard.sh", "dashboard/install-agent.sh", "prepare-lane.sh", "switch-model.sh"):
