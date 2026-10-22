@@ -55,6 +55,7 @@ def pinned_default() -> str:
 class TheOpencodePin(unittest.TestCase):
     def setUp(self):
         self.t = pathlib.Path(tempfile.mkdtemp(prefix="oc-pin-"))
+        self.addCleanup(shutil.rmtree, self.t, True)
         self.home = self.t / "home"
         self.home.mkdir()
         (self.home / ".bashrc").write_text("# a user's bashrc\n")
@@ -162,6 +163,54 @@ class TheOpencodePin(unittest.TestCase):
         self.assertEqual(calls, [f"upgrade {PINNED}"])
         self.assertEqual(self.version_of(npm_bin), PINNED)
         self.assertFalse(self.home_bin.exists(), "a second copy was installed beside the npm one")
+
+    def homebrew_opencode(self, version, tap):
+        """opencode as Homebrew lays it out: the keg in Cellar, its install receipt (tap None:
+        no receipt), and <prefix>/bin/opencode linking to it."""
+        keg = self.t / "linuxbrew" / "Cellar" / "opencode" / version
+        self.opencode_at(keg / "bin", version)
+        if tap is not None:
+            (keg / "INSTALL_RECEIPT.json").write_text(json.dumps(
+                {"homebrew_version": "4.6.0", "source": {"tap": tap, "spec": "stable"}}, indent=2))
+        linked = self.t / "linuxbrew" / "bin"
+        linked.mkdir(parents=True, exist_ok=True)
+        (linked / "opencode").symlink_to(keg / "bin" / "opencode")
+        (linked / "VERSION").write_text(version + "\n")   # the fake reads it beside the path it ran by
+        return linked
+
+    def assert_homebrew_kept(self, tap):
+        linked = self.homebrew_opencode("1.18.32", tap)
+        rc, out, calls = self.run_block(path_extra=[linked])
+        self.assertEqual(rc, 0, out)
+        self.assertEqual(calls, [], "neither opencode's upgrader nor a download ran")
+        self.assertIn("opencode 1.18.32 comes from Homebrew, not from opencode's own tap, kept", out)
+        self.assertIn("brew uninstall opencode", out)
+        self.assertIn("brew install anomalyco/tap/opencode", out)
+        self.assertEqual(self.version_of(linked / "opencode"), "1.18.32")
+        self.assertFalse(self.home_bin.exists(), "a second copy was installed beside Homebrew's")
+
+    def test_an_older_one_from_homebrew_core_is_kept_and_its_upgrader_never_runs(self):
+        """opencode's upgrader runs brew upgrade whatever version it is asked for (up to 1.19.1),
+        and Homebrew Core's formula is OpenCode 2 now (2.1.2, 2026-10-22): an update put
+        OpenCode 2 under oc and the Agent tab."""
+        self.assert_homebrew_kept("homebrew/core")
+
+    def test_a_homebrew_keg_that_does_not_say_its_tap_is_kept_too(self):
+        self.assert_homebrew_kept(None)
+
+    def test_an_older_one_from_opencodes_own_tap_goes_through_its_upgrader(self):
+        """opencode's own formula (anomalyco/tap/opencode, sst/tap/opencode before the project
+        moved) stays on 1.x, and its upgrader moves it to the tap's version: kept, it would have
+        stayed on the Bun without the fix this pin is for."""
+        for tap in ("anomalyco/tap", "sst/tap"):
+            with self.subTest(tap=tap):
+                self.log.unlink(missing_ok=True)
+                linked = self.homebrew_opencode("1.18.32", tap)
+                rc, out, calls = self.run_block(path_extra=[linked])
+                self.assertEqual(rc, 0, out)
+                self.assertEqual(calls, [f"upgrade {PINNED}"])
+                self.assertNotIn("comes from Homebrew", out)
+                shutil.rmtree(self.t / "linuxbrew")
 
     def test_a_newer_one_is_kept_and_said_so(self):
         self.opencode_at(self.home / ".opencode" / "bin", "1.18.40")

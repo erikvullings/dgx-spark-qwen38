@@ -52,7 +52,9 @@ What a run does with the opencode it finds:
 | none | downloads the pinned release, checks its sha256, installs it where opencode's own installer does (`~/.opencode/bin`) and adds that to `PATH` in `~/.bashrc` |
 | the pinned version | nothing |
 | an older one in `~/.opencode/bin` | replaces it the same way, checked |
-| an older one elsewhere (npm, brew, bun) | `opencode upgrade <pinned>`, opencode's own upgrader, which knows how it was installed |
+| an older one elsewhere (npm, bun) | `opencode upgrade <pinned>`, opencode's own upgrader, which knows how it was installed |
+| an older one from opencode's own Homebrew tap (`anomalyco/tap`, `sst/tap` before the project moved, as its keg's install receipt says) | the same upgrader, which runs `brew upgrade` and so moves it to the tap's own version, a 1.x (the pinned one on 2026-10-22) |
+| an older one from Homebrew Core (or a keg whose install receipt names no tap) | keeps it and says how to get the pinned one: `brew upgrade` installs the formula's own version whatever version it is asked for, Homebrew Core's formula is OpenCode 2 now (2.1.2 on 2026-10-22), whose server is not the 1.x `opencode serve` the Agent view relays, and up to 1.19.1 the upgrader took it (`brew uninstall opencode` and a new run of the installer, or `brew install anomalyco/tap/opencode`, opencode's own 1.x formula) |
 | a newer one | keeps it and says so: going back a version can leave sessions a newer opencode wrote unreadable |
 
 Up to 1.18, left alone, opencode installed its own patch releases (read out of its binary:

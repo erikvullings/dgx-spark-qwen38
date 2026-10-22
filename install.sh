@@ -2090,13 +2090,25 @@ OC_SUM_BEFORE="$(oc_configs_sum)"
 # ── opencode itself, at the pinned version (see the OPENCODE_VERSION pin) ─────────
 # Absent: the release asset is downloaded, checked against its pinned sha256 and put
 # where opencode's own installer puts it. Older in that place: replaced the same way.
-# Older elsewhere (npm, brew, bun): opencode's own upgrader, which knows its method.
+# Older elsewhere (npm, bun, opencode's own Homebrew tap): opencode's own upgrader, which
+# knows its method. Older from Homebrew Core, or from a Homebrew keg that does not say which
+# tap it came from: kept, and said so. For Homebrew the upgrader runs brew upgrade, which
+# installs the formula's own version whatever version it is asked for: opencode's tap stays
+# on 1.x, but Homebrew Core's formula is OpenCode 2 now (2.1.2 on 2026-10-22), whose server is
+# not the 1.x `opencode serve` the Agent tab relays, and up to 1.19.1 the upgrader took it.
 # Newer: kept, and said so, because going back a version can leave sessions a newer
 # opencode wrote unreadable. None of it fails the install: opencode is one integration.
 OC_HOME_BIN="$HOME/.opencode/bin/opencode"
 OC_HOME_DIR="${OC_HOME_BIN%/opencode}"
 oc_version(){ { "$1" --version 2>/dev/null || true; } | tail -1 | tr -d 'v[:space:]'; }
 ver_lt(){ [ "$1" != "$2" ] && [ "$(printf '%s\n%s\n' "$1" "$2" | sort -V | head -1)" = "$1" ]; }
+# Homebrew links a formula's binary from <prefix>/Cellar/<formula>/<version>/bin and writes the
+# tap the formula came from in that keg's INSTALL_RECEIPT.json (source.tap, Homebrew's tab.rb):
+# anomalyco/tap for opencode's own 1.x formula (sst/tap before the project moved, a name an older
+# keg keeps), homebrew/core for Homebrew's
+oc_brew_not_tap(){ local bin; bin="$(readlink -f "$1" 2>/dev/null || true)"
+  case "$bin" in */Cellar/opencode/*/bin/opencode) ;; *) return 1 ;; esac
+  ! grep -qsE '"tap"[[:space:]]*:[[:space:]]*"(anomalyco|sst)/tap"' "${bin%/bin/opencode}/INSTALL_RECEIPT.json"; }
 oc_fetch_pinned(){   # prints the cause of a failure; the caller says what it leaves behind
   local tmp url="https://github.com/anomalyco/opencode/releases/download/v$OPENCODE_VERSION/opencode-linux-arm64.tar.gz"
   tmp="$(mktemp -d)"
@@ -2142,6 +2154,12 @@ elif [ -z "$OC_FOUND" ] || { [ "$OC_FOUND" -ef "$OC_HOME_BIN" ] && ver_lt "$OC_H
   else
     echo "      opencode stays at $OC_HAVE."
   fi
+elif ver_lt "$OC_HAVE" "$OPENCODE_VERSION" && oc_brew_not_tap "$OC_FOUND"; then
+  echo "NOTE: opencode $OC_HAVE comes from Homebrew, not from opencode's own tap, kept: its upgrader would"
+  echo "      run brew upgrade, which installs Homebrew's version, not $OPENCODE_VERSION, and Homebrew Core's"
+  echo "      formula is OpenCode 2 now, which oc and the Agent view are not written for. For $OPENCODE_VERSION:"
+  echo "      brew uninstall opencode, then run this installer again (it installs $OPENCODE_VERSION at"
+  echo "      ~/.opencode/bin), or brew install anomalyco/tap/opencode (opencode's own formula, on 1.x)."
 elif ver_lt "$OC_HAVE" "$OPENCODE_VERSION"; then
   echo "opencode $OC_HAVE -> $OPENCODE_VERSION through opencode's own upgrader ($OC_FOUND)"
   "$OC_FOUND" upgrade "$OPENCODE_VERSION" </dev/null >/dev/null 2>&1 \
