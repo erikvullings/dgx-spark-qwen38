@@ -1,5 +1,37 @@
 # Changelog
 
+## v1.38.5 (2026-10-22): the note also covers the engine's warm-up, before its fit
+
+**What went wrong.** v1.38.4 showed the cockpit's own fit of opencode's limits as a note, but the
+yellow warning still came first after a Load of the 27B, for 29 seconds on the second GX10 (a watcher
+reading the page every second, after the box was updated to v1.38.4). The engine reports its pool
+while it warms up, before its health check answers, and the fit waits for ready: in between, the
+cockpit answered that no text engine was ready, which the page showed as the warning. Its opencode
+facts are read every 30 seconds, so that gap could last up to 30 seconds.
+
+**What changes.** While the 27B or the flash lane is still booting and the limits it will be given do
+not fit its pool, the cockpit answers that it is waiting for the engine, and the page shows the same
+note, which says the limits are lowered as soon as the engine is ready. These are the two lanes whose
+limits the cockpit fits (the vLLM lanes set theirs when they are loaded), and a pool read from another
+lane during a switch gets no such promise. Neither do limits the cockpit will leave alone once the
+engine is ready, such as a number somebody set lower: the fit is worked out while the engine boots,
+and the note is shown only for one it will make. The warning stays for what needs a person, as in
+v1.38.4, and for a box with no text engine booting or serving.
+
+**What an update does.** The cockpit restarts once, which names the release from this changelog.
+On a box that reached v1.38 with its previous update and has not loaded the Ornith lane since, this
+one also adds that lane's opencode provider and restarts opencode's web server once to read it (seen
+on the reference box, which v1.38.3 and v1.38.4 did not say).
+
+**Tests.** The cockpit says it waits for the engine through each of the six boot stages of the 27B or
+the flash lane, also while the other text lane stops, and that no text engine is ready when none is
+booting, for an empty state and for a pool read from another lane; the page shows the note, with its
+last sentence while the engine boots. The cockpit's test and the note's test fail on the code of
+v1.38.4, and the warning's own test passes on both, as it should. While the engine boots, no fit is
+promised for limits the cockpit will leave alone, or with no formula to fit by: a review found the
+note promising those fits, and this test fails on that first version. The test of limits left alone
+now also checks that this is decided once per activation, as it always was.
+
 ## v1.38.4 (2026-10-22): the seconds after a Load are a note, not a warning about opencode
 
 **What went wrong.** After every Load of the 27B, the page showed for about nine seconds a yellow
