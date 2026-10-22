@@ -23,7 +23,7 @@ PYSPY_WRAPPER=/usr/local/bin/qwen38-pyspy-scheduler
 # neither listed nor given a reclaim command (found in review, 2026-09-24).
 unit_mount(){  # $1 = the container path; prints the host side of every -v mounting it
   grep -hoE -- "-v [^ :]+:$1( |\$|:)" "$SYSTEMD_DIR/qwen38-sglang.service" "$CONFIG_DIR/launch-flash.sh" "$SYSTEMD_DIR/qwen38-kolibri.service" "$SYSTEMD_DIR/qwen38-nemotron.service" "$SYSTEMD_DIR/qwen38-nemotron-super.service" "$SYSTEMD_DIR/qwen38-flash-local.service" "$SYSTEMD_DIR/qwen38-ornith-122b.service" 2>/dev/null \
-    | sed -e 's/^-v //' -e "s|:$1.*\$||" || true
+    | sed -e 's/^-v //' -e "s|:$1.*\$||" | tr -s / || true
 }
 HF_CACHES="$( { printf '%s\n' "${HF_CACHE:-}"; unit_mount /root/.cache/huggingface
                { grep -m1 -E '^Environment=HF_HOME=' "$SYSTEMD_DIR/qwen38-image.service" 2>/dev/null || true; } | cut -d= -f3-
@@ -36,7 +36,7 @@ PLE_DIRS="$( { printf '%s\n' "${PLE_DIR:-}"; unit_mount /ple; printf '%s\n' "$HO
 FL_TABLE_DIRS="$( { [ "${FLASH_LOCAL_PLE_DIR:-}" = none ] || printf '%s\n' "${FLASH_LOCAL_PLE_DIR:-}"
                     { head -1 "$CONFIG_DIR/flash-local-ple-dir" 2>/dev/null || true; } | grep -vx none
                     { grep -hoE -- "-v [^ :]+:/root/\.cache/huggingface/hub/[^ :]+/blobs/[0-9a-f]{64}:ro" "$SYSTEMD_DIR/qwen38-flash-local.service" 2>/dev/null || true; } \
-                      | sed -e 's/^-v //' -e 's|:.*$||' | xargs -r -n1 dirname
+                      | sed -e 's/^-v //' -e 's|:.*$||' | tr -s / | xargs -r -n1 dirname
                     printf '%s\n' "$HOME/flash-local-ple"; } | awk 'NF && !seen[$0]++')"
 # The diffusion runtime's own caches, written at a lane's first start and reused after,
 # outside every lane's folder: copies of transformed weights (12 GB for the video lane's

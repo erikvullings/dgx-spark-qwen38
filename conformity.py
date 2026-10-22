@@ -188,7 +188,8 @@ def _engine_place(text, out):
                           ("HF_CACHE", r"-v ([^ :]+):/root/\.cache/huggingface")):
         v = _first(pattern, text)
         if v:
-            out[knob] = v
+            # a path one slash at a time: a unit rendered from a home with a trailing slash says "//"
+            out[knob] = re.sub(r"/{2,}", "/", v) if knob == "HF_CACHE" else v
 
 
 def observe(units_dir=UNITS, config_dir=None, lane="27b", repo_dir=REPO):
@@ -227,7 +228,7 @@ def observe(units_dir=UNITS, config_dir=None, lane="27b", repo_dir=REPO):
                 out["FLASH_REPLAYSSM_SPEC"] = "1" if "--enable-linear-replayssm-spec" in launch else "0"
         ple = _first(r"-v ([^ :]+):/ple", launch)
         if ple:
-            out["PLE_DIR"] = ple
+            out["PLE_DIR"] = re.sub(r"/{2,}", "/", ple)
         if lane == "flash" and "sglang.launch_server" in launch:
             _engine_place(launch, out)
     proxy = _read(Path(units_dir) / "qwen38-keepalive.service")

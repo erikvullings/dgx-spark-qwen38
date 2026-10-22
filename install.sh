@@ -950,11 +950,12 @@ if [ "$INSTALLED_CHOICE" = "flash" ]; then
       # upgrade regenerates the launcher on the new engine, keeping only
       # port/HF/model choices.
       CUR_PORT="$(grep -oE -- '-p [0-9]+:8000' "$FLASH_LAUNCH" | head -1 | grep -oE '^-p [0-9]+' | tr -dc '0-9' || true)"
-      CUR_HF="$(grep -oE -- '-v [^ :]+:/hf' "$FLASH_LAUNCH" | head -1 | sed -e 's/^-v //' -e 's|:/hf$||' || true)"
+      CUR_HF="$(grep -oE -- '-v [^ :]+:/hf' "$FLASH_LAUNCH" | head -1 | sed -e 's/^-v //' -e 's|:/hf$||' | tr -s / || true)"
       echo "NOTE: the installed flash lane is the v1.4 vLLM engine; this upgrade moves it to SGLang"
       echo "      (working prefix caching; see CHANGELOG v1.5). Port/cache/model choices are kept."
     fi
-    CUR_PLE="$(grep -oE -- '-v [^ :]+:/ple' "$FLASH_LAUNCH" | head -1 | sed -e 's/^-v //' -e 's|:/ple$||' || true)"
+    # one slash at a time, as unit_hf_cache reads the cache (lanes.sh): a "//" kept as a choice forever
+    CUR_PLE="$(grep -oE -- '-v [^ :]+:/ple' "$FLASH_LAUNCH" | head -1 | sed -e 's/^-v //' -e 's|:/ple$||' | tr -s / || true)"
     CUR_MODEL="$(grep -oE -- '--model-path [^ ]+' "$FLASH_LAUNCH" | head -1 | cut -d' ' -f2 || true)"
     # The tier lives in the launcher as the concurrency it pins, so a re-run
     # without FLASH_TIER keeps the tier the box is serving.

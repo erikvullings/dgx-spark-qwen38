@@ -10,10 +10,13 @@ import os
 import pathlib
 import re
 import subprocess
+import sys
 import tempfile
 import unittest
 
 REPO = pathlib.Path(__file__).resolve().parents[1]
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from test_conformity_classify import HOME, box, classes  # noqa: E402
 LINE = 'while [ -n "${HOME:-}" ] && [ "$HOME" != / ] && [ "${HOME%/}" != "$HOME" ]; do HOME="${HOME%/}"; done; export HOME'
 # the entry points that render a unit, the sudoers or a config from the home, or compare one with it
 ENTRY = ("install.sh", "switch-model.sh", "prepare-lane.sh", "uninstall.sh", "get.sh", "install-image.sh",
@@ -81,6 +84,48 @@ class OneSpellingOfTheHome(unittest.TestCase):
                                capture_output=True, text=True, timeout=10, env={"PATH": "/usr/bin:/bin", "HOME": f"{t}/"})
             self.assertEqual(r.returncode, 0, r.stderr)
             self.assertEqual(r.stdout, f"{t}/.config/qwen38/qwen38-ornith-122b.service.switch-stage")
+
+
+class WhatWasWrittenWithTheSlash(unittest.TestCase):
+    """A box installed before this release, from a home with the slash, has units that say "//". Read back,
+    such a path is the same folder: kept as the operator's choice it was never mended, and uninstall.sh
+    listed the cache twice (found in review, 2026-10-22)."""
+
+    def test_the_cache_a_unit_mounts_reads_back_one_slash_at_a_time(self):
+        with tempfile.TemporaryDirectory() as t:
+            unit = pathlib.Path(t) / "u.service"
+            unit.write_text("ExecStart=docker run -v /home/nvidia//.cache/huggingface:/root/.cache/huggingface img\n")
+            r = subprocess.run(["bash", "-c", f'. "{REPO}/lanes.sh"; unit_hf_cache "{unit}"'], capture_output=True,
+                               text=True, timeout=10, env={"PATH": "/usr/bin:/bin", "HOME": t})
+            self.assertEqual(r.stdout, "/home/nvidia/.cache/huggingface\n", r.stderr)
+
+    def test_the_ple_folder_install_sh_reads_back_too(self):
+        line = next(ln for ln in (REPO / "install.sh").read_text().splitlines() if ln.strip().startswith("CUR_PLE="))
+        with tempfile.TemporaryDirectory() as t:
+            launch = pathlib.Path(t) / "launch-flash.sh"
+            launch.write_text("docker run -v /home/nvidia//flashnext-ple:/ple img\n")
+            r = subprocess.run(["bash", "-c", f'set -euo pipefail\nFLASH_LAUNCH="{launch}"\n{line.strip()}\nprintf "%s" "$CUR_PLE"'],
+                               capture_output=True, text=True, timeout=10, env={"PATH": "/usr/bin:/bin"})
+            self.assertEqual(r.stdout, "/home/nvidia/flashnext-ple", r.stderr)
+
+    def test_uninstall_lists_the_cache_once(self):
+        text = (REPO / "uninstall.sh").read_text()
+        block = text[text.index("unit_mount(){"):text.index("PLE_DIRS=")]
+        with tempfile.TemporaryDirectory() as t:
+            units = pathlib.Path(t) / "units"
+            units.mkdir()
+            (units / "qwen38-sglang.service").write_text(
+                "ExecStart=docker run -v /home/nvidia//.cache/huggingface:/root/.cache/huggingface img\n")
+            r = subprocess.run(["bash", "-c", f'set -euo pipefail\nSYSTEMD_DIR="{units}"; CONFIG_DIR="{t}/cfg"; HF_CACHE=""\n'
+                                + block + '\nprintf "%s\\n" "$HF_CACHES"'],
+                               capture_output=True, text=True, timeout=10, env={"PATH": "/usr/bin:/bin", "HOME": "/home/nvidia"})
+            self.assertEqual(r.stdout.split(), ["/home/nvidia/.cache/huggingface"], r.stderr)
+
+    def test_conformity_classes_the_cache_and_the_ple_folder_as_the_default(self):
+        units, cfg = box(hf=f"{HOME}//.cache/huggingface", ple=f"{HOME}//flashnext-ple")
+        seen = classes(units, cfg)
+        self.assertNotIn("HF_CACHE", seen)
+        self.assertNotIn("PLE_DIR", seen)
 
 if __name__ == "__main__":
     unittest.main()

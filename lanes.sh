@@ -369,9 +369,10 @@ PY
 # huggingface), nothing when none does; and the nearest folder of a path that exists, where df and
 # stat can look. One reading each for every script: they were copied into a dozen places, a fix to
 # one missing from the next (found in review, 2026-10-16).
-unit_hf_cache(){  # $1... units or launchers
+unit_hf_cache(){  # $1... units or launchers; one slash at a time, as a unit rendered from a home with a
+  # trailing slash wrote "//" and the home is spelled without it now (install.sh, 2026-10-22)
   { grep -hoE -- '-v [^ :]+:/root/\.cache/huggingface' "$@" 2>/dev/null || true; } \
-    | head -1 | sed -e 's/^-v //' -e 's|:/root/\.cache/huggingface$||'
+    | head -1 | sed -e 's/^-v //' -e 's|:/root/\.cache/huggingface$||' | tr -s /
 }
 existing(){  # $1 a path
   local p="$1"; while [ ! -e "$p" ]; do p="$(dirname "$p")"; done; printf '%s\n' "$p"

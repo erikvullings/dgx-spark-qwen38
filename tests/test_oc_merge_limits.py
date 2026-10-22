@@ -249,6 +249,15 @@ def main() -> None:
                        capture_output=True, text=True)
     assert r.returncode == 0 and doc_of(p) == {"provider": {"x": {}}}, r.stdout
 
+    # a reference written from a home with a trailing slash is the same file too: uninstall.sh,
+    # spelling the home one way, matched it letter for letter and left the providers reading the key
+    # it then deleted (found in review, 2026-10-22); another file's reference stays
+    p = write(tmp, json.dumps({"provider": {"qwen38": box("{file:" + home + "//.config/qwen38/api-key}"),
+                                            "x": box("{file:/elsewhere/api-key}")}}))
+    r = subprocess.run([sys.executable, SCRIPT, p, "--remove-providers", home + "/.config/qwen38/api-key"],
+                       capture_output=True, text=True)
+    assert r.returncode == 0 and doc_of(p) == {"provider": {"x": box("{file:/elsewhere/api-key}")}}, r.stdout
+
     # first and last member of the provider object both leave valid JSON
     for body in ('{"provider": {"x": {}, "qwen38": ' + json.dumps(box()) + '}, "y": 1}',
                  '{"provider": {"qwen38": ' + json.dumps(box()) + ', "x": {}}, "y": 1}'):

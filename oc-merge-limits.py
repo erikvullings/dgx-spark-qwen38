@@ -652,6 +652,16 @@ def remove_provider(path: str, pid: str) -> int:
     return 0
 
 
+def _ref_path(ref):
+    """The file a {file:} reference reads, ~ expanded and its slashes one at a time; None for anything
+    else. install.sh wrote the key's path as the home said it, and a home with a trailing slash said
+    "/home/nvidia//.config/...", which uninstall.sh, spelling the home one way now, no longer matched
+    letter for letter: the providers stayed, reading a key it then deleted (found in review, 2026-10-22)."""
+    if not (isinstance(ref, str) and ref.startswith("{file:") and ref.endswith("}")):
+        return None
+    return os.path.normpath(os.path.expanduser(ref[len("{file:"):-1]))
+
+
 def remove_providers(path: str, key_file: str) -> int:
     """Take out of an opencode.json the providers that read this box's API key file.
 
@@ -666,12 +676,9 @@ def remove_providers(path: str, key_file: str) -> int:
     if opened is None:
         return 1
     text, doc = opened
-    refs = {f"{{file:{key_file}}}"}
-    home = os.path.expanduser("~")
-    if key_file.startswith(home + "/"):
-        refs.add("{file:~" + key_file[len(home):] + "}")
     prov = doc.get("provider") if isinstance(doc.get("provider"), dict) else {}
-    gone = [p for p, b in prov.items() if _dig(b, "options", "apiKey") in refs]
+    want = _ref_path(f"{{file:{key_file}}}")
+    gone = [p for p, b in prov.items() if want and _ref_path(_dig(b, "options", "apiKey")) == want]
     if not gone:
         print(f"no provider in {path} reads {key_file}: unchanged")
         return 0
