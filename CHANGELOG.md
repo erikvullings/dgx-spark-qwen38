@@ -1,5 +1,45 @@
 # Changelog
 
+## v1.38.3 (2026-10-22): an agent's turns on Ornith come back from the cache, about twice as fast
+
+**What went wrong.** On the second GX10, Ornith felt slow between the turns of an agent (opencode in
+the cockpit's Agent tab): the engine's metrics counted 12,672 of the 61,913 prompt tokens of its first
+six requests served from its cache, a fifth. On this hybrid model vLLM keeps a recurrent state, which
+its prefix cache needs to serve a prompt, only at the boundaries of its blocks, 4,224 tokens here, and
+with MTP it left the last of them out: an agent's request found in the cache the last whole block before
+the end of what it shared with the one before, less one, and an agent recomputed 10,000 to 17,000
+tokens a turn. Measured with the agents themselves (four turns of opencode and four of Claude Code, each
+turn with a tool, three times over), after the first turn: 84 % of opencode's prompts came from the
+cache, 14.1 to 15.8 s a turn, and 36 % of Claude Code's, 11.7 to 13.3 s.
+
+**What changes.** The lane's engine runs with `--prefix-match-unit 16`, an option of this vLLM build:
+the cache keys a prompt every 16 tokens and also keeps a state at each prompt's last 16-token boundary,
+so a request that extends an earlier one, as an agent's next request does, starts from the cache at that
+boundary, and MTP costs it 16 tokens of cache instead of a block. Measured on the second GX10
+(2026-10-22): a conversation of 40,000 tokens comes back with its first token after 0.54 to 0.58 s
+instead of 5.1 s, computing 46 to 58 tokens a turn; after the first turn, opencode's turns found 100 %
+in the cache, 5.6 to 7.9 s a turn, and Claude Code's 99 %, 3.7 to 6.4 s; every answer was right, the
+probe's five facts recalled (the last four from the cache) and the agents' 24 tool turns in each series.
+The writing speed is the same: `./bench.sh` gave 40.0 and 40.4 tok/s without the option and 39.9 to 40.3
+with it, in the same session. Turning MTP off, measured too, made an agent's turn about 30 % shorter
+without the option, and writes 29.2 tok/s on any text where MTP writes 41 to 43 on code, reasoning and
+math (the reference box): with the option, a turn is as short with MTP as without, often shorter, so MTP
+stays. The option's sibling in this build, `--enable-mamba-fine-grained-prefix-cache`, changed nothing
+that came from the cache beside it and is left out. docs/ornith-lane.md now says all this, and corrects
+what v1.38.0 said there: vLLM's fix vllm#58368, put into this image, changed nothing on this model, and
+Claude Code's prompt did not change from one turn to the next (it sends two requests of about 11,000 to
+12,000 tokens a turn, and the cache kept one block of each).
+
+**What an update does.** It writes the Ornith lane's unit again, with the option. An Ornith lane that
+serves goes on with the unit it started with until it is loaded again, and the update says so; no other
+lane is touched, and no image or checkpoint is fetched. The cockpit restarts once, which names the
+release from this changelog.
+
+**Tests.** The lane's unit test checks the option and its value, 16, which divides the block vLLM picks
+for this model (one that does not stops the engine at its start), beside prefix caching aligned to the
+Mamba blocks and MTP drafting. It fails on the unit of v1.38.2, and the mutants (the option left out,
+another unit) are killed.
+
 ## v1.38.2 (2026-10-22): Docker from the Snap package, said before the first image, and the GPU check shows Docker's own error
 
 **What went wrong** (issue #58, reported by ae-buddy on a DGX Spark). Their account reached Docker from
