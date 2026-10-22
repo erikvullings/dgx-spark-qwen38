@@ -412,9 +412,11 @@ A browser check holds the view against a real opencode, in CI: `dashboard/tests/
 fetches the opencode release `install.sh` pins (checked against its sha256), runs it on loopback with
 a HOME, a config and a password of its own, and drives it through a dry-run cockpit whose relay answers
 on 127.0.0.2, as a box's relay answers on its tailnet address: the relay's gate, the Agent tab, the
-phone layer in the page opencode sends, and a terminal with a command run in it. It needs Chrome, and
-`AGENT_BENCH_TARBALL` lets it use a release already downloaded. `dashboard/tests/agent-check.mjs` runs
-the same kind of checks against a live box:
+phone layer in the page opencode sends, and a terminal with a command run in it. opencode starts with
+the command line of the unit `install-agent.sh` writes, so a flag a release refuses fails there first. It
+needs Chrome; `AGENT_BENCH_TARBALL` lets it use a release already downloaded, and
+`AGENT_BENCH_OPENCODE=<binary>` tries another release before it is pinned (OpenCode 2.1.3 does not start
+with the unit's `--log-level INFO`, found that way on 2026-10-23). `dashboard/tests/agent-check.mjs` runs the same kind of checks against a live box:
 
 ```bash
 node dashboard/tests/agent-bench.mjs                                          # its own opencode and cockpit

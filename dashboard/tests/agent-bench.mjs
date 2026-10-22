@@ -70,22 +70,34 @@ if (!VERSION || !ARM64_SHA256) stop(2, 'install.sh names no OPENCODE_VERSION or 
 const ASSET = { arm64: 'opencode-linux-arm64.tar.gz', x64: 'opencode-linux-x64.tar.gz' }[process.arch];
 const SHA256 = { arm64: ARM64_SHA256, x64: X64_SHA256[VERSION] }[process.arch];
 if (!ASSET) stop(2, `no opencode release asset for ${process.arch}`);
-if (!SHA256) stop(2, `install.sh pins opencode ${VERSION}: add GitHub's digest of ${ASSET} for that release to X64_SHA256 here`);
-let tarball = process.env.AGENT_BENCH_TARBALL;
-if (!tarball) {
-  tarball = join(root, ASSET);
-  const r = await fetch(`https://github.com/anomalyco/opencode/releases/download/v${VERSION}/${ASSET}`, { signal: AbortSignal.timeout(300000) });
-  if (!r.ok) stop(2, `downloading opencode ${VERSION}: HTTP ${r.status}`);
-  writeFileSync(tarball, Buffer.from(await r.arrayBuffer()));
+// AGENT_BENCH_OPENCODE runs the bench against another opencode binary, a release to try before it is pinned:
+// no checksum then, and the tab's line is read against that binary's version.
+const CANDIDATE = process.env.AGENT_BENCH_OPENCODE;
+let OC, UNDER_TEST = VERSION;
+if (CANDIDATE) {
+  const v = spawnSync(CANDIDATE, ['--version'], { encoding: 'utf8', env: { PATH: process.env.PATH, HOME: join(root, 'version-home') } });
+  UNDER_TEST = (v.stdout || '').match(/(\d+\.\d+\.\d+)/)?.[1];
+  if (v.status !== 0 || !UNDER_TEST) stop(2, `${CANDIDATE} --version: ${v.stderr || v.stdout}`);
+  console.log(`  note a candidate opencode ${UNDER_TEST} (${CANDIDATE}), not the ${VERSION} install.sh pins: no checksum`);
+  OC = CANDIDATE;
+} else {
+  if (!SHA256) stop(2, `install.sh pins opencode ${VERSION}: add GitHub's digest of ${ASSET} for that release to X64_SHA256 here`);
+  let tarball = process.env.AGENT_BENCH_TARBALL;
+  if (!tarball) {
+    tarball = join(root, ASSET);
+    const r = await fetch(`https://github.com/anomalyco/opencode/releases/download/v${VERSION}/${ASSET}`, { signal: AbortSignal.timeout(300000) });
+    if (!r.ok) stop(2, `downloading opencode ${VERSION}: HTTP ${r.status}`);
+    writeFileSync(tarball, Buffer.from(await r.arrayBuffer()));
+  }
+  const got = createHash('sha256').update(readFileSync(tarball)).digest('hex');
+  ok(`opencode ${VERSION} (${ASSET}) matches its pinned sha256`, got === SHA256, got);
+  if (got !== SHA256) stop(1);
+  const ocDir = join(root, 'opencode');
+  mkdirSync(ocDir);
+  const untar = spawnSync('tar', ['-xzf', tarball, '-C', ocDir, 'opencode'], { encoding: 'utf8' });
+  if (untar.status !== 0) stop(2, `tar: ${untar.stderr}`);
+  OC = join(ocDir, 'opencode');
 }
-const got = createHash('sha256').update(readFileSync(tarball)).digest('hex');
-ok(`opencode ${VERSION} (${ASSET}) matches its pinned sha256`, got === SHA256, got);
-if (got !== SHA256) stop(1);
-const ocDir = join(root, 'opencode');
-mkdirSync(ocDir);
-const untar = spawnSync('tar', ['-xzf', tarball, '-C', ocDir, 'opencode'], { encoding: 'utf8' });
-if (untar.status !== 0) stop(2, `tar: ${untar.stderr}`);
-const OC = join(ocDir, 'opencode');
 
 // ── opencode serve: loopback, its own HOME, config and password ──────────────
 // opencode reads the .opencode folders and opencode.json files of every parent of its working
@@ -115,8 +127,23 @@ writeFileSync(ocConfig, JSON.stringify({
 }, null, 1));
 const password = randomBytes(18).toString('hex');
 const OC_PORT = await freePort();
+// the unit install-agent.sh would write for this server, AGENT_AUTO=1's permission line in it: the cockpit
+// reads the binary it runs and the permission mode from it (COCKPIT_AGENT_UNIT_PATH, never the box's own)
+const unitPath = join(root, 'opencode-web.service');
+const AUTO_LINE = `Environment='OPENCODE_PERMISSION={"*":"allow"}'`;
+const unitText = readFileSync(join(HERE, '..', 'opencode-web.service.template'), 'utf8')
+  .replaceAll('__OPENCODE_BIN__', OC).replaceAll('__AUTO_LINE__', AUTO_LINE).replaceAll('__HOME__', home)
+  .replaceAll('__PATH__', process.env.PATH).replaceAll('__OUTPUT_TOKEN_MAX__', '32000').replaceAll('__USER__', 'bench')
+  .replaceAll('__GROUP__', 'bench').replaceAll('__OPENCODE_PORT__', String(OC_PORT));
+writeFileSync(unitPath, unitText);
+ok('the unit template renders with no placeholder left', !/__[A-Z_]+__/.test(unitText), (unitText.match(/__[A-Z_]+__/g) || []).join(' '));
+// opencode starts with the unit's own command line: a flag the unit passes and a release refuses (2.1.3 takes
+// --log-level in lower case only, and refuses INFO) fails here, not at a box's next restart
+const execLine = unitText.split('\n').find(l => l.startsWith('ExecStart=')) || '';
+const [exe, ...ocArgs] = execLine.slice('ExecStart='.length).trim().split(/\s+/);
+ok('the unit runs this opencode, on the port given to it', exe === OC && ocArgs.join(' ').includes(`--port ${OC_PORT}`), execLine);
 const ocLog = openSync(join(root, 'opencode.log'), 'a');
-ocServer = spawn(OC, ['serve', '--hostname', '127.0.0.1', '--port', String(OC_PORT), '--print-logs', '--log-level', 'INFO'], {
+ocServer = spawn(exe, ocArgs, {
   cwd: work, detached: true, stdio: ['ignore', ocLog, ocLog],
   // the unit's environment (dashboard/opencode-web.service.template), every path under the bench's root,
   // and AGENT_AUTO=1's permission line, which our boxes run with
@@ -126,17 +153,23 @@ ocServer = spawn(OC, ['serve', '--hostname', '127.0.0.1', '--port', String(OC_PO
          OPENCODE_DISABLE_CLAUDE_CODE: '1', OPENCODE_DISABLE_LSP_DOWNLOAD: '1' },
 });
 const basic = 'Basic ' + Buffer.from(`opencode:${password}`).toString('base64');
-let health = null;
-for (const t0 = Date.now(); Date.now() - t0 < 90000; await sleep(500)) {
-  try {
-    const r = await fetch(`http://127.0.0.1:${OC_PORT}/global/health`, { headers: { authorization: basic }, signal: AbortSignal.timeout(2000) });
-    if (r.ok) { health = await r.json(); break; }
-  } catch { /* starting */ }
+// 1.x answers its health as JSON on /global/health; a 2.x sends its page there and its version on /api/info
+const json = async path => {
+  const r = await fetch(`http://127.0.0.1:${OC_PORT}${path}`, { headers: { authorization: basic }, signal: AbortSignal.timeout(2000) });
+  return r.ok && /json/.test(r.headers.get('content-type') || '') ? r.json() : null;
+};
+let health = null, healthPath = null;
+for (const t0 = Date.now(); Date.now() - t0 < 90000 && !health; await sleep(500)) {
+  for (const path of ['/global/health', '/api/info']) {
+    try { health = await json(path); } catch { health = null; }
+    if (health) { healthPath = path; break; }
+  }
 }
-ok(`opencode serve answers on loopback, version ${VERSION}`, health && health.healthy === true && health.version === VERSION, JSON.stringify(health));
+ok(`opencode serve answers on loopback, version ${UNDER_TEST}`, health && health.version === UNDER_TEST && health.healthy !== false,
+   `${healthPath}: ${JSON.stringify(health)}`);
 if (!health) stop(1, readFileSync(join(root, 'opencode.log'), 'utf8').slice(-1500));
 ok('opencode serve refuses a request without its password',
-   (await fetch(`http://127.0.0.1:${OC_PORT}/global/health`, { signal: AbortSignal.timeout(5000) })).status === 401);
+   (await fetch(`http://127.0.0.1:${OC_PORT}${healthPath}`, { signal: AbortSignal.timeout(5000) })).status === 401);
 
 // ── a dry-run cockpit whose Agent relay binds loopback ───────────────────────
 const cfgDir = join(root, 'config');
@@ -148,16 +181,6 @@ writeFileSync(join(cfgDir, 'opencode-web.env'), `OPENCODE_SERVER_USERNAME=openco
 for (const cmd of ['docker', 'systemctl', 'journalctl', 'nvidia-smi', 'sudo', 'git', 'curl', 'tailscale', 'opencode']) {
   writeFileSync(join(fence, cmd), '#!/bin/sh\nexit 1\n'); chmodSync(join(fence, cmd), 0o755);
 }
-// the unit install-agent.sh would write for this server, AGENT_AUTO=1's permission line in it: the cockpit
-// reads the binary it runs and the permission mode from it (COCKPIT_AGENT_UNIT_PATH, never the box's own)
-const unitPath = join(root, 'opencode-web.service');
-const AUTO_LINE = `Environment='OPENCODE_PERMISSION={"*":"allow"}'`;
-const unitText = readFileSync(join(HERE, '..', 'opencode-web.service.template'), 'utf8')
-  .replaceAll('__OPENCODE_BIN__', OC).replaceAll('__AUTO_LINE__', AUTO_LINE).replaceAll('__HOME__', home)
-  .replaceAll('__PATH__', process.env.PATH).replaceAll('__OUTPUT_TOKEN_MAX__', '32000').replaceAll('__USER__', 'bench')
-  .replaceAll('__GROUP__', 'bench').replaceAll('__OPENCODE_PORT__', String(OC_PORT));
-writeFileSync(unitPath, unitText);
-ok('the unit template renders with no placeholder left', !/__[A-Z_]+__/.test(unitText), (unitText.match(/__[A-Z_]+__/g) || []).join(' '));
 const PORT = await freePort(HOST), RELAY_PORT = await freePort(HOST);
 const BASE = `http://${HOST}:${PORT}`, RELAY = `http://${HOST}:${RELAY_PORT}`, CLOSED = 'http://127.0.0.1:1';
 cockpit = spawn('python3', [COCKPIT], {
@@ -179,22 +202,30 @@ if (!cookie) stop(1, `login failed: HTTP ${login.status}`);
 let agent = {};
 for (const t0 = Date.now(); Date.now() - t0 < 30000; await sleep(1000)) {
   agent = ((await (await fetch(`${BASE}/api/state`, { headers: { cookie: `cockpit=${cookie}` } })).json()).agent || {}).data || {};
-  if (agent.relay && agent.relay.listening && agent.server && agent.server.healthy) break;
+  if (agent.relay && agent.relay.listening && agent.server && agent.server.healthy && agent.auto_live != null) break;
 }
 ok('the cockpit sees its relay listening and opencode healthy', agent.relay && agent.relay.listening && agent.server && agent.server.healthy,
    JSON.stringify(agent).slice(0, 200));
 ok('the cockpit reads the permission mode through the relay (tool calls run without asking)', agent.auto_live === true, String(agent.auto_live));
-ok('the cockpit reads the unit: its binary and its permission line', agent.unit_installed === true && agent.binary === VERSION && agent.auto === true,
+ok('the cockpit reads the unit: its binary and its permission line', agent.unit_installed === true && agent.binary === UNDER_TEST && agent.auto === true,
    JSON.stringify({ unit_installed: agent.unit_installed, binary: agent.binary, auto: agent.auto }));
 
 // ── the relay's gate, from node ──────────────────────────────────────────────
 ok('relay: 401 without a session', (await fetch(`${RELAY}/global/health`)).status === 401);
 ok('relay: 403 with a foreign origin', (await fetch(`${RELAY}/global/health`, { headers: { cookie: `cockpit=${cookie}`, origin: 'http://evil.example' } })).status === 403);
-const h = await fetch(`${RELAY}/global/health`, { headers: { cookie: `cockpit=${cookie}` } });
-ok('relay: 200 and opencode healthy through it', h.status === 200 && (await h.json()).healthy === true, h.status);
+// the route that answered opencode's health above: /global/health on 1.x, /api/info on OpenCode 2
+const h = await fetch(`${RELAY}${healthPath}`, { headers: { cookie: `cockpit=${cookie}` } });
+const hBody = await h.text();
+let hJson = null;
+try { hJson = JSON.parse(hBody); } catch { /* a page, not a health answer */ }
+ok('relay: 200 and opencode healthy through it', h.status === 200 && hJson && hJson.version === UNDER_TEST && hJson.healthy !== false,
+   `${h.status} ${(h.headers.get('content-type') || '').split(';')[0]} ${hBody.slice(0, 60).replace(/\s+/g, ' ')}`);
 ok('relay: frame-ancestors names the cockpit', (h.headers.get('content-security-policy') || '').includes(`frame-ancestors 'self' ${BASE}`),
    h.headers.get('content-security-policy'));
-const page = await fetch(`${RELAY}/`, { headers: { cookie: `cockpit=${cookie}`, 'accept-encoding': 'identity' } });
+// asked the way a browser loads the frame (Sec-Fetch-Dest, and the compression a browser accepts): a
+// release that compresses its page passes the relay untouched, without the layer (OpenCode 2.1.3 does)
+const page = await fetch(`${RELAY}/`, { headers: { cookie: `cockpit=${cookie}`, 'accept-encoding': 'gzip, deflate, br',
+  'sec-fetch-dest': 'iframe', accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8' } });
 const html = await page.text();
 ok('relay: the page links the phone layer into what opencode sends', page.status === 200
    && html.includes('/__cockpit/agent-mobile.js') && html.includes('/__cockpit/agent-mobile.css'), `${page.status} ${html.length} bytes`);
@@ -261,15 +292,17 @@ try {
      await d.evalJs(`document.getElementById('ag-cap').textContent`));
   ok('tab: the frame points at the relay', await d.waitFor(`document.getElementById('ag-iframe')?.src === '${RELAY}/'`, 20000),
      await d.evalJs(`document.getElementById('ag-iframe')?.src || 'none'`));
-  ok(`tab: the line names opencode ${VERSION} and the permission mode`,
-     await d.waitFor(`document.getElementById('ag-line').textContent === 'opencode ${VERSION}, tool calls run without asking'`, 15000),
+  // a candidate gets the line's word on the pin between the two (newer than, or install.sh brings it in line)
+  ok(`tab: the line names opencode ${UNDER_TEST} and the permission mode`,
+     await d.waitFor(UNDER_TEST === VERSION ? `document.getElementById('ag-line').textContent === 'opencode ${VERSION}, tool calls run without asking'`
+       : `(t => t.startsWith('opencode ${UNDER_TEST}, ') && t.endsWith(', tool calls run without asking'))(document.getElementById('ag-line').textContent)`, 15000),
      await d.evalJs(`document.getElementById('ag-line').textContent`));
   // the frame is another origin (the relay's port): what it loaded is read from the network, not its DOM
   await sleep(8000);
   const fromRelay = d.responses().filter(r => r.url.startsWith(RELAY));
   ok('tab: the frame loaded opencode through the relay (its page and its scripts)', fromRelay.some(r => r.status === 200 && r.mimeType === 'text/html')
      && fromRelay.some(r => /javascript/.test(r.mimeType)), `${fromRelay.length} responses from the relay`);
-  ok('tab: the frame opened the event stream', fromRelay.some(r => r.url.endsWith('/global/event') && r.status === 200),
+  ok('tab: the frame opened the event stream', fromRelay.some(r => /\/(global|api)\/event(\?|$)/.test(r.url) && r.status === 200),
      fromRelay.filter(r => r.url.includes('event')).map(r => r.status).join(','));
   ok('tab: no 4xx or 5xx from the relay', !fromRelay.some(r => r.status >= 400), fromRelay.filter(r => r.status >= 400).map(r => `${r.status} ${r.url}`).join(' | '));
   ok('tab: the cockpit page raised no exception', d.jsErrors().length === 0, d.jsErrors().join(' | '));
@@ -284,34 +317,41 @@ try {
   const dirQ = 'directory=' + encodeURIComponent(work);
   const sid = await t.evalJs(`fetch('/session?${dirQ}', { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}' })
     .then(r => r.json()).then(j => j.id).catch(e => 'err ' + e)`);
-  ok('terminal: an empty session is made through the relay', typeof sid === 'string' && sid.startsWith('ses_'), String(sid));
-  const slug = Buffer.from(work).toString('base64').replace(/\+/g, '-').replace(/\//g, '_').replace(/=/g, '');
-  await t.go(`${RELAY}/${slug}/session/${sid}`);
-  await t.waitFor(`!!document.querySelector('[data-component=prompt-input], textarea')`, 30000);
-  await sleep(1500);
-  const seen = t.mine().length;
-  await t.key('`', 'Backquote', 192, null, 2);
-  ok('terminal: it opens by its keybind', await t.waitFor(`!!document.querySelector('[data-component=terminal] textarea')`, 15000));
-  await sleep(3000);
-  const hs = t.mine().slice(seen).filter(m => m.method === 'Network.webSocketHandshakeResponseReceived');
+  // what came back is written into the scripts below only when it is a session id: an error message
+  // holding a quote broke their syntax and ended the run with no report (OpenCode 2.1.3, 2026-10-23)
+  const sidOk = typeof sid === 'string' && /^ses_[A-Za-z0-9]+$/.test(sid);
+  ok('terminal: an empty session is made through the relay', sidOk, String(sid));
+  const marker = join(work, 'bench-marker');
+  let opened = false, hs = [], focused = false, ptys = 'no session', gone = 'no session';
+  if (sidOk) {
+    const slug = Buffer.from(work).toString('base64').replace(/\+/g, '-').replace(/\//g, '_').replace(/=/g, '');
+    await t.go(`${RELAY}/${slug}/session/${sid}`);
+    await t.waitFor(`!!document.querySelector('[data-component=prompt-input], textarea')`, 30000);
+    await sleep(1500);
+    const seen = t.mine().length;
+    await t.key('`', 'Backquote', 192, null, 2);
+    opened = await t.waitFor(`!!document.querySelector('[data-component=terminal] textarea')`, 15000);
+    await sleep(3000);
+    hs = t.mine().slice(seen).filter(m => m.method === 'Network.webSocketHandshakeResponseReceived');
+    focused = await t.evalJs(`(() => { const x = document.querySelector('[data-component=terminal] textarea'); if (!x) return false; x.focus(); return document.activeElement === x; })()`);
+    if (focused) {
+      await send('Input.insertText', { text: `echo AGENT-BENCH-$((6*7)) > ${marker}` }, t.sessionId);
+      await sleep(300);
+      if (await t.evalJs(`document.activeElement === document.querySelector('[data-component=terminal] textarea')`)) {
+        await t.key('Enter', 'Enter', 13, '\r');
+        for (const t0 = Date.now(); Date.now() - t0 < 10000 && !existsSync(marker); await sleep(300)) { /* the shell writes it */ }
+      }
+    }
+    ptys = await t.evalJs(`fetch('/pty?${dirQ}').then(r => r.json()).then(async l => { let n = 0; for (const s of (l || [])) {
+        if (s && s.id && (await fetch('/pty/' + s.id + '?${dirQ}', { method: 'DELETE' })).ok) n++; } return n; }).catch(e => -1)`);
+    gone = await t.evalJs(`fetch('/session/${sid}?${dirQ}', { method: 'DELETE' }).then(r => r.status).catch(e => 'err ' + e)`);
+  }
+  ok('terminal: it opens by its keybind', opened, sidOk ? '' : 'no session to open');
   ok('terminal: its WebSocket is accepted (101) through the relay, from a page on another host than opencode\'s', hs.some(m => m.params.response.status === 101),
      hs.map(m => m.params.response.status).join(',') || 'no handshake');
-  const marker = join(work, 'bench-marker');
-  const focused = await t.evalJs(`(() => { const x = document.querySelector('[data-component=terminal] textarea'); if (!x) return false; x.focus(); return document.activeElement === x; })()`);
-  if (focused) {
-    await send('Input.insertText', { text: `echo AGENT-BENCH-$((6*7)) > ${marker}` }, t.sessionId);
-    await sleep(300);
-    if (await t.evalJs(`document.activeElement === document.querySelector('[data-component=terminal] textarea')`)) {
-      await t.key('Enter', 'Enter', 13, '\r');
-      for (const t0 = Date.now(); Date.now() - t0 < 10000 && !existsSync(marker); await sleep(300)) { /* the shell writes it */ }
-    }
-  }
   ok('terminal: a command typed in it runs in the shell', existsSync(marker) && readFileSync(marker, 'utf8').trim() === 'AGENT-BENCH-42',
      focused ? (existsSync(marker) ? readFileSync(marker, 'utf8').trim() : 'no marker') : 'the terminal never held the focus: nothing typed');
-  const ptys = await t.evalJs(`fetch('/pty?${dirQ}').then(r => r.json()).then(async l => { let n = 0; for (const s of (l || [])) {
-      if (s && s.id && (await fetch('/pty/' + s.id + '?${dirQ}', { method: 'DELETE' })).ok) n++; } return n; }).catch(e => -1)`);
   ok('terminal: its session is removed through the relay', ptys >= 1, String(ptys));
-  const gone = await t.evalJs(`fetch('/session/${sid}?${dirQ}', { method: 'DELETE' }).then(r => r.status).catch(e => 'err ' + e)`);
   ok('terminal: the empty session is deleted through the relay', gone === 200, String(gone));
   ok('terminal: the pages raised no exception', t.jsErrors().length === 0, t.jsErrors().join(' | '));
 
