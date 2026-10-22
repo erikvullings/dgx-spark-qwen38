@@ -3062,8 +3062,18 @@ else
       || echo "NOTE: could not restart $KEEPALIVE_UNIT; restart it by hand so it runs the new code"
   fi
   if [ "$COCKPIT" -eq 1 ] && [ -x "$REPO_DIR/dashboard/install-dashboard.sh" ]; then
-    "$REPO_DIR/dashboard/install-dashboard.sh" \
-      || echo "NOTE: the cockpit did not reinstall; retry with ./dashboard/install-dashboard.sh"
+    if "$REPO_DIR/dashboard/install-dashboard.sh"; then
+      # The Agent tab's installer too, after the cockpit that relays it, as step 10 runs it: it
+      # restarts opencode-web on the opencode step 7 put in place, and points it at the one on
+      # the PATH. Step 10 is the text path's only, so a box booting this lane kept the opencode
+      # it started with until its next boot (the reference box on the FP4-Local lane, 2026-10-22).
+      if [ "$OPENCODE" -eq 1 ] && command -v opencode >/dev/null 2>&1; then
+        "$REPO_DIR/dashboard/install-agent.sh" \
+          || echo "NOTE: the Agent view did not install; the rest of the cockpit is up (retry: ./dashboard/install-agent.sh)"
+      fi
+    else
+      echo "NOTE: the cockpit did not reinstall; retry with ./dashboard/install-dashboard.sh"
+    fi
   fi
   # --no-smoke always: a proof starts and stops a lane, and a side lane is serving here.
   # Since v1.20 a side lane missing here is installed too, unless it was left out

@@ -15,6 +15,7 @@ only when their content changes, so their date means something.
 import json
 import os
 import pathlib
+import shutil
 import re
 import subprocess
 import tempfile
@@ -93,6 +94,78 @@ class EachRestartHasAReason(unittest.TestCase):
             guard = text[text.rfind("\nif ", 0, i):i]
             self.assertIn(f'"${marker}" -eq 1', guard, name)
             self.assertIn("stale_since", guard, name)
+
+
+class ABoxBootingAnotherLaneGetsTheAgentTab(unittest.TestCase):
+    """install-agent.sh restarts opencode-web on a newer opencode and points it at the one on
+    the PATH, and it ran at step 10 only: a box whose boot lane is not a text one takes another
+    branch, which reinstalled the cockpit alone, and it kept the opencode it started with until
+    its next boot (the reference box on the FP4-Local lane, 2026-10-22, where a new pin's reason
+    was the Bun under opencode). That branch runs it now, after the cockpit, as step 10 does."""
+    GUARD = '[ "$OPENCODE" -eq 1 ] && command -v opencode >/dev/null 2>&1; then\n'
+    AGENT = '"$REPO_DIR/dashboard/install-agent.sh" \\\n'
+    TEXT = SCRIPTS["dashboard/install-agent.sh"]
+
+    def test_its_branch_runs_the_agent_installer_after_the_cockpit_as_step_10_does(self):
+        start = INSTALL.index("# Updated, not switched to.")
+        seg = INSTALL[start:INSTALL.index("# --no-smoke always", start)]
+        self.assertIn('if "$REPO_DIR/dashboard/install-dashboard.sh"; then', seg,
+                      "the Agent tab only once the cockpit that relays it is installed")
+        self.assertLess(seg.index('"$REPO_DIR/dashboard/install-dashboard.sh"'), seg.index(self.AGENT))
+        self.assertIn(self.GUARD + "        " + self.AGENT, seg)
+        self.assertIn('|| echo "NOTE: the Agent view did not install', seg, "a failure is a note, as at step 10")
+        step10 = INSTALL[INSTALL.index('step "10/10 Spark Cockpit'):]
+        self.assertIn(self.GUARD + "          " + self.AGENT, step10, "the same condition as step 10's")
+
+    def restarted(self, binary_after_start, served="1.19.4", on_disk="1.19.4"):
+        """The script's own guard, run as written: the opencode-web unit, the opencode binary (its
+        date after or before the server's start), the version the server answers with (None: it
+        does not answer) and the one `opencode --version` gives."""
+        t = pathlib.Path(tempfile.mkdtemp(prefix="agent-bin-"))
+        self.addCleanup(shutil.rmtree, t, True)
+        bin_, home = t / "bin", t / "home"
+        bin_.mkdir(); (home / ".config" / "qwen38").mkdir(parents=True); (home / ".config" / "opencode").mkdir()
+        start = 1_800_000_000
+        oc = t / "opencode"
+        for f in (oc, t / "opencode-web.env", home / ".config/qwen38/opencode.json", home / ".config/opencode/opencode.json"):
+            f.write_text("x\n")
+            os.utime(f, (start - 100, start - 100))
+        if binary_after_start:
+            os.utime(oc, (start + 100, start + 100))
+        log = t / "calls"
+        (bin_ / "systemctl").write_text(
+            f'#!/bin/sh\ncase "$*" in *ActiveState*) echo active ;; *ExecMainStartTimestamp*) echo @{start} ;; esac\n')
+        (bin_ / "sudo").write_text(f'#!/bin/sh\necho "$*" >> "{log}"\n')
+        for f in ("systemctl", "sudo"):
+            (bin_ / f).chmod(0o755)
+        func = self.TEXT[self.TEXT.index("stale_since(){"):self.TEXT.index("\n}\n", self.TEXT.index("stale_since(){")) + 3]
+        guard = self.TEXT[self.TEXT.index('SERVED_VERSION="$(health'):]
+        guard = guard[:guard.index("\nfi\n") + 4]
+        answer = "" if served is None else '{"healthy":true,"version":"%s"}' % served
+        script = (f'set -euo pipefail\nUNIT=opencode-web.service; AGENT_CHANGED=0\n'
+                  f'OPENCODE_BIN="{oc}"; ENV_FILE="{t}/opencode-web.env"; OC_VERSION="{on_disk}"\n'
+                  f"health(){{ printf '%s' '{answer}'; }}\n" + func + "\n" + guard)
+        r = subprocess.run(["bash", "-c", script], capture_output=True, text=True, timeout=30,
+                           env={"PATH": f"{bin_}:/usr/bin:/bin", "HOME": str(home)})
+        self.assertEqual(r.returncode, 0, r.stderr)
+        return log.exists() and "try-restart opencode-web.service" in log.read_text()
+
+    def test_a_newer_opencode_restarts_opencode_web(self):
+        self.assertTrue(self.restarted(binary_after_start=True))
+
+    def test_the_same_opencode_does_not(self):
+        self.assertFalse(self.restarted(binary_after_start=False))
+        self.assertFalse(self.restarted(binary_after_start=False, served="v1.19.4"), "a v in front is the same")
+
+    def test_an_opencode_updated_with_an_older_date_restarts_it_by_its_version(self):
+        """npm and Homebrew keep the date their archive gives the binary: a server started after
+        that date ran the old opencode on, its binary older on disk than its start (found in
+        review, 2026-10-22). The version it answers with tells."""
+        self.assertTrue(self.restarted(binary_after_start=False, served="1.18.35", on_disk="1.19.4"))
+
+    def test_a_server_that_does_not_answer_is_judged_by_dates_as_before(self):
+        self.assertFalse(self.restarted(binary_after_start=False, served=None))
+        self.assertTrue(self.restarted(binary_after_start=True, served=None))
 
 
 class TheCockpitFollowsTheReleaseItNames(unittest.TestCase):

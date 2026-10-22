@@ -198,19 +198,29 @@ cmp -s "$TMP_UNIT" "/etc/systemd/system/$UNIT" \
 rm -f "$TMP_UNIT"
 sudo systemctl daemon-reload
 sudo systemctl enable --now "$UNIT"
-# A re-run with a new port, cap or binary must take effect; one that changed nothing must
-# not end the turn the Agent tab is in, which it did at every ./install.sh (49 starts of
-# opencode-web on the reference box on 2026-09-23; found in review, 2026-09-24).
-if [ "$AGENT_CHANGED" -eq 1 ] || stale_since "$UNIT" "$OPENCODE_BIN" "$ENV_FILE" \
-     "$HOME/.config/qwen38/opencode.json" "$HOME/.config/opencode/opencode.json"; then
-  sudo systemctl try-restart "$UNIT"
-fi
-
 # ── the server answers with the credentials (never on the command line) ────
 health(){
   printf 'user = "%s:%s"\nsilent\nmax-time = 3\nurl = "http://127.0.0.1:%s/global/health"\n' \
     "$CRED_USER" "$CRED_PW" "$OPENCODE_PORT" | curl -K - 2>/dev/null || true
 }
+# A re-run with a new port, cap or binary must take effect; one that changed nothing must
+# not end the turn the Agent tab is in, which it did at every ./install.sh (49 starts of
+# opencode-web on the reference box on 2026-09-23; found in review, 2026-09-24). The binary's
+# date alone missed an opencode updated where it lies by npm or Homebrew, which keep the date
+# their archive gives the file, older than a server started since: the version the server
+# answers with says it either way (found in review, 2026-10-22).
+SERVED_VERSION="$(health | python3 -c 'import json, sys
+try:
+    print(json.load(sys.stdin).get("version") or "")
+except Exception:
+    print("")' 2>/dev/null || true)"
+ON_DISK="${OC_VERSION##* }"
+if [ "$AGENT_CHANGED" -eq 1 ] || stale_since "$UNIT" "$OPENCODE_BIN" "$ENV_FILE" \
+     "$HOME/.config/qwen38/opencode.json" "$HOME/.config/opencode/opencode.json" \
+   || { [ -n "$SERVED_VERSION" ] && [ -n "$ON_DISK" ] && [ "${SERVED_VERSION#v}" != "${ON_DISK#v}" ]; }; then
+  sudo systemctl try-restart "$UNIT"
+fi
+
 HEALTHY=""
 for _ in $(seq 1 30); do
   case "$(health)" in *'"healthy":true'*) HEALTHY=1; break ;; esac

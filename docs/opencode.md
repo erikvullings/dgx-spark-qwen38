@@ -64,7 +64,12 @@ announces 2.x as soon as GitHub's latest release is one. OpenCode 2's server is 
 1.x `opencode serve` the Agent view relays. So, with the pin, the generated config and
 yours get `"autoupdate": false`: no check and no notice (`OPENCODE_DISABLE_AUTOUPDATE=1`
 does the same for one run). The Agent view says when the opencode it serves is not the
-pinned one.
+pinned one. An update that installs the cockpit restarts the Agent view's server on a new
+opencode, after the cockpit that relays it, whatever lane the box boots on and however that
+opencode came (since v1.38.6: before, only an update with a text lane at boot did, and only
+for a binary dated after the server's start, which npm and Homebrew do not give). An update
+that installs no cockpit (`--no-cockpit`, or `--no-start` on a box booting a text lane) leaves
+the server on the opencode it runs until it restarts.
 
 `OPENCODE_PIN=0 ./install.sh` keeps whatever opencode you have and leaves `autoupdate`
 alone. `OPENCODE_VERSION=<x> OPENCODE_SHA256=<its digest>` pins another release (a
