@@ -17,6 +17,7 @@ import unittest
 REPO = pathlib.Path(__file__).resolve().parents[1]
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from test_conformity_classify import HOME, box, classes  # noqa: E402
+from test_install_agent_keeps import DASH_CUSTOM, oc_unit, run_in  # noqa: E402
 LINE = 'while [ -n "${HOME:-}" ] && [ "$HOME" != / ] && [ "${HOME%/}" != "$HOME" ]; do HOME="${HOME%/}"; done; export HOME'
 # the entry points that render a unit, the sudoers or a config from the home, or compare one with it
 ENTRY = ("install.sh", "switch-model.sh", "prepare-lane.sh", "uninstall.sh", "get.sh", "install-image.sh",
@@ -141,6 +142,33 @@ class WhatWasWrittenWithTheSlash(unittest.TestCase):
                                        capture_output=True, text=True, timeout=10, env={"PATH": "/usr/bin:/bin", "HOME": "/home/nvidia"})
                 want = f"/home/nvidia/.local/share/qwen38-{lane}|" + ("/home/nvidia/.cache/huggingface" if lane != "speech" else "")
                 self.assertEqual((r.returncode, r.stdout), (0, want), r.stderr)
+
+    def test_install_sh_finds_local_bin_on_the_path_such_a_login_gives(self):
+        # its own lines, from the case before its note to the esac: a login from a home with the slash puts
+        # "/home/nvidia//.local/bin" on the PATH, and v1.38.0 said that folder was not on it
+        lines = (REPO / "install.sh").read_text().splitlines()
+        note = next(i for i, ln in enumerate(lines) if "is not in this shell's PATH" in ln)
+        start = max(i for i in range(note) if lines[i].lstrip().startswith("case "))
+        stop = next(i for i in range(note, len(lines)) if lines[i].strip() == "esac")
+        for path, says in (("/home/nvidia//.local/bin:/usr/bin:/bin", False), ("/usr/bin:/bin", True)):
+            with self.subTest(path=path):
+                r = subprocess.run(["bash", "-c", 'set -euo pipefail\nOC_BIN="$HOME/.local/bin/oc"\n'
+                                    + "\n".join(lines[start:stop + 1])],
+                                   capture_output=True, text=True, timeout=10, env={"PATH": path, "HOME": "/home/nvidia"})
+                self.assertEqual(r.returncode, 0, r.stderr)
+                self.assertEqual("NOTE" in r.stdout, says, r.stdout)
+
+    def test_opencode_webs_path_names_each_folder_once(self):
+        # the PATH install-agent.sh writes into opencode-web's unit, from such a login and the unit v1.38.0
+        # wrote there, which named opencode's folder in both spellings
+        home = "/home/nvidia"
+        installed = [f"{home}/.opencode/bin", f"{home}//.local/bin", "/usr/bin", f"{home}//.opencode/bin"]
+        with tempfile.TemporaryDirectory() as t:
+            (_, _, _, path), _ = run_in(pathlib.Path(t), DASH_CUSTOM, oc_unit(installed),
+                                        caller=(f"{home}//.local/bin", f"{home}//.opencode/bin"))
+        dirs = path.split(":")
+        self.assertEqual([d for d in dirs if "//" in d], [], dirs)
+        self.assertEqual((dirs.count(f"{home}/.opencode/bin"), dirs.count(f"{home}/.local/bin")), (1, 1), dirs)
 
     def test_conformity_classes_the_cache_and_the_ple_folder_as_the_default(self):
         units, cfg = box(hf=f"{HOME}//.cache/huggingface", ple=f"{HOME}//flashnext-ple")

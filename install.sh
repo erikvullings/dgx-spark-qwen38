@@ -2708,7 +2708,9 @@ exec "\$OPENCODE_BIN" "\$@" --yolo
 OCWRAP
   chmod +x "$OC_BIN"
   echo "installed the oc launcher at $OC_BIN (output ceiling $OC_OUT_CAP, this target's limit $OC_OUT)"
-  case ":$PATH:" in
+  # the PATH one slash at a time: a login from a home with a trailing slash put "/home/nvidia//.local/bin"
+  # on it, which is this folder, and the home is spelled without the slash since v1.38.0
+  case ":$(printf '%s' "$PATH" | tr -s /):" in
     *":$HOME/.local/bin:"*) ;;
     *) echo "NOTE: $HOME/.local/bin is not in this shell's PATH: a new login has it (Ubuntu's ~/.profile"
        echo "      adds it once the folder exists), or call $OC_BIN directly." ;;

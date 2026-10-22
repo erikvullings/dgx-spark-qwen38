@@ -155,9 +155,11 @@ esac
 # three of them into the unit, so opencode-web restarted, and the remote CLI's directory,
 # named after the editor's build, goes at the next VS Code update (the reference box,
 # 2026-10-03).
+# Each folder once, read one slash at a time: a login from a home with a trailing slash spells
+# "/home/nvidia//.local/bin", and the unit v1.38.0 wrote on such a box named opencode's folder twice.
 INSTALLED_PATH="$({ grep -m1 -E '^Environment=PATH=' "$INSTALLED_OC" 2>/dev/null || true; } | cut -d= -f3-)"
 EDITOR_DIRS='/bin/remote-cli(/|$)|/User/globalStorage/|/extensions/[^/]+[.][^/]+-[0-9][^/]*(/|$)'
-SVC_PATH="${AGENT_PATH:-$(printf '%s:%s:%s' "$(dirname "$OPENCODE_BIN")" "$PATH" "$INSTALLED_PATH" | tr ':' '\n' \
+SVC_PATH="${AGENT_PATH:-$(printf '%s:%s:%s' "$(dirname "$OPENCODE_BIN")" "$PATH" "$INSTALLED_PATH" | tr ':' '\n' | tr -s / \
   | awk -v ed="$EDITOR_DIRS" 'NF && $0 !~ ed && !seen[$0]++' | paste -sd: -)}"
 if [ -z "${AGENT_PATH:-}" ]; then
   GONE="$(printf '%s' "$INSTALLED_PATH" | tr ':' '\n' | awk -v ed="$EDITOR_DIRS" '$0 ~ ed' | paste -sd' ' -)"
