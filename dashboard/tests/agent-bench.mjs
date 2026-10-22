@@ -315,8 +315,17 @@ try {
   await t.go(`${RELAY}/`);
   await t.waitFor(`document.title === 'OpenCode'`, 30000);
   const dirQ = 'directory=' + encodeURIComponent(work);
-  const sid = await t.evalJs(`fetch('/session?${dirQ}', { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}' })
-    .then(r => r.json()).then(j => j.id).catch(e => 'err ' + e)`);
+  // 1.x makes a session on /session?directory= and opens it at /<directory>/session/<id>, its terminals on
+  // /pty?directory=; OpenCode 2 on /api/session (the directory in the body) and /server/<this origin>/session/<id>,
+  // its terminals on /api/pty?location[directory]= (both measured, 2.1.3 on 2026-10-23); the keybind, the terminal's
+  // textarea and its WebSocket through the relay are the same
+  const v2 = Number(UNDER_TEST.split('.')[0]) >= 2;
+  const locQ = 'location%5Bdirectory%5D=' + encodeURIComponent(work);
+  const sid = await t.evalJs(v2
+    ? `fetch('/api/session', { method: 'POST', headers: { 'content-type': 'application/json' }, body: ${JSON.stringify(JSON.stringify({ location: { directory: work } }))} })
+       .then(r => r.json()).then(j => (j.data || j).id).catch(e => 'err ' + e)`
+    : `fetch('/session?${dirQ}', { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}' })
+       .then(r => r.json()).then(j => j.id).catch(e => 'err ' + e)`);
   // what came back is written into the scripts below only when it is a session id: an error message
   // holding a quote broke their syntax and ended the run with no report (OpenCode 2.1.3, 2026-10-23)
   const sidOk = typeof sid === 'string' && /^ses_[A-Za-z0-9]+$/.test(sid);
@@ -324,9 +333,9 @@ try {
   const marker = join(work, 'bench-marker');
   let opened = false, hs = [], focused = false, ptys = 'no session', gone = 'no session';
   if (sidOk) {
-    const slug = Buffer.from(work).toString('base64').replace(/\+/g, '-').replace(/\//g, '_').replace(/=/g, '');
-    await t.go(`${RELAY}/${slug}/session/${sid}`);
-    await t.waitFor(`!!document.querySelector('[data-component=prompt-input], textarea')`, 30000);
+    await t.go(v2 ? `${RELAY}/server/${Buffer.from(RELAY).toString('base64url')}/session/${sid}`
+                  : `${RELAY}/${Buffer.from(work).toString('base64url')}/session/${sid}`);
+    await t.waitFor(`!!document.querySelector('[data-component=prompt-input], [data-component=composer], textarea')`, 30000);
     await sleep(1500);
     const seen = t.mine().length;
     await t.key('`', 'Backquote', 192, null, 2);
@@ -342,9 +351,13 @@ try {
         for (const t0 = Date.now(); Date.now() - t0 < 10000 && !existsSync(marker); await sleep(300)) { /* the shell writes it */ }
       }
     }
-    ptys = await t.evalJs(`fetch('/pty?${dirQ}').then(r => r.json()).then(async l => { let n = 0; for (const s of (l || [])) {
-        if (s && s.id && (await fetch('/pty/' + s.id + '?${dirQ}', { method: 'DELETE' })).ok) n++; } return n; }).catch(e => -1)`);
-    gone = await t.evalJs(`fetch('/session/${sid}?${dirQ}', { method: 'DELETE' }).then(r => r.status).catch(e => 'err ' + e)`);
+    ptys = await t.evalJs(v2
+      ? `fetch('/api/pty?${locQ}').then(r => r.json()).then(async j => { let n = 0; for (const s of (j.data || [])) {
+          if (s && s.id && (await fetch('/api/pty/' + s.id + '?${locQ}', { method: 'DELETE' })).ok) n++; } return n; }).catch(e => -1)`
+      : `fetch('/pty?${dirQ}').then(r => r.json()).then(async l => { let n = 0; for (const s of (l || [])) {
+          if (s && s.id && (await fetch('/pty/' + s.id + '?${dirQ}', { method: 'DELETE' })).ok) n++; } return n; }).catch(e => -1)`);
+    gone = await t.evalJs(v2 ? `fetch('/api/session/${sid}', { method: 'DELETE' }).then(r => r.status).catch(e => 'err ' + e)`
+                             : `fetch('/session/${sid}?${dirQ}', { method: 'DELETE' }).then(r => r.status).catch(e => 'err ' + e)`);
   }
   ok('terminal: it opens by its keybind', opened, sidOk ? '' : 'no session to open');
   ok('terminal: its WebSocket is accepted (101) through the relay, from a page on another host than opencode\'s', hs.some(m => m.params.response.status === 101),
@@ -352,7 +365,7 @@ try {
   ok('terminal: a command typed in it runs in the shell', existsSync(marker) && readFileSync(marker, 'utf8').trim() === 'AGENT-BENCH-42',
      focused ? (existsSync(marker) ? readFileSync(marker, 'utf8').trim() : 'no marker') : 'the terminal never held the focus: nothing typed');
   ok('terminal: its session is removed through the relay', ptys >= 1, String(ptys));
-  ok('terminal: the empty session is deleted through the relay', gone === 200, String(gone));
+  ok('terminal: the empty session is deleted through the relay', gone === 200 || gone === 204, String(gone));
   ok('terminal: the pages raised no exception', t.jsErrors().length === 0, t.jsErrors().join(' | '));
 
   // 3. a phone: the layer is at work on the page opencode sends
