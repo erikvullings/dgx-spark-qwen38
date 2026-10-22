@@ -1573,7 +1573,10 @@ def collect_opencode():
 
 # ── Agent tab: opencode web behind the cockpit session ───────────────────────
 AGENT_ENV_FILE = CONFIG_DIR / "opencode-web.env"
-AGENT_UNIT_PATH = Path("/etc/systemd/system") / AGENT_UNIT
+# The unit install-agent.sh writes. COCKPIT_AGENT_UNIT_PATH points a test's cockpit at a unit of its own,
+# as COCKPIT_AGENT_UPSTREAM does its server: the bench run on a box read that box's real unit, and its
+# permission line, instead of the one it had started (agent-bench.mjs, 2026-10-23).
+AGENT_UNIT_PATH = Path(os.environ.get("COCKPIT_AGENT_UNIT_PATH") or Path("/etc/systemd/system") / AGENT_UNIT)
 AGENT = {"bind": None, "port": AGENT_PORT, "listening": False, "error": None, "since": None}
 AGENT_BINARY: dict = {"key": None, "version": None}
 
