@@ -1,5 +1,35 @@
 # Changelog
 
+## v1.38.2 (2026-10-22): Docker from the Snap package, said before the first image, and the GPU check shows Docker's own error
+
+**What went wrong** (issue #58, reported by ae-buddy on a DGX Spark). Their account reached Docker from
+the Snap package, which they had beside DGX OS's own Docker CE and the NVIDIA Container Toolkit installed
+on the host, a pair Canonical documents as unable to start a container with the GPU
+(canonical/docker-snap#357). The installer pulled the SGLang image, then its GPU check threw Docker's
+error away ("failed to fulfil mount request: open /usr/bin/nvidia-cuda-mps-control: no such file or
+directory") and said that the NVIDIA Container Toolkit was missing or unconfigured, with a fix that did
+not apply. ae-buddy traced it, moved their Docker store to Docker CE, and the install went through.
+
+**What changes.** The preflight reads the engine this account reaches from Docker itself, its data root
+and the paths of its runtimes, not which docker binary or service the box has, and stops on the Snap
+engine beside the host's toolkit before any image is pulled. It says why, links Canonical's note, and
+says how to make DGX OS's Docker CE the engine. Nothing on the box is changed. Canonical's two ways round
+it are not taken: one removes the host's toolkit packages, which takes DGX OS packages with it, the other
+changes the GPU option of every container, and the Snap engine sees only the home, not a cache on another
+disk. The GPU check keeps what Docker said: a failure shows its exit status, Docker's last lines and the
+engine it reached (version, data root, endpoint, runtimes), with the toolkit as a possible cause, or the
+Snap engine when it is the one.
+
+**What an update does.** On a box whose Docker is DGX OS's own, the same check with the same result. The
+cockpit restarts once, which names the release from this changelog.
+
+**Tests.** The preflight's and the GPU check's own lines run against a fake docker and a fake dpkg-query:
+the Snap engine known by its data root or by a runtime, the host's toolkit by its packages, the stop on
+the pair and nothing on any other engine, Docker's own error, its exit status and the engine in the
+check's failure, the toolkit named as one possible cause, and a container that sees the GPU. Each fails
+on the code before, the GPU check's lines run as v1.38.1 has them, and the mutants (Docker's error thrown
+away again, the Snap engine not recognized) are killed.
+
 ## v1.38.1 (2026-10-22): Ornith's own mark and its place in the cockpit, and what v1.38.0 left of a home that ends with a slash
 
 **Ornith in the cockpit.** The Ornith 1.5 122B lane shows its authors' mark, the round avatar of the logo
