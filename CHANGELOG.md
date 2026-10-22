@@ -1,5 +1,71 @@
 # Changelog
 
+## v1.38.1 (2026-10-22): Ornith's own mark and its place in the cockpit, and what v1.38.0 left of a home that ends with a slash
+
+**Ornith in the cockpit.** The Ornith 1.5 122B lane shows its authors' mark, the round avatar of the logo
+they publish in their model's repository under the MIT licence (github.com/ornith-ai/Ornith-1), where
+v1.38.0 drew a plain red ring for want of a mark under a licence. The Now view's rack and the Lanes
+view's cards show the lane right after Flash FP4-Local, before Kolibri-1 and the two Nemotron lanes. An
+open page shows both at its next load.
+
+**What v1.38.0 said, and what was left.** On a box whose home ends with a slash, v1.38.0 said, an update
+writes every unit again without it, and the uninstall no longer lists twice a cache the units spell with
+a "//". On the second ASUS Ascent GX10, after the update to v1.38.0, the image and video lanes' units
+still said "/home/nvidia//" in their folder, their cache and every path built on them, and the
+uninstall's list of caches held that box's cache twice, as "/home/nvidia/.cache/huggingface" from the
+text lanes' units and "/home/nvidia//.cache/huggingface" from those two. The update said
+"/home/nvidia/.local/bin is not in this shell's PATH", which it was, told to start opencode with
+"/home/nvidia/.local/bin/oc" rather than `oc`, and wrote opencode's folder into the PATH of the Agent
+view's unit in both spellings.
+
+**Why.** The installers of the image and video lanes read their folder and their cache back from their
+own unit, so that a run keeps what the box has, and the speech lane's installer its folder: they kept
+the "//" they found there. The update to v1.38.0 wrote those units again, the lines built on the home
+without the slash and the ones built on the folder and the cache with it, and every update after found
+them as it would have written them. The uninstall read those units' folders and cache as spelled, and
+took a folder given to it from a shell on such a home (`PLE_DIR=~/...`) for another than its default, as
+`install-flash-local.sh --uninstall` did with the folder of its table. The PATH such a login gives says
+"/home/nvidia//.local/bin", and `install.sh` compared what it finds there with the folders it builds on
+the home, letter for letter. `dashboard/install-agent.sh`, run on its own from such a login, wrote
+opencode into the Agent view's unit with the slash, and without it when `install.sh` ran it: each run
+after the other wrote the unit again and restarted the view (found in review).
+
+**What changes.** `install.sh` and `dashboard/install-agent.sh` spell the PATH one slash at a time, right
+after the home. The side lanes' installers and the uninstalls read back one slash at a time the folders
+and caches they keep or list, and keep each folder of a list once. The paths were valid all along, the
+same folders, and nothing served differently.
+
+**What an update does.** It restarts the cockpit once, which names the release from this changelog. On a
+box whose home ends with a slash, it writes the image and video units again without it and reloads
+systemd, which restarts nothing: a lane that serves goes on serving the unit it started with, and the
+update says so. It writes opencode-web's unit again, each folder of its PATH once, and restarts it once.
+The speech lane, installed apart, is left alone by an update: its installer, run again, writes its unit
+and launcher without the slash, and restarts a speech lane that serves, as it does after any change.
+Where no path has a double slash, an update changes nothing of this. What still spells the home with the
+slash on such a box is opencode's own config, whose providers name the key's file as the installs before
+v1.38.0 wrote it: the same file, which the uninstall recognizes in that spelling since v1.38.0.
+
+**Tests.** Each change has a test that fails on v1.38.0's code: the side lanes' installers' own
+read-back lines, run against a unit rendered from a home with the slash, the uninstall's lists of caches
+and folders and `install-flash-local.sh`'s list of table folders, with the units and the folders given
+in both spellings, `install.sh`'s first lines and its note against the PATH such a login gives (and
+against one without the folder, where it still speaks), the PATH line right after the home's in both
+scripts, `install-agent.sh`'s opencode from that PATH, and its PATH for the unit from such a login and
+from the unit v1.38.0 wrote. Mutants killed, the PATH line made to keep the "//" among them. The order
+of the rack and the cards has its test too, which fails on the old order, and the mark and the order were
+checked by eye in the Now and Lanes views, rendered by Chrome from a cockpit of this release in its dry
+run.
+
+**Proved on the second GX10** (2026-10-22), in an earlier state of this release: the side lanes' fix,
+then a fix of the PATH at the note and in opencode-web's unit, installed one after the other by the
+update path while the 27B served (the same engine process before and after). The image and video units
+were written again with no "//", opencode-web's unit named each folder of its PATH once and restarted
+once, the install said nothing of the PATH, the uninstall's list held the cache once, the cockpit's six
+views had no banner and no script error, and the OpenAI and Anthropic SDKs answered through the proxy.
+The review's fixes that followed, the PATH spelled once at the start of both scripts and the lists of
+folders, are proved by their tests, each running the script's own lines as such a box gives them. On the
+reference box, whose units and PATH have no double slash, they change nothing.
+
 ## v1.38.0 (2026-10-22): Ornith AI's Ornith 1.5 122B, as a ninth lane on vLLM, with a window of a million tokens
 
 **What it is.** [Ornith 1.5 122B](https://huggingface.co/ornith-ai/Ornith-1.5-122B-NVFP4) is Ornith AI's
