@@ -1,5 +1,26 @@
 # Changelog
 
+## v1.38.4 (2026-10-22): the seconds after a Load are a note, not a warning about opencode
+
+**What went wrong.** After every Load of the 27B, the page showed for about nine seconds a yellow
+warning that opencode asked for more than the engine could hold and that a session would break (seen
+on the second GX10). A Load writes opencode's limits for the lane before its engine has a pool, 900,000
+tokens on the 1M lanes, and the cockpit lowers them to the pool once the engine is ready: the warning
+announced a fix the cockpit was already making, and while it ran, it named the Settings button as if
+somebody had to press it.
+
+**What changes.** While the cockpit's own fit of opencode's limits runs, the page says so in a note,
+with the numbers and nothing to do. The warning stays for what needs a person: limits the cockpit does
+not lower (it never raises a number somebody set lower), a fit that failed, or the automatic fit turned
+off (`COCKPIT_AUTOFIT=0`).
+
+**What an update does.** The cockpit restarts once, which names the release from this changelog.
+Nothing else changes.
+
+**Tests.** The page shows the note while the cockpit's fit is started or running, and the warning in
+every other state; the server says the fit is running while its job runs. Both fail on the code of
+v1.38.3.
+
 ## v1.38.3 (2026-10-22): an agent's turns on Ornith come back from the cache, about twice as fast
 
 **What went wrong.** On the second GX10, Ornith felt slow between the turns of an agent (opencode in
