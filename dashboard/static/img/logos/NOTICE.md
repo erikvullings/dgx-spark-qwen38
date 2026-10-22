@@ -11,6 +11,10 @@ removed. The marks themselves belong to their owners (Qwen to Alibaba Cloud, Min
 MiniMax, Aleph Alpha to Aleph Alpha, NVIDIA to NVIDIA); the cockpit shows them only to say
 which model a lane runs.
 
-`ornith.svg` is no one's mark: a plain red ring drawn for this repo, since Lobe Icons has no
-Ornith icon (checked in 1.97.0, 2026-10-21) and the cockpit shows no logo it has no licence to
-show. It stands for the Ornith 1.5 122B lane only.
+`ornith.svg` is Ornith AI's round avatar, cropped from the logo its authors publish in their
+model's repository (`assets/ornith_logo.png` of https://github.com/ornith-ai/Ornith-1 at commit
+7ad11eb, MIT licensed, Copyright (c) 2026 deepreinforce.ai, the licence is in
+`LICENSE-ornith.txt`) and scaled to 96 pixels, a PNG inside an SVG so that the cockpit sizes it as
+it sizes the others. Lobe Icons has no Ornith icon (1.97.0, its latest on 2026-10-22). The mark
+belongs to its owner, and the cockpit shows it only to say which model the Ornith 1.5 122B lane
+runs.
