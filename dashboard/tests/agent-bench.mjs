@@ -44,6 +44,13 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
 // outside the machine reaches it.
 const HOST = '127.0.0.2';
 const freePort = (host = '127.0.0.1') => new Promise(res => { const srv = net.createServer(); srv.listen(0, host, () => { const p = srv.address().port; srv.close(() => res(p)); }); });
+// two ports held open together, then released: asked one after the other, the second could be the first again
+const freePorts = async (host, n) => {
+  const servers = await Promise.all(Array.from({ length: n }, () => new Promise(res => { const srv = net.createServer(); srv.listen(0, host, () => res(srv)); })));
+  const ports = servers.map(srv => srv.address().port);
+  await Promise.all(servers.map(srv => new Promise(res => srv.close(res))));
+  return ports;
+};
 
 const root = mkdtempSync(join(tmpdir(), 'agent-bench-'));
 let ocServer = null, cockpit = null, chrome = null;
@@ -56,11 +63,18 @@ process.on('exit', () => {
 });
 process.on('SIGINT', () => process.exit(130));
 process.on('SIGTERM', () => process.exit(143));
+// a terminal closed under a run by hand (an SSH session dropped) ended node without 'exit', and the servers it
+// started in sessions of their own stayed up on loopback
+process.on('SIGHUP', () => process.exit(129));
 function report() {
   for (const c of checks) console.log(`  ${c.ok ? 'ok  ' : 'FAIL'} ${c.name}${c.ok || !c.detail ? '' : `  (${c.detail})`}`);
   console.log(`\n${checks.filter(c => c.ok).length}/${checks.length} checks passed`);
 }
 function stop(code, why) { if (why) console.error(why); report(); process.exit(code); }
+// a run takes two minutes or so; a browser or a server that stops answering must not hold a CI job for the six
+// hours a runner allows, nor a local run until someone notices (found in review, 2026-10-23)
+const RUN_LIMIT_S = Number(process.env.AGENT_BENCH_TIMEOUT_S || 600);
+setTimeout(() => stop(1, `the bench did not finish within ${RUN_LIMIT_S} s`), RUN_LIMIT_S * 1000).unref();
 
 // ── the pinned opencode, this machine's asset ────────────────────────────────
 const installSh = readFileSync(join(REPO, 'install.sh'), 'utf8');
@@ -76,7 +90,7 @@ const CANDIDATE = process.env.AGENT_BENCH_OPENCODE;
 let OC, UNDER_TEST = VERSION;
 if (CANDIDATE) {
   const v = spawnSync(CANDIDATE, ['--version'], { encoding: 'utf8', env: { PATH: process.env.PATH, HOME: join(root, 'version-home') } });
-  UNDER_TEST = (v.stdout || '').match(/(\d+\.\d+\.\d+)/)?.[1];
+  UNDER_TEST = (v.stdout || '').match(/(\d+\.\d+\.\d+\S*)/)?.[1];   // 1.19.4, "opencode v2.1.3", a pre-release whole
   if (v.status !== 0 || !UNDER_TEST) stop(2, `${CANDIDATE} --version: ${v.stderr || v.stdout}`);
   console.log(`  note a candidate opencode ${UNDER_TEST} (${CANDIDATE}), not the ${VERSION} install.sh pins: no checksum`);
   OC = CANDIDATE;
@@ -181,7 +195,7 @@ writeFileSync(join(cfgDir, 'opencode-web.env'), `OPENCODE_SERVER_USERNAME=openco
 for (const cmd of ['docker', 'systemctl', 'journalctl', 'nvidia-smi', 'sudo', 'git', 'curl', 'tailscale', 'opencode']) {
   writeFileSync(join(fence, cmd), '#!/bin/sh\nexit 1\n'); chmodSync(join(fence, cmd), 0o755);
 }
-const PORT = await freePort(HOST), RELAY_PORT = await freePort(HOST);
+const [PORT, RELAY_PORT] = await freePorts(HOST, 2);
 const BASE = `http://${HOST}:${PORT}`, RELAY = `http://${HOST}:${RELAY_PORT}`, CLOSED = 'http://127.0.0.1:1';
 cockpit = spawn('python3', [COCKPIT], {
   env: { ...process.env, COCKPIT_DRY_RUN: '1', COCKPIT_PORT: String(PORT), COCKPIT_CONFIG_DIR: cfgDir, COCKPIT_BIND: HOST,
@@ -232,6 +246,15 @@ ok('relay: the page links the phone layer into what opencode sends', page.status
 // opencode sends its page with no Cache-Control, and Safari then served it from its heuristic cache, the
 // phone layer with it never reaching the browser: the relay sends it with no-cache
 ok('relay: the page is revalidated at every load (no-cache)', /no-cache/.test(page.headers.get('cache-control') || ''), page.headers.get('cache-control'));
+// and as a browser asks for it on a box's tailnet address: http://100.x is no secure context, where browsers send
+// no Sec-Fetch-* header at all, so only its Accept says it wants a page. 127.0.0.2 is loopback, which browsers do
+// count as secure: the browser checks below cannot see that case, nor an API kept to secure contexts
+// (crypto.randomUUID, the clipboard) that a release would start to need.
+const plain = await fetch(`${RELAY}/`, { headers: { cookie: `cockpit=${cookie}`, 'accept-encoding': 'gzip, deflate, br',
+  accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8' } });
+const plainHtml = await plain.text();
+ok('relay: the page links the phone layer when asked without Sec-Fetch headers, as from a tailnet address',
+   plain.status === 200 && plainHtml.includes('/__cockpit/agent-mobile.js'), `${plain.status} ${plainHtml.length} bytes`);
 
 // ── the browser ──────────────────────────────────────────────────────────────
 if (!CHROME) stop(2, 'no browser: set CHROME to a Chromium or Chrome binary');
@@ -249,10 +272,17 @@ chrome.stdio[4].on('data', d => {
   let cut;
   while ((cut = inbox.indexOf('\0')) >= 0) {
     const m = JSON.parse(inbox.slice(0, cut)); inbox = inbox.slice(cut + 1);
-    if (m.id && pending.has(m.id)) { pending.get(m.id)(m); pending.delete(m.id); } else if (m.method) events.push(m);
+    if (m.id && pending.has(m.id)) { const call = pending.get(m.id); pending.delete(m.id); call.resolve(m); } else if (m.method) events.push(m);
   }
 });
-const send = (method, params = {}, sessionId) => new Promise(r => { const i = ++id; pending.set(i, r); chrome.stdio[3].write(JSON.stringify({ id: i, method, params, sessionId }) + '\0'); });
+// every call answers, or fails: when the browser exits, or after 90 s without an answer
+const send = (method, params = {}, sessionId) => new Promise((resolve, reject) => {
+  const i = ++id;
+  const timer = setTimeout(() => { pending.delete(i); reject(new Error(`${method}: no answer from the browser in 90 s`)); }, 90000);
+  pending.set(i, { resolve: m => { clearTimeout(timer); resolve(m); }, reject: e => { clearTimeout(timer); reject(e); } });
+  chrome.stdio[3].write(JSON.stringify({ id: i, method, params, sessionId }) + '\0');
+});
+chrome.once('exit', () => { for (const call of pending.values()) call.reject(new Error('the browser exited')); pending.clear(); });
 async function openTab({ w, h: ht, dpr = 1, mobile = false }) {
   const { result: { targetId } } = await send('Target.createTarget', { url: 'about:blank' });
   const { result: { sessionId } } = await send('Target.attachToTarget', { targetId, flatten: true });
@@ -324,7 +354,7 @@ try {
   const sid = await t.evalJs(v2
     ? `fetch('/api/session', { method: 'POST', headers: { 'content-type': 'application/json' }, body: ${JSON.stringify(JSON.stringify({ location: { directory: work } }))} })
        .then(r => r.json()).then(j => (j.data || j).id).catch(e => 'err ' + e)`
-    : `fetch('/session?${dirQ}', { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}' })
+    : `fetch(${JSON.stringify('/session?' + dirQ)}, { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}' })
        .then(r => r.json()).then(j => j.id).catch(e => 'err ' + e)`);
   // what came back is written into the scripts below only when it is a session id: an error message
   // holding a quote broke their syntax and ended the run with no report (OpenCode 2.1.3, 2026-10-23)
@@ -352,12 +382,12 @@ try {
       }
     }
     ptys = await t.evalJs(v2
-      ? `fetch('/api/pty?${locQ}').then(r => r.json()).then(async j => { let n = 0; for (const s of (j.data || [])) {
-          if (s && s.id && (await fetch('/api/pty/' + s.id + '?${locQ}', { method: 'DELETE' })).ok) n++; } return n; }).catch(e => -1)`
-      : `fetch('/pty?${dirQ}').then(r => r.json()).then(async l => { let n = 0; for (const s of (l || [])) {
-          if (s && s.id && (await fetch('/pty/' + s.id + '?${dirQ}', { method: 'DELETE' })).ok) n++; } return n; }).catch(e => -1)`);
+      ? `fetch(${JSON.stringify('/api/pty?' + locQ)}).then(r => r.json()).then(async j => { let n = 0; for (const s of (j.data || [])) {
+          if (s && s.id && (await fetch('/api/pty/' + s.id + ${JSON.stringify('?' + locQ)}, { method: 'DELETE' })).ok) n++; } return n; }).catch(e => -1)`
+      : `fetch(${JSON.stringify('/pty?' + dirQ)}).then(r => r.json()).then(async l => { let n = 0; for (const s of (l || [])) {
+          if (s && s.id && (await fetch('/pty/' + s.id + ${JSON.stringify('?' + dirQ)}, { method: 'DELETE' })).ok) n++; } return n; }).catch(e => -1)`);
     gone = await t.evalJs(v2 ? `fetch('/api/session/${sid}', { method: 'DELETE' }).then(r => r.status).catch(e => 'err ' + e)`
-                             : `fetch('/session/${sid}?${dirQ}', { method: 'DELETE' }).then(r => r.status).catch(e => 'err ' + e)`);
+                             : `fetch(${JSON.stringify('/session/' + sid + '?' + dirQ)}, { method: 'DELETE' }).then(r => r.status).catch(e => 'err ' + e)`);
   }
   ok('terminal: it opens by its keybind', opened, sidOk ? '' : 'no session to open');
   ok('terminal: its WebSocket is accepted (101) through the relay, from a page on another host than opencode\'s', hs.some(m => m.params.response.status === 101),
@@ -379,6 +409,9 @@ try {
   ok('phone: the layer set its colour default', scheme === 'dark' || scheme === 'light', String(scheme));
   ok('phone: the session list the layer reads answers', (await p.evalJs(`fetch('/api/session?limit=8&order=desc').then(r => r.status).catch(e => 0)`)) === 200);
   ok('phone: the page raised no exception', p.jsErrors().length === 0, p.jsErrors().join(' | '));
+} catch (e) {
+  // what a release answers wrong is reported, not thrown: an element missing, a call the browser refused
+  ok('the browser checks ran to the end', false, String((e && e.stack) || e).replace(/\s+/g, ' '));
 } finally {
   const ended = child => (!child || child.exitCode !== null || child.signalCode !== null) ? null
     : Promise.race([new Promise(r => child.once('exit', r)), sleep(5000)]);

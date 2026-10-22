@@ -99,6 +99,7 @@ jobs:
           node dashboard/tests/touch-check.mjs
 
       - name: The Agent tab against a real opencode (headless browser, a cockpit and an opencode of its own)
+        timeout-minutes: 15
         run: |
           # The Agent checks drove the live cockpit of a box, by hand: opencode 1.19 sent its page
           # chunked, and the relay dropped the phone layer, and it checks the Origin of every terminal

@@ -32,7 +32,9 @@ behaviour: the compaction threshold `oc-fit-limits.py` sizes the limits for, the
 with so that a refusal makes opencode compact instead of failing, and `--yolo` /
 `OPENCODE_PERMISSION` for the Agent view. So `install.sh` pins the opencode it runs:
 **1.19.4** (`OPENCODE_VERSION`, with the sha256 GitHub publishes for
-`opencode-linux-arm64.tar.gz` in `OPENCODE_SHA256`). 1.18.32 was checked against the
+`opencode-linux-arm64.tar.gz` in `OPENCODE_SHA256`). CI runs the Agent view against that release
+on an x86_64 runner, so `dashboard/tests/agent-bench.mjs` carries the digest of
+`opencode-linux-x64.tar.gz` for the same release (`X64_SHA256`): a new pin needs both. 1.18.32 was checked against the
 1.18.27 the repo was measured on, on 2026-09-23: the same 21 overflow phrases and 3
 exclusions verbatim, `max_tokens` 182,000 with the launcher's variable and 32,000 without
 it on both (recorded on a fake endpoint), the same compaction and permission code once the
