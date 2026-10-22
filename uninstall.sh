@@ -25,10 +25,11 @@ unit_mount(){  # $1 = the container path; prints the host side of every -v mount
   grep -hoE -- "-v [^ :]+:$1( |\$|:)" "$SYSTEMD_DIR/qwen38-sglang.service" "$CONFIG_DIR/launch-flash.sh" "$SYSTEMD_DIR/qwen38-kolibri.service" "$SYSTEMD_DIR/qwen38-nemotron.service" "$SYSTEMD_DIR/qwen38-nemotron-super.service" "$SYSTEMD_DIR/qwen38-flash-local.service" "$SYSTEMD_DIR/qwen38-ornith-122b.service" 2>/dev/null \
     | sed -e 's/^-v //' -e "s|:$1.*\$||" | tr -s / || true
 }
+# one slash at a time before the list keeps each once, the image and video units' HF_HOME too
 HF_CACHES="$( { printf '%s\n' "${HF_CACHE:-}"; unit_mount /root/.cache/huggingface
                { grep -m1 -E '^Environment=HF_HOME=' "$SYSTEMD_DIR/qwen38-image.service" 2>/dev/null || true; } | cut -d= -f3-
                { grep -m1 -E '^Environment=HF_HOME=' "$SYSTEMD_DIR/qwen38-video.service" 2>/dev/null || true; } | cut -d= -f3-
-               printf '%s\n' "$HOME/.cache/huggingface"; } | awk 'NF && !seen[$0]++')"
+               printf '%s\n' "$HOME/.cache/huggingface"; } | tr -s / | awk 'NF && !seen[$0]++')"
 PLE_DIRS="$( { printf '%s\n' "${PLE_DIR:-}"; unit_mount /ple; printf '%s\n' "$HOME/flashnext-ple"; } | awk 'NF && !seen[$0]++')"
 # The Flash FP4-Local lane's copies of its n-gram table (ple-table.py), where its unit mounts them
 # from, where FLASH_LOCAL_PLE_DIR puts them (given now, or kept by its installer), and their

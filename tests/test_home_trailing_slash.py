@@ -116,10 +116,31 @@ class WhatWasWrittenWithTheSlash(unittest.TestCase):
             units.mkdir()
             (units / "qwen38-sglang.service").write_text(
                 "ExecStart=docker run -v /home/nvidia//.cache/huggingface:/root/.cache/huggingface img\n")
+            # the image and the video lanes name it in their HF_HOME (v1.38.0 listed it twice from them)
+            for lane in ("image", "video"):
+                (units / f"qwen38-{lane}.service").write_text("Environment=HF_HOME=/home/nvidia//.cache/huggingface\n")
             r = subprocess.run(["bash", "-c", f'set -euo pipefail\nSYSTEMD_DIR="{units}"; CONFIG_DIR="{t}/cfg"; HF_CACHE=""\n'
                                 + block + '\nprintf "%s\\n" "$HF_CACHES"'],
                                capture_output=True, text=True, timeout=10, env={"PATH": "/usr/bin:/bin", "HOME": "/home/nvidia"})
             self.assertEqual(r.stdout.split(), ["/home/nvidia/.cache/huggingface"], r.stderr)
+
+    def test_the_side_lanes_read_their_folder_and_cache_back_one_slash_at_a_time(self):
+        # each installer's own read-back lines, from a unit it rendered from a home with the slash: the
+        # unit an update renders is then the one the home says, not the one it found (v1.38.0 kept theirs)
+        for script, lane in (("install-image.sh", "image"), ("install-video.sh", "video"), ("install-speech.sh", "speech")):
+            with self.subTest(script):
+                lines = (REPO / script).read_text().splitlines()
+                take = [ln for ln in lines if re.match(r"(installed|installed_env)\(\)\{|LANE_DIR=|HF_CACHE=\"\$\{HF_CACHE:-\$\(installed_env", ln)]
+                self.assertEqual(len(take), 4 if lane != "speech" else 2, take)
+                with tempfile.TemporaryDirectory() as t:
+                    unit = pathlib.Path(t) / f"qwen38-{lane}.service"
+                    unit.write_text(f"[Service]\nWorkingDirectory=/home/nvidia//.local/share/qwen38-{lane}\n"
+                                    "Environment=HF_HOME=/home/nvidia//.cache/huggingface\n")
+                    r = subprocess.run(["bash", "-c", f'set -euo pipefail\nINSTALLED="{unit}"\ntext_cache(){{ echo /elsewhere; }}\n'
+                                        + "\n".join(take) + '\nprintf "%s|%s" "$LANE_DIR" "${HF_CACHE:-}"'],
+                                       capture_output=True, text=True, timeout=10, env={"PATH": "/usr/bin:/bin", "HOME": "/home/nvidia"})
+                want = f"/home/nvidia/.local/share/qwen38-{lane}|" + ("/home/nvidia/.cache/huggingface" if lane != "speech" else "")
+                self.assertEqual((r.returncode, r.stdout), (0, want), r.stderr)
 
     def test_conformity_classes_the_cache_and_the_ple_folder_as_the_default(self):
         units, cfg = box(hf=f"{HOME}//.cache/huggingface", ple=f"{HOME}//flashnext-ple")

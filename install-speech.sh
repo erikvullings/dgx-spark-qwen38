@@ -55,7 +55,9 @@ LAUNCHER="$CONFIG_DIR/launch-speech.sh"
 # Every occurrence, last one kept: the recognizer's --host and --port come first in the
 # launcher, the routes' own after them.
 launcher_flag(){ { grep -oE -- "$1 [^ \\\\]+" "$LAUNCHER" 2>/dev/null || true; } | awk '{print $2}' | tail -1; }
-LANE_DIR="${SPEECH_LANE_DIR:-$(installed WorkingDirectory)}"; LANE_DIR="${LANE_DIR:-$HOME/.local/share/qwen38-speech}"
+# Read back one slash at a time, as unit_hf_cache reads the cache (lanes.sh): a unit rendered from a
+# home with a trailing slash says "//", and its own spelling kept it as it was at every update.
+LANE_DIR="${SPEECH_LANE_DIR:-$(installed WorkingDirectory | tr -s /)}"; LANE_DIR="${LANE_DIR:-$HOME/.local/share/qwen38-speech}"
 VENV="$LANE_DIR/venv"
 LLAMA_DIR="$LANE_DIR/llama.cpp"
 MODELS="$LANE_DIR/models"

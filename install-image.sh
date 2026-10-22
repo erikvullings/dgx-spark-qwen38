@@ -68,7 +68,9 @@ CONFIG_DIR="$HOME/.config/qwen38"
 . "$HERE/lanes.sh"
 # A terminal opened before the account joined the docker group: the run goes on with it (lanes.sh).
 docker_session bash "$HERE/${BASH_SOURCE[0]##*/}" "$@"
-LANE_DIR="${IMAGE_LANE_DIR:-$(installed WorkingDirectory)}"; LANE_DIR="${LANE_DIR:-$HOME/.local/share/qwen38-image}"
+# Read back one slash at a time, as unit_hf_cache reads the cache (lanes.sh): a unit rendered from a
+# home with a trailing slash says "//", and its own spelling kept it as it was at every update.
+LANE_DIR="${IMAGE_LANE_DIR:-$(installed WorkingDirectory | tr -s /)}"; LANE_DIR="${LANE_DIR:-$HOME/.local/share/qwen38-image}"
 VENV="$LANE_DIR/venv"
 SRC="$LANE_DIR/sglang"
 WHEEL_NOTE="$LANE_DIR/sglang-wheel"   # the wheel release the venv's dependencies come from (step 3)
@@ -102,7 +104,7 @@ text_cache(){
   # shellcheck disable=SC2086  # a list of paths
   unit_hf_cache $TEXT_UNITS
 }
-HF_CACHE="${HF_CACHE:-$(installed_env HF_HOME)}"; HF_CACHE="${HF_CACHE:-$(text_cache)}"
+HF_CACHE="${HF_CACHE:-$(installed_env HF_HOME | tr -s /)}"; HF_CACHE="${HF_CACHE:-$(text_cache)}"   # one slash at a time, as LANE_DIR
 HF_CACHE="${HF_CACHE:-$HOME/.cache/huggingface}"
 # The v0.5.21 release (its tag's commit), the first that carries Qwen-Image 2.1, measured
 # end to end on the reference box on 2026-10-10. From 2026-09-22 until then the lane ran

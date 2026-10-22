@@ -75,7 +75,9 @@ CONFIG_DIR="$HOME/.config/qwen38"
 . "$HERE/lanes.sh"
 # A terminal opened before the account joined the docker group: the run goes on with it (lanes.sh).
 docker_session bash "$HERE/${BASH_SOURCE[0]##*/}" "$@"
-LANE_DIR="${VIDEO_LANE_DIR:-$(installed WorkingDirectory)}"; LANE_DIR="${LANE_DIR:-$HOME/.local/share/qwen38-video}"
+# Read back one slash at a time, as unit_hf_cache reads the cache (lanes.sh): a unit rendered from a
+# home with a trailing slash says "//", and its own spelling kept it as it was at every update.
+LANE_DIR="${VIDEO_LANE_DIR:-$(installed WorkingDirectory | tr -s /)}"; LANE_DIR="${LANE_DIR:-$HOME/.local/share/qwen38-video}"
 VENV="$LANE_DIR/venv"
 SRC="$LANE_DIR/sglang"
 WHEEL_NOTE="$LANE_DIR/sglang-wheel"   # the wheel release the venv's dependencies come from (step 3)
@@ -111,7 +113,7 @@ text_cache(){
   # shellcheck disable=SC2086  # a list of paths
   unit_hf_cache $TEXT_UNITS
 }
-HF_CACHE="${HF_CACHE:-$(installed_env HF_HOME)}"; HF_CACHE="${HF_CACHE:-$(text_cache)}"
+HF_CACHE="${HF_CACHE:-$(installed_env HF_HOME | tr -s /)}"; HF_CACHE="${HF_CACHE:-$(text_cache)}"   # one slash at a time, as LANE_DIR
 HF_CACHE="${HF_CACHE:-$HOME/.cache/huggingface}"
 # The SGLang source this lane runs: the v0.5.21 release's commit, as the image lane does
 # since v1.24 (the lane ran main's ddebc52 from 2026-09-25 until v1.25). SGLANG_DIFFUSION_PIN
