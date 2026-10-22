@@ -376,7 +376,7 @@ event stream, browsers allow six connections per origin, and a sixth tab freezes
 them all (the interface handles any number of sessions in one tab). **Open in a
 new tab** still exists for a second screen. The Logs view reads the server's journal.
 
-Permissions are opencode's own. Its defaults (opencode 1.18) allow most tool
+Permissions are opencode's own. Its defaults (opencode 1.18, 1.19) allow most tool
 calls and ask before a tool touches a path outside the session's project and
 when the same call repeats three times; the interface shows those prompts. For
 the autonomy of the `oc` launcher's `--yolo` (a flag `opencode serve` rejects),

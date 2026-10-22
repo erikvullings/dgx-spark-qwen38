@@ -22,7 +22,7 @@ import unittest
 
 REPO = pathlib.Path(__file__).resolve().parents[1]
 INSTALL = REPO / "install.sh"
-PINNED = "1.18.35"
+PINNED = "1.19.4"
 
 FAKE_OC = """#!/bin/sh
 here="$(cd "$(dirname "$0")" && pwd)"
@@ -213,12 +213,15 @@ class TheOpencodePin(unittest.TestCase):
                 shutil.rmtree(self.t / "linuxbrew")
 
     def test_a_newer_one_is_kept_and_said_so(self):
-        self.opencode_at(self.home / ".opencode" / "bin", "1.18.40")
+        # newer than whatever the pin is (1.18.40 was, until the pin moved past it)
+        major, minor, patch = PINNED.split(".")
+        newer = f"{major}.{minor}.{int(patch) + 6}"
+        self.opencode_at(self.home / ".opencode" / "bin", newer)
         rc, out, calls = self.run_block()
         self.assertEqual(rc, 0, out)
         self.assertIn("newer than the", out)
         self.assertEqual(calls, [])
-        self.assertEqual(self.version_of(self.home_bin), "1.18.40")
+        self.assertEqual(self.version_of(self.home_bin), newer)
 
     def test_a_first_install_that_cannot_download_says_what_is_missing_and_what_to_run(self):
         (self.bin / "curl").write_text("#!/bin/sh\nexit 22\n")

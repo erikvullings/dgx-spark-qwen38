@@ -31,7 +31,7 @@ behaviour: the compaction threshold `oc-fit-limits.py` sizes the limits for, the
 32,000-token output cap the `oc` launcher lifts, the overflow phrases the proxy answers
 with so that a refusal makes opencode compact instead of failing, and `--yolo` /
 `OPENCODE_PERMISSION` for the Agent view. So `install.sh` pins the opencode it runs:
-**1.18.35** (`OPENCODE_VERSION`, with the sha256 GitHub publishes for
+**1.19.4** (`OPENCODE_VERSION`, with the sha256 GitHub publishes for
 `opencode-linux-arm64.tar.gz` in `OPENCODE_SHA256`). 1.18.32 was checked against the
 1.18.27 the repo was measured on, on 2026-09-23: the same 21 overflow phrases and 3
 exclusions verbatim, `max_tokens` 182,000 with the launcher's variable and 32,000 without
@@ -44,6 +44,18 @@ touches neither the compaction nor the permission code. What changed for this bo
 model requests carry one more header, `x-opencode-session-id`, with the session id
 `x-session-id` already carried (the proxy and the engine pass it by), and `opencode debug
 config` prints a provider's key as `***`, where 1.18.32 printed this box's key in clear.
+1.19.4 was checked against 1.18.35 on 2026-10-22, the binaries side by side: the same 21
+phrases and 3 exclusions, `max_tokens` 32,000 and 182,000 on the fake endpoint with the same
+headers, the release diff leaves the compaction, overflow, permission, flag and request code
+as it was, keys still masked, and the sessions one wrote the other lists and reads, both ways.
+Behind a copy of the cockpit's relay, reached by a name that is not loopback as the tailnet
+address is, both answered a prompt from the interface and ran a command in its terminal, and
+the phone layer found the same parts of the interface. One thing changed for the relay: 1.19.4
+sends its index chunked, where 1.18.35 sent a length, and the relay injected the phone layer
+only into a document with a length (it reads a chunked one too since v1.38.6). It runs on
+Bun 1.4.4 (read in its binary), whose Brotli carries the fix for CVE-2026-111497, an
+out-of-bounds write in the decoder: 1.18.35 runs on Bun 1.3.14, without it, and the agent's
+web fetch decodes whatever a page sends.
 
 What a run does with the opencode it finds:
 
