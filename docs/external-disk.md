@@ -1,7 +1,7 @@
 # An external disk for the models
 
 A DGX Spark has one internal NVMe drive, and the lanes of this repository want a lot of it: about
-852 GB for every lane at once (the installer's `--all-weights`). Many boxes keep their models on an
+930 GB for every lane at once (the installer's `--all-weights`). Many boxes keep their models on an
 external SSD instead. This page says what can live there, what must not, how to set it up, and what
 the installer does about it. Every number on it was measured on the reference box, an ASUS Ascent
 GX10 whose Hugging Face cache sits on an Intenso Portable SSD of 2 TB on USB 3.2 Gen 2x2 (about
@@ -14,7 +14,7 @@ is not used. Those weights can live on an external disk: only the start is slowe
 
 | Lane | What it reads, and when | From the external SSD |
 |---|---|---|
-| 27B, flash, Kolibri, both Nemotron lanes | the weights, once, at the start | the start is slower (the flash lane's, read in many small pieces, about 80 s more), the serving is the same |
+| 27B, flash, Kolibri, both Nemotron lanes, Ornith | the weights, once, at the start | the start is slower (the flash lane's, read in many small pieces, about 80 s more), the serving is the same |
 | Images (Qwen-Image 2.1) | the weights, once, at the start | 75 s to start instead of about 70, the same image bit for bit, in the same time |
 | Videos (MiniMax-H3) | its weights **at every step of every generation** (SGLang offloads its layers by itself) | **1.78 times slower** to generate: 29.4 s a step against 14.55 |
 | Flash 176B, its PLE table | a 47.7 GiB file **at every token**, written beside the home directory at every boot (`PLE_DIR`, `~/flashnext-ple`) | not on the external disk by default: `PLE_DIR` is under the home directory |

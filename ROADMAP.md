@@ -5,7 +5,13 @@ so that "on the roadmap" means a checkbox with a definition of done, not a
 mood. Statuses: shipped, in progress, planned, considered (considered items
 have a reason they are not yet planned, stated here or in an issue).
 
-## Shipped, current: v1.37
+## Shipped, current: v1.38
+
+- **Ornith 1.5 122B, a ninth lane** (v1.38.0): Ornith AI's mixture of experts
+  with vision, on vLLM in the Flash FP4-Local lane's image with its MTP head,
+  and a window of a million tokens with YaRN, written where the model reads it.
+
+## Shipped, v1.37
 
 - **Flash FP4-Local, an eighth lane** (v1.37.0): NVIDIA's FP4 build of the
   flash model on vLLM, with the flash lane's quality in about half its disk
@@ -182,8 +188,9 @@ the cockpit drift panel says so, per lane, until it is.
   parameterised by what the card can do, not by what this one does (the
   sm_121 story in v1.14 is the shape of that work: an objection that turned
   out to be about neither image). More model families, last in that order, came
-  first: Aleph Alpha's Kolibri-1 (v1.29), NVIDIA's Nemotron 3.5 Bolt (v1.34)
-  and Nemotron 3.5 Super VL (v1.35) each have a lane, measured by the method
+  first: Aleph Alpha's Kolibri-1 (v1.29), NVIDIA's Nemotron 3.5 Bolt (v1.34),
+  Nemotron 3.5 Super VL (v1.35) and Ornith AI's Ornith 1.5 122B (v1.38) each
+  have a lane, measured by the method
   its lane's page states. None of this is a rewrite, it is the same discipline
   applied to a wider set of pins, and nothing ships as "supported" before a
   measured row exists for it.
@@ -232,8 +239,10 @@ the cockpit drift panel says so, per lane, until it is.
 
 ## Considered (and why not yet)
 
-- **vLLM for the Qwen lanes**: vLLM serves three lanes since v1.29 (Kolibri,
-  then Bolt and Super VL), the models SGLang did not serve on this box; for
+- **vLLM for the Qwen lanes**: vLLM serves five lanes: since v1.29 Kolibri,
+  then Bolt and Super VL, the models SGLang did not serve on this box, NVIDIA's
+  FP4-Local build of the flash model as its card serves it (v1.37), and Ornith
+  (v1.38), whose window SGLang held half of here; for
   the two Qwen lanes, third-party vLLM numbers on this hardware tie or lose
   to the SGLang config here (issue #2, BENCHMARKS.md), and moving a lane
   that serves well needs a measured win, not a second flavor of parity.

@@ -93,8 +93,8 @@ others set fields of its scheduler no client of this port has to set (proxy v6.4
 
 Served model names: `qwen3.8-27b` (27B lane, both context modes),
 `qwen3.8-flash-next` (flash lane), `qwen3.8-flash-next-fp4` (Flash FP4-Local lane),
-`kolibri-1` (Kolibri lane), `nemotron-3.5-bolt` (Nemotron lane) and `nemotron-3.5-super-vl`
-(Nemotron Super lane). Send the name, not the checkpoint path. A client set up for one lane
+`kolibri-1` (Kolibri lane), `nemotron-3.5-bolt` (Nemotron lane), `nemotron-3.5-super-vl`
+(Nemotron Super lane) and `ornith-1.5-122b` (Ornith lane). Send the name, not the checkpoint path. A client set up for one lane
 keeps working on another: SGLang answers any name, and on the vLLM lanes, whose vLLM
 refuses a model it does not serve, the proxy gives such a request the served name
 (proxy v6.37).

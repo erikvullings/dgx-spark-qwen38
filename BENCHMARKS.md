@@ -13,6 +13,7 @@ stock DGX OS), with the page that measured it and gives its date, version and me
 | Kolibri-1, Aleph Alpha's FP8 on vLLM | **48.0 / 121.9 / 165.8 / 202.0 tok/s** at 1 / 4 / 8 / 16 streams | [docs/kolibri-lane.md](docs/kolibri-lane.md) |
 | Nemotron 3.5 Bolt 74B on vLLM, with its drafter | **140 tok/s** rewriting code, one request, reasoning off; 74.8 / 113.4 / 163.6 / 201.2 tok/s at 1 / 4 / 8 / 16 streams | [docs/nemotron-lane.md](docs/nemotron-lane.md) |
 | Nemotron 3.5 Super VL 120B on vLLM, with its drafter | **69.5 tok/s** rewriting code, one request, reasoning off; 81.7 tok/s in all at 4 streams | [docs/nemotron-super-lane.md](docs/nemotron-super-lane.md) |
+| Ornith 1.5 122B, Ornith AI's NVFP4 on vLLM, with its MTP head, at a window of a million | **42.4 tok/s** greedy median (`./bench.sh`); 41.2 / 68.1 / 90.0 tok/s in all at 1 / 4 / 8 streams on five real jobs; GSM8K 98.8 % (250), HumanEval 93.90 % (164), 97.6 % and 95.12 % at its native window | [docs/ornith-lane.md](docs/ornith-lane.md) |
 | Qwen-Image 2.1 | 1024x1024 at 40 steps in **34.3 s**, **7.5 s** with its Turbo | [docs/image-lane.md](docs/image-lane.md) |
 | MiniMax-H3, video with sound | 4 s at 480P in **622.8 to 632.5 s** at 50 steps, **126.2 to 127.9 s** with the Turbo adapter | [docs/video-lane.md](docs/video-lane.md) |
 
