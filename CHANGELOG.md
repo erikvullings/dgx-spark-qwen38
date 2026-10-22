@@ -1,5 +1,95 @@
 # Changelog
 
+## v1.38.6 (2026-10-22): opencode 1.19.4, on Bun 1.4.4 and its Brotli fix, and the Agent tab's phone layer on a chunked page
+
+**Why.** CVE-2026-111497 is an out-of-bounds write in Brotli's decoder, which Node.js fixed on
+2026-10-21 and Bun on 2026-10-22, in 1.4.4 ([oven-sh/bun#46352](https://github.com/oven-sh/bun/issues/46352),
+fixed by #46392). opencode is a Bun program, and the agent's web fetch decodes whatever a page
+sends. The 1.18.35 this repo pinned runs on Bun 1.3.14, without the fix. opencode 1.19.4,
+published the same day, runs on Bun 1.4.4. Both versions were read in their own binaries.
+
+**opencode 1.19.4.** The pin moves from 1.18.35 to 1.19.4 (`8568230ccd84...`, GitHub's own
+digest of `opencode-linux-arm64.tar.gz`). It was checked against 1.18.35 with both binaries
+side by side, as each pin before it:
+
+- the same 21 overflow phrases and 3 exclusions the proxy's refusals are matched against;
+- `max_tokens` 32,000 without the oc launcher's variable and 182,000 with it, on a fake
+  endpoint, with the same headers;
+- the compaction, overflow, permission, flag and request code is the same file for file, and
+  the one change to the provider code needs a `reasoning_options` field the repo never writes;
+- `opencode debug config` still prints a provider's key as `***`;
+- the sessions 1.18.35 wrote, 1.19.4 lists and reads, and 1.18.35 reads what 1.19.4 wrote,
+  so going back is possible;
+- with `"autoupdate": false` its TUI asks npm for no update and offers nothing. Without it,
+  it shows "/update to upgrade to OpenCode 2.0";
+- behind the proxy, an engine that holds its headers 320 s (as SGLang does behind a full queue)
+  is waited for, and the answer taken at 322 s, as with 1.18.35. Straight to that engine, both
+  versions give up at 300 s and send the request again, so Bun 1.4's new fetch timeouts change
+  nothing here.
+
+**The Agent tab's phone layer on a chunked page.** Behind a copy of the cockpit's relay,
+reached by a name other than loopback, as a browser reaches the real one by the tailnet
+address, both versions answered a prompt from the interface and ran a command in its
+terminal. One thing differed. 1.19.4 sends the interface's index chunked, where 1.18.35 sent a
+Content-Length, and the relay injected its phone layer only into a document with a length.
+With 1.19.4 the Agent tab lost that layer on a phone. The relay now reads a chunked document
+too, up to the same 256 KiB, and injects the layer when the whole of it came within. A document
+opencode cuts short is still refused with a 502, and one past the limit, or an empty one,
+streams untouched. On a phone, the layer then finds the same parts of 1.19.4's interface as of
+1.18.35's: the card of the server's sessions opens one, the composer is at 16 px and the
+buttons at 40 px.
+
+**opencode-web restarts on a new opencode, whatever lane the box boots.** An update replaced
+the binary, and the Agent tab's installer restarted its server on it at step 10, which only an
+update with a text lane at boot reaches. A box that boots another lane takes a branch that
+reinstalled the cockpit alone, so it kept the old opencode until its next boot. The reference
+box, booting the FP4-Local lane, was one of them. That branch now runs the Agent tab's installer
+too, after the cockpit that relays it, as step 10 does: opencode-web restarts on the new
+opencode, and follows the opencode on the PATH when that one moved. The Agent tab's installer
+restarted it only for a binary dated after the server's start, and npm and Homebrew give an
+updated binary the date of its archive: it now also restarts it when the version the server
+answers with is not the binary's. And it never points it at OpenCode 2, whose own server takes
+the same flags (2.0.28 read) but is not what the Agent tab relays: it says so and leaves the
+unit as it is. An update that installs no cockpit (`--no-cockpit`, or `--no-start` on a box
+booting a text lane) leaves opencode-web on the opencode it runs until it restarts.
+
+**An opencode from Homebrew Core is kept.** An older opencode from Homebrew went through
+opencode's own upgrader. Up to 1.19.1 that upgrader runs `brew upgrade` whatever version it is
+asked for, and Homebrew Core's formula is OpenCode 2 now (2.1.2). OpenCode 2's server is not the
+1.x `opencode serve` the Agent tab relays, so an update would have put OpenCode 2 under oc and
+the Agent tab. Such an opencode is now kept, and the installer says how to get the pinned one:
+`brew uninstall opencode` then a new run of the installer, or
+`brew install anomalyco/tap/opencode`, opencode's own formula, which stays on 1.x. That formula
+(`sst/tap` before the project moved), named in its keg's install receipt, still goes through
+the upgrader, whose `brew upgrade` moves it to the tap's own version (the pin on 2026-10-22),
+and a keg whose receipt names no tap is kept as Homebrew Core's is.
+
+**What an update does.** opencode 1.19.4 replaces an older one in `~/.opencode/bin` (a newer
+one is kept). The cockpit restarts once, for its relay, and then opencode-web once, on the new
+opencode, which ends a turn the Agent tab is in. The engines keep running.
+
+**Tests.**
+
+- The relay gives a chunked document the layer, refuses a cut one with a 502, injects one up
+  to the limit and streams one a byte past it untouched, and an empty one as it came. The first
+  three fail on the code of v1.38.5, the last passes on both as it should, and each of seven
+  mutants of the change fails one of them. These tests read every Cache-Control the relay
+  sends, where a dict of headers kept only the last one: an upstream policy passed beside the
+  relay's own now fails them.
+- The installer keeps an opencode from Homebrew Core, or from a keg whose receipt names no tap,
+  without running its upgrader, and runs the upgrader for opencode's own tap, under either name.
+  The first two fail on the installer of v1.38.5, which ran `opencode upgrade 1.19.4` for all.
+- A box booting another lane runs the Agent tab's installer after the cockpit, under step 10's
+  condition, which fails on the installer of v1.38.5. The Agent tab installer's own check, run
+  as written, restarts opencode-web for an opencode dated after its start, or answering with
+  another version than the binary's, and not for the same one, nor when the server does not
+  answer and the date is older. It stops before touching the unit for an OpenCode 2 (2.0.28,
+  2.1.3, 10.0.0) and goes on for a 1.x. Both fail on the scripts of v1.38.5, and each of three
+  mutants fails one of them. The fake opencode of these tests said 9.9.9, which the script now
+  takes for an OpenCode 2: it says 1.99.9.
+- The test of a newer opencode took 1.18.40 as newer than the pin, which 1.19.4 is not. It now
+  takes a version newer than whatever the pin is.
+
 ## v1.38.5 (2026-10-22): the note also covers the engine's warm-up, before its fit
 
 **What went wrong.** v1.38.4 showed the cockpit's own fit of opencode's limits as a note, but the

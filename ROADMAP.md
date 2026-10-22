@@ -10,6 +10,8 @@ have a reason they are not yet planned, stated here or in an issue).
 - **Ornith 1.5 122B, a ninth lane** (v1.38.0): Ornith AI's mixture of experts
   with vision, on vLLM in the Flash FP4-Local lane's image with its MTP head,
   and a window of a million tokens with YaRN, written where the model reads it.
+- **opencode 1.19.4** (v1.38.6): on Bun 1.4.4 and its fix for CVE-2026-111497 in
+  Brotli's decoder, with the Agent tab's phone layer on the page it sends chunked.
 
 ## Shipped, v1.37
 
