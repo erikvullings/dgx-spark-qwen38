@@ -1,5 +1,160 @@
 # Changelog
 
+## v1.38.0 (2026-10-22): Ornith AI's Ornith 1.5 122B, as a ninth lane on vLLM, with a window of a million tokens
+
+**What it is.** [Ornith 1.5 122B](https://huggingface.co/ornith-ai/Ornith-1.5-122B-NVFP4) is Ornith AI's
+mixture of experts of the Qwen3.5 family, published under the MIT licence on 2026-10-20: 122B
+parameters with 8 of its 256 experts active per token, 48 layers of which 12 are full attention and the
+rest linear attention, a vision encoder and one MTP layer. Its authors published an NVFP4 build, made
+with ModelOpt in mixed precision: the experts and the output head in NVFP4, read as W4A16, the
+projections in FP8, a KV cache in FP8. Every plain install now puts it in as a ninth lane, on demand
+like the others: its unit now, and its first Load from the cockpit pulls the Flash FP4-Local lane's
+image when that lane has not (18.2 GB on disk, by digest) and fetches the checkpoint (77.7 GB at its
+pinned revision). `--with-ornith-122b` or `--all-weights` does it at install and proves it,
+`--no-ornith-122b` leaves it out and later runs remember it. On the cockpit's Lanes view it is
+**Ornith 1.5 122B**, then **Load**. From a terminal, `./prepare-lane.sh ornith-122b` the first time, then
+`./switch-model.sh ornith-122b`. Clients reach it through the proxy on `:30001` with the box's key, as
+model `ornith-1.5-122b`, in the OpenAI and the Anthropic dialects alike, images and videos inside the
+request.
+
+**What an update does.** It puts in the lane's unit, and nothing heavy: no image is pulled and no weight
+fetched until its first Load. Every other lane's unit names the new one in its `Conflicts=` and `After=`
+lines, which systemd applies at its daemon-reload: each such unit keeps its date and its engine keeps
+running. The proxy restarts once (v6.45, its unit holds requests for this lane too while it boots), and
+so does the cockpit. On a box whose home ends with a slash (below), every unit is written again without
+it, and the engine that serves restarts once.
+
+**The engine: vLLM with the model's own MTP head, measured against SGLang with DFlash2.** Two engines
+serve this checkpoint on a GB10, each with a drafter: vLLM with NVIDIA's b12x kernels and the MTP layer
+the model carries, in the image the Flash FP4-Local lane already pulls, and SGLang with DFlash2, a
+drafter trained apart for the model that proposes eight tokens at once. Measured one after the other on
+the reference box the same night, one request at a time, SGLang's drafter is faster where text is
+predictable (53.7 against 42.2 tok/s on code, 66 to 68 against 43 on reasoning, 70 to 75 against 41 to
+43 on math, greedy, `./bench.sh`) and slower where it is not (25.2 against 30.8 to 32.2 on free prose,
+11.2 to 11.5 against 37.3 to 42.1 on random tokens). At four and eight requests the two are within 6 %
+(64.2 and 88.3 tok/s in all for vLLM on five real jobs, 63.0 and 93.2 for SGLang). An agent's next turn
+comes back from SGLang's cache in 0.2 s, from vLLM's in 5.3 (below). But SGLang holds half the window:
+at a million tokens its KV cache is 566,943 tokens, and it refused a prompt of 900,000. It boots in 11
+and a half minutes against under 4, and leaves 10.7 GiB free in service against 15.8. The lane serves
+vLLM. DFlash2 on vLLM does not start in this image ("a manager block cannot be split into 271 kernel
+blocks of 16 tokens"), with prefix caching or without, so a build of the same weights with a BF16
+output head, made for that path, was checked (its weights are the authors', its head their NVFP4 head
+dequantized, bit for bit) and is not the lane's. The MTP head drafts 2 tokens: 42.4 to 42.6 tok/s
+against 41.3 to 41.7 with 3 and 40.7 to 41.1 with 4.
+
+**A window of a million, in the form this vLLM reads.** The model's own window is 262,144 tokens, and its
+model card stretches it four times with YaRN, as `--hf-overrides '{"rope_scaling": ...}'`. In this vLLM
+that form does nothing: it sets a field at the top of the config while the layers read
+`text_config.rope_parameters`, and the probabilities the engine gave 150 Wikipedia articles (English,
+German, French) were the native window's (a KL divergence of 0.0117 nats per token, the engine's own
+noise being 0.0137). The unit writes `text_config.rope_parameters` whole instead, seven
+`--hf-overrides.text_config.rope_parameters.*` options carrying the checkpoint's own values and YaRN, and
+vLLM gives the MTP head the same. Against the native window it costs short texts 0.4 % of perplexity (KL
+0.0271, a change of the log-likelihood of +0.0040, from +0.0022 to +0.0057), and it holds on real tasks:
+GSM8K 98.8 % (250 problems) and HumanEval 93.90 % (164), against 97.6 % and 95.12 % on the native window,
+the same box and the same drafting (3 problems gained, 2 lost: the engine's own run-to-run noise moves
+as much). A code hidden at 499,974 tokens was found exactly with the MTP head drafting (its prompt
+prefilled in 19 minutes and a half), one at 900,055 with it off, and the speed is the native window's
+(42.2 to 42.4 tok/s alone, 41.2 / 68.1 / 90.0 in all at 1 / 4 / 8 requests). vLLM derives its window
+from `max_position_embeddings`, so the unit sets `VLLM_ALLOW_LONG_MAX_MODEL_LEN=1` as the card does, and
+it fixes the KV cache at 17 GiB (1,301,680 tokens, the window 1.24 times over), where a share of the
+memory gave from 829,030 to 1,149,938 tokens from one boot to the next, less than the window at some.
+opencode gets 990,000 tokens of context with 32,000 of output, Claude Code
+`CLAUDE_CODE_MAX_CONTEXT_TOKENS=1000000` with its default output.
+
+**Its reasoning, in its template's words.** The chat template turns reasoning on or off
+(`enable_thinking`) and reads no effort. The proxy (v6.45) says a chat request's `reasoning_effort` in
+those words: `none` and `minimal` off whatever else the request says, as on the Qwen lanes (omp sends
+`enable_thinking: true` beside its level), every other level on unless the request names
+`enable_thinking` itself. opencode's provider has the two levels, `high` first and `none`, and pi and omp
+send their level as it is, `off` as `none`, and start at `high`. The Anthropic dialect's `thinking` does
+not reach the template: the model reasons with `thinking: {"type": "disabled"}` all the same (checked).
+The sampling is the checkpoint's (temperature 0.6, top_k 20, top_p 0.95), which vLLM applies to a
+request that sets none, and the chat template is served as published.
+
+**What it shares with the Flash FP4-Local lane.** The image and the io_uring filter (b12x's loader reads
+the checkpoint over io_uring, which Docker's default profile refuses). Each lane's uninstall leaves the
+filter while the other's unit reads it. The image keeps a tag for each lane prepared, so that a prune
+leaves it alone: an uninstall takes its own, says when the other lane's still keeps the image, and gives
+it to the other lane's unit when that lane, loaded from the cockpit after the first had pulled the
+image, has none of its own (found in review).
+
+**An agent's turns.** On a hybrid model, vLLM serves from its prefix cache only what it kept a recurrent
+state for: here one at every 4,224 tokens, and with MTP one block before the end of the prompt. A
+conversation of 40,000 tokens found 33,792 of them in the cache at each turn after the first, its first
+token after 5.3 s. With the agents themselves, four turns each in one session: opencode found 85 to 86 %
+of its prompts in the cache, 12.6 to 14.6 s a turn, and Claude Code 36 % (8,448 of 23,000 tokens), 10.7
+to 14.4 s a turn, as many with a checkpoint kept at every block: its prompt, as this template renders
+it, changes from one turn to the next before its 12,672nd token. vLLM's fix for MTP prompt tails
+(vllm#58368, merged upstream on 2026-09-24) would bring a turn's reuse to the request's end, and the
+image (the latest, of 2026-10-15) does not have it yet. The fixes vLLM made for the correctness of
+those turns on hybrid models are in it (vllm#46384, #51113), and the misread prefill that gave NaN after
+a turn from the cache on other builds (vllm#49918, #55766) does not reach the model runner this lane
+uses.
+
+**A home with a trailing slash, found on a second ASUS Ascent GX10.** Its user's home is "/home/nvidia/" in
+/etc/passwd, slash included, and the scripts built every path on it with a "//", while
+systemd hands the cockpit the same home without the slash. The cockpit's exact-argv sudoers allowlist,
+rendered from a login shell, named `/home/nvidia//.config/qwen38/<unit>.switch-stage`, the cockpit's own
+switch called `/home/nvidia/.config/qwen38/<unit>.switch-stage`, and sudo asked for a password at every
+Load that installs a unit: the switch to the Ornith lane failed so, as any lane's would have. Every
+script that renders or compares a path built on the home spells it without the slash now, before its
+first use, and the units and the allowlist an update renders follow: the update to this release mended
+that box, and its Load went through. What such a box wrote before, the cache and the PLE folder its units
+mount and opencode's reference to the key, is read back one slash at a time: kept as a choice, listed
+twice by the uninstall, or left reading a key the uninstall deleted, it was not (found in review).
+
+**Fixed on the way: a test that deleted a revision from the box's cache.**
+`dashboard/tests/test_cockpit_delete_strays.py` runs the cockpit's real `delete_strays` job, and it
+redirected a fixed list of unit paths to its own. Flash FP4-Local's (v1.37.0) was not on it, so on the
+reference box the cockpit under test read the box's unit, its mount of the box's Hugging Face cache, and
+scanned that cache: when this release moved the Ornith pin, the revision the night's measurements served
+was stray to it and was deleted (77.6 GB, restored the same night from the identical files of the
+BF16-head build and a download of the rest, every file checked against its sha256).
+`dashboard/tests/test_cockpit_prepare.py` and `test_cockpit_fetch.py` read units through a fixed list too,
+which the Ornith lane's unit did not join (their jobs run as a dry run, which deletes nothing, but the
+box's cache was read). Every cockpit test that reads units redirects every `*_UNIT_PATH` of the module
+now, and the two that ask for the job first check that every cache it would scan is inside their own
+folder: with the old list put back, the one that deletes stops at that check, before anything is.
+
+**Found in review, fixed before it shipped.** omp, as `pi-gen.py` writes its config, sends
+`enable_thinking: true` beside its level, and its `minimal` reasoned in full: `none` and `minimal` now win
+over a request's own `enable_thinking`. pi sent its `minimal` as `low`, which the proxy keeps whole, from
+the Kolibri lane's map: it sends its levels as they are now. A test of `install.sh`'s left-out lane ran
+`install-ornith-122b.sh` for real (copied with its execute bit), and the guard tests that list the vLLM
+installers did not name it: it is neutralized there and named in each now, and `switch-model.sh
+--fetch` has its Ornith case.
+
+**The cockpit on a phone.** A button never breaks its line, and Library's "Delete 1 stray revision, frees
+0.0 GiB", beside its panel's title, made the page 409 px wide on a 393 px iPhone 15: the browser zoomed
+the page out, and a tap landed a row below where it aimed. Any box whose cache keeps a revision a release
+no longer pins showed it so. Panel headers wrap now, their buttons under the title when they do not fit
+beside it (found by the CI's touch test, on the reference box).
+
+**Proved on a second ASUS Ascent GX10** (2026-10-22). Installed by the update path while its 27B served,
+then loaded from the cockpit: its switch fetched the pinned revision and made it the boot lane, and the
+lane answered 5 min 31 s after its first start, b12x tuning its kernels, then 1 min 52 s at the next
+boots, with 1,301,680 tokens of KV cache. Through the proxy with the box's key: the OpenAI and Anthropic
+SDKs, fetch in Node 24.22.1 and in Bun 1.3.12, LiteLLM, and Claude Code, opencode, Hermes and pi, each
+reading a file with a tool. A picture and a short film read right in both dialects, and under the 27B's
+name. The engine's routes refused without the key but /health and /metrics. The effort as the proxy
+says it: `none`, `minimal` and omp's form off, no level and `high` on. The cockpit's six views had no
+banner and no script error, and the box went back to its 27B from the cockpit.
+
+**Tests.** Each change has a test that fails on the old code. The lane's unit, staged as a switch stages
+it: the pinned checkpoint on the shared image, its key alone of the config directory, no remote code,
+its allocator, a command bash reads whole, and its window, the seven options parsed as bash passes them
+and compared whole with the dict the campaign served (one option taken out, the test fails), the KV
+cache at its pin, the card's `rope_scaling` absent. Its installer's refusals, the two lanes' uninstalls
+leaving the filter and the vLLM middleware to the other, the image's tags (the other lane's tag kept,
+the other lane's unit given one, another image's unit given none). The proxy's translation, top-level
+and in `chat_template_kwargs`, omp's form, the request's own choice, end to end through the proxy. pi's
+and opencode's levels, the opencode limits against the window, the cockpit (its boot from its own
+engine's captured log, its panel, its refusals in its name), `install.sh` (its flags, its boot, its
+provider), `switch-model.sh`'s fetch, every lane list, the pins, `bench.sh`'s header, the home spelled
+one way by each entry script (each script's own first lines run from a home with the slash), and the
+cockpit tests that read units, with a unit planted outside them. Mutants killed.
+
 ## v1.37.7 (2026-10-21): a text lane left out stays out on a box booting a side lane
 
 **A text lane left out gets its units only beside a side lane at boot** (issue #57, reported by
