@@ -98,7 +98,8 @@ const U27 = 'qwen38-sglang.service', UFLASH = 'qwen38-flash.service', IMAGE_UNIT
       VIDEO_UNIT = 'qwen38-video.service', KOLIBRI_UNIT = 'qwen38-kolibri.service', NEMOTRON_UNIT = 'qwen38-nemotron.service',
       NEMOTRON_SUPER_UNIT = 'qwen38-nemotron-super.service', FLASH_LOCAL_UNIT = 'qwen38-flash-local.service',
       ORNITH_UNIT = 'qwen38-ornith-122b.service', PROXY_UNIT = 'qwen38-keepalive.service', AGENT_UNIT = 'opencode-web.service';
-const LANE_UNITS = [U27, UFLASH, FLASH_LOCAL_UNIT, KOLIBRI_UNIT, NEMOTRON_UNIT, NEMOTRON_SUPER_UNIT, ORNITH_UNIT, IMAGE_UNIT, VIDEO_UNIT];
+// the order of the Now view's rack and the Lanes view's cards: Ornith before Kolibri and the Nemotron lanes (Hasan, 2026-10-22)
+const LANE_UNITS = [U27, UFLASH, FLASH_LOCAL_UNIT, ORNITH_UNIT, KOLIBRI_UNIT, NEMOTRON_UNIT, NEMOTRON_SUPER_UNIT, IMAGE_UNIT, VIDEO_UNIT];
 // the two Nemotron lanes, Bolt and Super VL: one vLLM image, the same routes and the same limits
 const isNemotron = u => u === NEMOTRON_UNIT || u === NEMOTRON_SUPER_UNIT;
 // the vLLM lanes on b12x, the two Nemotron lanes, the Flash FP4-Local lane and the Ornith lane: the

@@ -2085,8 +2085,8 @@ class EachLaneWearsItsMakersMark(unittest.TestCase):
                 hidden: [...document.querySelectorAll('#rack .mark, #lanes-list .mark')].map(m => m.getAttribute('aria-hidden')),
                 none, flash, video});
         """)
-        lanes = ["qwen.svg", "qwen.svg", "nvidia.svg", "alephalpha.svg", "nvidia.svg", "nvidia.svg", "ornith.svg", "qwen.svg",
-                 "minimax.svg"]   # 27B, flash, Flash FP4-Local, Kolibri, the Nemotron lanes, Ornith, image, video
+        lanes = ["qwen.svg", "qwen.svg", "nvidia.svg", "ornith.svg", "alephalpha.svg", "nvidia.svg", "nvidia.svg", "qwen.svg",
+                 "minimax.svg"]   # 27B, flash, Flash FP4-Local, Ornith, Kolibri, the Nemotron lanes, image, video
         self.assertEqual(r["bays"], lanes)
         self.assertEqual(r["cards"], lanes)
         # the mark is decoration beside the lane's name: no alt text to read twice
