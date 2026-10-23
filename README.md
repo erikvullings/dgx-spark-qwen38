@@ -220,13 +220,13 @@ Everything below is optional and combinable. Variables ride on the `bash` side o
 | systemd service | default, or `--no-service` | service | `--no-service`: foreground with `./run.sh`, no sudo, 27B native only |
 | Start now | default, or `--no-start` | starts | install and enable the engine and the proxy without starting them (`sudo systemctl start` later, as the installer prints); that path installs the other text lane too, and skips the smoke test, the fit of the 1M limits, the cockpit with its Agent view, and the image, video, Kolibri, both Nemotron, Flash FP4-Local and Ornith lanes |
 | The other text lane | default, or `--no-flash` (on a 27B box), `--no-27b` (on a flash box) | beside the serving one, on demand: its units, built at its first Load | since v1.20: the same installer, started again for that lane, with its own target kept across updates; since v1.33 its image, checkpoint and draft (or vocabulary) come with its first Load. `--with-flash` / `--with-27b` install it whole now and prove it, and bring it back |
-| Image lane | default, or `--no-image` | on demand: its units, built at its first Load | Qwen-Image 2.1, 46 GB; `--with-image` installs it whole now and proves it, and brings it back after a `--no-image` |
-| Video lane | default, or `--no-video` | on demand: its units, built at its first Load | MiniMax-H3, about 174 GB of headroom; `--with-video` installs it whole now and proves it (about 23 min), and brings it back |
-| Kolibri lane | default, or `--no-kolibri` | on demand: its units, built at its first Load | Aleph Alpha's Kolibri-1 on vLLM, 102 GB (79 checkpoint, 23 image); `--with-kolibri` installs it whole now and proves it (about 10 min), and brings it back |
-| Nemotron lane | default, or `--no-nemotron` | on demand: its units, built at its first Load | NVIDIA's Nemotron 3.5 Bolt on vLLM, 51 GB (26 checkpoint and drafter, 25 image); `--with-nemotron` installs it whole now and proves it, and brings it back |
-| Nemotron Super lane | default, or `--no-nemotron-super` | on demand: its units, built at its first Load | NVIDIA's Nemotron 3.5 Super VL on vLLM, in the Nemotron lane's image: 77 GB of checkpoint and drafter, 102 with the image when the Nemotron lane is not there; `--with-nemotron-super` installs it whole now and proves it, and brings it back |
-| Flash FP4-Local lane | default, or `--no-flash-local` | on demand: its units, built at its first Load | NVIDIA's FP4-Local build of Qwen3.8-Flash-Next on vLLM, 121 GB (103 checkpoint, 18 image), 32 more for the copy of its n-gram table when the cache is on another disk. `--with-flash-local` installs it whole now and proves it, and brings it back |
-| Ornith 122B lane | default, or `--no-ornith-122b` | on demand: its units, built at its first Load | Ornith AI's Ornith 1.5 122B on vLLM, in the Flash FP4-Local lane's image: 78 GB of checkpoint, 96 with the image when the Flash FP4-Local lane is not there; `--with-ornith-122b` installs it whole now and proves it, and brings it back |
+| Image lane | default, or `--no-image` | on demand: its units, built at its first Load | Qwen-Image 2.1, 46 GB; `--with-image` installs it whole now and proves it |
+| Video lane | default, or `--no-video` | on demand: its units, built at its first Load | MiniMax-H3, about 174 GB of headroom; `--with-video` installs it whole now and proves it (about 23 min) |
+| Kolibri lane | default, or `--no-kolibri` | on demand: its units, built at its first Load | Aleph Alpha's Kolibri-1 on vLLM, 102 GB (79 checkpoint, 23 image); `--with-kolibri` installs it whole now and proves it (about 10 min) |
+| Nemotron lane | default, or `--no-nemotron` | on demand: its units, built at its first Load | NVIDIA's Nemotron 3.5 Bolt on vLLM, 51 GB (26 checkpoint and drafter, 25 image); `--with-nemotron` installs it whole now and proves it |
+| Nemotron Super lane | default, or `--no-nemotron-super` | on demand: its units, built at its first Load | NVIDIA's Nemotron 3.5 Super VL on vLLM, in the Nemotron lane's image: 77 GB of checkpoint and drafter, 102 with the image when the Nemotron lane is not there; `--with-nemotron-super` installs it whole now and proves it |
+| Flash FP4-Local lane | default, or `--no-flash-local` | on demand: its units, built at its first Load | NVIDIA's FP4-Local build of Qwen3.8-Flash-Next on vLLM, 121 GB (103 checkpoint, 18 image), 32 more for the copy of its n-gram table when the cache is on another disk. `--with-flash-local` installs it whole now and proves it |
+| Ornith 122B lane | default, or `--no-ornith-122b` | on demand: its units, built at its first Load | Ornith AI's Ornith 1.5 122B on vLLM, in the Flash FP4-Local lane's image: 78 GB of checkpoint, 96 with the image when the Flash FP4-Local lane is not there; `--with-ornith-122b` installs it whole now and proves it |
 | opencode integration | default, or `--no-opencode` | on | on = ready config + `oc` launcher + default model following every switch; off = none of that, your own opencode config is never touched. `--with-opencode` turns it back on |
 | Ports | `PORT=`, `PROXY_PORT=` | 30000, 30001 | agent clients use the proxy port |
 | Storage | `HF_CACHE=`, `PLE_DIR=`, `FLASH_LOCAL_PLE_DIR=` | `~/.cache/huggingface`, `~/flashnext-ple`, `~/flash-local-ple` when the cache is on another disk | checkpoints, the 52 GB flash PLE backing file, and the copies of the Flash FP4-Local lane's n-gram table (32 GB, none with `none`, which reads it where the cache is), and each choice holds for the runs after |
@@ -253,7 +253,7 @@ CONTEXT_MODE=native ./install.sh                         # the 262144 window on 
 ./switch-model.sh stock | uncensored | flash             # change model later, no reinstall (then stop/start the units it prints; a lane installed on demand is built once first: ./prepare-lane.sh <lane>)
 ```
 
-Re-running the installer (upgrades included) remembers what you chose: the installed model, the context mode, the port, the HF cache, the opencode on/off choice, and the lanes you left out. Pass the variable or flag again only to change something. Since v1.36.0 a value that only an older release's default put on the box, and that nothing records as your choice (the engine on every interface before v1.17.0, the native window before v1.12.1, the flash lane's context tier before v1.19.0, the BF16 drafter before v1.9.0), moves to today's default instead. Every run lists both, what moves and what stays, before its first step, `./install.sh --plan` prints that list and changes nothing, and the cockpit says in orange what the next update moves (your own choices are listed in Settings, with no alert). `./install.sh --recommended` gives the box what a new one gets instead, your choices included, its port, HF cache and PLE folder kept (`--plan --recommended` lists what it moves). It restarts the engine only when something the engine reads changed since it started (its unit, image, chat template, checkpoint config, API key): an update that touches only the cockpit, the proxy or opencode keeps it serving, and `RESTART_ENGINE=1 ./install.sh` forces a restart. The same holds for the services around it since v1.18.7: the proxy, the cockpit and opencode-web restart only when what they run or read changed (the proxy also follows an engine restart), so a run that changes nothing cuts no request in flight and no turn of the Agent view. `./uninstall.sh --list` shows everything the repo put on the box before removing anything.
+Re-running the installer (upgrades included) remembers what you chose: the installed model, the context mode, the port, the HF cache, and the opencode and cockpit on/off choices, which every run says. Pass the variable or flag again only to change something. A lane left out with `--no-<lane>` is left out of that run only: pass the flag on every run to keep it out, since a lane left out and forgotten was left behind by every update after it. Since v1.36.0 a value that only an older release's default put on the box, and that nothing records as your choice (the engine on every interface before v1.17.0, the native window before v1.12.1, the flash lane's context tier before v1.19.0, the BF16 drafter before v1.9.0), moves to today's default instead. Every run lists both, what moves and what stays, before its first step, `./install.sh --plan` prints that list and changes nothing, and the cockpit says in orange what the next update moves (your own choices are listed in Settings, with no alert). `./install.sh --recommended` gives the box what a new one gets instead, your choices included, its port, HF cache and PLE folder kept (`--plan --recommended` lists what it moves). It restarts the engine only when something the engine reads changed since it started (its unit, image, chat template, checkpoint config, API key): an update that touches only the cockpit, the proxy or opencode keeps it serving, and `RESTART_ENGINE=1 ./install.sh` forces a restart. The same holds for the services around it since v1.18.7: the proxy, the cockpit and opencode-web restart only when what they run or read changed (the proxy also follows an engine restart), so a run that changes nothing cuts no request in flight and no turn of the Agent view. `./uninstall.sh --list` shows everything the repo put on the box before removing anything.
 
 ## What speed and quality to expect
 
@@ -363,7 +363,7 @@ table and every trap on the way: **[docs/systemone.md](docs/systemone.md)**.
 Every plain install includes an image lane since v1.20: text to
 image, image editing with up to ten references, and the native RGBA this model is built for.
 It costs 46 GB (34 checkpoint, 12 runtime and its build). A plain install puts in its units, and its first Load from the cockpit builds its runtime, as you, with no sudo, and fetches its checkpoint; `--with-image` installs it whole now and proves it with one image.
-`--no-image` leaves it out, and later runs remember that; `--with-image` brings it back:
+`--no-image` leaves it out of the run that passes it; `--with-image` installs it whole now:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/hasso5703/dgx-spark-qwen38/main/get.sh | bash -s -- --with-image
@@ -418,7 +418,7 @@ with joint video-and-audio, plus first/last-frame conditioning. It needs about 1
 headroom. A plain install puts in its units, and its first Load from the cockpit builds its runtime
 and fetches its checkpoint; `--with-video` installs it whole now and proves it with one 4 s video
 (about 23 minutes with its boot).
-`--no-video` leaves it out, and later runs remember that; `--with-video` brings it back:
+`--no-video` leaves it out of the run that passes it; `--with-video` installs it whole now:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/hasso5703/dgx-spark-qwen38/main/get.sh | bash -s -- --with-video
@@ -455,8 +455,8 @@ their Dockerfile, with the model card's settings (temperature 1.0, top_p 0.97, t
 port behind the same proxy and key, so every client reaches it as model `kolibri-1`, OpenAI or
 Anthropic dialect alike. It needs about 102 GB, installed on demand: a plain run puts its units
 on the box, and its first Load from the cockpit builds its image and fetches its checkpoint
-(`--all-weights` or `--with-kolibri` does it at install); `--no-kolibri` leaves it out,
-`--with-kolibri` brings it back.
+(`--all-weights` or `--with-kolibri` does it at install); `--no-kolibri` leaves it out of the run
+that passes it.
 
 On the cockpit's Lanes view, pick **Kolibri-1** and press **Load** (about 10 minutes to answer);
 from a terminal, `./prepare-lane.sh kolibri` the first time (it builds its image, no sudo), then
@@ -481,7 +481,7 @@ proxy and key, so every client reaches it as model `nemotron-3.5-bolt`, OpenAI o
 alike; images and videos come inside the request, 16 images and 2 videos per conversation. It needs
 about 51 GB, installed on demand: a plain run puts its units on the box, and its first Load from the
 cockpit builds its image and fetches its checkpoint and drafter (`--all-weights` or
-`--with-nemotron` does it at install); `--no-nemotron` leaves it out, `--with-nemotron` brings it back.
+`--with-nemotron` does it at install); `--no-nemotron` leaves it out of the run that passes it.
 
 On the cockpit's Lanes view, pick **Nemotron 3.5 Bolt** and press **Load** (about 8 minutes to
 answer); from a terminal, `./prepare-lane.sh nemotron` the first time (it builds its image, no

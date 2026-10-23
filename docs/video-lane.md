@@ -6,8 +6,8 @@ Every plain install includes it since v1.20, now on demand: a plain run puts its
 the box, and its first Load from the cockpit builds its runtime and fetches its checkpoint
 (about 174 GB of headroom: 145 of checkpoint and Turbo adapter, 12 of runtime and its
 build, 17 for the runtime's own caches). `--all-weights`, or `--with-video`, builds it at
-install and proves it with one 4 s video. `--no-video` leaves it out, and later runs
-remember that; `--with-video` brings it back:
+install and proves it with one 4 s video. `--no-video` leaves it out of the run that
+passes it; `--with-video` installs it whole now:
 
 ```bash
 ./install.sh --with-video

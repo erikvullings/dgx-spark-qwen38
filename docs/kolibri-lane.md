@@ -145,5 +145,5 @@ other requests they tested. The call the model wrote after its reasoning is then
 - A terminal: `./prepare-lane.sh kolibri` the first time (it builds its image, no sudo), then
   `./switch-model.sh kolibri` (or `kolibri-nvfp4`) and the commands it prints.
 - Installed on demand by every plain `./install.sh` (its units; its first Load builds it);
-  `--with-kolibri` installs it whole now and brings it back after a `--no-kolibri`, which leaves
-  it out (102 GB); `./install-kolibri.sh --uninstall` removes its unit and its local image (the weights stay, and so does the 23 GB vLLM image it was built on, which the script names for you to remove).
+  `--with-kolibri` installs it whole now, and `--no-kolibri` leaves it out of the run that passes
+  it (102 GB); `./install-kolibri.sh --uninstall` removes its unit and its local image (the weights stay, and so does the 23 GB vLLM image it was built on, which the script names for you to remove).

@@ -183,8 +183,8 @@ const TARGET_NOTE = {
   'flash-local': 'NVIDIA’s own FP4 build of the flash model, served as its model card says for a DGX Spark: vLLM with b12x, its experts and its n-gram table in NVFP4 after a quantization-aware distillation from the full precision (GPQA Diamond 91.5 % against 92.2 % on NVIDIA’s card), an MTP head drafting 4 tokens, 262,144 tokens of context and a KV cache of about 920,000 tokens, reasoning on at xhigh unless a request asks less. Its table is read at every token: with the HF cache on another disk, its first Load copies the table’s files (32 GB) beside your home directory. The first boot tunes b12x’s kernels for this GPU, about 17 min; the next ones take about 6. The first switch downloads about 102 GB.',
   'ornith-122b': 'Ornith AI’s Ornith 1.5 122B (MIT) in its authors’ NVFP4 build, served by vLLM with b12x in the Flash FP4-Local lane’s image: its experts and output head in NVFP4, its projections in FP8, an MTP head drafting 2 tokens, 1,048,576 tokens of context (its own 262,144 stretched four times with YaRN), temperature 0.6, top_p 0.95, top_k 20, reasoning on (off with effort none or minimal). It reads images and video. The first switch downloads about 78 GB.'};
 // What installs a lane this box does not have. Since v1.20 a plain ./install.sh installs
-// every lane, so one missing here was left out (--no-<lane>) or did not fit: --with-<lane>
-// brings it back beside the lane that serves, which keeps serving. A text lane comes with
+// every lane, so one missing here was left out (a --no-<lane> on the last run) or did not fit:
+// --with-<lane> installs it beside the lane that serves, which keeps serving. A text lane comes with
 // its default target; the others download when they are loaded.
 const LANE_INSTALL = {[U27]: './install.sh --with-27b', [UFLASH]: './install.sh --with-flash', [IMAGE_UNIT]: './install.sh --with-image',
                       [VIDEO_UNIT]: './install.sh --with-video', [KOLIBRI_UNIT]: './install.sh --with-kolibri',
