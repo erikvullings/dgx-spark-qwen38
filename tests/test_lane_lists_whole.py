@@ -33,11 +33,12 @@ DIFFUSION = {"qwen38-image.service", "qwen38-video.service"}
 
 
 def engine_lanes() -> set:
-    """The units of the templates that conflict with the others (the 1M template is the 27B's unit)."""
+    """The units of the templates that conflict with the others (the 1M and the 64 GB templates are
+    the 27B's unit)."""
     lanes = set()
     for t in REPO.glob("qwen38-*.service.template"):
         if re.search(r"^Conflicts=", t.read_text(), re.M):
-            lanes.add(t.name[:-len(".template")].replace("qwen38-sglang-1m.", "qwen38-sglang."))
+            lanes.add(t.name[:-len(".template")].replace("qwen38-sglang-1m.", "qwen38-sglang.").replace("qwen38-sglang-64.", "qwen38-sglang."))
     return lanes
 
 
@@ -56,7 +57,7 @@ NOT_SGLANG = DIFFUSION | VLLM
 B12X = {u for u in VLLM if "b12x" in (REPO / f"install-{u[len('qwen38-'):-len('.service')]}.sh").read_text()}
 # the lanes whose unit mounts the Hugging Face cache (the flash lane's launcher mounts it for its unit)
 HF_UNITS = {("qwen38-flash.service" if t.name == "qwen38-flash-launch.sh.template"
-             else t.name[:-len(".template")].replace("qwen38-sglang-1m.", "qwen38-sglang."))
+             else t.name[:-len(".template")].replace("qwen38-sglang-1m.", "qwen38-sglang.").replace("qwen38-sglang-64.", "qwen38-sglang."))
             for t in REPO.glob("qwen38-*.template")
             if re.search(r"-v __HF_CACHE__:/root/\.cache/huggingface\b", t.read_text())}
 # switch-model.sh's targets, by the lane each block switches to
@@ -307,7 +308,7 @@ class TheLanesAreWhatTheTemplatesSay(unittest.TestCase):
             m = re.search(r"^Conflicts=(.*)$", text, re.M)
             if not m:
                 continue
-            own = t.name[:-len(".template")].replace("qwen38-sglang-1m.", "qwen38-sglang.")
+            own = t.name[:-len(".template")].replace("qwen38-sglang-1m.", "qwen38-sglang.").replace("qwen38-sglang-64.", "qwen38-sglang.")
             with self.subTest(template=t.name):
                 self.assertEqual(set(UNIT.findall(m.group(1))) & ENGINE, ENGINE - {own})
                 after = re.search(r"^After=(.*)$", text, re.M)
