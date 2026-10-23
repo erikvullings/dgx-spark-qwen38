@@ -73,6 +73,16 @@ read), so a run on a box never reads that box's own unit. And `tests/test_bench_
 failed once in a full local run and passed alone five times, looks for the 27B's reference line
 whole: it looked for "71.4", which the fake engine's rates, timings, can contain.
 
+**The Snap engine's guard holds every time.** The guard of issue #58 (v1.38.2) stops a run whose
+Docker is the Snap package beside the host's NVIDIA Container Toolkit, before the first byte. Its
+check of the toolkit piped `dpkg-query` into `grep -q`, which ends at its first match: `dpkg-query`
+then died writing its next line (SIGPIPE, exit 141), and under the installer's `pipefail` the
+toolkit read as missing, so the guard let the Snap engine through now and then and the old advice
+came back. The CI run of this release found it, on GitHub's runner, and the guard's test then failed
+in 1 run of 60 on the reference box. `dpkg-query`'s lines are now read whole before they are looked
+at. A new test writes the second line once `grep` has had the first: the old check fails it every
+time, the new one passes it, and the guard's test passed 120 runs of 120.
+
 **What an update does.** A box that serves the 27B pulls the new image (11.5 GB to download from
 a box that has `v0.5.21`, 29.4 GB more on disk, the two share 7.0 GB), rewrites the 27B unit and
 restarts the engine once. The cockpit restarts too (its code changed), and with it the Agent tab's relay, which reconnects by itself; opencode-web keeps running. A box that serves another lane rewrites the 27B unit without starting
