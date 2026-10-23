@@ -118,6 +118,9 @@ def main(argv=None):
     t.add_argument("--class", dest="cls", choices=("128", "64", "none"),
                    help="the class already read (install.sh's MEM_CLASS) instead of reading it again")
     sub.add_parser("machine", help="print the box's name, as its DMI gives it")
+    g = sub.add_parser("fitting", help="print the lanes that fit this box, in LANES' order")
+    g.add_argument("--class", dest="cls", choices=("128", "64", "none"),
+                   help="the class already read (install.sh's MEM_CLASS) instead of reading it again")
     a = ap.parse_args(argv)
     if a.cmd == "class":
         print(mem_class() or "none")
@@ -132,6 +135,9 @@ def main(argv=None):
         return 0 if target_fits(a.target, None if cls == "none" else cls) else 1
     elif a.cmd == "machine":
         print(machine()["name"] or "unknown")
+    elif a.cmd == "fitting":
+        cls = a.cls if a.cls else mem_class()
+        print(" ".join(lane for lane in LANES if fits(lane, None if cls == "none" else cls)))
     return 0
 
 

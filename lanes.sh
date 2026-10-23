@@ -15,7 +15,17 @@ LANES_UNIT_DIR="${LANES_UNIT_DIR:-/etc/systemd/system}"
 # The box's memory class and the lanes that fit it, from boxmem.py beside this file: 128, or 64 for
 # the 64 GB DGX Spark NVIDIA's partners ship from 2026-10-23, which gets only the lanes that fit it.
 _lanes_dir(){ case "${BASH_SOURCE[0]}" in */*) echo "${BASH_SOURCE[0]%/*}" ;; *) echo . ;; esac; }
+# QWEN38_MEMORY_CLASS forces the class (the tests, the 64 GB proofs on a 128 GB box): anything but
+# 64 or 128 is refused here, by its name, for every script that sources this one. install.sh read a
+# typo as no class and stopped at step 1 on a box it then said needed 64 or 128 GB, while the lane
+# installers and the switch went on as on a 128 GB box (found in review, 2026-10-23).
+case "${QWEN38_MEMORY_CLASS:-}" in
+  ""|64|128) ;;
+  *) echo "ERROR: QWEN38_MEMORY_CLASS=$QWEN38_MEMORY_CLASS is not a memory class: 64 or 128, or unset to read the box's own." >&2
+     exit 1 ;;
+esac
 box_mem_class(){ python3 -I "$(_lanes_dir)/boxmem.py" class; }   # 128, 64 or none
+fitting_lanes(){ python3 -I "$(_lanes_dir)/boxmem.py" fitting ${MEM_CLASS:+--class "$MEM_CLASS"}; }   # the lanes that fit
 # $1 a lane, by install.sh's name; the class install.sh read (MEM_CLASS) when it has one
 lane_fits(){ python3 -I "$(_lanes_dir)/boxmem.py" fits "$1" ${MEM_CLASS:+--class "$MEM_CLASS"}; }
 target_fits(){ python3 -I "$(_lanes_dir)/boxmem.py" fits-target "$1" ${MEM_CLASS:+--class "$MEM_CLASS"}; }   # $1 a target

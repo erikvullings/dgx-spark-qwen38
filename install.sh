@@ -1160,7 +1160,14 @@ if [ -n "$INSTALLED_CHOICE" ]; then
     fi
   fi
   check_binds
-  if [ "$INSTALLED_CHOICE" = "27b" ] && [ "$LANE" != "flash" ] && [ -z "$_ENV_CONTEXT_MODE" ] && [ "$RECOMMENDED" -eq 0 ]; then
+  if [ "$INSTALLED_CHOICE" = "27b" ] && [ "$LANE" != "flash" ] && [ -z "$_ENV_CONTEXT_MODE" ] && [ "$MEM_CLASS" = 64 ]; then
+    # A 64 GB box serves the native window whatever its unit says and whatever the old default
+    # was: this convergence moved it to the 1m one, said so, and the 64 GB check below then refused
+    # a CONTEXT_MODE nobody passed (found in review, 2026-10-23). The default below says which.
+    if grep -q -- '--context-length 1010000' "$SGL_UNIT_PATH" 2>/dev/null; then
+      echo "The installed 1m window needs a 128 GB DGX Spark: this 64 GB box goes back to the native one."
+    fi
+  elif [ "$INSTALLED_CHOICE" = "27b" ] && [ "$LANE" != "flash" ] && [ -z "$_ENV_CONTEXT_MODE" ] && [ "$RECOMMENDED" -eq 0 ]; then
     if grep -q -- '--context-length 1010000' "$SGL_UNIT_PATH"; then
       CONTEXT_MODE=1m
       echo "Keeping the installed context mode: 1m. Pass CONTEXT_MODE=native to change."
@@ -1246,7 +1253,9 @@ fi
 # whose KV pool is more memory than the box has.
 if [ "$MEM_CLASS" = 64 ]; then
   [ "$LANE" != flash ] || die "The flash lane needs a 128 GB DGX Spark (its checkpoint alone is 135.3 GB), and this box is a 64 GB one. MODEL_CHOICE=stock ./install.sh serves the 27B, sized for it."
-  target_fits "$MODEL_CHOICE" || die "MODEL_CHOICE=$MODEL_CHOICE (Qwen's FP8 weights, 30.9 GB) leaves the 27B's KV pool too little on a 64 GB DGX Spark: MODEL_CHOICE=stock or uncensored (NVFP4) serve here."
+  # custom is a 27B unit serving a model of its own, whose size boxmem.py cannot know: kept, as on
+  # any box (it read as an FP8 target, and the box could not be updated, found in review, 2026-10-23)
+  [ "$MODEL_CHOICE" = custom ] || target_fits "$MODEL_CHOICE" || die "MODEL_CHOICE=$MODEL_CHOICE (Qwen's FP8 weights, 30.9 GB) leaves the 27B's KV pool too little on a 64 GB DGX Spark: MODEL_CHOICE=stock or uncensored (NVFP4) serve here."
   [ "$CONTEXT_MODE" != 1m ] || die "CONTEXT_MODE=1m needs a 128 GB DGX Spark (the 1M window's KV pool alone is more memory than this box has), and this box is a 64 GB one. Drop CONTEXT_MODE: the 27B serves its native 262144 window here."
 fi
 if [ -z "$CONTEXT_MODE" ]; then
@@ -1388,13 +1397,16 @@ lane_wanted(){  # $1 lane (image, video, flash, 27b), $2 --no-$1 given, $3 --wit
   # A lane a 64 GB box cannot hold is left out of it whatever was asked, and said once below.
   if [ "$MEM_CLASS" = 64 ] && ! lane_fits "$1"; then
     [ "$3" -eq 0 ] || die "The $(lane_title "$1") lane needs a 128 GB DGX Spark, and this box is a 64 GB one. Drop --with-$1."
+    # an older release's --no-$1 is no choice about a lane this box cannot hold: it goes, unsaid,
+    # where it stayed for good, and uninstall.sh --list called the lane left out (review, 2026-10-23)
+    [ "$PLAN_ONLY" -eq 1 ] || rm -f "$mark"
     WANT=0; TOO_BIG+=("$1"); return 0
   fi
   if [ "$2" -eq 1 ]; then
     WANT=0
     ! serves_anyway "$1" || serves_said "$1"
   elif [ -f "$mark" ] && [ "$3" -eq 0 ]; then
-    echo "Your earlier --no-$1 is no longer remembered ($(head -1 "$mark" 2>/dev/null || echo 'its marker')): a --no-$1 counts for the run that passes it only now, so the ${1/27b/27B} lane is back in this run. Pass --no-$1 on each run to keep it out."
+    echo "Your earlier --no-$1 is no longer remembered ($(head -1 "$mark" 2>/dev/null || echo 'its marker')): a --no-$1 counts for the run that passes it only now, so the $(lane_title "$1") lane is back in this run. Pass --no-$1 on each run to keep it out."
   fi
   [ "$PLAN_ONLY" -eq 1 ] || rm -f "$mark"
 }
@@ -1418,10 +1430,20 @@ if [ -z "$SECONDARY" ]; then
   lane_wanted flash-local "$NO_FLASH_LOCAL" "$WITH_FLASH_LOCAL"; WANT_FLASH_LOCAL="$WANT"
   lane_wanted ornith-122b "$NO_ORNITH_122B" "$WITH_ORNITH_122B"; WANT_ORNITH_122B="$WANT"
 fi
+too_big(){ local l; for l in ${TOO_BIG[@]+"${TOO_BIG[@]}"}; do [ "$l" = "$1" ] && return 0; done; return 1; }   # $1 a lane
 if [ "${#TOO_BIG[@]}" -gt 0 ]; then
+  # the lanes that fit, as boxmem.py decides them, rather than a second list of them here (review,
+  # 2026-10-23); the speech lane is installed by its own script
+  _fit=(); _speech=""
+  for _l in $(fitting_lanes); do
+    if [ "$_l" = speech ]; then _speech=", and the speech lane (./install-speech.sh)"; else _fit+=("$(lane_title "$_l")"); fi
+  done
+  _fits=""; for _i in "${!_fit[@]}"; do
+    if [ "$_i" -eq 0 ]; then _fits="${_fit[$_i]}"; elif [ "$_i" -eq $((${#_fit[@]} - 1)) ]; then _fits+=" and ${_fit[$_i]}"; else _fits+=", ${_fit[$_i]}"; fi
+  done
   _big=""; for _l in "${TOO_BIG[@]}"; do _big+="${_big:+, }$(lane_title "$_l")"; done
-  echo "This box is a 64 GB DGX Spark: the lanes that fit it are the 27B and Nemotron 3.5 Bolt here, and the speech lane (./install-speech.sh). Left out, as they need a 128 GB one: $_big."
-  unset _big _l
+  echo "This box is a 64 GB DGX Spark: the lanes that fit it are the $_fits here$_speech. Left out, as they need a 128 GB one: $_big."
+  unset _big _l _fit _fits _speech _i
 fi
 
 # The image, video, Kolibri and Nemotron lanes are installed on demand: a run puts in their units
@@ -3235,7 +3257,11 @@ else
       units)     echo "  the ${SECOND_LANE/27b/27B} lane got its units: its first Load fetches its image and weights" ;;
       cannot)    echo "  the flash lane got its units only: this GPU cannot start it ($SECOND_CANNOT)" ;;
       failed)    echo "  the ${SECOND_LANE/27b/27B} lane: ./install.sh --with-$SECOND_LANE installs it whole" ;;
-      off)       echo "  the ${SECOND_LANE/27b/27B} lane is left out too, by --no-$SECOND_LANE on this run" ;;
+      off)       if too_big "$SECOND_LANE"; then
+                   echo "  the ${SECOND_LANE/27b/27B} lane needs a 128 GB DGX Spark, and this box is a 64 GB one"
+                 else
+                   echo "  the ${SECOND_LANE/27b/27B} lane is left out too, by --no-$SECOND_LANE on this run"
+                 fi ;;
     esac
   else
     step "Done: the text lane is up to date; the $SERVING_LANE lane stays this box's serving lane"
@@ -3720,7 +3746,9 @@ except Exception as e:
                    else
                      echo "  $1: NOT ready, see its NOTE above (it did not install): ./install.sh --with-$3 installs it whole"
                    fi ;;
-        off)       if [ -f "$6" ]; then
+        off)       if too_big "$3"; then
+                     echo "  $1: needs a 128 GB DGX Spark, and this box is a 64 GB one"
+                   elif [ -f "$6" ]; then
                      echo "  $1: left out by --no-$3 on this run, so not updated; a run without it updates it"
                    else
                      echo "  $1: left out by --no-$3 on this run; a run without it adds it, ready to load ($5)"

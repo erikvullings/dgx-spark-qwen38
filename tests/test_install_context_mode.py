@@ -254,5 +254,30 @@ class TheWiring(unittest.TestCase):
         self.assertIn("SGLANG_ALLOW_OVERWRITE_LONGER_CONTEXT_LEN=1", tpl)
 
 
+
+class OnA64GBBox(unittest.TestCase):
+    """A 64 GB DGX Spark serves the native window: the old default's convergence moved its unit to
+    the 1m one and said so on every update, and a unit already on 1m (the 64 GB proofs on a 128 GB
+    box) was kept, then refused as a CONTEXT_MODE nobody had passed (found in review, 2026-10-23)."""
+    NATIVE_64 = "Context mode: native (262144 tokens), the one a 64 GB DGX Spark holds."
+
+    def test_a_native_unit_stays_native_on_an_old_box(self):
+        _, out = run(STOP, script=box_27b(262144), home=wall.box_home(key_at=BEFORE_V1121),
+                     QWEN38_MEMORY_CLASS="64", **STOCK)
+        self.assertNotIn(MOVED_NATIVE, out)
+        self.assertIn(self.NATIVE_64, out)
+
+    def test_a_unit_on_1m_goes_back_to_native_and_is_not_refused(self):
+        _, out = run(STOP, script=box_27b(1010000), QWEN38_MEMORY_CLASS="64", **STOCK)
+        self.assertIn("The installed 1m window needs a 128 GB DGX Spark: this 64 GB box goes back to the native one.", out)
+        self.assertNotIn(KEPT_1M, out)
+        self.assertNotIn("CONTEXT_MODE=1m needs a 128 GB DGX Spark", out)
+        self.assertIn(self.NATIVE_64, out)
+
+    def test_an_explicit_1m_is_still_refused(self):
+        rc, out = run(STOP, script=box_27b(262144), QWEN38_MEMORY_CLASS="64", CONTEXT_MODE="1m", **STOCK)
+        self.assertEqual(rc, 1)
+        self.assertIn("CONTEXT_MODE=1m needs a 128 GB DGX Spark", out)
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

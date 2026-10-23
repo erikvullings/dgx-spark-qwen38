@@ -45,7 +45,8 @@ class EachLaneIsWantedUnlessLeftOut(unittest.TestCase):
     nothing (a choice kept in a marker left the lane out of every later update, behind and unsaid:
     Hasan, 2026-10-22), an older release's marker brings it back once, said, and is removed (but by
     --plan), --with-<lane> wants it."""
-    FUNC = between("lane_wanted(){", "\n}\n") + "\n}\n"
+    FUNC = (between("lane_title(){", "\n}\n") + "\n}\n"
+            + between("lane_wanted(){", "\n}\n") + "\n}\n")
 
     def want(self, no, with_, marker=False, plan=0):
         cfg = tmp("lane-want-") / ".config" / "qwen38"
@@ -75,7 +76,7 @@ class EachLaneIsWantedUnlessLeftOut(unittest.TestCase):
         out, mark = self.want(0, 0, marker=True)
         self.assertIn("WANT=1", out)
         self.assertIn("Your earlier --no-image is no longer remembered (left out): a --no-image counts for the run "
-                      "that passes it only now, so the image lane is back in this run. Pass --no-image on each run to "
+                      "that passes it only now, so the image (Qwen-Image 2.1) lane is back in this run. Pass --no-image on each run to "
                       "keep it out.", out)
         self.assertFalse(mark.exists())
 
@@ -89,6 +90,24 @@ class EachLaneIsWantedUnlessLeftOut(unittest.TestCase):
         out, mark = self.want(0, 1, marker=True)
         self.assertIn("WANT=1", out)
         self.assertFalse(mark.exists())
+
+    def test_on_a_64_gb_box_a_lane_it_cannot_hold_takes_its_old_marker_with_it(self):
+        # the lane is left out whatever was asked, and an older release's --no- marker of it goes
+        # too, unsaid, but by --plan (it stayed for good, found in review, 2026-10-23)
+        for plan in (0, 1):
+            with self.subTest(plan=plan):
+                cfg = tmp("lane-want-64-") / ".config" / "qwen38"
+                cfg.mkdir(parents=True)
+                (cfg / "image.off").write_text("left out\n")
+                script = (f'set -euo pipefail\nRECOMMENDED=0\nMEM_CLASS=64\nCONFIG_DIR="{cfg}"\nPLAN_ONLY={plan}\n'
+                          f'TOO_BIG=()\nlane_fits(){{ return 1; }}\n{self.FUNC}\n'
+                          'lane_wanted image 0 0\necho "WANT=$WANT TOO_BIG=${TOO_BIG[*]}"\n')
+                r = subprocess.run(["bash", "-c", script], capture_output=True, text=True, timeout=30,
+                                   env={"PATH": "/usr/bin:/bin"})
+                self.assertEqual(r.returncode, 0, r.stderr)
+                self.assertIn("WANT=0 TOO_BIG=image", r.stdout)
+                self.assertNotIn("no longer remembered", r.stdout)
+                self.assertEqual((cfg / "image.off").exists(), bool(plan))
 
 
 class TheFlags(unittest.TestCase):
