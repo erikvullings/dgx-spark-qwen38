@@ -57,12 +57,14 @@ class TheBox(unittest.TestCase):
 
     def test_a_64_gb_box_and_the_two_lanes_that_fit_it(self):
         self.assertEqual(self.box("64"), {"cls": "64", "name": "ASUS Ascent GX10",
-                                          "fits": ["qwen38-nemotron.service", "qwen38-sglang.service"]})
+                                          "fits": ["qwen38-nemotron.service", "qwen38-sglang.service"],
+                                          "targets": ["nemotron", "stock", "uncensored"]})
 
     def test_a_128_gb_box_and_every_lane(self):
         got = self.box("128")
         self.assertEqual((got["cls"], got["name"]), ("128", "ASUS Ascent GX10"))
         self.assertEqual(set(got["fits"]), set(self.cp.UNIT_OF_LANE.values()))
+        self.assertIn("fp8", got["targets"])
 
     def test_the_machine_panel_carries_it(self):
         self.box("64")
@@ -74,7 +76,7 @@ class TheBox(unittest.TestCase):
         self.addCleanup(patch.stop)
         self.cp._BOX.clear()
         self.addCleanup(self.cp._BOX.clear)
-        self.assertEqual(self.cp.box_info(), {"cls": None, "name": None, "fits": None})
+        self.assertEqual(self.cp.box_info(), {"cls": None, "name": None, "fits": None, "targets": None})
         self.assertIn("mem", self.cp.collect_machine())
 
 

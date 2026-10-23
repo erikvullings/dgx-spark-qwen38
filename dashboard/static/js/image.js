@@ -261,10 +261,11 @@ function imgWatch(on){
 function imgRenderLane(){
   const box = $('img-lane'), e = engines()[IMAGE_UNIT], s = servingEngine();
   const ready = !!e && (e.state === 'ready' || e.state === 'degraded'); IS.available = ready;
-  const sig = !F.life ? 'wait' : !e ? 'absent' : ready ? 'ready' : TRANSITIONAL.has(e.state) ? 'boot' : 'down:' + (s ? s[0] : '');
+  const sig = !F.life ? 'wait' : !e ? (laneFits(IMAGE_UNIT) ? 'absent' : 'absent:64') : ready ? 'ready' : TRANSITIONAL.has(e.state) ? 'boot' : 'down:' + (s ? s[0] : '');
   if (box.dataset.sig !== sig){
     box.dataset.sig = sig; clear(box);
-    if (sig === 'absent'){ const b = el('div', 'banner info'); b.append(el('span', 'lamp')); const d = el('div'); d.append(el('b', null, 'The image lane is not installed. '), el('span', null, 'On the box: ./install.sh --with-image (46 GB, about 25 min).')); b.append(d); box.append(b); }
+    // on a 64 GB box the command would be refused: the lane needs a 128 GB one (review, 2026-10-23)
+    if (sig.startsWith('absent')){ const b = el('div', 'banner info'); b.append(el('span', 'lamp')); const d = el('div'); d.append(el('b', null, 'The image lane is not installed. '), el('span', null, sig === 'absent' ? 'On the box: ./install.sh --with-image (46 GB, about 25 min).' : `It ${NEEDS_128}, and this box is a 64 GB one.`)); b.append(d); box.append(b); }
     if (sig === 'boot'){ const card = el('div', 'progress-card'); card.style.marginBottom = 'var(--s-5)'; const top = el('div', 'top'); top.append(el('b', null, 'Loading Qwen-Image'), el('span', 'eta'));
       const m = el('div', 'meter'); m.append(el('i')); card.append(top, m); box.append(card); }
     if (sig.startsWith('down')){ const card = el('div', 'banner info'); card.style.alignItems = 'center'; card.append(el('span', 'lamp' + (e.state === 'failed' ? ' err' : '')));

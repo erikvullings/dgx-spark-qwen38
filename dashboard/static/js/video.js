@@ -161,9 +161,11 @@ function vidRenderLane(){
   if (!ready){ VS.busy = false; VS.foreign = null; if (!VS.inflight){ VS.run = null; VID_NOW.run = null; VID_NOW.label = ''; } }
   let sig, build;
   if (!F.life){ sig = 'wait'; build = () => {}; }
-  else if (!e){ sig = 'absent'; build = () => {
+  else if (!e){ sig = laneFits(VIDEO_UNIT) ? 'absent' : 'absent:64'; build = () => {
     const b = el('div', 'banner info'); b.append(el('span', 'lamp'));
-    const d = el('div'); d.append(el('b', null, 'The video lane is not installed. '), el('span', null, 'On the box: ./install.sh --with-video. It needs about 174 GB of disk and an hour.'));
+    // on a 64 GB box the command would be refused: the lane needs a 128 GB one (review, 2026-10-23)
+    const d = el('div'); d.append(el('b', null, 'The video lane is not installed. '), el('span', null, sig === 'absent'
+      ? 'On the box: ./install.sh --with-video. It needs about 174 GB of disk and an hour.' : `It ${NEEDS_128}, and this box is a 64 GB one.`));
     b.append(d); box.append(b); }; }
   else if (ready){ sig = 'ready'; build = () => {}; }
   else if (TRANSITIONAL.has(e.state)){

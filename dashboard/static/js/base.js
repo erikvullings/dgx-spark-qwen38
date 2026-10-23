@@ -196,6 +196,11 @@ const laneFits = unit => {
   const box = (F.machine || {}).box || {};
   return box.cls !== '64' || !Array.isArray(box.fits) || box.fits.includes(unit);
 };
+// A switch target the same way: the 27B's FP8 ones are not a 64 GB box's (boxmem.py's targets)
+const targetFits = target => {
+  const box = (F.machine || {}).box || {};
+  return box.cls !== '64' || !Array.isArray(box.targets) || box.targets.includes(target);
+};
 const NEEDS_128 = 'needs a 128 GB DGX Spark';
 const installHint = unit => laneFits(unit) ? `Install it on the box: ${LANE_INSTALL[unit]}`
   : `It ${NEEDS_128}, and this box is a 64 GB one.`;

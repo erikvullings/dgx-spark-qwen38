@@ -2261,14 +2261,27 @@ class TheBoxItIs(unittest.TestCase):
                  'qwen38-nemotron-super.service', 'qwen38-flash-local.service', 'qwen38-ornith-122b.service'];
     for (const u of BIG) units.units[u].enabled = '';
     const fits = %s === '64' ? ['qwen38-nemotron.service', 'qwen38-sglang.service'] : Object.keys(units.units);
+    const targets = fits.length === 2 ? ['nemotron', 'stock', 'uncensored'] : Object.keys(TARGET_NAME);
     feed({config: CONFIG, units, lifecycle: life({'qwen38-sglang.service': eng('ready')}),
           machine: {mem: {MemTotal: %s * GIB, MemAvailable: 20 * GIB, Cached: 2 * GIB, SwapTotal: 0, SwapFree: 0},
-                    box: {cls: %s, name: 'ASUS Ascent GX10', fits}, cpu_pct: {cpu: 1}, load: [0, 0, 0], disks: {}}});
+                    box: {cls: %s, name: 'ASUS Ascent GX10', fits, targets}, cpu_pct: {cpu: 1}, load: [0, 0, 0], disks: {}}});
     const notes = BIG.map(u => BAYS.get(u).note.textContent);
     showView('lanes');
     const install = [...document.querySelectorAll('#view-lanes dt')].filter(d => d.textContent === 'Install').map(d => d.nextSibling.textContent);
     BAYS.get('qwen38-flash.service').root.click();
-    report({notes, install, pool: txt('h-pool'), box: txt('mm-box'), toast: toastText()});
+    const toast = toastText();
+    // the 27B card's versions, and the Image and Video views of a box without those lanes
+    const versions = [...document.querySelectorAll('#view-lanes .opt')].filter(b => ['fp8', 'uncensored-fp8', 'stock'].includes(b.dataset.target))
+      .map(b => `${b.dataset.target}:${b.disabled}`).filter((v, i, a) => a.indexOf(v) === i);
+    showView('image'); imgRenderLane(); const image = txt('img-lane');
+    showView('video'); vidRenderLane(); const video = txt('vid-lane');
+    // Library's targets: a checkpoint not on the disk yet, its lane installed
+    __fetch = async url => url.startsWith('/api/registry') ? __response(200, {models: [], targets: [
+      {target: 'fp8', repo: 'Qwen/Qwen3.8-27B-FP8', state: 'missing', installed: true},
+      {target: 'stock', repo: 'RadixArk/Qwen3.8-27B-NVFP4', state: 'missing', installed: true}]}) : new Promise(() => {});
+    showView('library'); await scanRegistry(false); await __settle();
+    const library = [...$('reg-targets').tBodies[0].rows].map(r => r.textContent);
+    report({notes, install, pool: txt('h-pool'), box: txt('mm-box'), toast, versions, image, video, library});
     """
 
     def page(self, cls, gib):
@@ -2281,6 +2294,17 @@ class TheBoxItIs(unittest.TestCase):
         self.assertEqual(r["pool"], "Unified memory of this ASUS Ascent GX10, 64 GB, shared by CPU and GPU")
         self.assertEqual(r["box"], "ASUS Ascent GX10, 64 GB: the lanes that fit it, the others say they need 128 GB")
         self.assertIn("is not installed on this box. It needs a 128 GB DGX Spark, and this box is a 64 GB one.", r["toast"])
+        # the 27B's FP8 versions are shown and not to be picked, Image and Video say the box, and
+        # Library downloads no FP8 checkpoint (found in review, 2026-10-23)
+        self.assertEqual(sorted(r["versions"]), ["fp8:true", "stock:false", "uncensored-fp8:true"], r)
+        self.assertIn("It needs a 128 GB DGX Spark, and this box is a 64 GB one.", r["image"])
+        self.assertNotIn("--with-image", r["image"])
+        self.assertIn("It needs a 128 GB DGX Spark, and this box is a 64 GB one.", r["video"])
+        self.assertNotIn("--with-video", r["video"])
+        fp8, stock = r["library"]
+        self.assertIn("it needs a 128 GB DGX Spark", fp8)
+        self.assertNotIn("Download", fp8)
+        self.assertIn("Download", stock)
 
     def test_a_128_gb_box_still_names_the_command_that_installs_a_lane_left_out(self):
         r = self.page("128", 121.6)
@@ -2289,6 +2313,10 @@ class TheBoxItIs(unittest.TestCase):
         self.assertEqual(r["pool"], "Unified memory of this ASUS Ascent GX10, 128 GB, shared by CPU and GPU")
         self.assertEqual(r["box"], "ASUS Ascent GX10, 128 GB")
         self.assertIn("is not installed on this box. Install it on the box: ./install.sh --with-flash", r["toast"])
+        self.assertEqual(sorted(r["versions"]), ["fp8:false", "stock:false", "uncensored-fp8:false"], r)
+        self.assertIn("./install.sh --with-image", r["image"])
+        self.assertIn("./install.sh --with-video", r["video"])
+        self.assertTrue(all("Download" in row for row in r["library"]), r["library"])
 
 
 if __name__ == "__main__":

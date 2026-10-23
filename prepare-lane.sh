@@ -183,6 +183,13 @@ case "$1" in
     CONFIG_DIR="$HOME/.config/qwen38"; REPO_DIR="$HERE"
     # shellcheck source=lanes.sh
     . "$HERE/lanes.sh"
+    # A 64 GB DGX Spark holds neither the flash lane nor the 27B's FP8 targets (boxmem.py): refused
+    # here before an image or a checkpoint is pulled, as the cockpit's Load runs this before its
+    # switch, which refused them only after (found in review, 2026-10-23)
+    if [ "$(box_mem_class)" = 64 ]; then
+      lane_fits "$1" || die "The $1 lane needs a 128 GB DGX Spark, and this box is a 64 GB one."
+      [ -z "$TARGET" ] || target_fits "$TARGET" || die "The $TARGET target needs a 128 GB DGX Spark, and this box is a 64 GB one."
+    fi
     # a terminal opened before the account joined the docker group: on with the group (lanes.sh)
     docker_session bash "$HERE/${BASH_SOURCE[0]##*/}" "$@"
     pins_or_die

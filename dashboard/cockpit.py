@@ -438,9 +438,11 @@ _BOX: dict = {}
 
 
 def box_info():
-    """{cls, name, fits}: the box's memory class (128, 64 or None) and the name its maker sells it
-    under, as boxmem.py at the root of the repo reads them (loaded the way conformity.py is), and
-    the lanes' units that fit it. Read once: neither changes while the cockpit runs."""
+    """{cls, name, fits, targets}: the box's memory class (128, 64 or None) and the name its maker
+    sells it under, as boxmem.py at the root of the repo reads them (loaded the way conformity.py
+    is), the lanes' units that fit it, and the switch's targets that do (the 27B's FP8 ones are
+    not a 64 GB box's: the page offered them, found in review, 2026-10-23). Read once: none of it
+    changes while the cockpit runs."""
     if "info" not in _BOX:
         try:
             spec = importlib.util.spec_from_file_location("boxmem_for_cockpit", REPO_DIR / "boxmem.py")
@@ -448,9 +450,10 @@ def box_info():
             spec.loader.exec_module(mod)
             cls = mod.mem_class()
             _BOX["info"] = {"cls": cls, "name": mod.machine()["name"],
-                            "fits": sorted(u for lane, u in UNIT_OF_LANE.items() if mod.fits(lane, cls))}
+                            "fits": sorted(u for lane, u in UNIT_OF_LANE.items() if mod.fits(lane, cls)),
+                            "targets": sorted(t for t in mod.TARGETS if mod.target_fits(t, cls))}
         except Exception:  # noqa: BLE001 (a box that cannot be read is said as unknown, never a failed panel)
-            _BOX["info"] = {"cls": None, "name": None, "fits": None}
+            _BOX["info"] = {"cls": None, "name": None, "fits": None, "targets": None}
     return _BOX["info"]
 
 

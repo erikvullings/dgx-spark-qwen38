@@ -182,6 +182,18 @@ class TheRunSaysIt(unittest.TestCase):
                 if not ok:
                     self.assertIn(f"QWEN38_MEMORY_CLASS={cls} is not a memory class: 64 or 128", r.stderr)
 
+    def test_prepare_lane_refuses_what_a_64_gb_box_cannot_hold_before_a_pull(self):
+        # the cockpit's Load runs it before its switch, which refused these only after the image
+        # and the draft were pulled (found in review, 2026-10-23)
+        env = {k: v for k, v in os.environ.items() if not k.startswith("QWEN38_")}
+        for args, said in ((("27b", "fp8"), "The fp8 target needs a 128 GB DGX Spark"),
+                           (("flash",), "The flash lane needs a 128 GB DGX Spark")):
+            with self.subTest(args), tempfile.TemporaryDirectory(prefix="prep64-") as home:
+                r = subprocess.run(["bash", str(REPO / "prepare-lane.sh"), *args], capture_output=True, text=True,
+                                   timeout=60, env={**env, "HOME": home, "PATH": "/usr/bin:/bin", "QWEN38_MEMORY_CLASS": "64"})
+                self.assertEqual(r.returncode, 1, r.stderr[-400:])
+                self.assertIn(said, r.stderr)
+
     def test_the_lanes_that_fit_come_from_boxmem(self):
         r = subprocess.run([sys.executable, "-I", str(REPO / "boxmem.py"), "fitting", "--class", "64"],
                            capture_output=True, text=True)

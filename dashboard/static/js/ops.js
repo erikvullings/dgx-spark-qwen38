@@ -318,7 +318,8 @@ async function scanRegistry(fresh = true){
       // a lane installed on demand and not prepared yet: the download runs in the image or the
       // venv its first Load builds, so that Load is what downloads it
       const lane = SIDE_LANE[TARGET_UNIT(t.target)], unbuilt = !!lane && (F.lanesReady || {})[lane] === false;
-      if (t.state !== 'complete' && t.installed && !unbuilt){
+      if (t.state !== 'complete' && !targetFits(t.target)) st.append(' ', el('span', 'muted', `it ${NEEDS_128}`));
+      else if (t.state !== 'complete' && t.installed && !unbuilt){
         const b4 = el('button', 'btn sm ghost', t.state === 'incomplete' ? 'Finish the download' : 'Download'); b4.type = 'button';
         b4.addEventListener('click', () => askAction('fetch', {target: t.target}));
         st.append(' ', b4);

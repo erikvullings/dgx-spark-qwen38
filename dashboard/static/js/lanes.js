@@ -24,7 +24,9 @@ function laneCard(unit){
   const opts = LANE_TARGETS[unit].map(t => {
     const b = el('button', 'opt', TARGET_SHORT_NAME[t] || TARGET_NAME[t]); b.type = 'button'; b.setAttribute('role', 'radio'); b.dataset.target = t;
     b.title = TARGET_NAME[t];
-    b.addEventListener('click', () => { c.target = t; c.touched = true; renderLanes(); });
+    // a version a 64 GB box cannot hold is shown, and not to be picked (its Load would stop at the switch)
+    if (!targetFits(t)){ b.disabled = true; b.title = `${TARGET_NAME[t]}: ${NEEDS_128}`; }
+    b.addEventListener('click', () => { if (!targetFits(t)) return; c.target = t; c.touched = true; renderLanes(); });
     return b;
   });
   const pickLine = el('p', 'pick-line');
