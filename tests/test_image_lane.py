@@ -700,7 +700,7 @@ class ThePageNeverShowsAStaleOrRacingState(unittest.TestCase):
 
     def test_nothing_is_claimed_before_the_first_lifecycle_snapshot(self):
         render = self.js[self.js.index("function imgRenderLane(){"):]
-        self.assertLess(render.index("!F.life ? 'wait'"), render.index("!e ? 'absent'"))
+        self.assertLess(render.index("!F.life ? 'wait'"), render.index("!e ? (laneFits(IMAGE_UNIT) ? 'absent'"))
 
 
 class AGenerationCanBeCancelled(unittest.TestCase):

@@ -105,7 +105,7 @@ class ALaneLeftOutGetsItsUnitsOnly(unittest.TestCase):
         r = resolved(self, out)
         self.assertEqual((r["LANE"], r["UNITS_ONLY"], r["LEFT_OUT"]), ("flash", "1", "1"))
         self.assertIn("Your earlier --no-flash is no longer remembered (left out with ./install.sh --no-flash on "
-                      "2026-10-20T08:00Z): a --no-flash counts for the run that passes it only now, so the flash lane is "
+                      "2026-10-20T08:00Z): a --no-flash counts for the run that passes it only now, so the flash 176B lane is "
                       "back in this run. Pass --no-flash on each run to keep it out.", out)
         self.assertIn("NOTE: the flash lane is not prepared on this box: its units only, none of its downloads, and this "
                       "run starts nothing.", out)

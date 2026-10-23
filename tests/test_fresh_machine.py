@@ -666,7 +666,12 @@ class TheScriptsRunFromATerminalGoOnWithTheGroup(unittest.TestCase):
 
     def test_prepare_lane_asks_where_it_loads_the_library(self):
         text = (REPO / "prepare-lane.sh").read_text()
-        self.assertIn('. "$HERE/lanes.sh"\n    # a terminal opened before', text)
+        at = text.index('    . "$HERE/lanes.sh"\n')
+        ask = text.index('    docker_session bash "$HERE/${BASH_SOURCE[0]##*/}" "$@"\n', at)
+        # only a 64 GB box's refusal comes between the two, and it runs no docker
+        code = [ln for ln in text[at:ask].splitlines() if not ln.lstrip().startswith("#")]
+        self.assertEqual([ln for ln in code if "docker" in ln], [])
+        self.assertIn("    # a terminal opened before the account joined the docker group", text[at:ask])
 
 
 
