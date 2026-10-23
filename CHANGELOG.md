@@ -1,5 +1,87 @@
 # Changelog
 
+## v1.39.0 (2026-10-23): the 27B lane moves to SGLang v0.5.22, faster at one and four streams, and CI tests the Agent tab against a real opencode
+
+The 27B lane serves `lmsysorg/sglang@sha256:e3a4f060...` (`v0.5.22`, 2026-10-16) instead of
+`v0.5.21`. `lmsysorg/sglang:latest`, the image the SGLang cookbook's DGX Spark recipe names for
+this model, has pointed at it since 2026-10-16.
+
+**Why.** It carries two fixes on this lane's paths that `v0.5.21` lacks, each checked against
+both tags with GitHub's compare API: [sglang#41872](https://github.com/sgl-project/sglang/pull/41872),
+a scheduler that stalled with nothing running because it kept a full batch flag set
+([#41841](https://github.com/sgl-project/sglang/issues/41841), reported on `v0.5.20`, fixed after
+`v0.5.21`), and
+[#41737](https://github.com/sgl-project/sglang/pull/41737): DFlash2's greedy selector took a
+neighbouring row's candidates when a row of scores was all NaN.
+
+**Measured on the reference box, 2026-10-23, both images in one night.** Each image was started
+from the installed unit's own command line (only the container's name, the image and, for
+`v0.5.22`, a cache of its own changed), in the order `v0.5.21`, `v0.5.22`, `v0.5.22`, `v0.5.21`,
+with the same client and the same probes. The first `v0.5.21` run gave the same prefill
+log-probabilities, bit for bit, as the unit itself on 2026-10-09.
+
+| | `v0.5.21` | `v0.5.22` |
+|---|---|---|
+| SGLang's serving bench, 1 stream, output | 31.8, 31.8, 36.7 tok/s | 38.8, 38.5, 38.8 tok/s |
+| 1 stream, median inter-token latency | 17.9, 17.9, 13.8 ms | 10.9, 10.9, 10.9 ms |
+| 1 stream, the draft's accepted length | 3.96, 3.96, 4.59 | 5.05, 5.05, 5.05 |
+| 4 streams, output | 77.5, 77.8, 74.7 tok/s | 81.7, 81.6 tok/s |
+| `./bench.sh`, greedy median | 63.3, 60.5, 69.0 tok/s | 67.0, 69.6 tok/s |
+| boot | 452, 432 s | 395 (cold cache), 388 s |
+| KV pool | 872,921 and 898,513 | 869,920 and 874,145 |
+| GSM8K, 250 questions | 246 | 244 |
+| needle at 120,196 and 299,901 prompt tokens | exact (114 s, 486 s) | exact (113 s, 478 s) |
+| conc-check, 40 serial and 160 at 8 | 0 wrong, 0 crossed | 0 wrong, 0 crossed |
+
+The draft's accepted length on `v0.5.21` moved from one boot to the next (3.96, then 4.59, the
+same prompts), where `v0.5.22` gave 5.05 on both; that fits #41737, without proof that it is the
+cause. The prefill log-probabilities are deterministic on each release (identical, bit for bit,
+from one boot to the next) and differ between them (0.20 nats a token on average over 30 fixed
+texts of 1,024 tokens), without a bias: mean NLL 1.786 against 1.802, lower on 17 texts of 30.
+torch moves from 2.13 to 2.14.1 and FlashInfer from 0.6.18 to 0.7.1; cuBLAS (13.1) and CUDA
+(13.0) are the same. A cached answer resumed against a recompute (the measure of v1.23.0, on
+16 documents) shifts by 0.97 (median) against 0.75, and a cached prompt alone by 1.44 against
+1.25: both move with the new arithmetic, inside what a chunked prefill alone moves (1.41).
+
+**A long agent session on `v0.5.22`**, 30 minutes through the proxy: 29 requests, 20 of them
+turns of one conversation that grew from 215,868 to 518,252 prompt tokens (15 past 300,000),
+with sub-agent calls and fresh prompts in between. All answered, with no engine exception, no CUDA or cuBLAS
+error and no Xid in the kernel log. Through the proxy on `v0.5.22`, as on `v0.5.21`: the 27B
+production checks (one failed on both, the campaign's own check of the proxy's memory cap, which
+expected an old value: fixed), Claude Code, opencode, Hermes and pi each read a file with a tool
+and answered, the OpenAI and Anthropic SDKs, LiteLLM, and fetch under Node and Bun answered.
+Every metric the cockpit reads is still there (16 new ones). The GPU peaked at 88 °C on both,
+within the 85 to 89 °C of the days before.
+
+**CI tests the Agent tab against a real opencode.** The Agent checks drove the live cockpit of a
+box, by hand, and two opencode releases broke the tab between two of those runs: 1.19 sent its
+page chunked and the relay dropped the phone layer (v1.38.6), and it checks the Origin of every
+terminal connection (v1.26.2). `dashboard/tests/agent-bench.mjs` owns what it drives: it fetches
+the opencode release `install.sh` pins (this machine's asset: `install.sh`'s sha256 for
+linux-arm64, its own for the CI runner's linux-x64), starts it on loopback with the command line
+of the unit `install-agent.sh` writes and a HOME, a config and a password of its own, starts a
+dry-run cockpit whose relay answers on 127.0.0.2, and drives both with a headless browser: the
+relay's gate, the Agent tab and its line, the page opencode sends with the phone layer linked into
+it (asked as a browser on a tailnet address asks too), a terminal opened through the relay with a
+command run in it, and a phone. 34 checks, in CI and on any box; with the relay of v1.38.5 it
+fails 5 of them, and with a relay that forwards the browser's Origin, 2 (measured on the second GX10). A run is bounded (each
+browser call, the whole run, the CI step) and always prints its report. `AGENT_BENCH_OPENCODE`
+runs it against another release before it is pinned: OpenCode 2.1.3 does not start with the
+unit as it is (it refuses `--log-level INFO`), which is the first thing a move to OpenCode 2 has
+to change. For the bench, the cockpit takes `COCKPIT_AGENT_UNIT_PATH` (unset, the unit it always
+read), so a run on a box never reads that box's own unit. And `tests/test_bench_lane.py`, which
+failed once in a full local run and passed alone five times, looks for the 27B's reference line
+whole: it looked for "71.4", which the fake engine's rates, timings, can contain.
+
+**What an update does.** A box that serves the 27B pulls the new image (11.5 GB to download from
+a box that has `v0.5.21`, 29.4 GB more on disk, the two share 7.0 GB), rewrites the 27B unit and
+restarts the engine once. The cockpit restarts too (its code changed), and with it the Agent tab's relay, which reconnects by itself; opencode-web keeps running. A box that serves another lane rewrites the 27B unit without starting
+it and keeps its serving engine running; it pulls the new image now when the 27B lane is
+prepared, named (`--with-27b`) or the text lane the box served last, and at the lane's next Load
+from the cockpit otherwise. `uninstall.sh` knows both images. To stay on `v0.5.21`,
+pass its digest on every run (`IMAGE` is not remembered), or check out v1.38.6:
+`IMAGE=lmsysorg/sglang@sha256:b1259f3ea3275f66237c498ea388919729018bc9f01c3d638391e06e2cf3f469 ./install.sh`.
+
 ## v1.38.6 (2026-10-22): opencode 1.19.4, on Bun 1.4.4 and its Brotli fix, and the Agent tab's phone layer on a chunked page
 
 **Why.** CVE-2026-111497 is an out-of-bounds write in Brotli's decoder, which Node.js fixed on

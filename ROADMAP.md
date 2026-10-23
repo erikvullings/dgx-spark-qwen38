@@ -5,7 +5,15 @@ so that "on the roadmap" means a checkbox with a definition of done, not a
 mood. Statuses: shipped, in progress, planned, considered (considered items
 have a reason they are not yet planned, stated here or in an issue).
 
-## Shipped, current: v1.38
+## Shipped, current: v1.39
+
+- **SGLang v0.5.22 for the 27B lane** (v1.39.0): faster at one and four streams
+  in an A/B on the reference box, its draft accepted alike on every boot, with
+  the scheduler and DFlash2 selector fixes `v0.5.21` lacks.
+- **The Agent tab against a real opencode, in CI** (v1.39.0): the pinned release,
+  a cockpit of its own and a browser, the terminal and the phone layer included.
+
+## Shipped, v1.38
 
 - **Ornith 1.5 122B, a ninth lane** (v1.38.0): Ornith AI's mixture of experts
   with vision, on vLLM in the Flash FP4-Local lane's image with its MTP head,
