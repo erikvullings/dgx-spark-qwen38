@@ -117,7 +117,7 @@ sudo systemctl enable --now "$UNIT"
 # engine-inputs.py, oc-merge-limits.py and conformity.py too: the cockpit loads them once (what
 # an update owes the serving engine, the opencode limits, the box against what its clone
 # recommends), and a change to one alone left the old code in memory (found in review, 2026-10-17).
-if [ "$DASH_CHANGED" -eq 1 ] || stale_since "$UNIT" "$HERE"/*.py "$REPO_DIR/oc-fit-limits.py" "$REPO_DIR/oc-merge-limits.py" "$REPO_DIR/engine-inputs.py" "$REPO_DIR/conformity.py" "$REPO_DIR/CHANGELOG.md"; then
+if [ "$DASH_CHANGED" -eq 1 ] || stale_since "$UNIT" "$HERE"/*.py "$REPO_DIR/oc-fit-limits.py" "$REPO_DIR/oc-merge-limits.py" "$REPO_DIR/engine-inputs.py" "$REPO_DIR/conformity.py" "$REPO_DIR/boxmem.py" "$REPO_DIR/CHANGELOG.md"; then
   sudo systemctl try-restart "$UNIT"
 fi
 for _ in $(seq 1 15); do

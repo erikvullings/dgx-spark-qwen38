@@ -233,9 +233,10 @@ CODE_FILES = ("cockpit.py", "recipes.py", "lifecycle.py", "registry.py",
 
 # The repo's modules this process loads once are its code too: engine-inputs.py (stale_engines),
 # oc-fit-limits.py and oc-merge-limits.py (the opencode limits), conformity.py (the release
-# installed, and the box against what its clone recommends). A change to one of them alone
-# left the cockpit running the old code, and nothing said so (found in review, 2026-10-17).
-REPO_CODE_FILES = ("engine-inputs.py", "oc-fit-limits.py", "oc-merge-limits.py", "conformity.py")
+# installed, and the box against what its clone recommends), boxmem.py (the box's class and name).
+# A change to one of them alone left the cockpit running the old code, and nothing said so (found
+# in review, 2026-10-17).
+REPO_CODE_FILES = ("engine-inputs.py", "oc-fit-limits.py", "oc-merge-limits.py", "conformity.py", "boxmem.py")
 
 
 def code_fingerprint() -> dict:
