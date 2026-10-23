@@ -60,12 +60,14 @@ fail on the old code (a lane not prepared, with no flag at all, was fetched whol
 
 **OpenAI's voice names each speak (issue #53).** Its eleven voice names, which clients such as
 Open WebUI send, all answered with the lane's default voice, so a picker of those names changed
-nothing anyone could hear (found by Quadrant6630, whose table this is). Each is now an English
-voice of its own, checked against the 41 the lane serves, two of them British. The lane takes a
-voice's language from its name, so on a box whose default voice speaks another language, that
-voice keeps answering all eleven: an English voice would read a French text wrong. A name whose
-voice the lane lacks gets the default voice, not a 400. The test of the English box fails on the
-old code.
+nothing anyone could hear (found by Quadrant6630, whose table this is). Ten of them are now an
+English voice of their own, checked against the 41 the lane serves, two of them British.
+`alloy`, the name a client sends when nobody chose a voice (Open WebUI's default, OpenAI's
+examples), keeps the default voice: `af_heart` is graded A in Kokoro's list, and `af_alloy`, the
+table's voice for it, C. The lane takes a voice's language from its name, so on a box whose
+default voice speaks another language, that voice keeps answering all eleven: an English voice
+would read a French text wrong. A name whose voice the lane lacks gets the default voice, not a
+400. The tests of the English box fail on the old code.
 
 **What an update does.** [to check on the reference box with the update itself] The cockpit
 restarts (its code changed), and with it the Agent tab's relay, which reconnects by itself. The

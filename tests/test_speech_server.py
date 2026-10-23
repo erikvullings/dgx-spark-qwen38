@@ -104,12 +104,18 @@ class OpenAIVoiceNames(unittest.TestCase):
         tts, speak = self.front("af_heart", self.ENGLISH)
         for name in sorted(ss.OPENAI_VOICES):
             self.assertEqual(speak(name), 200, name)
-        voices = [c[1] for c in tts.calls]
-        self.assertEqual(len(set(voices)), 11, voices)
-        self.assertNotIn("af_heart", voices)
         by_name = dict(zip(sorted(ss.OPENAI_VOICES), tts.calls))
-        self.assertEqual((by_name["alloy"][1], by_name["alloy"][3]), ("af_alloy", "en-us"))
+        others = [c[1] for n, c in by_name.items() if n != "alloy"]
+        self.assertEqual(len(set(others)), 10, others)
+        self.assertNotIn("af_heart", others)
         self.assertEqual((by_name["fable"][1], by_name["fable"][3]), ("bm_fable", "en-gb"))
+
+    def test_alloy_the_name_sent_when_nobody_chose_keeps_the_default_voice(self):
+        # Open WebUI sends it unless told otherwise, and af_alloy is graded C where the default
+        # af_heart is graded A (Kokoro's VOICES.md)
+        tts, speak = self.front("af_heart", self.ENGLISH)
+        self.assertEqual(speak("alloy"), 200)
+        self.assertEqual((tts.calls[-1][1], tts.calls[-1][3]), ("af_heart", "en-us"))
 
     def test_on_a_french_box_the_default_voice_answers_them_all(self):
         tts, speak = self.front("ff_siwis", ["ff_siwis"] + self.ENGLISH)
