@@ -32,12 +32,11 @@ def run_units_only(lane, gpu="ATS", main=False):
     nothing. gpu: the addressing mode nvidia-smi reports."""
     units = wall.units_dir()
     script = pathlib.Path(wall.walled(at=NO_START if main else DONE, after=not main, units=units))
+    # the reference box's memory, as install.sh reads it, by QWEN38_MEMINFO (its class at the top
+    # and its GiB at step 1, boxmem.py): rewriting the fallback in the copy was dead code under the
+    # wall's own file (found in review, 2026-10-23)
     meminfo = wall._tmp("meminfo-") / "meminfo"
-    meminfo.write_text("MemTotal:       127535272 kB\n")      # the reference box's
-    # read twice, its class at the top and its GiB at step 1 (boxmem.py)
-    text, read = script.read_text(), "${QWEN38_MEMINFO:-/proc/meminfo}"
-    assert text.count(read) == 2, "install.sh reads the memory another way now"
-    script.write_text(text.replace(read, read.replace("/proc/meminfo", str(meminfo))))
+    meminfo.write_text("MemTotal:       127535272 kB\n")
     for f in REPO.iterdir():      # what install.sh reads beside itself (its templates, its helpers)
         if f.is_file() and not (script.parent / f.name).exists():
             shutil.copy2(f, script.parent / f.name)
@@ -72,6 +71,7 @@ def run_units_only(lane, gpu="ATS", main=False):
     run = {} if main else {"QWEN38_SECONDARY": lane, "QWEN38_UNITS_ONLY": "1",
                            "MODEL_CHOICE": "flash" if lane == "flash" else "stock"}
     env, fenced = wall.fenced_env(home=home, first=str(stubs), HF_CACHE=str(home / "hf"), PORT="30000",
+                                  QWEN38_MEMINFO=str(meminfo),
                                   PROXY_PORT="30001", **run)
     r = subprocess.run([str(script)] + (["--no-opencode"] if main else []), capture_output=True, text=True,
                        env=env, cwd=wall.cwd(), timeout=300)

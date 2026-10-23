@@ -72,9 +72,11 @@ def box_run(record, units=("flash", "27b"), off=(), args=(), boot=FP4, port=3100
     if "27b" in units:
         (unit_dir / "qwen38-sglang.service").write_text(SGL_UNIT.format(hf=hf, port=port, ctx=ctx))
     copy = pathlib.Path(wall.walled(at=AFTER_RULE, units=str(unit_dir)))
+    # its memory as install.sh reads it, by QWEN38_MEMINFO: a /proc/meminfo rewritten in the copy is
+    # only its fallback, which the wall's own file passes over (found in review, 2026-10-23)
     mem = copy.parent / "meminfo"
     mem.write_text(MEMINFO)
-    text = copy.read_text().replace("/proc/meminfo", str(mem))
+    text = copy.read_text()
     copy.write_text(text.replace(f'echo "{wall.WALL}"', PROBE + f'echo "{wall.WALL}"', 1))
     home = wall._tmp("left-out-home-")
     cfg = home / ".config" / "qwen38"
@@ -83,7 +85,8 @@ def box_run(record, units=("flash", "27b"), off=(), args=(), boot=FP4, port=3100
     (cfg / "launch-flash.sh").write_text(LAUNCHER.format(hf=hf, port=port))
     for lane in off:
         (cfg / f"{lane}.off").write_text(f"left out with ./install.sh --no-{lane} on 2026-10-20T08:00Z\n")
-    env, record_file = wall.fenced_env(home=home, enabled=(boot,), first=str(box.bin), **(env_extra or {}))
+    env, record_file = wall.fenced_env(home=home, enabled=(boot,), first=str(box.bin), QWEN38_MEMINFO=str(mem),
+                                       **(env_extra or {}))
     r = subprocess.run(["bash", str(copy), *args], capture_output=True, text=True, env=env, cwd=wall.cwd(),
                        timeout=120, stdin=subprocess.DEVNULL, start_new_session=True)
     return r.returncode, r.stdout + r.stderr
@@ -341,9 +344,8 @@ def full_run(record, off=(), args=()):
     (rc, out, calls, units dir, config dir, HF cache)."""
     units = pathlib.Path(wall.units_dir())
     script = pathlib.Path(wall.walled(at=AFTER_SIDE_BOOT, after=True, units=str(units)))
-    mem = script.parent / "meminfo"
+    mem = script.parent / "meminfo"       # read by QWEN38_MEMINFO, as above
     mem.write_text(MEMINFO)
-    script.write_text(script.read_text().replace("/proc/meminfo", str(mem)))
     for f in REPO.iterdir():      # what install.sh reads beside itself (its templates, its helpers)
         if f.is_file() and not (script.parent / f.name).exists():
             shutil.copy2(f, script.parent / f.name)
@@ -387,7 +389,7 @@ def full_run(record, off=(), args=()):
             ("apt-get", 'exit 1\n')):
         (stubs / name).write_text(f'#!/bin/bash\necho "{name} $*" >> "{calls}"\n' + body)
         (stubs / name).chmod(0o755)
-    env, _ = wall.fenced_env(home=home, first=str(stubs), QWEN38_HOST_PACKAGES_TRIED="1",
+    env, _ = wall.fenced_env(home=home, first=str(stubs), QWEN38_HOST_PACKAGES_TRIED="1", QWEN38_MEMINFO=str(mem),
                              SAFE_ROOT=str(pathlib.Path(wall._tmp("x")).parent))
     r = subprocess.run(["bash", str(script), *args], capture_output=True, text=True, env=env, cwd=wall.cwd(),
                        timeout=600, stdin=subprocess.DEVNULL, start_new_session=True)
