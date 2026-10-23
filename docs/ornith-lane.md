@@ -232,7 +232,7 @@ lane's image when that lane has not (18.2 GB on disk), fetches the checkpoint at
 for this model, then 1 min 52 s there, its checkpoint on the internal disk, and 2 min 46 s to 3 min
 46 s on the reference box, whose cache is on a USB SSD. From a terminal: `./prepare-lane.sh ornith-122b` the first time, then
 `./switch-model.sh ornith-122b`. `--with-ornith-122b` installs it whole at install time and proves it,
-`--no-ornith-122b` leaves it out for good, and `./install-ornith-122b.sh --uninstall` removes its unit,
+`--no-ornith-122b` leaves it out of that run, and `./install-ornith-122b.sh --uninstall` removes its unit,
 its opencode and pi providers, its caches, its image's pin tag and, when the Flash FP4-Local lane is not
 installed, the io_uring filter the two lanes share. The image (which the Flash FP4-Local lane's own tag
 keeps, when that lane is installed) and the checkpoint stay, and it prints how to delete them.

@@ -213,8 +213,8 @@ Through the proxy on `:30001`, with the box's key, as model `nemotron-3.5-bolt`:
 - A terminal: `./prepare-lane.sh nemotron` the first time (it builds its image, no sudo), then
   `./switch-model.sh nemotron` and the commands it prints.
 - Installed on demand by every plain `./install.sh` (its units; its first Load builds it and fetches
-  its weights); `--with-nemotron` installs it whole now and brings it back after a `--no-nemotron`,
-  which leaves it out (51 GB: 26 of checkpoint and drafter, 25 of image);
+  its weights); `--with-nemotron` installs it whole now (51 GB: 26 of checkpoint and drafter, 25 of
+  image), and `--no-nemotron` leaves it out of that run;
   `./install-nemotron.sh --uninstall` removes its unit, and its local image unless the Nemotron Super
   lane runs it too (the weights stay, and so does the vLLM image it was built on, which the script
   names for you to remove). The key's middleware stays while another vLLM lane (Kolibri, Nemotron

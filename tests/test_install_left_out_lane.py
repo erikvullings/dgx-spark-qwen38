@@ -462,5 +462,18 @@ class TheRunOfALaneLeftOutToItsEnd(unittest.TestCase):
         self.assertIn("the 27B lane got its units: its first Load fetches its image and weights", out)
         self.assertEqual([m.name for m in cfg.glob("*.off")], [])
 
+
+class TheDocsSayIt(unittest.TestCase):
+    """No page promises a --no-<lane> that later runs remember: README.md, five lane pages and a
+    comment of install.sh still did after the rule changed (found in review, 2026-10-23)."""
+    STALE = re.compile(r"leaves it out for good|later runs remember|brings? it back after a `--no-|and bring it back \|")
+
+    def test_no_page_says_a_lane_left_out_stays_out(self):
+        pages = [REPO / "README.md", *sorted((REPO / "docs").glob("*.md"))]
+        # the whole page, one space for every run of whitespace: a phrase cut over two lines counts
+        found = [f"{p.name}: {m.group(0)}" for p in pages
+                 for m in self.STALE.finditer(re.sub(r"\s+", " ", p.read_text()))]
+        self.assertEqual(found, [])
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

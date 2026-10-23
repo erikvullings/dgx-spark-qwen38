@@ -164,8 +164,8 @@ opencode's default. pi and omp send it their level, starting at `high`. System O
   lanes run, no sudo, when the Nemotron lane has not), then `./switch-model.sh nemotron-super` and
   the commands it prints.
 - Installed on demand by every plain `./install.sh` (its units; its first Load builds the image if
-  needed and fetches its weights); `--with-nemotron-super` installs it whole now and brings it back
-  after a `--no-nemotron-super`, which leaves it out (102 GB: 77 of checkpoint and drafter, 25 of
-  image, 77 when the Nemotron lane is there); `./install-nemotron-super.sh --uninstall` removes its
+  needed and fetches its weights); `--with-nemotron-super` installs it whole now
+  (102 GB: 77 of checkpoint and drafter, 25 of image, 77 when the Nemotron lane is there), and
+  `--no-nemotron-super` leaves it out of that run; `./install-nemotron-super.sh --uninstall` removes its
   unit, and its image unless the Nemotron lane runs it (the weights stay). The key's middleware
   stays while another vLLM lane uses it.

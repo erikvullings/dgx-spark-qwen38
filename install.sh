@@ -1551,8 +1551,9 @@ if [ -z "$SECONDARY" ] && [ "$NO_SERVICE" -eq 0 ]; then
       --units /etc/systemd/system/ --lane "$LANE" ${CHOSE[@]+"${CHOSE[@]}"} ${REC_FLAG[@]+"${REC_FLAG[@]}"} \
     || echo "NOTE: could not list this box's settings against the recommended ones; the run goes on."
 fi
-# --plan ends here, before the first step: nothing above writes but the markers of --no-<lane>
-# and --no-cockpit (and their --with-), which it leaves as they are.
+# --plan ends here, before the first step: nothing above writes but the marker of --no-cockpit (and
+# --with-cockpit takes it away), which it leaves as it is, as it leaves an older release's --no-<lane>
+# markers, which any other run takes away.
 if [ "$PLAN_ONLY" -eq 1 ]; then
   echo
   echo "--plan: nothing was changed. The same command without --plan applies it."
