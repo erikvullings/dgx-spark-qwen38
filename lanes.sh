@@ -633,9 +633,15 @@ docker_snap_engine(){
   return 1
 }
 # host_nvidia_toolkit: the NVIDIA Container Toolkit installed on the host as Ubuntu packages, as DGX
-# OS installs it
+# OS installs it. dpkg-query's lines are read whole before they are looked at: piped into grep -q,
+# which ends at the first match, dpkg-query died writing the next one (SIGPIPE, 141), and under
+# install.sh's pipefail the check said "not installed" now and then, which let a Snap engine through
+# the guard of issue #58 (found by the CI run of v1.39.0, 2026-10-23; its test failed then in 1 run
+# of 60 on the reference box).
 host_nvidia_toolkit(){
-  dpkg-query -W -f='${Status}\n' nvidia-container-toolkit nvidia-container-toolkit-base 2>/dev/null | grep -qx 'install ok installed'
+  local st
+  st="$(dpkg-query -W -f='${Status}\n' nvidia-container-toolkit nvidia-container-toolkit-base 2>/dev/null || true)"
+  grep -qx 'install ok installed' <<< "$st"
 }
 # docker_engine_line: the engine this account reaches, in one line, for a failure to show
 docker_engine_line(){

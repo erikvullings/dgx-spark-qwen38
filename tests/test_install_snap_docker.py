@@ -56,11 +56,11 @@ def engine(snap_root=False, snap_runtime=False, toolkit=True, run_out="", run_er
             "FAKE_RUN_OUT": run_out, "FAKE_RUN_ERR": run_err, "FAKE_RUN_RC": str(run_rc)}
 
 
-def run(script, env):
+def run(script, env, dpkg=DPKG):
     with tempfile.TemporaryDirectory() as t:
         bin_ = pathlib.Path(t) / "bin"
         bin_.mkdir()
-        for name, body in (("docker", DOCKER), ("dpkg-query", DPKG)):
+        for name, body in (("docker", DOCKER), ("dpkg-query", dpkg)):
             (bin_ / name).write_text(body)
             (bin_ / name).chmod(0o755)
         r = subprocess.run(["bash", "-c", f'set -euo pipefail\n. "{REPO}/lanes.sh"\n{DIE}\n{STEP}\n{script}'],
@@ -90,6 +90,17 @@ class TheEngineThisAccountReaches(unittest.TestCase):
     def test_the_host_toolkit_is_read_from_its_packages(self):
         self.assertEqual(run("host_nvidia_toolkit", engine(toolkit=True))[0], 0)
         self.assertEqual(run("host_nvidia_toolkit", engine(toolkit=False))[0], 1)
+
+    def test_the_host_toolkit_is_read_whole_not_cut_short(self):
+        # dpkg-query writes a line per package. Piped into grep -q, which ends at its first match,
+        # it died writing the next line (SIGPIPE), and under pipefail the toolkit read as missing:
+        # the CI run of v1.39.0 failed on the preflight's test below that way (2026-10-23). Here the
+        # second line comes once grep has had the first, every time.
+        one = "printf 'install ok installed\\ninstall ok installed\\n'"
+        self.assertEqual(DPKG.count(one), 1)
+        slow = DPKG.replace(one, "printf 'install ok installed\\n'; sleep 0.3; printf 'install ok installed\\n'")
+        self.assertEqual(run("host_nvidia_toolkit", engine(toolkit=True), dpkg=slow)[0], 0)
+        self.assertEqual(run("host_nvidia_toolkit", engine(toolkit=False), dpkg=slow)[0], 1)
 
 
 class ThePreflight(unittest.TestCase):
