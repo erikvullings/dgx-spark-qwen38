@@ -107,6 +107,8 @@ dl_free_gb(){ { df -BG --output=avail "$(existing "${1:-$HF_CACHE}")" 2>/dev/nul
 # notes the SGLang text unit it takes the boot from, a switch to a text target notes its own.
 # shellcheck source=lanes.sh
 . "$REPO_DIR/lanes.sh"
+# A target a 64 GB DGX Spark cannot hold is refused there before any download (boxmem.py).
+[ "$(box_mem_class)" != 64 ] || target_fits "$CHOICE" || die "The $CHOICE target needs a 128 GB DGX Spark, and this box is a 64 GB one."
 # A terminal opened before the account joined the docker group: the run goes on with it (lanes.sh).
 docker_session bash "$REPO_DIR/${BASH_SOURCE[0]##*/}" "$@"
 [ "$FETCH_ONLY" -eq 1 ] || text_lane_migrate
@@ -295,12 +297,14 @@ if [ "$CHOICE" = "nemotron" ] || [ "$CHOICE" = "nemotron-super" ]; then
   [ -f "$NEM_UNIT" ] || die "the $NEM_TITLE lane is not installed on this box (no $NEM_UNIT). Install it once: ./install.sh --with-$CHOICE (about $NEM_SIZE GB)"
   # The checkpoint, its drafter, their pinned revisions, the memory share and the size, from the
   # lane's installer, the one place they are declared.
-  eval "$(grep -E "^${NEM_PIN}_(REPO|REV|DRAFT_REPO|DRAFT_REV|GMU|GB)=" "$REPO_DIR/$NEM_INSTALLER" || true)"
+  eval "$(grep -E "^${NEM_PIN}_(REPO|REV|DRAFT_REPO|DRAFT_REV|GMU|GMU_64|GB)=" "$REPO_DIR/$NEM_INSTALLER" || true)"
   for _v in REPO REV DRAFT_REPO DRAFT_REV GMU GB; do
     eval "[ -n \"\${${NEM_PIN}_$_v:-}\" ]" || die "$NEM_INSTALLER no longer defines ${NEM_PIN}_$_v (repo layout changed?)"
   done
   unset _v
   eval "NEM_MODEL=\"\$${NEM_PIN}_REPO\"; NEM_REV=\"\$${NEM_PIN}_REV\"; NEM_GMU=\"\$${NEM_PIN}_GMU\"; NEM_NEED_GB=\"\$${NEM_PIN}_GB\""
+  # on a 64 GB DGX Spark, the share its installer gives that box (boxmem.py)
+  if [ "$(box_mem_class)" = 64 ]; then eval "NEM_GMU=\"\${${NEM_PIN}_GMU_64:-\$NEM_GMU}\""; fi
   eval "NEM_DRAFT=\"\$${NEM_PIN}_DRAFT_REPO\"; NEM_DREV=\"\$${NEM_PIN}_DRAFT_REV\""
   # the two lanes run the one image the Bolt lane builds (install-nemotron-super.sh says why)
   NEM_IMAGE="$(grep -m1 -oE 'qwen38-nemotron:[^ ]+' "$NEM_UNIT" || true)"

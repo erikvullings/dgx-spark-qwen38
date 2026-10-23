@@ -89,6 +89,8 @@ NEMOTRON_BOLT_DRAFT_REV="4c6a5613b6d887194a3a5493e3a18a5b3930bb86"
 # The share of the GPU memory and the download in GB (why: where they are used below).
 # switch-model.sh reads them here, with the repos and revisions.
 NEMOTRON_BOLT_GMU="0.70"
+# PROVISIONAL 64 GB VALUE, NOT MEASURED YET: the share on a 64 GB DGX Spark (boxmem.py)
+NEMOTRON_BOLT_GMU_64="0.60"
 NEMOTRON_BOLT_GB="26"
 # The local image: the base and the wheel, nothing else. Its tag names both, so a change of
 # either pin is a new tag, and a box never serves an image built from older pins. The wheel is
@@ -109,6 +111,7 @@ LOCAL_IMAGE="${LOCAL_IMAGE:0:52}"
 MODEL="$NEMOTRON_BOLT_REPO"; MODEL_REV="$NEMOTRON_BOLT_REV"
 DRAFT="$NEMOTRON_BOLT_DRAFT_REPO"; DRAFT_REV="$NEMOTRON_BOLT_DRAFT_REV"
 GMU="$NEMOTRON_BOLT_GMU"; WEIGHTS_GB="$NEMOTRON_BOLT_GB"
+[ "$(box_mem_class)" != 64 ] || GMU="$NEMOTRON_BOLT_GMU_64"
 # The base image's pull at its peak: 24.46 GB unpacked with the wheel's layer (27 MB) and 10.30 GB
 # to download (the registry's arm64 manifest), which the containerd image store (Docker 29's
 # default on a new install) keeps beside it, 32.4 GiB; ceil(x 1.02) + 1 as df -BG rounds up
