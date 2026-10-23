@@ -8,6 +8,7 @@ script's own lines with the class forced (QWEN38_MEMORY_CLASS), so no installer 
 import os
 import pathlib
 import re
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -137,8 +138,8 @@ def between(text, start, end):
     return text[i:text.index(end, i) + len(end)]
 
 
-# where prepare-lane.sh asks for the docker group, the first thing past its 64 GB refusal
-PREPARE_DOCKER = '    docker_session bash "$HERE/${BASH_SOURCE[0]##*/}" "$@"\n'
+# the 27B's first pull, once its target is known
+PREPARE_27B_PULL = '  local img_need=48\n'
 # where it hands a side lane to that lane's installer
 PREPARE_SIDE = '    exec bash "$HERE/install-$1.sh" --prepare ;;\n'
 
@@ -193,18 +194,34 @@ class TheRunSaysIt(unittest.TestCase):
 
     def test_prepare_lane_refuses_what_a_64_gb_box_cannot_hold_before_a_pull(self):
         # the cockpit's Load runs it before its switch, which refused these only after the image
-        # and the draft were pulled (found in review, 2026-10-23). A walled copy, stopped before it
-        # asks for the docker group, its units elsewhere and docker fenced: a refusal that slipped
-        # meets the wall, never this box's units, images or checkpoints (found in review, 2026-10-23)
-        script = wall.walled("prepare-lane.sh", at=PREPARE_DOCKER)
-        for args, said in ((("27b", "fp8"), "The fp8 target needs a 128 GB DGX Spark"),
-                           (("flash",), "The flash lane needs a 128 GB DGX Spark")):
-            with self.subTest(args):
+        # and the draft were pulled (found in review, 2026-10-23). A walled copy, stopped before the
+        # 27B's first pull, a 27B unit of its own in place and docker fenced: a refusal that slipped
+        # meets the wall, never this box's units, images or checkpoints (found in review, 2026-10-23).
+        # The 27B's target is checked once it is known: by its name, by its repo, or the unit's own;
+        # a typo is a typo, and stock by its repo goes on (found in review, 2026-10-23)
+        repos = dict(re.findall(r'^(STOCK|UNC|FP8|UNCFP8)_REPO="([^"]+)"', (REPO / "install.sh").read_text(), re.M))
+        def unit(model):
+            return ("[Service]\nExecStart=/bin/bash -c 'exec /usr/bin/docker run --rm --name qwen38-sglang \\\n"
+                    "  -v /nowhere/hf:/root/.cache/huggingface \\\n  lmsysorg/sglang@sha256:0 \\\n"
+                    f"  python3 -m sglang.launch_server --model-path {model} --port 30000'\n")
+        too_big = "The fp8 target needs a 128 GB DGX Spark, and this box is a 64 GB one."
+        for args, served, rc, said in ((("27b", "fp8"), repos["STOCK"], 1, too_big),
+                                       (("27b", repos["FP8"]), repos["STOCK"], 1, too_big),
+                                       (("27b",), repos["FP8"], 1, too_big),
+                                       (("27b", "fp9"), repos["STOCK"], 1, "fp9 is not a 27B lane target"),
+                                       (("27b", repos["STOCK"]), repos["STOCK"], 97, wall.WALL),
+                                       (("27b", "uncensored"), repos["STOCK"], 97, wall.WALL),
+                                       (("flash",), repos["STOCK"], 1, "The flash lane needs a 128 GB DGX Spark")):
+            with self.subTest(args=args, served=served):
+                units = wall.units_dir({"qwen38-sglang.service": unit(served)})
+                script = wall.walled("prepare-lane.sh", at=PREPARE_27B_PULL, units=units)
+                shutil.copy(REPO / "install.sh", pathlib.Path(script).parent)     # the pins it reads
                 env, record = wall.fenced_env(QWEN38_MEMORY_CLASS="64")
                 r = subprocess.run(["bash", script, *args], capture_output=True, text=True, timeout=60, env=env)
-                self.assertEqual(r.returncode, 1, (r.stdout + r.stderr)[-400:])
-                self.assertIn(said, r.stderr)
-                self.assertNotIn(wall.WALL, r.stdout)
+                self.assertEqual(r.returncode, rc, (r.stdout + r.stderr)[-400:])
+                self.assertIn(said, r.stdout + r.stderr)
+                if said != too_big and "flash lane" not in said:
+                    self.assertNotIn("needs a 128 GB DGX Spark", r.stderr)
                 self.assertEqual(wall.reached(record), [])
 
     def test_prepare_lane_says_a_side_lane_needs_128_gb_not_an_install(self):

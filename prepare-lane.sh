@@ -143,6 +143,10 @@ prepare_27b(){
     *) if [ -n "$TARGET" ]; then die "$TARGET is not a 27B lane target (stock, uncensored, fp8 or uncensored-fp8)"; fi
        die "the 27B unit serves $model, which no 27B target names: ./switch-model.sh stock points it at one" ;;
   esac
+  # by its name, a target given by its repo or a typo checked as one was refused as too big, and the
+  # unit's own target was not checked at all (found in review, 2026-10-23)
+  [ "$(box_mem_class)" != 64 ] || target_fits "$target" \
+    || die "The $target target needs a 128 GB DGX Spark, and this box is a 64 GB one."
   # what it downloads, summed on each disk before the first byte, as for the flash lane; the
   # checkpoint's 45 hold its DFlash2 draft, as install.sh counts them (5 more for it here asked
   # 98 where install.sh asks 93, found in review, 2026-10-15)
@@ -190,12 +194,10 @@ case "$1" in
     # shellcheck source=lanes.sh
     . "$HERE/lanes.sh"
     # A 64 GB DGX Spark holds neither the flash lane nor the 27B's FP8 targets (boxmem.py): refused
-    # here before an image or a checkpoint is pulled, as the cockpit's Load runs this before its
-    # switch, which refused them only after (found in review, 2026-10-23)
-    if [ "$(box_mem_class)" = 64 ]; then
-      lane_fits "$1" || die "The $1 lane needs a 128 GB DGX Spark, and this box is a 64 GB one."
-      [ -z "$TARGET" ] || target_fits "$TARGET" || die "The $TARGET target needs a 128 GB DGX Spark, and this box is a 64 GB one."
-    fi
+    # before an image or a checkpoint is pulled, as the cockpit's Load runs this before its switch,
+    # which refused them only after (found in review, 2026-10-23). The lane here, the 27B's target in
+    # prepare_27b, once it is known by its name, its repo or the unit's own
+    [ "$(box_mem_class)" != 64 ] || lane_fits "$1" || die "The $1 lane needs a 128 GB DGX Spark, and this box is a 64 GB one."
     # a terminal opened before the account joined the docker group: on with the group (lanes.sh)
     docker_session bash "$HERE/${BASH_SOURCE[0]##*/}" "$@"
     pins_or_die
