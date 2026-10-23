@@ -174,8 +174,11 @@ below (`0` turns a ceiling off).
   in the environment only), the model that serves, the timeouts below, and the
   context and answer budget that fit that lane, then runs `claude` with your
   arguments. Your `~/.claude` is left alone, and a variable you set yourself is
-  kept as it is. The pair comes from the lane's opencode limits, which the
-  installer and the cockpit fit to its pool, its window and the proxy's ceiling:
+  kept as it is. The installer leaves any other `claude-local` where it is, but
+  for the one the reply to discussion #59 gave to copy there (2026-10-22): that
+  one is kept beside it as `claude-local.from-59`, and replaced. The pair comes
+  from the lane's opencode limits, which the installer and the cockpit fit to
+  its pool, its window and the proxy's ceiling:
   `CLAUDE_CODE_MAX_CONTEXT_TOKENS` is opencode's context plus 23,000, so Claude
   Code's longest prompt is opencode's context, and `max_tokens` is opencode's
   answer budget (228,000 and 32,000 on Flash FP4-Local, 578,000 and 185,000 on

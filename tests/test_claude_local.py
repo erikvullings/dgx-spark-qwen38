@@ -7,7 +7,8 @@ only in the environment, never on the command line, the model the proxy serves, 
 context and answer budget derived from the lane's opencode limits by Claude Code's own rule
 (its longest prompt is CLAUDE_CODE_MAX_CONTEXT_TOKENS - 23,000, measured against Claude Code
 2.1.304 on 2026-10-23). The installer's own lines write the launcher with HOME in a temporary
-directory, and leave a claude-local that is not this repo's where it is."""
+directory, and leave a claude-local that is not this repo's where it is, but for the one
+discussion #59's reply gave to copy there, which they keep beside and replace."""
 import importlib.util
 import json
 import os
@@ -25,6 +26,26 @@ spec = importlib.util.spec_from_file_location("claude_local", SCRIPT)
 cl = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(cl)
 KEY = "test-key-not-a-real-one"
+# The launcher discussion #59's reply of 2026-10-22 gave to copy to ~/.local/bin/claude-local,
+# byte for byte as it was published
+FROM_59 = rb'''#!/bin/bash
+# ~/.local/bin/claude-local: Claude Code on the lane the box serves
+export ANTHROPIC_BASE_URL=http://127.0.0.1:30001   # from another machine: http://<box>:30001
+export ANTHROPIC_AUTH_TOKEN="$(head -1 ~/.config/qwen38/api-key)"
+export ANTHROPIC_API_KEY=""
+# any model name Claude Code sends is answered by the lane that serves
+export ANTHROPIC_MODEL=qwen3.8-27b
+# how much context Claude Code may fill: a pair that fits every lane's 262K window,
+# or the 27B's measured pair when it serves in its 1M mode (the default)
+CTX=205000 OUT=32000
+systemctl is-active --quiet qwen38-sglang.service && CTX=529000 OUT=250000
+export CLAUDE_CODE_MAX_CONTEXT_TOKENS=$CTX CLAUDE_CODE_EXTRA_BODY="{\"max_tokens\":$OUT}"
+# a long prefill or a long answer is not a dead stream
+export API_TIMEOUT_MS=3600000 CLAUDE_STREAM_IDLE_TIMEOUT_MS=1800000 CLAUDE_BYTE_STREAM_IDLE_TIMEOUT_MS=1800000
+# Unsloth's advice for local servers: a header that changes at every request defeats the prefix cache
+export CLAUDE_CODE_ATTRIBUTION_HEADER=0 CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1
+exec claude "$@"
+'''
 
 
 class Pair(unittest.TestCase):
@@ -162,7 +183,7 @@ class TheInstallerWritesIt(unittest.TestCase):
     def run_block(self, existing=None):
         home = pathlib.Path(tempfile.mkdtemp(prefix="claude-local-home-"))
         self.addCleanup(lambda: subprocess.run(["rm", "-rf", str(home)]))
-        bindir = home / ".local/bin"
+        bindir = self.bindir = home / ".local/bin"
         bindir.mkdir(parents=True)
         if existing is not None:
             (bindir / "claude-local").write_bytes(existing)
@@ -184,6 +205,31 @@ class TheInstallerWritesIt(unittest.TestCase):
         r, text = self.run_block(existing=foreign)
         self.assertEqual(text, foreign)
         self.assertIn("an unrelated 'claude-local' exists", r.stdout)
+
+    def test_the_launcher_59s_reply_gave_is_kept_beside_and_replaced(self):
+        r, text = self.run_block(existing=FROM_59)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn(b'exec python3 -I "/the/clone/claude-local.py" "$@"', text)
+        self.assertEqual((self.bindir / "claude-local.from-59").read_bytes(), FROM_59)
+        self.assertIn("the claude-local of discussion #59's reply is kept as", r.stdout)
+        self.assertNotIn("unrelated", r.stdout)
+
+    def test_an_edited_one_is_kept_beside_as_it_was(self):
+        # a model or an address of one's own changes neither its first comment nor its last line
+        edited = FROM_59.replace(b"ANTHROPIC_MODEL=qwen3.8-27b", b"ANTHROPIC_MODEL=mine").replace(
+            b"http://127.0.0.1:30001", b"http://spark.local:30001")
+        r, text = self.run_block(existing=edited)
+        self.assertIn(b"dgx-spark-qwen38", text)
+        self.assertEqual((self.bindir / "claude-local.from-59").read_bytes(), edited)
+
+    def test_a_file_with_one_of_its_lines_only_is_left_alone(self):
+        for keep in (b"# ~/.local/bin/claude-local: Claude Code on the lane the box serves\n", b'exec claude "$@"\n'):
+            with self.subTest(keep):
+                other = b"#!/bin/sh\n" + keep + b"echo mine\n"
+                r, text = self.run_block(existing=other)
+                self.assertEqual(text, other)
+                self.assertFalse((self.bindir / "claude-local.from-59").exists())
+                self.assertIn("an unrelated 'claude-local' exists", r.stdout)
 
     def test_the_uninstaller_lists_and_removes_only_ours(self):
         text = (REPO / "uninstall.sh").read_text()
