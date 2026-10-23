@@ -8,8 +8,8 @@ The copy ends at a wall just past its last line (installer_wall); the commands t
 box are stubs that answer as a box with no lane image would (docker has none, nvidia-smi sees
 the GPU), sudo runs what it is given in the test's own folders, and the units are written to a
 folder the test owns. The machine is a GB10 whatever runs the suite: uname says aarch64 and the
-copy reads the reference box's MemTotal, as the preflight refuses anything else (GitHub's x86_64
-runner, 16 GB, stopped it there: found by the CI run of v1.33.0, 2026-10-15)."""
+copy reads the reference box's MemTotal, as the preflight refuses a box below the 64 GB class
+(GitHub's x86_64 runner, 16 GB, stopped it there: found by the CI run of v1.33.0, 2026-10-15)."""
 import pathlib
 import shutil
 import subprocess
@@ -34,8 +34,9 @@ def run_units_only(lane, gpu="ATS", main=False):
     script = pathlib.Path(wall.walled(at=NO_START if main else DONE, after=not main, units=units))
     meminfo = wall._tmp("meminfo-") / "meminfo"
     meminfo.write_text("MemTotal:       127535272 kB\n")      # the reference box's
-    text, read = script.read_text(), "awk '/^MemTotal/{print int($2/1048576)}' /proc/meminfo"
-    assert text.count(read) == 1, "install.sh reads the memory another way now"
+    # read twice, its class at the top and its GiB at step 1 (boxmem.py)
+    text, read = script.read_text(), "${QWEN38_MEMINFO:-/proc/meminfo}"
+    assert text.count(read) == 2, "install.sh reads the memory another way now"
     script.write_text(text.replace(read, read.replace("/proc/meminfo", str(meminfo))))
     for f in REPO.iterdir():      # what install.sh reads beside itself (its templates, its helpers)
         if f.is_file() and not (script.parent / f.name).exists():

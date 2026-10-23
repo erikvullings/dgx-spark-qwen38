@@ -33,7 +33,7 @@ REAL_UNITS = "the box's own units"
 # thing that probes the machine; or, for the one test that means to run step 1, the line
 # that ends it. get.sh: the first line after its root refusal.
 BEFORE_STEP_1 = 'step "1/10 Preflight checks"\n'
-AFTER_STEP_1 = 'echo "OK (aarch64, ${TOTAL_GB} GB RAM, ${FREE_DISK_GB} GB free)"\n'
+AFTER_STEP_1 = 'echo "OK (aarch64, ${TOTAL_GIB} GiB of memory: a ${MEM_CLASS} GB box, ${FREE_DISK_GB} GiB free)"\n'
 GET_PAST_ROOT = '  REPO_URL="https://github.com/hasso5703/dgx-spark-qwen38"\n'
 
 # Every directory this makes lives under one root, removed when the process ends: the suite
@@ -87,6 +87,8 @@ def walled(script="install.sh", at=None, after=False, units=None):
     # and conformity.py (since v1.36.0), which the convergence asks whether an installed value
     # is a default of an older release or a choice
     (d / "conformity.py").write_text((REPO / "conformity.py").read_text())
+    # and boxmem.py (since the 64 GB DGX Spark), which says the box's memory class
+    (d / "boxmem.py").write_text((REPO / "boxmem.py").read_text())
     # and the side lanes' installers, whose defaults it recommends (since v1.36.0): read only,
     # so written without the execute bit, and a run that reached one would stop on it
     for side in ("install-kolibri.sh", "install-image.sh", "install-video.sh"):

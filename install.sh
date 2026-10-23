@@ -474,6 +474,13 @@ REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # the text lane the box comes back to, one record shared with switch-model.sh (lanes.sh)
 # shellcheck source=lanes.sh
 . "$REPO_DIR/lanes.sh"
+# The box's memory class (boxmem.py), read before any choice: 128, or 64 for the 64 GB DGX Spark
+# NVIDIA's partners ship from 2026-10-23, which gets the 27B in a unit sized for it, Bolt and the
+# speech lane, and no lane that does not fit it. A box below both is refused at step 1.
+MEM_CLASS="$(QWEN38_MEMINFO="${QWEN38_MEMINFO:-/proc/meminfo}" box_mem_class 2>/dev/null)" || MEM_CLASS=none
+# and the same class for what this run calls: conformity.py, the lanes' installers, the run for the
+# other text lane
+case "$MEM_CLASS" in 64|128) export QWEN38_MEMORY_CLASS="$MEM_CLASS" ;; esac
 
 NO_START=0
 NO_SERVICE=0
@@ -1235,9 +1242,19 @@ fi
 # lane, --no-service, and what the installed unit already says) is only known
 # now. An explicit CONTEXT_MODE still refuses the combinations it cannot serve,
 # a few lines below; a default must never refuse anything.
+# A 64 GB box serves neither the flash lane (its checkpoint alone is 135.3 GB) nor the 1M window,
+# whose KV pool is more memory than the box has.
+if [ "$MEM_CLASS" = 64 ]; then
+  [ "$LANE" != flash ] || die "The flash lane needs a 128 GB DGX Spark (its checkpoint alone is 135.3 GB), and this box is a 64 GB one. MODEL_CHOICE=stock ./install.sh serves the 27B, sized for it."
+  target_fits "$MODEL_CHOICE" || die "MODEL_CHOICE=$MODEL_CHOICE (Qwen's FP8 weights, 30.9 GB) leaves the 27B's KV pool too little on a 64 GB DGX Spark: MODEL_CHOICE=stock or uncensored (NVFP4) serve here."
+  [ "$CONTEXT_MODE" != 1m ] || die "CONTEXT_MODE=1m needs a 128 GB DGX Spark (the 1M window's KV pool alone is more memory than this box has), and this box is a 64 GB one. Drop CONTEXT_MODE: the 27B serves its native 262144 window here."
+fi
 if [ -z "$CONTEXT_MODE" ]; then
   if [ "$LANE" = "flash" ]; then
     CONTEXT_MODE=native
+  elif [ "$MEM_CLASS" = 64 ]; then
+    CONTEXT_MODE=native
+    echo "Context mode: native (262144 tokens), the one a 64 GB DGX Spark holds."
   elif [ "$NO_SERVICE" -eq 1 ]; then
     CONTEXT_MODE=native
     echo "--no-service installs the native 262144 window (1m needs the keepalive proxy service)."
@@ -1357,9 +1374,22 @@ fi
 # that a run leaves out stays where it is, not updated by that run; the text lane a box booting a
 # side lane served last gets this release's units and none of its downloads while it is left out
 # or not prepared (issue #57, below: LEFT_OUT).
+lane_title(){  # $1 a lane, by its flag's name: the name a run says
+  case "$1" in
+    27b) echo "27B" ;; flash) echo "flash 176B" ;; image) echo "image (Qwen-Image 2.1)" ;;
+    video) echo "video (MiniMax-H3)" ;; kolibri) echo "Kolibri-1" ;; nemotron) echo "Nemotron 3.5 Bolt" ;;
+    nemotron-super) echo "Nemotron 3.5 Super VL" ;; flash-local) echo "Flash FP4-Local" ;;
+    ornith-122b) echo "Ornith 1.5 122B" ;; *) echo "$1" ;;
+  esac
+}
 lane_wanted(){  # $1 lane (image, video, flash, 27b), $2 --no-$1 given, $3 --with-$1 given: sets WANT
   local mark="$CONFIG_DIR/$1.off"
   WANT=1
+  # A lane a 64 GB box cannot hold is left out of it whatever was asked, and said once below.
+  if [ "$MEM_CLASS" = 64 ] && ! lane_fits "$1"; then
+    [ "$3" -eq 0 ] || die "The $(lane_title "$1") lane needs a 128 GB DGX Spark, and this box is a 64 GB one. Drop --with-$1."
+    WANT=0; TOO_BIG+=("$1"); return 0
+  fi
   if [ "$2" -eq 1 ]; then
     WANT=0
     ! serves_anyway "$1" || serves_said "$1"
@@ -1376,6 +1406,7 @@ serves_anyway(){ [ "$1" = "$LANE" ] && [ "$SIDE_BOOT" -eq 0 ]; }   # $1 a lane l
 # gets its units only, and the run then says so (issue #54; both said, found in review, 2026-10-21).
 serves_said(){ echo "The ${1/27b/27B} lane is the one this run serves: --no-$1 leaves nothing out of it."; }
 WANT_IMAGE=0; WANT_VIDEO=0; WANT_FLASH=0; WANT_27B=0; WANT_KOLIBRI=0; WANT_NEMOTRON=0; WANT_NEMOTRON_SUPER=0; WANT_FLASH_LOCAL=0; WANT_ORNITH_122B=0
+TOO_BIG=()
 if [ -z "$SECONDARY" ]; then
   lane_wanted image "$NO_IMAGE" "$WITH_IMAGE"; WANT_IMAGE="$WANT"
   lane_wanted video "$NO_VIDEO" "$WITH_VIDEO"; WANT_VIDEO="$WANT"
@@ -1386,6 +1417,11 @@ if [ -z "$SECONDARY" ]; then
   lane_wanted nemotron-super "$NO_NEMOTRON_SUPER" "$WITH_NEMOTRON_SUPER"; WANT_NEMOTRON_SUPER="$WANT"
   lane_wanted flash-local "$NO_FLASH_LOCAL" "$WITH_FLASH_LOCAL"; WANT_FLASH_LOCAL="$WANT"
   lane_wanted ornith-122b "$NO_ORNITH_122B" "$WITH_ORNITH_122B"; WANT_ORNITH_122B="$WANT"
+fi
+if [ "${#TOO_BIG[@]}" -gt 0 ]; then
+  _big=""; for _l in "${TOO_BIG[@]}"; do _big+="${_big:+, }$(lane_title "$_l")"; done
+  echo "This box is a 64 GB DGX Spark: the lanes that fit it are the 27B and Nemotron 3.5 Bolt here, and the speech lane (./install-speech.sh). Left out, as they need a 128 GB one: $_big."
+  unset _big _l
 fi
 
 # The image, video, Kolibri and Nemotron lanes are installed on demand: a run puts in their units
@@ -1550,9 +1586,10 @@ case "$GPU_NAME" in *GB10*) ;; *) echo "WARNING: expected GB10, found '$GPU_NAME
 command -v docker >/dev/null || die "docker not found. Install Docker + NVIDIA Container Toolkit (stock on DGX OS)."
 command -v python3 >/dev/null || die "python3 not found on the host (needed for the template patcher; stock on DGX OS)."
 command -v ss >/dev/null || die "ss not found (iproute2, stock on DGX OS): the preflight cannot check the ports without it."
-# /proc/meminfo, not `free`: free(1) localizes its row labels (issue #3)
-TOTAL_GB=$(awk '/^MemTotal/{print int($2/1048576)}' /proc/meminfo)
-[ "$TOTAL_GB" -ge 110 ] || die "This config needs a ~121 GB unified-memory machine; found ${TOTAL_GB} GB."
+# /proc/meminfo, not `free`: free(1) localizes its row labels (issue #3). In GiB, as the kernel
+# counts it: the reference box's 128 GB is 121.6 GiB of MemTotal. Its class was read at the top.
+TOTAL_GIB="$(QWEN38_MEMINFO="${QWEN38_MEMINFO:-/proc/meminfo}" python3 -I "$REPO_DIR/boxmem.py" gib)"
+[ "$MEM_CLASS" != none ] || die "This box has ${TOTAL_GIB} GiB of memory (MemTotal), and the lanes here need a 64 GB or a 128 GB DGX Spark."
 # An account outside the docker group, as a new box's is, joins it here, after every refusal above
 # (and --help, --plan or a mistyped flag never get here), and the run starts again with it; a daemon
 # down or a refusal elsewhere stops with the way out (lanes.sh docker_grant). --no-service uses no
@@ -1746,7 +1783,7 @@ if [ "$NO_SERVICE" -eq 0 ] && ! sudo -n true 2>/dev/null; then
   echo "sudo is needed from step 8 on (systemd units); it asks for your password now, before the downloads."
   sudo -v || die "sudo could not be used here: run 'sudo -v' in this terminal, then re-run ./install.sh"
 fi
-echo "OK (aarch64, ${TOTAL_GB} GB RAM, ${FREE_DISK_GB} GB free)"
+echo "OK (aarch64, ${TOTAL_GIB} GiB of memory: a ${MEM_CLASS} GB box, ${FREE_DISK_GB} GiB free)"
 # What the image and video lanes build or run with, which DGX OS lacks: Python's headers, which
 # their first Load builds xatlas against, and ffmpeg, which the video pipeline refuses to start
 # without. Installed now, while this terminal can give sudo its password: the first Load runs from
@@ -2839,6 +2876,7 @@ if [ "$LANE" = "flash" ]; then
 else
   UNIT_TPL="$REPO_DIR/qwen38-sglang.service.template"
   [ "$CONTEXT_MODE" = "1m" ] && UNIT_TPL="$REPO_DIR/qwen38-sglang-1m.service.template"
+  [ "$MEM_CLASS" = 64 ] && UNIT_TPL="$REPO_DIR/qwen38-sglang-64.service.template"
   SERVE_IMAGE_FINAL="$SERVE_IMAGE"
 fi
 # Serve-time revision lock: the pinned sha is passed to the server itself, so

@@ -17,6 +17,7 @@ the way it loads engine-inputs.py.
 """
 import argparse
 import fcntl
+import importlib.util
 import json
 import os
 import re
@@ -129,6 +130,14 @@ SIDE = {
 }
 
 
+def _box_class():
+    """The box's memory class, as boxmem.py beside this file reads it: 128, 64, or None."""
+    spec = importlib.util.spec_from_file_location("boxmem_for_conformity", REPO / "boxmem.py")
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod.mem_class()
+
+
 def recommended(repo_dir=REPO, home=None):
     """{knob: value} a box installed today with no variable set ends up with. A default install.sh
     no longer writes the way this reads raises KeyError rather than recommend nothing."""
@@ -150,8 +159,9 @@ def recommended(repo_dir=REPO, home=None):
         "target.flash": flash_target.group(1),
         "DRAFT2": drafter(val("DRAFT2_REPO"), val("DRAFT2_QUANT"), val("DRAFT2_TOKENS")),
         # empty in install.sh, and resolved to 1m on a 27B service install once the flags are
-        # read (the test runs install.sh to check that this is what it resolves)
-        "CONTEXT_MODE": "1m",
+        # read (the test runs install.sh to check that this is what it resolves); native on a 64 GB
+        # DGX Spark, which cannot hold the 1M window's KV pool
+        "CONTEXT_MODE": "native" if _box_class() == "64" else "1m",
         "ENGINE_BIND": val("ENGINE_BIND"),
         "PROXY_BIND": val("PROXY_BIND"),
         "PORT": port,

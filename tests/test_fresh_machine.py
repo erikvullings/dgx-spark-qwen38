@@ -739,12 +739,47 @@ class TheWholeScripts(unittest.TestCase):
                 self.assertFalse(box.sg_calls())
         box = box_for_step_1()
         copy = pathlib.Path(wall.walled(at=GRANT_LINE, after=True))
-        small = copy.parent / "meminfo-64"
-        small.write_text("MemTotal:       65536000 kB\n")
+        small = copy.parent / "meminfo-32"
+        small.write_text("MemTotal:       32505856 kB\n")      # 31.0 GiB, below the 64 GB class
         copy.write_text(copy.read_text().replace("/proc/meminfo", str(small)))
         r, out, record = self.run_install(box, str(copy))
-        self.assertIn("This config needs a ~121 GB unified-memory machine", out)
+        self.assertIn("This box has 31.0 GiB of memory (MemTotal), and the lanes here need a 64 GB or a 128 GB DGX Spark.", out)
         self.assertEqual(box.sudo_calls(), [])
+
+    def test_a_64_gb_box_goes_on_with_the_lanes_that_fit_it(self):
+        # until the 64 GB DGX Spark (2026-10-23) step 1 refused it as "a ~121 GB unified-memory
+        # machine" short; it goes on now, and says which lanes it leaves out
+        box = box_for_step_1(docker_err="", docker_rc=0, member=True, in_session=True)
+        copy = pathlib.Path(wall.walled(at=GRANT_LINE, after=True))
+        mem = copy.parent / "meminfo-64"
+        mem.write_text("MemTotal:       60397977 kB\n")      # 57.6 GiB: 64 GiB held aside on the reference box
+        copy.write_text(copy.read_text().replace("/proc/meminfo", str(mem)))
+        r, out, record = self.run_install(box, str(copy))
+        self.assertIn(wall.WALL, out, out[-800:])
+        self.assertIn("This box is a 64 GB DGX Spark: the lanes that fit it are the 27B and Nemotron 3.5 Bolt here", out)
+        self.assertIn("Left out, as they need a 128 GB one: image (Qwen-Image 2.1), video (MiniMax-H3), flash 176B, Kolibri-1, "
+                      "Nemotron 3.5 Super VL, Flash FP4-Local, Ornith 1.5 122B.", out)
+        self.assertIn("Context mode: native (262144 tokens), the one a 64 GB DGX Spark holds.", out)
+        self.assertNotIn("needs a ~121 GB", out)
+
+    def test_a_64_gb_box_refuses_what_it_cannot_hold_before_anything(self):
+        for args, env, said in (
+                ((), {"MODEL_CHOICE": "flash"}, "The flash lane needs a 128 GB DGX Spark (its checkpoint alone is 135.3 GB)"),
+                ((), {"MODEL_CHOICE": "fp8"}, "MODEL_CHOICE=fp8 (Qwen's FP8 weights, 30.9 GB) leaves the 27B's KV pool too little"),
+                ((), {"CONTEXT_MODE": "1m"}, "CONTEXT_MODE=1m needs a 128 GB DGX Spark"),
+                (("--with-video",), {}, "The video (MiniMax-H3) lane needs a 128 GB DGX Spark, and this box is a 64 GB one. Drop --with-video."),
+                (("--with-flash-local",), {}, "The Flash FP4-Local lane needs a 128 GB DGX Spark")):
+            with self.subTest(args or env):
+                box = box_for_step_1(docker_err="", docker_rc=0, member=True, in_session=True)
+                copy = pathlib.Path(wall.walled(at=GRANT_LINE, after=True))
+                mem = copy.parent / "meminfo-64"
+                mem.write_text("MemTotal:       60397977 kB\n")
+                copy.write_text(copy.read_text().replace("/proc/meminfo", str(mem)))
+                r, out, record = self.run_install(box, str(copy), *args, **env)
+                self.assertEqual(r.returncode, 1, out[-800:])
+                self.assertIn(said, out)
+                self.assertNotIn(wall.WALL, out)
+                self.assertEqual(box.sudo_calls(), [])
 
     def test_install_sh_started_again_does_not_say_its_first_lines_twice(self):
         box = box_for_step_1(docker_err="", docker_rc=0, member=True, in_session=True)
