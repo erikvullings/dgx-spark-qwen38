@@ -585,7 +585,7 @@ class TheOneLinerReachesIt(unittest.TestCase):
                          "the normal path prepares then proves it, and the image-boot path updates it")
 
     def test_the_help_says_what_it_costs_before_someone_spends_it(self):
-        self.assertIn("--no-image            leave the Qwen-Image 2.1 lane out (46 GB)", self.text)
+        self.assertIn("--no-image            leave the Qwen-Image 2.1 lane out of this run (46 GB).", self.text)
         self.assertIn("about 39 GB of\ndownloads", self.text)   # a plain run: the lane that serves
         self.assertIn("about\n                        930 GB of disk", self.text)   # --all-weights: the whole box
 
