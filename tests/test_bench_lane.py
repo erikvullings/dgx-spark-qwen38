@@ -85,6 +85,12 @@ def run_bench(model):
     return r.stdout + r.stderr
 
 
+# The 27B's reference line, whole: the fake engine's rates are timings (239674.5, 65536.0 tok/s and
+# so on), and "71.4" alone turned up inside one of them under the load of a full CI run, which then
+# failed the Ornith lane for a line it never printed (2026-10-23).
+REF_27B = "71.4 greedy median"
+
+
 def main():
     fails = []
 
@@ -123,14 +129,14 @@ def main():
     out = run_bench("ornith-1.5-122b")
     if "Ornith 1.5 122B" not in out.splitlines()[0]:
         fails.append(f"the Ornith lane is not named in the header: {out.splitlines()[0]!r}")
-    for other in ("NVFP4+NEXTN", "FP4-Local", "71.4", "Qwen3.8-27B NVFP4+DFlash2"):
+    for other in ("NVFP4+NEXTN", "FP4-Local", REF_27B, "Qwen3.8-27B NVFP4+DFlash2"):
         if other in out:
             fails.append(f"the Ornith lane printed another lane's line: {other!r}")
     if "42.2-42.4" not in out:
         fails.append(f"the Ornith lane's reference is not printed:\n{out[:400]}")
     for model in ("kolibri-1", "nemotron-3.5-bolt", "nemotron-3.5-super-vl"):
         out = run_bench(model)
-        for other in ("Qwen3.8-27B NVFP4+DFlash2", "71.4", "Flash-Next"):
+        for other in ("Qwen3.8-27B NVFP4+DFlash2", REF_27B, "Flash-Next"):
             if other in out:
                 fails.append(f"{model} printed another lane's line: {other!r}")
         if model not in out.splitlines()[0]:
