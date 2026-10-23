@@ -12,6 +12,14 @@
 # one record there is no chain to follow, and no loop to close.
 LANES_UNIT_DIR="${LANES_UNIT_DIR:-/etc/systemd/system}"
 
+# The box's memory class and the lanes that fit it, from boxmem.py beside this file: 128, or 64 for
+# the 64 GB DGX Spark NVIDIA's partners ship from 2026-10-23, which gets only the lanes that fit it.
+_lanes_dir(){ case "${BASH_SOURCE[0]}" in */*) echo "${BASH_SOURCE[0]%/*}" ;; *) echo . ;; esac; }
+box_mem_class(){ python3 -I "$(_lanes_dir)/boxmem.py" class; }   # 128, 64 or none
+# $1 a lane, by install.sh's name; the class install.sh read (MEM_CLASS) when it has one
+lane_fits(){ python3 -I "$(_lanes_dir)/boxmem.py" fits "$1" ${MEM_CLASS:+--class "$MEM_CLASS"}; }
+target_fits(){ python3 -I "$(_lanes_dir)/boxmem.py" fits-target "$1" ${MEM_CLASS:+--class "$MEM_CLASS"}; }   # $1 a target
+
 text_lane_note(){  # $1 unit: the box's text lane is this one; anything but an SGLang text unit is ignored
   case "$1" in
     qwen38-sglang.service|qwen38-flash.service) mkdir -p "$CONFIG_DIR"; printf '%s\n' "$1" > "$CONFIG_DIR/text-lane" ;;
