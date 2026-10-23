@@ -24,10 +24,26 @@ import test_conformity_classify as tcc  # noqa: E402
 REPO = pathlib.Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO))
 import conformity  # noqa: E402
+from unittest import mock  # noqa: E402
 
 TEXT = (REPO / "install.sh").read_text()
 HOME = tcc.HOME
-REC = conformity.recommended(home=HOME)
+# conformity.py recommends by the box's class (the native window on a 64 GB one): these hold a
+# 128 GB box's state, so the class is that one whatever the machine running them is, and an
+# exported QWEN38_MEMORY_CLASS is back as it was after them (found in review, 2026-10-23).
+_ENV = mock.patch.dict(os.environ, {"QWEN38_MEMORY_CLASS": "128"})
+
+
+def setUpModule():
+    _ENV.start()
+
+
+def tearDownModule():
+    _ENV.stop()
+
+
+with _ENV:
+    REC = conformity.recommended(home=HOME)
 OLD_BOX = "2026-09-05T09:00:00+02:00"      # before v1.17.0 moved the engine bind
 YOUNG_BOX = "2026-10-01T10:00:00+02:00"    # after every change OLD_DEFAULTS lists
 

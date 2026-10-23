@@ -32,6 +32,10 @@ OLD_BOX = "2026-09-05T09:00:00+02:00"
 
 def setUpModule():
     ENV_BEFORE.update(os.environ)
+    # conformity.py recommends by the box's class (the native window on a 64 GB one): the cockpit
+    # here holds a 128 GB box's state, whatever the machine running it is, and an exported class is
+    # back as it was after (tearDownModule; found in review, 2026-10-23)
+    os.environ["QWEN38_MEMORY_CLASS"] = "128"
 
 
 def tearDownModule():
