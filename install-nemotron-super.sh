@@ -65,8 +65,9 @@ CONFIG_DIR="$HOME/.config/qwen38"
 # the text lane the box comes back to, one record shared with switch-model.sh (lanes.sh)
 # shellcheck source=lanes.sh
 . "$HERE/lanes.sh"
-# A 64 GB DGX Spark cannot hold this lane (boxmem.py): refused there before anything is fetched.
-[ "$(box_mem_class)" != 64 ] || lane_fits nemotron-super || die "The Nemotron 3.5 Super VL lane needs a 128 GB DGX Spark, and this box is a 64 GB one."
+# A 64 GB DGX Spark cannot hold this lane (boxmem.py): refused there before anything is fetched,
+# and --uninstall still takes away what an older release put there (found in review, 2026-10-23).
+[ "$ACTION" = uninstall ] || [ "$(box_mem_class)" != 64 ] || lane_fits nemotron-super || die "The Nemotron 3.5 Super VL lane needs a 128 GB DGX Spark, and this box is a 64 GB one."
 # A terminal opened before the account joined the docker group: the run goes on with it (lanes.sh).
 docker_session bash "$HERE/${BASH_SOURCE[0]##*/}" "$@"
 # what the three vLLM lanes' installers share: the engine's cache and port, the uninstall, the

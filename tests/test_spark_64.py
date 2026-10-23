@@ -38,19 +38,21 @@ class TheSideLanes(unittest.TestCase):
         after = text.split(SOURCE, 1)[1].splitlines()
         # the comment, then the refusal: the first thing the script does once it has the library
         self.assertTrue(after[0].startswith("# A 64 GB DGX Spark cannot hold this lane"), after[0])
-        self.assertTrue(after[1].startswith('[ "$(box_mem_class)" != 64 ] || lane_fits '), after[1])
-        return after[1]
+        self.assertTrue(after[2].startswith('[ "$ACTION" = uninstall ] || [ "$(box_mem_class)" != 64 ] || lane_fits '), after[2])
+        return after[2]
 
     def test_each_refuses_a_64_gb_box_and_lets_a_128_gb_one_through(self):
         for script, lane in SIDE.items():
             with self.subTest(script):
                 line = self.guard(script)
                 self.assertIn(f"lane_fits {lane} ||", line)
-                rc, out, err = bash(line + '\necho "went on"', "64")
+                rc, out, err = bash('ACTION=install\n' + line + '\necho "went on"', "64")
                 self.assertEqual(rc, 1, err)
                 self.assertNotIn("went on", out)
                 self.assertIn("needs a 128 GB DGX Spark, and this box is a 64 GB one.", err)
-                self.assertEqual(bash(line + '\necho "went on"', "128")[:2], (0, "went on\n"))
+                self.assertEqual(bash('ACTION=install\n' + line + '\necho "went on"', "128")[:2], (0, "went on\n"))
+                # its --uninstall takes away what an older release put there, on a 64 GB box too
+                self.assertEqual(bash('ACTION=uninstall\n' + line + '\necho "went on"', "64")[:2], (0, "went on\n"))
 
     def test_nothing_runs_before_the_refusal_but_the_script_finding_itself(self):
         # what comes before the library: comments, set, die(), the arguments and HERE, no command
