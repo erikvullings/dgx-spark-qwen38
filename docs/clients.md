@@ -168,7 +168,25 @@ below (`0` turns a ceiling off).
   config (effort variants, default model follows the target). Everything
   in README applies through the proxy.
 - **Claude Code**: works through the proxy's Anthropic route
-  (`/v1/messages`). The env block that makes it behave:
+  (`/v1/messages`). **`claude-local`** runs it on the lane the box serves (the
+  installer puts it in `~/.local/bin`, beside `oc`): it sets, for the one
+  process it starts, the proxy, the key (read from its file at each launch,
+  in the environment only), the model that serves, the timeouts below, and the
+  context and answer budget that fit that lane, then runs `claude` with your
+  arguments. Your `~/.claude` is left alone, and a variable you set yourself is
+  kept as it is. The pair comes from the lane's opencode limits, which the
+  installer and the cockpit fit to its pool, its window and the proxy's ceiling:
+  `CLAUDE_CODE_MAX_CONTEXT_TOKENS` is opencode's context plus 23,000, so Claude
+  Code's longest prompt is opencode's context, and `max_tokens` is opencode's
+  answer budget (228,000 and 32,000 on Flash FP4-Local, 578,000 and 185,000 on
+  the 27B in its 1M mode). opencode may reach one worst step past its context,
+  and that step is the margin left for what Claude Code adds to a prompt and
+  only estimates. A lane opencode has no limits for gets 205,000 and 32,000,
+  which fit every lane. It does not set `CLAUDE_CODE_ATTRIBUTION_HEADER=0`:
+  on the Ornith lane Claude Code reused 36 to 38% of its prompts from the cache
+  with it and without it (2026-10-22).
+
+  By hand, the env block that makes it behave:
 
   ```bash
   ANTHROPIC_BASE_URL=http://<host>:30001   ANTHROPIC_AUTH_TOKEN="<key>"
@@ -179,9 +197,13 @@ below (`0` turns a ceiling off).
   ```
 
   With `CONTEXT_MODE=1m` the limit is the KV pool, not the 1M window.
-  Claude Code (measured on 2.1.239) compacts at that variable minus 33,000
-  input tokens, refuses to send past it minus 23,000, and asks for its
-  `max_tokens` on top. The proxy refuses a prompt past 92% of the pool,
+  Claude Code (measured on 2.1.239, and again on 2.1.304 on 2026-10-23 against a
+  fake server) compacts at that variable minus 33,000 input tokens, refuses to
+  send past it minus 23,000, and asks for its `max_tokens` on top. On 2.1.304,
+  for a model whose name is not a Claude one, it reaches the first of these
+  through its reactive path: it sends the turn, and compacts if the server says
+  the prompt is too long, as the proxy does. It compacts before sending at the
+  second. The proxy refuses a prompt past 92% of the pool,
   prompt and answer together must fit in it, and the pool is decided at
   boot (832,993 to 922,094 tokens over sixteen 27B boots here; the
   cockpit's Lanes view shows yours). Set to the window, a session grows past

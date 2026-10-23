@@ -2841,6 +2841,30 @@ fi
 fi
 # end of step 7
 
+# claude-local (discussion #59, 2026-10-23): Claude Code on the lane this box serves, with that
+# lane's context and answer budget, worked out at each launch by claude-local.py (its docstring
+# says how). Installed whether or not the opencode integration is on, since it falls back to a
+# pair that fits every lane; the run for the other text lane leaves it to the run that serves.
+# Never clobbers a claude-local that is not this repo's.
+if [ -z "$SECONDARY" ]; then
+  CL_BIN="$HOME/.local/bin/claude-local"
+  if [ -e "$CL_BIN" ] && ! grep -q 'dgx-spark-qwen38' "$CL_BIN" 2>/dev/null; then
+    echo "NOTE: an unrelated 'claude-local' exists at $CL_BIN; not installing the launcher."
+    echo "      Launch Claude Code on this box with:  python3 -I $REPO_DIR/claude-local.py"
+  else
+    mkdir -p "$HOME/.local/bin"
+    cat > "$CL_BIN" <<CLWRAP
+#!/bin/bash
+# claude-local launcher installed by dgx-spark-qwen38: Claude Code on the lane this box serves.
+# The key, the model and the limits are read at each launch by claude-local.py in the clone.
+export CONFIG_DIR="\${CONFIG_DIR:-$CONFIG_DIR}"
+exec python3 -I "$REPO_DIR/claude-local.py" "\$@"
+CLWRAP
+    chmod +x "$CL_BIN"
+    echo "installed the claude-local launcher at $CL_BIN (Claude Code on the lane that serves)"
+  fi
+fi
+
 # What this run installed, written down in $CONFIG_DIR/installed.json by conformity.py (since
 # v1.36.0, 2026-10-17): the release and its commit, how the run ended, and the choices made on
 # this command line. It is what tells a value an older release installed by default from one

@@ -2,7 +2,7 @@
 # Removes the qwen38 serving services (27B SGLang and/or Flash-Next) and their config,
 # and knows every artifact ANY past version of this repo may have left on the box
 # (v1.0 through v1.5): units, drop-ins, backups, local and base docker images
-# (tag or digest form), checkpoints, the PLE mmap file, the oc launcher.
+# (tag or digest form), checkpoints, the PLE mmap file, the oc and claude-local launchers.
 #
 #   ./uninstall.sh --list    inventory only: show what is present and how big it
 #                            is, decide for yourself; changes NOTHING, needs no sudo
@@ -167,6 +167,9 @@ fi
 if grep -q 'dgx-spark-qwen38' "$HOME/.local/bin/oc" 2>/dev/null; then
   echo "  launcher  $HOME/.local/bin/oc (this repo's opencode launcher)"
 fi
+if grep -q 'dgx-spark-qwen38' "$HOME/.local/bin/claude-local" 2>/dev/null; then
+  echo "  launcher  $HOME/.local/bin/claude-local (this repo's Claude Code launcher)"
+fi
 # install.sh installs opencode itself only when a box had none; it marks that in the
 # PATH line it adds to ~/.bashrc. Listed, never removed: from then on it is the user's
 # opencode as much as this repo's, with its own sessions under ~/.local/share/opencode.
@@ -274,9 +277,12 @@ if [ -d "$SPEECH_LANE_DIR" ] && { [ "$PRIV" -eq 0 ] || [ "$PRIV_DONE" -eq 1 ]; }
   [ -d "$SPEECH_LANE_DIR/models" ] || rmdir "$SPEECH_LANE_DIR" 2>/dev/null \
     || echo "kept $SPEECH_LANE_DIR: it holds files the speech lane did not put there"
 fi
-# The oc launcher, only if it is ours (never a foreign oc binary)
+# The oc and claude-local launchers, only if they are ours (never a foreign oc binary)
 if grep -q 'dgx-spark-qwen38' "$HOME/.local/bin/oc" 2>/dev/null; then
   rm -f "$HOME/.local/bin/oc"
+fi
+if grep -q 'dgx-spark-qwen38' "$HOME/.local/bin/claude-local" 2>/dev/null; then
+  rm -f "$HOME/.local/bin/claude-local"
 fi
 if [ "$PRIV_DONE" -eq 1 ]; then
   echo "services removed."
