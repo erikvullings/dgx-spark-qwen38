@@ -886,9 +886,10 @@ if [ -z "$SECONDARY" ] && systemctl is-enabled --quiet qwen38-nemotron.service 2
    && [ "$SGL_ENABLED" -eq 0 ] && [ "$FLASH_ENABLED" -eq 0 ]; then
   if [ -n "$_ENV_MODEL_CHOICE" ]; then
     echo "MODEL_CHOICE=$_ENV_MODEL_CHOICE given on a box booting the Nemotron lane: making that text lane the boot lane again."
-  elif [ "$RECOMMENDED" -eq 1 ]; then
+  elif [ "$RECOMMENDED" -eq 1 ] && [ "$MEM_CLASS" != 64 ]; then
     echo "--recommended on a box booting the Nemotron lane: the 27B lane becomes the boot lane again, as on a new box."
   else
+    # (a new 64 GB box serves Bolt itself, so --recommended keeps it there)
     NEMOTRON_BOOT=1
     echo "The Nemotron lane is this box's boot lane: this run brings the other lanes up to date"
     echo "without making one of them the boot lane again. Switch from the cockpit when you want another."
@@ -3813,6 +3814,21 @@ except Exception as e:
     lane_line "FP4-Local  " "$FLASH_LOCAL_STATE" flash-local flash-local "121 GB" "$FLASH_LOCAL_UNIT_PATH"
     lane_line "Ornith 122B" "$ORNITH_122B_STATE" ornith-122b ornith-122b "96 GB" "$ORNITH_122B_UNIT_PATH"
     [ "$LANE" = "27b" ] && echo "  Benchmark  : ./bench.sh"
+    # A 64 GB DGX Spark serves Nemotron 3.5 Bolt (Hasan, 2026-10-24): there the 27B gets 2 requests
+    # and a pool of 46,700 to 92,415 tokens on a 64 GB budget (measured 2026-10-24, its mamba cache
+    # taking much of what is left), where Bolt runs a 262,144-token window at 140 tok/s on code. A
+    # new box has proved its 27B by now: Bolt is prepared and loaded as the cockpit's Load does it,
+    # and the 27B stays a Load away. A box that already boots a lane keeps it, and a run that
+    # names a 27B target, or leaves Bolt out, keeps the 27B.
+    if [ "$MEM_CLASS" = 64 ] && [ -z "$INSTALLED_CHOICE" ] && [ "$SIDE_BOOT" -eq 0 ] && [ -z "$SECONDARY" ] \
+       && [ -z "$_ENV_MODEL_CHOICE" ] && [ "$WANT_NEMOTRON" -eq 1 ]; then
+      step "A 64 GB DGX Spark serves Nemotron 3.5 Bolt: preparing it, then switching to it (the 27B stays installed)"
+      if bash "$REPO_DIR/prepare-lane.sh" nemotron && bash "$REPO_DIR/switch-model.sh" nemotron; then
+        echo "  Nemotron 3.5 Bolt serves now, and at boot; the 27B is a Load away (the cockpit, or ./switch-model.sh stock)"
+      else
+        echo "NOTE: Bolt did not come up (see above), so the 27B keeps serving. Load Bolt from the cockpit to try again."
+      fi
+    fi
     record_install full
     exit 0
   fi

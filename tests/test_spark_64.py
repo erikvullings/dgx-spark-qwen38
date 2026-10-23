@@ -144,6 +144,62 @@ PREPARE_27B_PULL = '  local img_need=48\n'
 PREPARE_SIDE = '    exec bash "$HERE/install-$1.sh" --prepare ;;\n'
 
 
+class ANew64GBBoxServesBolt(unittest.TestCase):
+    """A 64 GB DGX Spark serves Nemotron 3.5 Bolt (Hasan, 2026-10-24): the 27B gets 2 requests and a
+    small pool on that budget. A new box ends its install on Bolt, prepared and loaded as the
+    cockpit's Load does it; a box that boots a lane keeps it. install.sh's own lines run here, with
+    prepare-lane.sh, switch-model.sh and systemctl replaced by stubs that write down their calls."""
+
+    def epilogue(self, cls="64", installed="", side_boot="0", secondary="", env_choice="", want="1", prep_rc=0):
+        d = pathlib.Path(tempfile.mkdtemp(prefix="bolt-first-"))
+        self.addCleanup(shutil.rmtree, d, True)
+        for name, rc in (("prepare-lane.sh", prep_rc), ("switch-model.sh", 0)):
+            (d / name).write_text(f'echo "{name} $*" >> "{d}/calls"\nexit {rc}\n')
+        block = between(INSTALL, '    [ "$LANE" = "27b" ] && echo "  Benchmark  : ./bench.sh"\n', "    record_install full\n")
+        script = ("set -euo pipefail\nstep(){ echo \"== $*\"; }\nrecord_install(){ :; }\n"
+                  f'REPO_DIR="{d}"; LANE=27b; MEM_CLASS={cls}; INSTALLED_CHOICE="{installed}"; SIDE_BOOT={side_boot}\n'
+                  f'SECONDARY="{secondary}"; _ENV_MODEL_CHOICE="{env_choice}"; WANT_NEMOTRON={want}\n' + block)
+        r = subprocess.run(["bash", "-c", script], capture_output=True, text=True, timeout=30)
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        calls = (d / "calls").read_text().splitlines() if (d / "calls").exists() else []
+        return r.stdout, calls
+
+    def test_a_new_64_gb_box_ends_its_install_on_bolt(self):
+        out, calls = self.epilogue()
+        self.assertEqual(calls, ["prepare-lane.sh nemotron", "switch-model.sh nemotron"])
+        self.assertIn("Nemotron 3.5 Bolt serves now, and at boot", out)
+
+    def test_a_bolt_that_does_not_come_up_leaves_the_27b_serving(self):
+        out, calls = self.epilogue(prep_rc=1)
+        self.assertEqual(calls, ["prepare-lane.sh nemotron"])
+        self.assertIn("the 27B keeps serving", out)
+
+    def test_nothing_else_is_moved(self):
+        for kw in ({"cls": "128"}, {"installed": "27b"}, {"side_boot": "1"}, {"secondary": "27b"},
+                   {"env_choice": "uncensored"}, {"want": "0"}):
+            with self.subTest(**kw):
+                out, calls = self.epilogue(**kw)
+                self.assertEqual(calls, [])
+                self.assertNotIn("Bolt", out)
+
+    def test_recommended_keeps_bolt_on_a_64_gb_box(self):
+        # --recommended is what a new box gets, and a new 64 GB box serves Bolt
+        d = pathlib.Path(tempfile.mkdtemp(prefix="bolt-rec-"))
+        self.addCleanup(shutil.rmtree, d, True)
+        (d / "systemctl").write_text('#!/bin/sh\ncase "$*" in *qwen38-nemotron.service*) exit 0 ;; esac\nexit 1\n')
+        (d / "systemctl").chmod(0o755)
+        block = between(INSTALL, "# The Nemotron lane is one too", "# And the Nemotron Super lane")
+        for cls, boot, said in (("64", "1", "The Nemotron lane is this box's boot lane"),
+                                ("128", "0", "the 27B lane becomes the boot lane again")):
+            with self.subTest(cls=cls):
+                script = (f'set -euo pipefail\nPATH="{d}:$PATH"\nSECONDARY=""; SGL_ENABLED=0; FLASH_ENABLED=0\n'
+                          f'_ENV_MODEL_CHOICE=""; RECOMMENDED=1; MEM_CLASS={cls}\n' + block + '\necho "BOOT=$NEMOTRON_BOOT"\n')
+                r = subprocess.run(["bash", "-c", script], capture_output=True, text=True, timeout=30)
+                self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+                self.assertIn(f"BOOT={boot}", r.stdout)
+                self.assertIn(said, r.stdout)
+
+
 class TheRunSaysIt(unittest.TestCase):
     """What install.sh says of a 64 GB box, run from its own lines (found in review, 2026-10-23)."""
     def too_big_fn(self):
