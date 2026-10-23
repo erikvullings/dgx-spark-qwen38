@@ -2,8 +2,9 @@
 """./install.sh --recommended: what a new box gets, the site's settings kept (v1.36.0, 2026-10-17).
 
 A run keeps the operator's choices from one update to the next: each lane's target, the drafter,
-the context mode, the binds, the flash tier, the side lanes' checkpoints, and the lanes, opencode
-and the cockpit an earlier --no-* left out. Hasan asked for one command that brings a box to the
+the context mode, the binds, the flash tier, the side lanes' checkpoints, and opencode and the
+cockpit an earlier --no-opencode or --no-cockpit left out (a lane left out is not kept: its
+--no-<lane> counts for its run only, Hasan, 2026-10-22). Hasan asked for one command that brings a box to the
 recommended state, "tout comme une box neuve", the site's port, cache and folders kept
 (2026-10-17). --recommended keeps none of those choices: each setting the list compares, but the
 site's, takes the value a new box gets, and what was left out comes back. --plan --recommended
@@ -34,7 +35,6 @@ LEFT_OUT = ("image.off", "opencode.off", "cockpit.off")
 # the choices the box below holds, as a plain run says it keeps them
 KEPT = ("Keeping the installed drafter:", "Keeping the installed context mode: native",
         "Keeping the installed engine bind: 0.0.0.0", "Keeping the installed proxy bind: 127.0.0.1",
-        "Leaving the image lane out (your earlier --no-image)",
         "Keeping the opencode integration off (your earlier --no-opencode)",
         "Keeping the cockpit off (your earlier --no-cockpit)")
 
@@ -73,8 +73,11 @@ class ARecommendedRunKeepsNoChoice(Base):
         for line in KEPT:
             with self.subTest(line=line):
                 self.assertIn(line, out)
-        for name in LEFT_OUT:
+        for name in ("opencode.off", "cockpit.off"):
             self.assertTrue((cfg / name).exists(), name)
+        # but a lane: an older release's marker is said once and dropped
+        self.assertIn("Your earlier --no-image is no longer remembered (left out)", out)
+        self.assertFalse((cfg / "image.off").exists())
 
     def test_recommended_keeps_none_but_the_sites_and_brings_back_what_was_left_out(self):
         rc, out, cfg = self.run_install("--recommended")
@@ -83,10 +86,10 @@ class ARecommendedRunKeepsNoChoice(Base):
             with self.subTest(line=line):
                 self.assertNotIn(line, out)
         self.assertIn("Keeping the installed port: :30100", out, "the site's port stays")
-        self.assertIn("--recommended: the image lane comes back (your earlier --no-image), as on a new box.", out)
+        self.assertIn("Your earlier --no-image is no longer remembered (left out)", out)
         self.assertIn("--recommended: the opencode integration comes back (your earlier --no-opencode), as on a new box.", out)
         self.assertIn("--recommended: the cockpit comes back (your earlier --no-cockpit), as on a new box.", out)
-        self.assertFalse((cfg / "image.off").exists(), "the lane's marker is gone, as --with-image removes it")
+        self.assertFalse((cfg / "image.off").exists(), "the lane's marker is gone, as on a plain run")
         self.assertFalse((cfg / "cockpit.off").exists())
         # the list before step 1 names each choice it moves, the side lanes' checkpoints among them
         at = out.index("recommends:")

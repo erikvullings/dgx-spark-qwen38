@@ -186,12 +186,12 @@ class TheSummarySaysWhatBecameOfEachOtherLane(unittest.TestCase):
 
     def test_left_out_but_still_on_the_box(self):
         out = self.line("off", True)
-        self.assertIn("left out by --no-image, so not updated", out)
-        self.assertIn("./install.sh --with-image brings it back", out)
+        self.assertIn("left out by --no-image on this run, so not updated", out)
+        self.assertIn("a run without it updates it", out)
 
     def test_left_out_and_absent(self):
         out = self.line("off", False)
-        self.assertIn("./install.sh --with-image adds it (40 GB)", out)
+        self.assertIn("a run without it adds it, ready to load (40 GB)", out)
 
     def test_proved_installed_and_failed(self):
         self.assertIn("installed and proved it serves", self.line("proved", True))

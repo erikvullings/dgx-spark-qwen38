@@ -41,18 +41,20 @@ def stub(path, body):
 
 
 class EachLaneIsWantedUnlessLeftOut(unittest.TestCase):
-    """lane_wanted, run as written: on by default, --no-<lane> writes the marker and turns
-    it off, the marker keeps it off on the next run, --with-<lane> removes it."""
+    """lane_wanted, run as written: on by default, --no-<lane> turns it off for its run and writes
+    nothing (a choice kept in a marker left the lane out of every later update, behind and unsaid:
+    Hasan, 2026-10-22), an older release's marker brings it back once, said, and is removed (but by
+    --plan), --with-<lane> wants it."""
     FUNC = between("lane_wanted(){", "\n}\n") + "\n}\n"
 
-    def want(self, no, with_, marker=False):
+    def want(self, no, with_, marker=False, plan=0):
         cfg = tmp("lane-want-") / ".config" / "qwen38"
         if marker:
             cfg.mkdir(parents=True)
             (cfg / "image.off").write_text("left out\n")
         # PLAN_ONLY=0 and RECOMMENDED=0 as install.sh sets them before its flags (--plan leaves the
         # markers alone, --recommended removes them)
-        script = (f'set -euo pipefail\nRECOMMENDED=0\nCONFIG_DIR="{cfg}"\nPLAN_ONLY=0\n{self.FUNC}\n'
+        script = (f'set -euo pipefail\nRECOMMENDED=0\nCONFIG_DIR="{cfg}"\nPLAN_ONLY={plan}\n{self.FUNC}\n'
                   f'lane_wanted image {no} {with_}\necho "WANT=$WANT"\n')
         r = subprocess.run(["bash", "-c", script], capture_output=True, text=True, timeout=30,
                            env={"PATH": "/usr/bin:/bin"})
@@ -64,15 +66,23 @@ class EachLaneIsWantedUnlessLeftOut(unittest.TestCase):
         self.assertIn("WANT=1", out)
         self.assertFalse(mark.exists())
 
-    def test_no_writes_the_marker(self):
+    def test_no_leaves_it_out_of_its_run_and_writes_nothing(self):
         out, mark = self.want(1, 0)
         self.assertIn("WANT=0", out)
-        self.assertIn("--no-image", mark.read_text())
+        self.assertFalse(mark.exists())
 
-    def test_the_marker_keeps_it_out_and_says_so(self):
+    def test_an_old_marker_brings_it_back_says_so_and_goes(self):
         out, mark = self.want(0, 0, marker=True)
-        self.assertIn("WANT=0", out)
-        self.assertIn("Pass --with-image to bring it back", out)
+        self.assertIn("WANT=1", out)
+        self.assertIn("Your earlier --no-image is no longer remembered (left out): a --no-image counts for the run "
+                      "that passes it only now, so the image lane is back in this run. Pass --no-image on each run to "
+                      "keep it out.", out)
+        self.assertFalse(mark.exists())
+
+    def test_plan_says_it_and_leaves_the_marker(self):
+        out, mark = self.want(0, 0, marker=True, plan=1)
+        self.assertIn("WANT=1", out)
+        self.assertIn("Your earlier --no-image is no longer remembered", out)
         self.assertTrue(mark.exists())
 
     def test_with_brings_it_back(self):
@@ -95,12 +105,12 @@ class TheFlags(unittest.TestCase):
         self.assertEqual(wall.reached(record), [])
         return r.returncode, out, home / ".config" / "qwen38"
 
-    def test_each_no_flag_is_remembered(self):
+    def test_no_flag_is_remembered(self):
         for lane in ("image", "video", "flash", "27b", "kolibri"):
             rc, out, cfg = self.run_install(f"--no-{lane}")
             self.assertEqual(rc, 1, out)
             self.assertIn("CONTEXT_MODE=1m", out, "stopped at the refusal after the flags")
-            self.assertTrue((cfg / f"{lane}.off").exists(), lane)
+            self.assertFalse((cfg / f"{lane}.off").exists(), lane)
 
     def test_contradictions_are_refused(self):
         for lane in ("flash", "27b", "kolibri"):

@@ -219,7 +219,7 @@ class ALaneThatIsNotHereSaysWhatInstallsIt(unittest.TestCase):
     serves and never brings the 27B one, and a missing lane's card offered targets whose
     choice changed nothing (a box installed from nothing, 2026-09-30). Since v1.20 a plain
     install installs every lane, so a missing one was left out or did not fit, and
-    --with-<lane> brings it back beside the lane that serves."""
+    --with-<lane> installs it beside the lane that serves."""
 
     def test_the_command_brings_the_lane_back_beside_the_served_one(self):
         r = run(self, r"""

@@ -257,8 +257,8 @@ class TheInstaller(Box):
         out = self.ending("failed")
         self.assertIn("it did not install", out)
         self.assertIn("./install.sh --with-27b installs it whole", out)
-        self.assertIn("./install.sh --with-27b brings it back", self.ending("off"))
-        self.assertIn("./install.sh --with-27b adds it", self.ending("off", unit=False))
+        self.assertIn("left out by --no-27b on this run, so not updated; a run without it updates it", self.ending("off"))
+        self.assertIn("a run without it adds it, ready to load (58 GB)", self.ending("off", unit=False))
         for state in ("installed", "units", "failed", "off"):
             out = self.ending(state)
             self.assertIn("STEP Done: this box is up to date, and its flash lane, which this GPU cannot start", out)

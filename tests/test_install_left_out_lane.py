@@ -50,12 +50,20 @@ FP4 = "qwen38-flash-local.service"
 
 
 def box_run(record, units=("flash", "27b"), off=(), args=(), boot=FP4, port=31000, hf="/mnt/x/hf", pbind="127.0.0.1",
-            env_extra=None, ctx=1010000):
+            env_extra=None, ctx=1010000, prepared=False):
     """(rc, out): install.sh up to the wall, on a box booting `boot` whose text-lane record says `record`,
-    with the text units of `units`, the markers of `off`, the flash launcher and the keepalive unit
-    carrying the box's own port, cache and proxy bind. No PORT, HF_CACHE or bind in the environment:
-    what the run keeps, it reads."""
+    with the text units of `units`, the markers of `off` (an older release's), the flash launcher and the
+    keepalive unit carrying the box's own port, cache and proxy bind. No PORT, HF_CACHE or bind in the
+    environment: what the run keeps, it reads. prepared: both text lanes' checkpoints are in a cache of
+    the test's own (their images are, as docker answers here), which makes each lane prepared."""
     box = box_for_step_1(docker_err="", docker_rc=0, member=True, in_session=True)
+    if prepared:
+        hf = str(wall._tmp("left-out-hf-"))
+        for repo, rev in (("RadixArk--Qwen3.8-Flash-Next-NVFP4", "7b719225242aacd3dbd3f9407468c2ee9a9d2594"),
+                          ("RadixArk--Qwen3.8-27B-NVFP4", "52d1adc5f38aa5ebf099c29ed7025ba34cfbb854")):
+            snap = pathlib.Path(hf) / "hub" / f"models--{repo}" / "snapshots" / rev
+            snap.mkdir(parents=True)
+            (snap / "model.safetensors").write_text("")
     unit_dir = wall._tmp("left-out-units-")
     (unit_dir / FP4).write_text("[Service]\n")
     (unit_dir / "qwen38-keepalive.service").write_text(KEEPALIVE.format(pbind=pbind, port=port))
@@ -89,19 +97,26 @@ def resolved(case, out):
 
 class ALaneLeftOutGetsItsUnitsOnly(unittest.TestCase):
 
-    def test_the_issue_the_flash_left_out_by_its_marker(self):
+    def test_the_issue_an_old_marker_no_longer_leaves_the_flash_out_and_still_fetches_nothing(self):
+        # a --no-flash counts for its run only (Hasan, 2026-10-22): the marker an older release wrote is
+        # said and dropped, and the lane, not prepared on this box, still gets none of its downloads
         rc, out = box_run("qwen38-flash.service", off=("flash",))
         self.assertEqual(rc, 97, out[-1500:])
         r = resolved(self, out)
         self.assertEqual((r["LANE"], r["UNITS_ONLY"], r["LEFT_OUT"]), ("flash", "1", "1"))
-        self.assertIn("NOTE: the flash lane is left out: its units only, none of its downloads, and this run starts nothing.", out)
-        self.assertIn("Leaving the flash lane out (your earlier --no-flash). Pass --with-flash to bring it back.", out)
+        self.assertIn("Your earlier --no-flash is no longer remembered (left out with ./install.sh --no-flash on "
+                      "2026-10-20T08:00Z): a --no-flash counts for the run that passes it only now, so the flash lane is "
+                      "back in this run. Pass --no-flash on each run to keep it out.", out)
+        self.assertIn("NOTE: the flash lane is not prepared on this box: its units only, none of its downloads, and this "
+                      "run starts nothing.", out)
+        self.assertNotIn("Leaving the flash lane out", out)
 
     def test_and_by_its_flag(self):
         rc, out = box_run("qwen38-flash.service", args=("--no-flash",))
         self.assertEqual(rc, 97, out[-1500:])
         r = resolved(self, out)
         self.assertEqual((r["LANE"], r["UNITS_ONLY"]), ("flash", "1"))
+        self.assertIn("NOTE: the flash lane is left out (--no-flash): its units only, none of its downloads", out)
 
     def test_the_box_keeps_its_port_cache_and_proxy_bind(self):
         """No 27B unit, as on the first fix's second regression: the run reads them from the lane it keeps."""
@@ -113,11 +128,11 @@ class ALaneLeftOutGetsItsUnitsOnly(unittest.TestCase):
 
     def test_a_27b_left_out_stays_the_runs_and_never_makes_the_flash_its_own(self):
         """The first fix's first regression: the flash lane there with its units only was installed whole."""
-        rc, out = box_run("qwen38-sglang.service", off=("27b",))
+        rc, out = box_run("qwen38-sglang.service", args=("--no-27b",))
         self.assertEqual(rc, 97, out[-1500:])
         r = resolved(self, out)
         self.assertEqual((r["LANE"], r["UNITS_ONLY"], r["INSTALLED"]), ("27b", "1", "27b"))
-        self.assertIn("NOTE: the 27B lane is left out: its units only", out)
+        self.assertIn("NOTE: the 27B lane is left out (--no-27b): its units only", out)
         self.assertEqual((r["PORT"], r["HF"], r["PBIND"]), ("31000", "/mnt/x/hf", "127.0.0.1"))
 
     def test_with_both_left_out_the_run_goes_on(self):
@@ -129,15 +144,35 @@ class ALaneLeftOutGetsItsUnitsOnly(unittest.TestCase):
                 self.assertEqual((r["LANE"], r["UNITS_ONLY"]), ("flash", "1"))
                 self.assertNotIn("ERROR", out)
 
-    def test_a_lane_not_left_out_is_brought_up_to_date_whole_as_before(self):
+    def test_a_lane_prepared_is_brought_up_to_date_whole_as_before(self):
         for record, lane in (("qwen38-flash.service", "flash"), ("qwen38-sglang.service", "27b")):
             with self.subTest(record):
-                rc, out = box_run(record, off=("27b" if lane == "flash" else "flash",))
+                rc, out = box_run(record, prepared=True)
                 self.assertEqual(rc, 97, out[-1500:])
                 r = resolved(self, out)
                 self.assertEqual((r["LANE"], r["UNITS_ONLY"]), (lane, "0"))
                 self.assertIn(r["LEFT_OUT"], ("0", ""))
-                self.assertNotIn("is left out: its units only", out)
+                self.assertNotIn("its units only", out)
+
+    def test_a_lane_not_prepared_gets_its_units_only_with_no_flag_at_all(self):
+        # with --no-<lane> no longer remembered, what keeps issue #57's downloads off a box that left a text
+        # lane out once is that the lane is not prepared: it was updated whole, 35 and 136 GB for the flash
+        for record, lane, shown in (("qwen38-flash.service", "flash", "flash"), ("qwen38-sglang.service", "27b", "27B")):
+            with self.subTest(record):
+                rc, out = box_run(record)
+                self.assertEqual(rc, 97, out[-1500:])
+                r = resolved(self, out)
+                self.assertEqual((r["LANE"], r["UNITS_ONLY"], r["LEFT_OUT"]), (lane, "1", "1"))
+                self.assertIn(f"NOTE: the {shown} lane is not prepared on this box: its units only, none of its downloads", out)
+
+    def test_named_or_with_all_weights_a_lane_not_prepared_is_updated_whole(self):
+        for args in (("--with-flash",), ("--all-weights",)):
+            with self.subTest(args):
+                rc, out = box_run("qwen38-flash.service", args=args)
+                self.assertEqual(rc, 97, out[-1500:])
+                r = resolved(self, out)
+                self.assertEqual((r["LANE"], r["UNITS_ONLY"]), ("flash", "0"))
+                self.assertIn(r["LEFT_OUT"], ("0", ""))
 
     def test_contradicting_flags_are_refused_first_and_alone(self):
         rc, out = box_run("qwen38-flash.service", args=("--no-flash", "--with-flash"))
@@ -146,7 +181,7 @@ class ALaneLeftOutGetsItsUnitsOnly(unittest.TestCase):
         self.assertNotIn("is left out", out)
         self.assertNotIn("RESOLVED", out)
 
-    def test_the_lane_that_serves_is_brought_up_to_date_and_says_how_to_drop_its_marker(self):
+    def test_the_lane_that_serves_is_brought_up_to_date_whatever_it_was_asked(self):
         for record, lane, shown, unit in (("qwen38-flash.service", "flash", "flash", "qwen38-flash.service"),
                                            ("qwen38-sglang.service", "27b", "27B", "qwen38-sglang.service")):
             for args, off in (((), (lane,)), ((f"--no-{lane}",), ())):
@@ -157,17 +192,20 @@ class ALaneLeftOutGetsItsUnitsOnly(unittest.TestCase):
                     self.assertEqual((r["LANE"], r["UNITS_ONLY"]), (lane, "0"))
                     self.assertNotIn(f"Leaving the {shown} lane out", out)
                     # what it says holds on a GPU outside ATS too, whose flash lane gets its units only (#54)
-                    self.assertIn(f"The {shown} lane is the one this run serves: --no-{lane} leaves it out once "
-                                  f"another lane serves. Pass --with-{lane} to drop that.", out)
+                    if off:
+                        self.assertIn(f"Your earlier --no-{lane} is no longer remembered", out)
+                    else:
+                        self.assertIn(f"The {shown} lane is the one this run serves: --no-{lane} leaves nothing out of it.", out)
                     self.assertNotIn("brought up to date", out)
 
     def test_a_27b_left_out_is_named_so(self):
-        rc, out = box_run("qwen38-sglang.service", off=("27b",))
-        self.assertIn("Leaving the 27B lane out (your earlier --no-27b). Pass --with-27b to bring it back.", out)
-        self.assertNotIn("the 27b lane", out)
-        rc, out = box_run("qwen38-sglang.service", off=("27b",), args=("--recommended",))
-        self.assertIn("--recommended: the 27B lane comes back (your earlier --no-27b), as on a new box.", out)
-        self.assertNotIn("the 27b lane", out)
+        for args in ((), ("--recommended",)):
+            with self.subTest(args):
+                rc, out = box_run("qwen38-sglang.service", off=("27b",), args=args)
+                self.assertIn("Your earlier --no-27b is no longer remembered (left out with ./install.sh --no-27b on "
+                              "2026-10-20T08:00Z): a --no-27b counts for the run that passes it only now, so the 27B lane "
+                              "is back in this run. Pass --no-27b on each run to keep it out.", out)
+                self.assertNotIn("the 27b lane", out)
 
     def test_every_side_lane_at_boot_not_only_flash_local(self):
         """The rule is the side lanes' (SIDE_BOOT): run with FP4-Local only, a rule read from it alone passed."""
@@ -193,11 +231,16 @@ class ALaneLeftOutGetsItsUnitsOnly(unittest.TestCase):
         """--no-service prepares the lane for ./run.sh: with its downloads left out the run said Prepared, and
         run.sh then stopped on a checkpoint not found (review of 2026-10-21)."""
         # the 27B at its native window: the flash lane is refused --no-service already, and so is the 27B's 1m
-        rc, out = box_run("qwen38-sglang.service", off=("27b",), args=("--no-service",), ctx=262144)
+        rc, out = box_run("qwen38-sglang.service", args=("--no-27b", "--no-service"), ctx=262144)
         self.assertEqual(rc, 1, out[-1500:])
-        self.assertIn("--no-service prepares the 27B lane for ./run.sh, and that lane is left out (--no-27b or its "
-                      "marker): nothing would run. Pass --with-27b to prepare it whole, or run without --no-service", out)
+        self.assertIn("--no-service prepares the 27B lane for ./run.sh, and that lane is left out (--no-27b): nothing "
+                      "would run. Drop --no-27b to prepare it whole, or run without --no-service", out)
         self.assertNotIn("RESOLVED", out)
+        # an older release's marker no longer refuses it, and the lane, not prepared, is prepared whole for run.sh
+        rc, out = box_run("qwen38-sglang.service", off=("27b",), args=("--no-service",), ctx=262144)
+        self.assertEqual(rc, 97, out[-1500:])
+        r = resolved(self, out)
+        self.assertEqual((r["LANE"], r["UNITS_ONLY"]), ("27b", "0"))
 
     def test_plan_lists_and_stops_with_both_left_out(self):
         rc, out = box_run("qwen38-flash.service", args=("--plan",), off=("flash", "27b"))
@@ -213,13 +256,14 @@ class ItsEndSaysSo(unittest.TestCase):
     way back through ./install.sh --with-<lane>, a run that fetches it whole at once, and said nothing
     of the other text lane (review of 2026-10-21)."""
 
-    def ending(self, lane, second="units", cockpit=1, choice=None):
+    def ending(self, lane, second="units", cockpit=1, choice=None, why=None):
         text = (REPO / "install.sh").read_text()
         start = text.index('  elif [ "$LEFT_OUT" -eq 1 ]; then\n')
         end = text.index('  else\n    step "Done: the text lane is up to date', start)
         other = "27b" if lane == "flash" else "flash"
+        why = why or f"left out (--no-{lane})"
         script = ('step(){ echo "STEP $*"; }\n'
-                  f'LANE={lane}; SERVING_LANE="Flash FP4-Local"; LEFT_OUT=1; COCKPIT={cockpit}; '
+                  f'LANE={lane}; SERVING_LANE="Flash FP4-Local"; LEFT_OUT=1; LEFT_WHY="{why}"; COCKPIT={cockpit}; '
                   f'MODEL_CHOICE={choice or ("stock" if lane == "27b" else "flash")}\n'
                   f'SECOND_LANE={other}; SECOND_STATE={second}; SECOND_CANNOT="the GPU\'s addressing mode is None"\n'
                   'if false; then :\n' + text[start:end] + "fi\n")
@@ -229,17 +273,22 @@ class ItsEndSaysSo(unittest.TestCase):
 
     def test_it_names_the_lane_left_out_and_the_way_back(self):
         out = self.ending("flash")
-        self.assertIn("STEP Done: the flash lane is left out, so it got its units only, none of its downloads", out)
+        self.assertIn("STEP Done: the flash lane is left out (--no-flash), so it got its units only, none of its downloads", out)
         self.assertNotIn("this box is up to date", out)   # the side lanes' own NOTEs can say otherwise
         self.assertIn("the Flash FP4-Local lane stays this box's serving lane", out)
         self.assertIn("back to it: Load it from the cockpit's Lanes view, which fetches what it lacks", out)
-        self.assertIn("./install.sh --with-flash takes it back into every update: that run fetches it whole at once", out)
+        self.assertIn("./install.sh --with-flash prepares it whole instead: that run fetches it all at once", out)
+        self.assertNotIn("every update", out)     # a --no-<lane> no longer outlives its run
         self.assertNotIn("first Load from the cockpit then fetches", out)
         out = self.ending("27b", cockpit=0)
-        self.assertIn("STEP Done: the 27B lane is left out", out)
+        self.assertIn("STEP Done: the 27B lane is left out (--no-27b)", out)
         self.assertIn("back to it: ./prepare-lane.sh 27b stock fetches what it lacks, then ./switch-model.sh stock switches to it", out)
-        self.assertIn("./install.sh --with-27b takes it back", out)
+        self.assertIn("./install.sh --with-27b prepares it whole instead", out)
         self.assertNotIn("text lane is up to date", out)
+
+    def test_a_lane_not_prepared_is_said_so(self):
+        out = self.ending("flash", why="not prepared on this box")
+        self.assertIn("STEP Done: the flash lane is not prepared on this box, so it got its units only, none of its downloads", out)
 
     def test_a_custom_model_kept_goes_back_through_the_installer(self):
         """A custom model has no switch target and no Load prepares it: ./prepare-lane.sh 27b custom is refused."""
@@ -253,14 +302,14 @@ class ItsEndSaysSo(unittest.TestCase):
     def test_it_says_where_the_other_text_lane_stands(self):
         for second, said in (("installed", "the 27B lane is up to date, ready to Load"),
                              ("units", "the 27B lane got its units: its first Load fetches its image and weights"),
-                             ("off", "the 27B lane is left out too: ./install.sh --with-27b brings it back"),
+                             ("off", "the 27B lane is left out too, by --no-27b on this run"),
                              ("failed", "the 27B lane: ./install.sh --with-27b installs it whole")):
             with self.subTest(second):
                 out = self.ending("flash", second)
                 self.assertIn(said, out)
                 if second == "failed":
                     self.assertIn("STEP Done, but the 27B lane did not install (see its NOTE above); the flash lane is left "
-                                  "out", out)
+                                  "out (--no-flash)", out)
                     self.assertNotIn("this box is up to date", out)
         out = self.ending("27b", "cannot")
         self.assertIn("the flash lane got its units only: this GPU cannot start it (the GPU's addressing mode is None)", out)
@@ -360,19 +409,19 @@ class TheRunOfALaneLeftOutToItsEnd(unittest.TestCase):
         self.assertEqual(list(hf.rglob("*.safetensors")) + list(hf.rglob("*.incomplete")), [], "a checkpoint fetched")
         self.assertNotIn("ERROR", out)
 
-    def test_the_flash_left_out_by_its_marker_and_by_its_flag(self):
-        for args, off in (((), ("flash",)), (("--no-flash",), ())):
+    def test_the_flash_left_out_by_its_flag_or_not_prepared_after_an_old_marker(self):
+        for args, off, why in ((("--no-flash",), (), "left out (--no-flash)"), ((), ("flash",), "not prepared on this box")):
             with self.subTest(args=args, off=off):
                 rc, out, calls, units, cfg, hf = full_run("qwen38-flash.service", off=off, args=args)
                 self.check(out, rc, calls, hf)
-                for said in ("NOTE: the flash lane is left out: its units only, none of its downloads, and this run starts nothing.",
-                             "2/10 The Flash-Next image: not pulled, as the flash lane is left out (its next Load pulls what it lacks)",
-                             "3/10 The GPU from a container: not asked, as the flash lane is left out",
-                             "4/10 The Flash-Next checkpoint: not fetched, as the flash lane is left out (its next Load fetches what it lacks)",
-                             "Done: the flash lane is left out, so it got its units only, none of its downloads",
+                for said in (f"NOTE: the flash lane is {why}: its units only, none of its downloads, and this run starts nothing.",
+                             f"2/10 The Flash-Next image: not pulled, as the flash lane is {why} (its next Load pulls what it lacks)",
+                             f"3/10 The GPU from a container: not asked, as the flash lane is {why}",
+                             f"4/10 The Flash-Next checkpoint: not fetched, as the flash lane is {why} (its next Load fetches what it lacks)",
+                             f"Done: the flash lane is {why}, so it got its units only, none of its downloads",
                              "the Flash FP4-Local lane stays this box's serving lane",
                              "back to it: Load it from the cockpit's Lanes view, which fetches what it lacks",
-                             "./install.sh --with-flash takes it back into every update: that run fetches it whole at once",
+                             "./install.sh --with-flash prepares it whole instead: that run fetches it all at once",
                              "the 27B lane got its units: its first Load fetches its image and weights"):
                     self.assertTrue(said in out, said)
                 # the run's own steps (the 27B's run beside it, on demand, says its own)
@@ -382,17 +431,18 @@ class TheRunOfALaneLeftOutToItsEnd(unittest.TestCase):
                 self.assertIn(FLASH_PIN, launcher, "its units at this release's pins")
                 for kept in ("--port 31000", f"-v {hf}:/root/.cache/huggingface", "--host 127.0.0.1"):
                     self.assertIn(kept, launcher)
-                self.assertTrue((cfg / "flash.off").is_file(), "the flag's marker is written, as before")
+                # no marker written by the flag, and an older release's removed once said
+                self.assertFalse((cfg / "flash.off").exists(), "a --no-flash outlives its run")
 
     def test_the_27b_left_out(self):
-        rc, out, calls, units, cfg, hf = full_run("qwen38-sglang.service", off=("27b",))
+        rc, out, calls, units, cfg, hf = full_run("qwen38-sglang.service", args=("--no-27b",))
         self.check(out, rc, calls, hf)
-        for said in ("NOTE: the 27B lane is left out: its units only, none of its downloads, and this run starts nothing.",
-                     "2/10 The SGLang image: not pulled, as the 27B lane is left out (its next Load pulls what it lacks)",
-                     "3/10 The GPU from a container: not asked, as the 27B lane is left out",
-                     "4/10 The checkpoints (the target and its DFlash2 draft): not fetched, as the 27B lane is left out",
-                     "Done: the 27B lane is left out, so it got its units only, none of its downloads",
-                     "./install.sh --with-27b takes it back into every update: that run fetches it whole at once",
+        for said in ("NOTE: the 27B lane is left out (--no-27b): its units only, none of its downloads, and this run starts nothing.",
+                     "2/10 The SGLang image: not pulled, as the 27B lane is left out (--no-27b) (its next Load pulls what it lacks)",
+                     "3/10 The GPU from a container: not asked, as the 27B lane is left out (--no-27b)",
+                     "4/10 The checkpoints (the target and its DFlash2 draft): not fetched, as the 27B lane is left out (--no-27b)",
+                     "Done: the 27B lane is left out (--no-27b), so it got its units only, none of its downloads",
+                     "./install.sh --with-27b prepares it whole instead: that run fetches it all at once",
                      "the flash lane got its units: its first Load fetches its image and weights"):
             self.assertTrue(said in out, said)
         unit = (units / "qwen38-sglang.service").read_text()
@@ -401,10 +451,16 @@ class TheRunOfALaneLeftOutToItsEnd(unittest.TestCase):
             self.assertIn(kept, unit)
 
     def test_both_left_out(self):
+        rc, out, calls, units, cfg, hf = full_run("qwen38-flash.service", args=("--no-flash", "--no-27b"))
+        self.check(out, rc, calls, hf)
+        self.assertIn("Done: the flash lane is left out (--no-flash)", out)
+        self.assertIn("the 27B lane is left out too, by --no-27b on this run", out)
+        # both markers of an older release: both lanes back, neither prepared, none of their downloads
         rc, out, calls, units, cfg, hf = full_run("qwen38-flash.service", off=("flash", "27b"))
         self.check(out, rc, calls, hf)
-        self.assertIn("Done: the flash lane is left out", out)
-        self.assertIn("the 27B lane is left out too: ./install.sh --with-27b brings it back", out)
+        self.assertIn("Done: the flash lane is not prepared on this box", out)
+        self.assertIn("the 27B lane got its units: its first Load fetches its image and weights", out)
+        self.assertEqual([m.name for m in cfg.glob("*.off")], [])
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)
