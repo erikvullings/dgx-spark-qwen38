@@ -1252,6 +1252,9 @@ fi
 # A 64 GB box serves neither the flash lane (its checkpoint alone is 135.3 GB) nor the 1M window,
 # whose KV pool is more memory than the box has.
 if [ "$MEM_CLASS" = 64 ]; then
+  # run.sh serves the native unit's settings, the ones the 64 GB unit exists to change (found in
+  # review, 2026-10-23): a 64 GB box gets the 27B as a service, its unit sized for it
+  [ "$NO_SERVICE" -eq 0 ] || die "--no-service prepares ./run.sh, which runs the 27B with the memory settings of a 128 GB DGX Spark, and this box is a 64 GB one. Drop --no-service: the service's unit is sized for this box."
   [ "$LANE" != flash ] || die "The flash lane needs a 128 GB DGX Spark (its checkpoint alone is 135.3 GB), and this box is a 64 GB one. MODEL_CHOICE=stock ./install.sh serves the 27B, sized for it."
   # custom is a 27B unit serving a model of its own, whose size boxmem.py cannot know: kept, as on
   # any box (it read as an FP8 target, and the box could not be updated, found in review, 2026-10-23)

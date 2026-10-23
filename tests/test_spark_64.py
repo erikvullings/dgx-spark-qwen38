@@ -157,13 +157,20 @@ class TheRunSaysIt(unittest.TestCase):
         self.assertEqual((rc, out.strip()), (0, "the flash lane needs a 128 GB DGX Spark, and this box is a 64 GB one"), err)
 
     def test_a_27b_unit_serving_a_model_of_its_own_still_updates(self):
-        block = between(INSTALL, 'if [ "$MEM_CLASS" = 64 ]; then\n  [ "$LANE" != flash ]', "\nfi\n")
+        block = between(INSTALL, 'if [ "$MEM_CLASS" = 64 ]; then\n  # run.sh serves', "\nfi\n")
         for choice, goes in (("custom", True), ("stock", True), ("fp8", False)):
             with self.subTest(choice):
-                rc, out, err = bash(f"MEM_CLASS=64\nLANE=27b\nCONTEXT_MODE=\nMODEL_CHOICE={choice}\n{block}"
+                rc, out, err = bash(f"MEM_CLASS=64\nNO_SERVICE=0\nLANE=27b\nCONTEXT_MODE=\nMODEL_CHOICE={choice}\n{block}"
                                     'echo "went on"', "64")
                 self.assertEqual(rc == 0 and out == "went on\n", goes, err)
                 self.assertNotIn("invalid choice", err)
+
+    def test_no_service_is_refused_as_run_sh_serves_a_128_gb_box(self):
+        block = between(INSTALL, 'if [ "$MEM_CLASS" = 64 ]; then\n  # run.sh serves', "\nfi\n")
+        rc, out, err = bash(f"MEM_CLASS=64\nNO_SERVICE=1\nLANE=27b\nCONTEXT_MODE=\nMODEL_CHOICE=stock\n{block}"
+                            'echo "went on"', "64")
+        self.assertEqual(rc, 1, err)
+        self.assertIn("--no-service prepares ./run.sh, which runs the 27B with the memory settings of a 128 GB DGX Spark", err)
 
     def test_a_forced_class_that_is_no_class_is_refused_by_its_name(self):
         for cls, ok in (("64", True), ("128", True), ("", True), ("64GB", False), ("96", False)):
