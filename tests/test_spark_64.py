@@ -13,6 +13,9 @@ import sys
 import tempfile
 import unittest
 
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import installer_wall as wall  # noqa: E402
+
 REPO = pathlib.Path(__file__).resolve().parents[1]
 SIDE = {"install-image.sh": "image", "install-video.sh": "video", "install-kolibri.sh": "kolibri",
         "install-nemotron-super.sh": "nemotron-super", "install-flash-local.sh": "flash-local",
@@ -134,6 +137,10 @@ def between(text, start, end):
     return text[i:text.index(end, i) + len(end)]
 
 
+# where prepare-lane.sh asks for the docker group, the first thing past its 64 GB refusal
+PREPARE_DOCKER = '    docker_session bash "$HERE/${BASH_SOURCE[0]##*/}" "$@"\n'
+
+
 class TheRunSaysIt(unittest.TestCase):
     """What install.sh says of a 64 GB box, run from its own lines (found in review, 2026-10-23)."""
     def too_big_fn(self):
@@ -184,15 +191,19 @@ class TheRunSaysIt(unittest.TestCase):
 
     def test_prepare_lane_refuses_what_a_64_gb_box_cannot_hold_before_a_pull(self):
         # the cockpit's Load runs it before its switch, which refused these only after the image
-        # and the draft were pulled (found in review, 2026-10-23)
-        env = {k: v for k, v in os.environ.items() if not k.startswith("QWEN38_")}
+        # and the draft were pulled (found in review, 2026-10-23). A walled copy, stopped before it
+        # asks for the docker group, its units elsewhere and docker fenced: a refusal that slipped
+        # meets the wall, never this box's units, images or checkpoints (found in review, 2026-10-23)
+        script = wall.walled("prepare-lane.sh", at=PREPARE_DOCKER)
         for args, said in ((("27b", "fp8"), "The fp8 target needs a 128 GB DGX Spark"),
                            (("flash",), "The flash lane needs a 128 GB DGX Spark")):
-            with self.subTest(args), tempfile.TemporaryDirectory(prefix="prep64-") as home:
-                r = subprocess.run(["bash", str(REPO / "prepare-lane.sh"), *args], capture_output=True, text=True,
-                                   timeout=60, env={**env, "HOME": home, "PATH": "/usr/bin:/bin", "QWEN38_MEMORY_CLASS": "64"})
-                self.assertEqual(r.returncode, 1, r.stderr[-400:])
+            with self.subTest(args):
+                env, record = wall.fenced_env(QWEN38_MEMORY_CLASS="64")
+                r = subprocess.run(["bash", script, *args], capture_output=True, text=True, timeout=60, env=env)
+                self.assertEqual(r.returncode, 1, (r.stdout + r.stderr)[-400:])
                 self.assertIn(said, r.stderr)
+                self.assertNotIn(wall.WALL, r.stdout)
+                self.assertEqual(wall.reached(record), [])
 
     def test_opencode_s_limits_are_fitted_to_the_pool_on_a_64_gb_box(self):
         # the native pair was sized on a 128 GB box's pool: a 64 GB box gets the fit 1m gets
