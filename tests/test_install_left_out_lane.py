@@ -468,13 +468,30 @@ class TheRunOfALaneLeftOutToItsEnd(unittest.TestCase):
 class TheDocsSayIt(unittest.TestCase):
     """No page promises a --no-<lane> that later runs remember: README.md, five lane pages and a
     comment of install.sh still did after the rule changed (found in review, 2026-10-23)."""
-    STALE = re.compile(r"leaves it out for good|later runs remember|brings? it back after a `--no-|and bring it back \|")
+    STALE = re.compile(r"leaves (?:it|the lane) out for good|a marker file remembers it|and a run remembers it"
+                       r"|later runs remember|brings? it back after a `--no-|and bring it back \|")
 
     def test_no_page_says_a_lane_left_out_stays_out(self):
         pages = [REPO / "README.md", *sorted((REPO / "docs").glob("*.md"))]
         # the whole page, one space for every run of whitespace: a phrase cut over two lines counts
         found = [f"{p.name}: {m.group(0)}" for p in pages
                  for m in self.STALE.finditer(re.sub(r"\s+", " ", p.read_text()))]
+        self.assertEqual(found, [])
+
+    def test_no_installer_s_help_says_it_either(self):
+        # -h and --help print each installer's header, and the seven lane installers' still promised
+        # the marker; install.sh's own comments too (found in review, 2026-10-23)
+        found = []
+        for f in sorted(REPO.glob("install*.sh")):
+            head = []
+            for line in f.read_text().splitlines()[1:]:
+                if not line.startswith("#"):
+                    break
+                head.append(line.lstrip("#"))
+            found += [f"{f.name}: {m.group(0)}" for m in self.STALE.finditer(re.sub(r"\s+", " ", " ".join(head)))]
+        comments = " ".join(line.strip().lstrip("#") for line in (REPO / "install.sh").read_text().splitlines()
+                            if line.strip().startswith("#"))
+        found += [f"install.sh: {m.group(0)}" for m in self.STALE.finditer(re.sub(r"\s+", " ", comments))]
         self.assertEqual(found, [])
 
 if __name__ == "__main__":

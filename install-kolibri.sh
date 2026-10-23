@@ -11,7 +11,7 @@
 #                                        runs it (./prepare-lane.sh kolibri)
 #
 # install.sh runs this on every plain install, like the other lanes; ./install.sh
-# --no-kolibri leaves it out for good (a marker file remembers it). It takes 79 GB of
+# --no-kolibri leaves it out of the run that passes it. It takes 79 GB of
 # weights (the official FP8 release) and a 23 GB image; when the disk does not have the
 # room, this refuses before downloading anything and install.sh goes on without it.
 #

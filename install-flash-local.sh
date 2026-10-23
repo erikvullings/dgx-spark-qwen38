@@ -26,7 +26,7 @@
 #
 # install.sh puts this lane's unit in on every plain install, like the other lanes, and its first
 # Load from the cockpit pulls its image and fetches its checkpoint; ./install.sh --no-flash-local
-# leaves it out for good (a marker file remembers it). It takes a checkpoint of 102 GB and an image
+# leaves it out of the run that passes it. It takes a checkpoint of 102 GB and an image
 # of 18 GB (10 to download): when the disk does not have the room, this refuses before downloading
 # anything.
 #

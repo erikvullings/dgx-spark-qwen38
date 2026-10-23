@@ -14,7 +14,7 @@
 #
 # install.sh puts this lane's unit in on every plain install, like the other lanes, and its first
 # Load from the cockpit builds its image and fetches its weights; ./install.sh --no-nemotron-super
-# leaves it out for good (a marker file remembers it). It takes 77 GB of weights (the model and its
+# leaves it out of the run that passes it. It takes 77 GB of weights (the model and its
 # drafter) and the Nemotron Bolt lane's image, 25 GB, 35 at its build's peak, which the two lanes
 # share: when the disk does not have the room, this refuses before downloading anything.
 #

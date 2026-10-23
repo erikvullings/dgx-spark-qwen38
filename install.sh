@@ -3572,8 +3572,8 @@ except Exception as e:
 
     # ── Every other lane ─────────────────────────────────────────────────────
     # Since v1.20 the image and the video lanes are installed by default, like the other
-    # text lane above (lane_wanted: --no-image and --no-video leave them out, and a run
-    # remembers it). They are prepared here while this lane keeps serving. Each lane this
+    # text lane above (lane_wanted: --no-image and --no-video leave them out of the run that
+    # passes them). They are prepared here while this lane keeps serving. Each lane this
     # run installs for the first time then proves it serves, and those proofs need the
     # GPU to themselves, so they come last and together: this lane stops once, each new
     # lane boots, answers and stops, and this lane comes back and proves itself again

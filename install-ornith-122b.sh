@@ -15,7 +15,7 @@
 #
 # install.sh puts this lane's unit in on every plain install, like the other lanes, and its first
 # Load from the cockpit pulls its image and fetches its checkpoint; ./install.sh --no-ornith-122b
-# leaves it out for good (a marker file remembers it). It takes a checkpoint of 78 GB and the
+# leaves it out of the run that passes it. It takes a checkpoint of 78 GB and the
 # Flash FP4-Local lane's image, 18 GB (10 to download), which the two lanes share: when the disk
 # does not have the room, this refuses before downloading anything.
 #

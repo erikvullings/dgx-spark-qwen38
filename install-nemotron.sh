@@ -13,8 +13,7 @@
 #                                         runs it (./prepare-lane.sh nemotron)
 #
 # install.sh puts this lane's unit in on every plain install, like the other lanes, and its first
-# Load from the cockpit builds it; ./install.sh --no-nemotron leaves it out for good (a marker file
-# remembers it). It takes 26 GB of weights (the model and its drafter) and a 25 GB image, 35 at its
+# Load from the cockpit builds it; ./install.sh --no-nemotron leaves it out of the run that passes it. It takes 26 GB of weights (the model and its drafter) and a 25 GB image, 35 at its
 # pull's peak; when the disk does not have the room, this refuses before downloading anything.
 #
 # WHY THIS BUILD. NVIDIA's model card serves Bolt with one vLLM nightly, 77154ca6, plus the b12x

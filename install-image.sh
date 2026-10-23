@@ -13,7 +13,7 @@
 # below count them in GiB, 31 and 11: the venv, the checkout and the wheel take 8.6 to 8.8 GiB
 # on the reference box, measured 2026-10-17, the rest is for the build); when the disk does not have the room, this refuses before
 # downloading anything, install.sh says so and goes on, and ./install.sh --no-image
-# leaves the lane out for good (a marker file remembers it).
+# leaves the lane out of the run that passes it.
 #
 # WHY IT IS A VENV AND NOT DOCKER. The cookbook is explicit for this model: "This
 # integration currently uses the Python/source command; no published Docker image is

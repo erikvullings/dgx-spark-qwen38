@@ -15,7 +15,7 @@
 # 11 GiB) and the runtime's own caches (17, 15.7 GiB measured) need about 174 GB of
 # headroom; when the disk does not have it, this refuses before
 # downloading anything, install.sh says so and goes on, and ./install.sh --no-video leaves
-# the lane out for good (a marker file remembers it).
+# the lane out of the run that passes it.
 #
 # WHY IT IS A VENV AND NOT DOCKER. Like the image lane, no published Docker image is
 # verified for this model: the cookbook serves it from Python/source. The release wheel
