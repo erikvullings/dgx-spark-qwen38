@@ -110,7 +110,8 @@ function s1Sync(){
   // with a text lane serving, what holds it back is the note's to say (the proxy mute, a 401):
   // the line named the lanes that answer it over the one that served (found in review, 2026-10-15)
   const text = (() => { const s = servingEngine(); return !!s && (s[0] === U27 || s[0] === UFLASH); })();
-  const off = text ? 'System One does not answer right now: the note says why.' : 'System One is not served right now: the 27B or the flash lane answers it.';
+  const off = text ? 'System One does not answer right now: the note says why.'
+    : `System One is not served right now: ${laneFits(UFLASH) ? 'the 27B or the flash lane answers it' : 'the 27B answers it'}.`;
   const why = wait || (s1Available === false ? off : s1Running ? '' : s1Problem());
   b.disabled = !!wait || s1Available === false || s1Running || !!s1Problem();
   show('s1-why', !!why && !s1Running); setText('s1-why', why);
@@ -173,7 +174,10 @@ async function s1Probe(){
       const why = cap1(String(d.reason || 'the proxy in front of this box does not answer /v1/systemone').replace(/\.?\s*$/, '.'));
       note.style.display = 'flex'; note.style.alignItems = 'center'; note.style.gap = 'var(--s-3)'; note.style.flexWrap = 'wrap';
       const t = el('span', null, why); t.style.flex = '1'; t.style.minWidth = '240px';
-      const b = el('button', 'btn primary sm', 'Load flash 176B'); b.type = 'button'; b.addEventListener('click', () => askJourney('flash'));
+      // a 64 GB box holds no flash lane: the lane it offers is the 27B, which answers it too (found in
+      // review, 2026-10-23)
+      const [label, target] = laneFits(UFLASH) ? ['Load flash 176B', 'flash'] : ['Load 27B stock', 'stock'];
+      const b = el('button', 'btn primary sm', label); b.type = 'button'; b.addEventListener('click', () => askJourney(target));
       note.append(t, b);
     }
     badge('decide', d.available ? '' : 'off', '');

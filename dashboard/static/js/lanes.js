@@ -23,20 +23,19 @@ function laneCard(unit){
   const pick = el('div', 'pick'); pick.setAttribute('role', 'radiogroup'); pick.setAttribute('aria-label', `Version of ${LANE_NAME[unit]}`);
   const opts = LANE_TARGETS[unit].map(t => {
     const b = el('button', 'opt', TARGET_SHORT_NAME[t] || TARGET_NAME[t]); b.type = 'button'; b.setAttribute('role', 'radio'); b.dataset.target = t;
-    b.title = TARGET_NAME[t];
-    // a version a 64 GB box cannot hold is shown, and not to be picked (its Load would stop at the switch)
-    if (!targetFits(t)){ b.disabled = true; b.title = `${TARGET_NAME[t]}: ${NEEDS_128}`; }
     b.addEventListener('click', () => { if (!targetFits(t)) return; c.target = t; c.touched = true; renderLanes(); });
     return b;
   });
   const pickLine = el('p', 'pick-line');
   pick.append(...opts); pickBox.append(pickLab, pick, pickLine);
-  // the arrow keys move the choice, as in any group of radio buttons
+  // the arrow keys move the choice, as in any group of radio buttons, over the versions to be picked:
+  // a disabled one took neither the click nor the focus, and the focus stayed (found in review, 2026-10-23)
   pick.addEventListener('keydown', ev => {
     const step = {ArrowRight: 1, ArrowDown: 1, ArrowLeft: -1, ArrowUp: -1}[ev.key];
     if (!step || ev.altKey || ev.ctrlKey || ev.metaKey) return;
     ev.preventDefault();
-    const i = opts.indexOf(document.activeElement), next = opts[(Math.max(0, i) + step + opts.length) % opts.length];
+    const live = opts.filter(b => !b.disabled); if (!live.length) return;
+    const i = live.indexOf(document.activeElement), next = live[(Math.max(0, i) + step + live.length) % live.length];
     next.click(); next.focus();
   });
   const load = el('button', 'btn primary'); load.type = 'button';
@@ -105,6 +104,10 @@ function renderLanes(){
     const live = seated && (st === 'ready' || st === 'degraded');
     c.opts.forEach(b => {
       const t = b.dataset.target;
+      // a version a 64 GB box cannot hold is shown, and not to be picked (its Load would stop at the
+      // switch); said at each render, as the box's class comes with the machine panel, which may come
+      // after the card was built (found in review, 2026-10-23)
+      const fits = targetFits(t); b.disabled = !fits; b.title = fits ? TARGET_NAME[t] : `${TARGET_NAME[t]}: ${NEEDS_128}`;
       b.setAttribute('aria-checked', String(t === target)); b.tabIndex = t === target ? 0 : -1;
       b.classList.toggle('served', live && t === served);
     });

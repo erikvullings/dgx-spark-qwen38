@@ -2306,6 +2306,49 @@ class TheBoxItIs(unittest.TestCase):
         self.assertNotIn("Download", fp8)
         self.assertIn("Download", stock)
 
+    MACHINE_64 = r"""{mem: {MemTotal: 57.6 * GIB, MemAvailable: 20 * GIB, Cached: 2 * GIB, SwapTotal: 0, SwapFree: 0},
+        box: {cls: '64', name: 'ASUS Ascent GX10', fits: ['qwen38-nemotron.service', 'qwen38-sglang.service'],
+              targets: ['nemotron', 'stock', 'uncensored']}, cpu_pct: {cpu: 1}, load: [0, 0, 0], disks: {}}"""
+
+    def test_decide_offers_the_27b_on_a_64_gb_box(self):
+        # it offered Load flash 176B whatever the box, and that ended on the toast that the flash lane
+        # needs a 128 GB DGX Spark (found in review, 2026-10-23)
+        r = run(self, r"""
+        __fetch = async url => url === '/api/systemone' ? __response(200, {available: false, lane: '', reason: 'no text lane is serving'}) : new Promise(() => {});
+        feed({config: CONFIG, units: UNITS, lifecycle: life({'qwen38-nemotron.service': eng('ready')}), machine: %s});
+        showView('decide'); await __settle();
+        const btn = $('s1-note').querySelector('button');
+        report({label: btn && btn.textContent, why: txt('s1-why')});
+        btn.click(); await __settle();
+        report({label: btn.textContent, why: txt('s1-why'), title: txt('sh-title'), toast: toastText()});
+        """ % self.MACHINE_64)
+        self.assertEqual(r["label"], "Load 27B stock")
+        self.assertIn("the 27B answers it", r["why"])
+        self.assertNotIn("flash", r["why"])
+        self.assertEqual(r["title"], "Load 27B stock, NVFP4")
+        self.assertNotIn("128 GB", r["toast"])
+
+    def test_the_versions_follow_a_machine_panel_that_comes_after_the_card(self):
+        # the card was built before the box's class was known, and its FP8 versions stayed to be
+        # picked until a reload; the arrow keys stopped on a version that could not take the focus
+        # (found in review, 2026-10-23)
+        r = run(self, r"""
+        feed({config: CONFIG, units: UNITS, lifecycle: life({'qwen38-sglang.service': eng('ready')})});
+        showView('lanes');
+        const opt = t => [...document.querySelectorAll('#view-lanes .opt')].find(b => b.dataset.target === t);
+        const before = opt('fp8').disabled;
+        feed({machine: %s});
+        const after = [opt('fp8').disabled, opt('uncensored-fp8').disabled, opt('stock').disabled];
+        const unc = opt('uncensored'); unc.focus();
+        unc.parentNode.dispatchEvent({type: 'keydown', key: 'ArrowRight', preventDefault(){}});
+        report({before, after, focus: document.activeElement && document.activeElement.dataset.target,
+                title: opt('fp8').title});
+        """ % self.MACHINE_64)
+        self.assertFalse(r["before"], "no class known is no refusal")
+        self.assertEqual(r["after"], [True, True, False], r)
+        self.assertEqual(r["focus"], "stock", "the arrow passes over the versions this box cannot hold")
+        self.assertIn("needs a 128 GB DGX Spark", r["title"])
+
     def test_a_128_gb_box_still_names_the_command_that_installs_a_lane_left_out(self):
         r = self.page("128", 121.6)
         self.assertIn("./install.sh --with-flash", r["notes"][0])
