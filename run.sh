@@ -25,6 +25,11 @@ unset _v
 # must still break if the name disappears, which is what this line is for.
 grep -qE '^CONTEXT_MODE=' "$REPO_DIR/install.sh" \
   || die "install.sh no longer defines CONTEXT_MODE (repo layout changed?)"
+# A 64 GB DGX Spark: this runs the 27B with a 128 GB box's memory settings, where its own unit
+# (qwen38-sglang-64.service.template) has settings sized for it, and it took the FP8 targets too.
+# Refused there, as ./install.sh --no-service is, which prepares it (found in review, 2026-10-23).
+[ "$(python3 -I "$REPO_DIR/boxmem.py" class 2>/dev/null)" != 64 ] \
+  || die "./run.sh runs the 27B with the memory settings of a 128 GB DGX Spark, and this box is a 64 GB one. Its service, which ./install.sh installs, runs the 27B with settings sized for it."
 # run.sh is the foreground path, which serves the native window by definition.
 # An explicit CONTEXT_MODE=1m from the environment survives this and is refused
 # by name below, which is the behaviour that path has always had.

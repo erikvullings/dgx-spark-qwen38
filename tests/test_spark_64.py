@@ -224,6 +224,19 @@ class TheRunSaysIt(unittest.TestCase):
                     self.assertNotIn("needs a 128 GB DGX Spark", r.stderr)
                 self.assertEqual(wall.reached(record), [])
 
+    def test_run_sh_refuses_a_64_gb_box(self):
+        # it runs the 27B with a 128 GB box's memory settings and took MODEL_CHOICE=fp8: refused there,
+        # as --no-service, which prepares it, is (found in review, 2026-10-23). Its throwaway HOME holds
+        # no key, so a run that went on stops at that, and docker is fenced
+        said = "./run.sh runs the 27B with the memory settings of a 128 GB DGX Spark, and this box is a 64 GB one."
+        for cls, choice in (("64", "stock"), ("64", "fp8"), ("128", "stock")):
+            with self.subTest(cls=cls, choice=choice):
+                env, record = wall.fenced_env(QWEN38_MEMORY_CLASS=cls, MODEL_CHOICE=choice)
+                r = subprocess.run(["bash", str(REPO / "run.sh")], capture_output=True, text=True, timeout=60, env=env)
+                self.assertEqual(r.returncode, 1, r.stderr[-400:])
+                (self.assertIn if cls == "64" else self.assertNotIn)(said, r.stderr)
+                self.assertEqual(wall.reached(record), [])
+
     def test_prepare_lane_says_a_side_lane_needs_128_gb_not_an_install(self):
         # its unit is never there on a 64 GB box, and ./install.sh leaves the lane out: the old
         # answer sent the owner round in a circle (found in review, 2026-10-23). Walled before the
