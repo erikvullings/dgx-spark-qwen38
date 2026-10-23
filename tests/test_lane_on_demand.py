@@ -9,6 +9,7 @@ everything that acts on the machine: sudo, systemctl and docker record their cal
 runs what follows it only when the test allows root), python3 and git stand in for the venv,
 the wheel and the source, and uname says aarch64 on any machine the suite runs on.
 """
+import os
 import pathlib
 import re
 import subprocess
@@ -278,9 +279,17 @@ class TheDispatcher(unittest.TestCase):
         for lane in units:
             (d / "units" / f"qwen38-{lane}.service").write_text("[Unit]\n")
         (d / "prepare-lane.sh").write_text((REPO / "prepare-lane.sh").read_text().replace("/etc/systemd/system/", f"{d}/units/"))
+        # the library a side lane's branch sources since the 64 GB DGX Spark, its units where the
+        # copy's are, and the memory reader it asks; a 128 GB box's memory, so the machine the
+        # tests run on, or a class exported in their shell, decides nothing here
+        (d / "lanes.sh").write_text((REPO / "lanes.sh").read_text().replace("/etc/systemd/system", f"{d}/units"))
+        (d / "boxmem.py").write_text((REPO / "boxmem.py").read_text())
+        (d / "meminfo").write_text("MemTotal:       127533104 kB\nMemAvailable:   121000000 kB\n")
         for lane in ("image", "video", "kolibri", "nemotron", "nemotron-super"):
             (d / f"install-{lane}.sh").write_text(f'echo "install-{lane}.sh $*"\n')
-        r = subprocess.run(["bash", str(d / "prepare-lane.sh"), *args], capture_output=True, text=True, timeout=30)
+        env = {k: v for k, v in os.environ.items() if not k.startswith("QWEN38_")}
+        r = subprocess.run(["bash", str(d / "prepare-lane.sh"), *args], capture_output=True, text=True, timeout=30,
+                           env={**env, "QWEN38_MEMINFO": str(d / "meminfo")})
         return r.returncode, (r.stdout + r.stderr).strip()
 
     def test_each_lane_runs_its_installers_prepare(self):

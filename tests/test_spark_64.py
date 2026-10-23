@@ -139,6 +139,8 @@ def between(text, start, end):
 
 # where prepare-lane.sh asks for the docker group, the first thing past its 64 GB refusal
 PREPARE_DOCKER = '    docker_session bash "$HERE/${BASH_SOURCE[0]##*/}" "$@"\n'
+# where it hands a side lane to that lane's installer
+PREPARE_SIDE = '    exec bash "$HERE/install-$1.sh" --prepare ;;\n'
 
 
 class TheRunSaysIt(unittest.TestCase):
@@ -204,6 +206,24 @@ class TheRunSaysIt(unittest.TestCase):
                 self.assertIn(said, r.stderr)
                 self.assertNotIn(wall.WALL, r.stdout)
                 self.assertEqual(wall.reached(record), [])
+
+    def test_prepare_lane_says_a_side_lane_needs_128_gb_not_an_install(self):
+        # its unit is never there on a 64 GB box, and ./install.sh leaves the lane out: the old
+        # answer sent the owner round in a circle (found in review, 2026-10-23). Walled before the
+        # lane's own installer; a lane that fits, with its unit, goes on to it
+        units = wall.units_dir({"qwen38-nemotron.service": "[Service]\n"})
+        script = wall.walled("prepare-lane.sh", at=PREPARE_SIDE, units=units)
+        for lane in ("image", "video", "kolibri", "nemotron-super", "flash-local", "ornith-122b"):
+            with self.subTest(lane):
+                env, record = wall.fenced_env(QWEN38_MEMORY_CLASS="64")
+                r = subprocess.run(["bash", script, lane], capture_output=True, text=True, timeout=60, env=env)
+                self.assertEqual(r.returncode, 1, (r.stdout + r.stderr)[-400:])
+                self.assertIn(f"The {lane} lane needs a 128 GB DGX Spark, and this box is a 64 GB one.", r.stderr)
+                self.assertNotIn("./install.sh installs its units", r.stderr)
+                self.assertEqual(wall.reached(record), [])
+        env, record = wall.fenced_env(QWEN38_MEMORY_CLASS="64")
+        r = subprocess.run(["bash", script, "nemotron"], capture_output=True, text=True, timeout=60, env=env)
+        self.assertEqual((r.returncode, wall.WALL in r.stdout), (97, True), (r.stdout + r.stderr)[-400:])
 
     def test_opencode_s_limits_are_fitted_to_the_pool_on_a_64_gb_box(self):
         # the native pair was sized on a 128 GB box's pool: a 64 GB box gets the fit 1m gets

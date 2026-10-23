@@ -177,6 +177,12 @@ prepare_27b(){
 case "$1" in
   image|video|kolibri|nemotron|nemotron-super|flash-local|ornith-122b)
     # its checkpoint comes with its switch, as for any Load: no target here
+    CONFIG_DIR="$HOME/.config/qwen38"; REPO_DIR="$HERE"
+    # shellcheck source=lanes.sh
+    . "$HERE/lanes.sh"
+    # A lane a 64 GB DGX Spark cannot hold has no unit there, and ./install.sh leaves it out: said
+    # so, rather than sent to an install that never installs it (found in review, 2026-10-23)
+    [ "$(box_mem_class)" != 64 ] || lane_fits "$1" || die "The $1 lane needs a 128 GB DGX Spark, and this box is a 64 GB one."
     [ -f "/etc/systemd/system/qwen38-$1.service" ] || die "the $1 lane is not installed on this box (no unit): ./install.sh installs its units"
     exec bash "$HERE/install-$1.sh" --prepare ;;
   flash|27b)
