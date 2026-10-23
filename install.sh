@@ -2386,8 +2386,10 @@ OC_KEEP="$("$REPO_DIR/oc-limits.sh" --preserve "$OC_CTX")" \
 # On 1m the table gives bounds and the fit to the pool sets the pair (fitted() below and
 # --keep-lower), so the compaction goes with the fitted pair too: sized from the bound here,
 # it was set back at every run and the fit at the end set it again, two writes, two backups
-# and two opencode-web restarts per update (seen on the reference box, 2026-09-25).
-if [ "$CONTEXT_MODE" = "1m" ] && [ "$LANE" != "flash" ]; then
+# and two opencode-web restarts per update (seen on the reference box, 2026-09-25). A 64 GB box
+# is fitted at the end too (its native pair was sized on a 128 GB box's pool), so the same holds
+# there (found in review, 2026-10-23).
+if { [ "$CONTEXT_MODE" = "1m" ] || [ "$MEM_CLASS" = 64 ]; } && [ "$LANE" != "flash" ]; then
   OC_FIT_CTX="$(python3 - "$CONFIG_DIR/opencode.json" "$OC_CTX" "$OC_OUT" <<'PY' 2>/dev/null || true
 import json, sys
 try:
@@ -2483,7 +2485,7 @@ OC_WINDOW=262144; [ "$CONTEXT_MODE" = "1m" ] && OC_WINDOW=1010000
 OC_SERVED_NAME="$(python3 "$REPO_DIR/oc-point-default.py" --label "$MODEL_CHOICE" "$OC_WINDOW")" \
   || die "oc-point-default.py --label failed (repo bug: please open an issue)"
 OC_LANE="$LANE" OC_27B="$OC_27B" OC_FLASH="$OC_FLASH" OC_PORT="$OC_PORT" \
-OC_CTX="$OC_CTX" OC_OUT="$OC_OUT" OC_LABEL="$OC_LABEL" OC_CONTEXT_MODE="$OC_27B_MODE" \
+OC_CTX="$OC_CTX" OC_OUT="$OC_OUT" OC_LABEL="$OC_LABEL" OC_CONTEXT_MODE="$OC_27B_MODE" OC_MEM_CLASS="$MEM_CLASS" \
 OC_27B_CTX="$OC_27B_CTX" OC_27B_OUT="$OC_27B_OUT" OC_SERVED_NAME="$OC_SERVED_NAME" \
 OC_27B_NAME="$OC_27B_NAME" OC_FLASH_NAME="$OC_FLASH_NAME" \
 OC_FLASH_CTX="$OC_FLASH_CTX" OC_FLASH_OUT="$OC_FLASH_OUT" \
@@ -2549,7 +2551,8 @@ if os.environ["OC_27B"] == "1":
     else:  # flash install on a box that also has the 27B unit: keep its own limits
         ctx, out = int(os.environ["OC_27B_CTX"]), int(os.environ["OC_27B_OUT"])
         label = "local, 1M" if os.environ["OC_CONTEXT_MODE"] == "1m" else "local"
-    if os.environ["OC_CONTEXT_MODE"] == "1m":
+    # a 64 GB box's pair is fitted at the end as 1m's is (its native pair a bound there)
+    if os.environ["OC_CONTEXT_MODE"] == "1m" or os.environ.get("OC_MEM_CLASS") == "64":
         ctx, out = fitted("qwen38", "qwen3.8-27b", ctx, out) or (ctx, out)
     providers["qwen38"] = prov("Qwen3.8-27B (DGX Spark)", "qwen3.8-27b",
                                lane == "27b" and served_name or os.environ.get("OC_27B_NAME")
@@ -2707,15 +2710,19 @@ if [ -f "$OC_USER_CFG" ]; then
     # window, a 400 past it, under advice to pass CONTEXT_MODE=1m (found in review,
     # 2026-09-24). Since the mode converges on the installed unit, an explicit one is
     # the only way here.
+    # A 64 GB box goes back to the native window on its own (the convergence says so): keeping the
+    # 1M limits there asked 700,000 of a 262,144 window, under advice to pass the CONTEXT_MODE=1m it
+    # refuses (found in review, 2026-10-23)
     UNIT_CTX="$(grep -oE -- '--context-length [0-9]+' "$SGL_UNIT_PATH" 2>/dev/null | awk '{print $2}' | head -1 || true)"
-    if [ -n "$UNIT_CTX" ] && [ "$UNIT_CTX" -gt 262144 ] && [ "$CONTEXT_MODE" != "1m" ] && [ -z "$_ENV_CONTEXT_MODE" ]; then
+    if [ -n "$UNIT_CTX" ] && [ "$UNIT_CTX" -gt 262144 ] && [ "$CONTEXT_MODE" != "1m" ] && [ -z "$_ENV_CONTEXT_MODE" ] \
+       && [ "$MEM_CLASS" != 64 ]; then
       echo "NOTE: the installed 27B unit serves --context-length $UNIT_CTX; keeping the existing"
       echo "      opencode limits (these $CONTEXT_MODE-mode values would shrink them). Re-run with"
       echo "      CONTEXT_MODE=1m to manage them, or edit $OC_USER_CFG yourself."
     else
-      # on 1m the table's pair is a bound, and the fit at the end sets the pair: keep one
-      # already under it (see oc-merge-limits.py --keep-lower)
-      OC_KEEP_LOWER=(); [ "$CONTEXT_MODE" = "1m" ] && OC_KEEP_LOWER=(--keep-lower)
+      # on 1m and on a 64 GB box the table's pair is a bound, and the fit at the end sets the
+      # pair: keep one already under it (see oc-merge-limits.py --keep-lower)
+      OC_KEEP_LOWER=(); { [ "$CONTEXT_MODE" = "1m" ] || [ "$MEM_CLASS" = 64 ]; } && OC_KEEP_LOWER=(--keep-lower)
       python3 "$REPO_DIR/oc-merge-limits.py" "$OC_USER_CFG" qwen38 qwen3.8-27b "$OC_CTX" "$OC_OUT" ${OC_KEEP_LOWER[@]+"${OC_KEEP_LOWER[@]}"} || true
       python3 "$REPO_DIR/oc-merge-limits.py" "$OC_USER_CFG" --compaction "$OC_KEEP" || true
     fi

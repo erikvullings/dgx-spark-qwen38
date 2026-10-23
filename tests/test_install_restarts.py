@@ -215,13 +215,13 @@ class TheGeneratedConfigKeepsItsFit(unittest.TestCase):
 
     BODY = None
 
-    def run_generator(self, d, mode):
+    def run_generator(self, d, mode, cls="128"):
         start = INSTALL.index("OC_CONFIG_DIR=\"$CONFIG_DIR\" python3 - <<'PYEOF'")
         body = INSTALL[INSTALL.index("\n", start) + 1:INSTALL.index("\nPYEOF\n", start)]
         ctx, out = ("700000", "200000") if mode == "1m" else ("173000", "64000")
         env = dict(os.environ, OC_LANE="27b", OC_27B="1", OC_FLASH="0", OC_PORT="30001", OC_CTX=ctx,
                    OC_OUT=out, OC_LABEL="local, 1M", OC_CONTEXT_MODE=mode, OC_27B_CTX=ctx, OC_27B_OUT=out,
-                   OC_KEEP="38000", OC_PIN="1", OC_CONFIG_DIR=str(d))
+                   OC_KEEP="38000", OC_PIN="1", OC_CONFIG_DIR=str(d), OC_MEM_CLASS=cls)
         r = subprocess.run(["python3", "-c", body], capture_output=True, text=True, env=env, timeout=30)
         self.assertEqual(r.returncode, 0, r.stderr)
         f = d / "opencode.json"
@@ -248,12 +248,12 @@ class TheGeneratedConfigKeepsItsFit(unittest.TestCase):
         self.assertEqual(text, before)
         self.assertEqual(mtime, 1000, "an identical config was written again, and its date moved")
 
-    def keep_after(self, d, mode="1m", lane="27b"):
+    def keep_after(self, d, mode="1m", lane="27b", cls="128"):
         """OC_KEEP as install.sh resolves it for the config in d."""
         start = INSTALL.index("# On 1m the table gives bounds and the fit to the pool sets the pair")
         block = INSTALL[start:INSTALL.index("\nfi\n", INSTALL.index("  if [ -n \"$OC_FIT_CTX\" ]; then", start)) + 4]
         script = (f'set -euo pipefail\ndie(){{ echo "DIE $*"; exit 1; }}\nREPO_DIR="{REPO}"\nCONFIG_DIR="{d}"\n'
-                  f'CONTEXT_MODE={mode}\nLANE={lane}\nOC_CTX=700000\nOC_OUT=200000\nOC_KEEP=170000\n'
+                  f'CONTEXT_MODE={mode}\nLANE={lane}\nMEM_CLASS={cls}\nOC_CTX=700000\nOC_OUT=200000\nOC_KEEP=170000\n'
                   + block + 'echo "KEEP=$OC_KEEP"\n')
         r = subprocess.run(["bash", "-c", script], capture_output=True, text=True, timeout=30)
         self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
@@ -276,6 +276,59 @@ class TheGeneratedConfigKeepsItsFit(unittest.TestCase):
     def test_a_native_install_writes_the_table(self):
         pair, _, _ = self.run_generator(self.fitted_dir(559000, 186000), "native")
         self.assertEqual(pair, (173000, 64000))
+
+    def test_a_64_gb_box_keeps_its_fit_under_the_native_bounds(self):
+        # its native pair is a bound, fitted to the pool at the end as 1m's is: writing the bound over
+        # the fit made every update write twice, with two backups and two opencode-web restarts
+        # (found in review, 2026-10-23)
+        pair, _, _ = self.run_generator(self.fitted_dir(140000, 32000), "native", cls="64")
+        self.assertEqual(pair, (140000, 32000))
+        want = int(subprocess.run([str(REPO / "oc-limits.sh"), "--preserve", "140000"],
+                                  capture_output=True, text=True).stdout)
+        self.assertEqual(self.keep_after(self.fitted_dir(140000, 32000), mode="native", cls="64"), want)
+        # a 128 GB box's native install still writes the table, and keeps its compaction
+        self.assertEqual(self.keep_after(self.fitted_dir(140000, 32000), mode="native"), 170000)
+
+
+class Step7OnA64GBBox(unittest.TestCase):
+    """Step 7's merge of the 27B's limits, run from install.sh's own lines with a merge that
+    writes down what it is asked (found in review, 2026-10-23)."""
+
+    def run_step(self, cls, unit_ctx=1010000):
+        d = pathlib.Path(tempfile.mkdtemp(prefix="step7-64-"))
+        (d / "oc-merge-limits.py").write_text(f'import sys\nopen("{d}/calls", "a").write(" ".join(sys.argv[1:]) + "\\n")\n')
+        (d / "unit").write_text(f"ExecStart=... --context-length {unit_ctx} ...\n")
+        start = INSTALL.index('    UNIT_CTX="$(grep -oE -- \'--context-length [0-9]+\'')
+        block = INSTALL[start:INSTALL.index("    # Offered whatever the limits branch decided above", start)]
+        script = (f'set -euo pipefail\nREPO_DIR="{d}"\nSGL_UNIT_PATH="{d}/unit"\nCONTEXT_MODE=native\n_ENV_CONTEXT_MODE=\n'
+                  f'MEM_CLASS={cls}\nOC_USER_CFG="{d}/opencode.json"\nOC_CTX=173000\nOC_OUT=64000\nOC_KEEP=38000\n'
+                  "if true; then\n" + block + "fi\n")
+        r = subprocess.run(["bash", "-c", script], capture_output=True, text=True, timeout=30)
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        calls = (d / "calls").read_text().splitlines() if (d / "calls").exists() else []
+        return r.stdout, calls
+
+    def test_a_64_gb_box_with_a_1m_unit_has_its_limits_managed(self):
+        # the convergence takes it back to the native window: keeping the 1M limits asked 700,000 of
+        # a 262,144 window, under advice to pass the CONTEXT_MODE=1m it refuses
+        out, calls = self.run_step("64")
+        self.assertNotIn("keeping the existing", out)
+        self.assertIn(f"{self.cfg_of(calls)} qwen38 qwen3.8-27b 173000 64000 --keep-lower", calls)
+
+    def test_its_merge_keeps_a_fitted_pair_under_the_bound(self):
+        out, calls = self.run_step("64", unit_ctx=262144)
+        self.assertIn(f"{self.cfg_of(calls)} qwen38 qwen3.8-27b 173000 64000 --keep-lower", calls)
+
+    def test_a_128_gb_box_is_as_before(self):
+        out, calls = self.run_step("128")
+        self.assertIn("keeping the existing", out)
+        self.assertEqual(calls, [])
+        out, calls = self.run_step("128", unit_ctx=262144)
+        self.assertIn(f"{self.cfg_of(calls)} qwen38 qwen3.8-27b 173000 64000", calls)
+
+    @staticmethod
+    def cfg_of(calls):
+        return calls[0].split()[0] if calls else "?"
 
 
 if __name__ == "__main__":

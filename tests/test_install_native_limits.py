@@ -28,7 +28,7 @@ def run(env_mode):
         "import sys\nopen(sys.argv[0] + '.log', 'a').write(' '.join(sys.argv[1:]) + '\\n')\n")
     script = ("set -euo pipefail\n"
               f'REPO_DIR="{d}"; SGL_UNIT_PATH="{d}/unit"; OC_USER_CFG="{d}/opencode.json"\n'
-              f"CONTEXT_MODE=native; _ENV_CONTEXT_MODE={env_mode}; OC_CTX=173000; OC_OUT=64000; OC_KEEP=38000\n"
+              f"CONTEXT_MODE=native; _ENV_CONTEXT_MODE={env_mode}; MEM_CLASS=128; OC_CTX=173000; OC_OUT=64000; OC_KEEP=38000\n"
               + BLOCK)
     r = subprocess.run(["bash", "-c", script], capture_output=True, text=True, timeout=30)
     log = d / "oc-merge-limits.py.log"
