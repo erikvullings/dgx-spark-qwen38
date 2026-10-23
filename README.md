@@ -209,16 +209,14 @@ First boot takes **~7-9 minutes** for a 27B target (CUDA graph capture + kernel 
 
 ### On a 64 GB DGX Spark
 
-<!-- PROVISIONAL 64 GB VALUES, NOT MEASURED YET: every [bracket] below is measured before this ships -->
-
 The installer reads the box's class from its MemTotal (`boxmem.py`): a 128 GB box from 110 GiB, a
 64 GB DGX Spark from 48 GiB, and below that it stops at step 1 and says how many GiB the box has. On
-a 64 GB box it installs what fits it, and nothing else:
+a 64 GB box it installs what fits it, nothing else, and ends its first install on Bolt:
 
 | Lane | On a 64 GB DGX Spark |
 |---|---|
-| Qwen3.8-27B in NVFP4 | its native window, in a unit sized for 64 GB: [pool] tokens of KV pool, [X] tok/s on one stream |
-| Nemotron 3.5 Bolt | with a memory share of its own: [Z] tok/s on one stream |
+| Nemotron 3.5 Bolt | the lane it serves, with a memory share of its own: 667,874 tokens of KV (2.55 times its 262,144-token window), 110.8 tok/s greedy median on `bench.sh` |
+| Qwen3.8-27B in NVFP4 | a Load away, its native window in a unit sized for 64 GB: two requests at a time, 59,625 tokens of KV, 67.2 tok/s greedy median |
 | Speech (`./install-speech.sh`) | as on any box, on the CPU |
 | the flash lane, `CONTEXT_MODE=1m`, the FP8 targets, images, video, Kolibri-1, Nemotron 3.5 Super VL, Flash FP4-Local, Ornith 1.5 122B | refused, as they need a 128 GB DGX Spark |
 
@@ -227,7 +225,8 @@ Each refusal comes before a byte is fetched or pulled: in `install.sh`, in each 
 a 128 GB DGX Spark. `--no-service` is refused there too, as `./run.sh` serves a 128 GB box's
 settings: the service's unit is the one sized for 64 GB. opencode's limits are fitted to the pool
 the 27B boots to, by the installer and at each Load, as on the 1M window. The cockpit names the box over its pool,
-from its DMI ("ASUS Ascent GX10, 64 GB"). Measured [how: on the reference box with 64 GiB held aside, N runs, the median].
+from its DMI ("ASUS Ascent GX10, 64 GB"). Measured on the reference box at the memory a 64 GB box gives
+each engine (2026-10-24), how and every setting tried in the [CHANGELOG](CHANGELOG.md) (v1.40.0).
 
 ### Your choices, and how they combine
 

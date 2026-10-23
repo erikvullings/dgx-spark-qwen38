@@ -88,7 +88,11 @@ NEMOTRON_BOLT_DRAFT_REV="4c6a5613b6d887194a3a5493e3a18a5b3930bb86"
 # The share of the GPU memory and the download in GB (why: where they are used below).
 # switch-model.sh reads them here, with the repos and revisions.
 NEMOTRON_BOLT_GMU="0.70"
-# PROVISIONAL 64 GB VALUE, NOT MEASURED YET: the share on a 64 GB DGX Spark (boxmem.py)
+# The share on a 64 GB DGX Spark (boxmem.py), of its total as vLLM reads it. Measured on a 64 GB
+# budget (2026-10-24: on the reference box at the same absolute memory, 0.284 of its 121.63 GiB,
+# as vLLM asks total x share): 667,874 tokens of KV, 2.55 times the 262,144-token window, a
+# 110.8 tok/s greedy median on bench.sh, and 7.1 GiB left at the peak under four 32,768-token
+# requests. A 64 GB box serves this lane (install.sh).
 NEMOTRON_BOLT_GMU_64="0.60"
 NEMOTRON_BOLT_GB="26"
 # The local image: the base and the wheel, nothing else. Its tag names both, so a change of

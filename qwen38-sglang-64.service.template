@@ -11,7 +11,14 @@ Conflicts=qwen38-flash.service qwen38-image.service qwen38-video.service qwen38-
 After=network-online.target docker.service qwen38-flash.service qwen38-image.service qwen38-video.service qwen38-kolibri.service qwen38-nemotron.service qwen38-nemotron-super.service qwen38-flash-local.service qwen38-ornith-122b.service
 
 [Service]
-# PROVISIONAL 64 GB VALUES, NOT MEASURED YET
+# The memory settings of a 64 GB DGX Spark, measured on a 64 GB budget (2026-10-24: on the reference
+# box at the fraction that gives SGLang the same absolute budget, as it sizes the pool from the memory
+# free before its weights load). 0.65 is the highest fraction that left 6 GiB at the peak under four
+# requests filling the pool (6.2 GiB; 0.70 left 3.7). The Mamba cache, which SGLang sizes per
+# running request, holds 12 slots: 4.4 GB of the budget where 24 took 7.5, and SGLang runs two
+# requests at a time with them (six slots each), whatever --max-running-requests says. The pool came
+# to 59,625 tokens on that boot, and moves from one boot to the next with the page cache reading the
+# weights fills. A 64 GB box serves Nemotron 3.5 Bolt; this lane is a Load away (install.sh).
 Type=simple
 User=__USER__
 Group=__GROUP__
@@ -34,7 +41,7 @@ ExecStart=/bin/bash -c 'exec /usr/bin/docker run --rm --name qwen38-sglang --gpu
   python3 -m sglang.launch_server \
     --model-path __MODEL__ __MODEL_REV_ARGS__ --tp-size 1 \
     --served-model-name qwen3.8-27b \
-    --mem-fraction-static 0.60 __KV_CACHE_ARGS__\
+    --mem-fraction-static 0.65 __KV_CACHE_ARGS__\
     --attention-backend flashinfer --chunked-prefill-size 8192 \
     --disable-prefill-cuda-graph --cuda-graph-max-bs-decode 4 \
     --disable-flashinfer-autotune \
@@ -42,7 +49,7 @@ ExecStart=/bin/bash -c 'exec /usr/bin/docker run --rm --name qwen38-sglang --gpu
     --speculative-draft-model-revision __DRAFT2_REV__ \
     --speculative-num-draft-tokens __DRAFT2_TOKENS__ --speculative-draft-model-quantization __DRAFT2_QUANT__ \
     --mamba-radix-cache-strategy extra_buffer --mamba-ssm-dtype bfloat16 \
-    --max-mamba-cache-size 24 --max-running-requests 4 \
+    --max-mamba-cache-size 12 --max-running-requests 4 \
     --enable-torch-compile --torch-compile-max-bs 4 \
     --num-continuous-decode-steps 2 --sleep-on-idle \
     --enable-metrics \

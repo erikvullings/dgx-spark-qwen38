@@ -1,8 +1,6 @@
 # Changelog
 
-## v1.40.0 (2026-10-23): the 64 GB DGX Spark gets the lanes that fit it, a --no-<lane> counts for its run only, and OpenAI's voice names each speak
-
-<!-- PROVISIONAL 64 GB VALUES, NOT MEASURED YET: measure every [bracket] below, and set the date to the release day, before this ships -->
+## v1.40.0 (2026-10-24): the 64 GB DGX Spark gets the lanes that fit it and serves Bolt, Claude Code a launcher for the lane that serves, a --no-<lane> counts for its run only, and OpenAI's voice names each speak
 
 **The 64 GB DGX Spark.** NVIDIA's partners ship it from 2026-10-23: the same GB10, on the same
 256-bit bus at 273 GB/s (NVIDIA's product page), with half the memory, and NVIDIA names Bolt 24GB
@@ -17,14 +15,26 @@ box and never decides its class.
 
 On a 64 GB box a run installs:
 
-- the 27B in NVFP4, serving its native window from `qwen38-sglang-64.service.template`, the native
-  unit with memory settings of its own: [fraction, container memory, mamba cache, requests],
-  [pool] tokens, [X] tok/s on one stream
-- Nemotron 3.5 Bolt with a memory share of its own ([share]), [Z] tok/s on one stream
+- Nemotron 3.5 Bolt, which such a box serves, with a memory share of its own (0.60 of the total, as
+  vLLM reads it): 667,874 tokens of KV on that budget, 2.55 times its 262,144-token window, at a
+  110.8 tok/s greedy median on bench.sh
+- the 27B in NVFP4, a Load away, serving its native window from `qwen38-sglang-64.service.template`,
+  the native unit with memory settings of its own: a fraction of 0.65, 32 GB for its container, 12
+  Mamba slots, two requests at a time; 59,625 tokens of KV on that budget, at a 67.2 tok/s greedy
+  median
 - the speech lane, which runs on the CPU, as on every box
 
+A new 64 GB box ends its install on Bolt. On that budget the 27B gets two requests and a pool of
+tens of thousands of tokens, few for an agent (Claude Code's first request alone holds about
+18,600), where Bolt holds its whole window two and a half times over: once the 27B has proved
+itself, Bolt is prepared and loaded as the cockpit's Load does it, and the 27B stays a Load away. A
+Bolt that does not come up leaves the 27B serving, with a note. A box that already boots a lane
+keeps it, a run that names a 27B target or leaves Bolt out keeps the 27B, and `--recommended`,
+what a new box gets, keeps Bolt on such a box.
+
 It refuses what a 64 GB box cannot hold before anything moves: the flash lane, `CONTEXT_MODE=1m`,
-the FP8 targets and `--no-service` (whose `run.sh` serves a 128 GB box's settings) in `install.sh`,
+the FP8 targets and `--no-service` in `install.sh`, `./run.sh` itself (it runs a 128 GB box's
+settings),
 every other lane's installer as soon as it has its library (its `--uninstall` still runs),
 `prepare-lane.sh` and `switch-model.sh` for such a lane or target, and so the cockpit's Load, whose
 page shows them and does not offer them. opencode's limits are fitted to the pool the 27B boots to,
@@ -38,9 +48,34 @@ row, and a lane a 64 GB box cannot hold says it needs a 128 GB DGX Spark, in its
 and in the toast, where a lane left out names the command that installs it. Its recipes compare a
 64 GB box with the unit sized for it, whose memory settings would otherwise read as drift.
 
-**Measured** [how: on the reference box with 64 GiB held aside, 57.6 GiB of MemTotal left, the
-same GB10 and the same 273 GB/s, N runs, the median], [the table: the 27B and Bolt, one stream,
-pool, boot, the memory floor at the peak, the same probes as v1.39.0].
+**Measured** on the reference box at the memory a 64 GB box gives each engine (2026-10-24, this
+box's own services around it, the speech lane included). Holding 64 GiB aside, the first way tried,
+upset the GPU driver: nvidia-smi saw no GPU while the memory was being locked, and the 27B's CUDA
+context then failed to allocate with 52 GiB available, so nothing is held aside. SGLang sizes the
+27B from the memory free before its weights load: what it keeps out of the pool is that free memory
+times one less the fraction. So the 27B ran at the fraction that gives it, here, the budget it has
+on a 64 GB box, where SGLang read 48.70 GiB free (with the 64 GiB held, before the driver failed),
+against 110 to 113.6 here. vLLM sizes Bolt from the total instead, which stays this box's 121.63
+GiB, so its share ran at 0.60 x 57.63 / 121.63 = 0.284, the same budget. A 64 GB box's memory left
+at the peak is the one measured here less 64 GiB. Each setting: its boot, its pool, the memory left
+during the boot and under four requests that fill nine tenths of the pool (four of 32,768 tokens
+for Bolt), bench.sh's probes, and for the settings kept the probes of v1.39.0.
+
+| On a 64 GB budget | KV pool, tokens | Requests | bench.sh, greedy median | Left at the peak | Boot |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| 27B, fraction 0.70, 24 Mamba slots | 31,341 | 4 | 71.7 tok/s (1 run) | 6.3 GiB | 371 s |
+| 27B, fraction 0.75, 24 Mamba slots | 86,732 | 4 | 65.8 tok/s (1 run) | 3.6 GiB, refused | 367 s |
+| 27B, fraction 0.70, 12 Mamba slots | 46,700 and 92,415 (two boots) | 2 | 64.2 tok/s (1 run) | 3.7 GiB, refused | 296 s |
+| 27B, fraction 0.65, 12 Mamba slots | 59,625 | 2 | 67.2 tok/s (median of 3) | 6.2 GiB | 301 s |
+| Bolt, share 0.60 | 667,874 (2.55 windows) | 16 | 110.8 tok/s (median of 3) | 7.1 GiB | 332 s |
+
+The kept settings are the highest that leave at least 6 GiB at the peak. On that budget the 27B's
+Mamba cache, which SGLang sizes per running request (six slots each with these settings), takes
+much of what the weights leave: 7.5 GB for 24 slots, 4.4 for 12. And the pool moves from one boot
+to the next at the same settings (46,700 then 92,415): the page cache that reading the weights
+fills changes the free memory SGLang reads before and after, and the pool is the difference.
+Bolt's prefix cache serves an agent's turns as on a 128 GB box (31,808 of 40,000 tokens a turn,
+5.2 s to the first token).
 
 `QWEN38_MEMORY_CLASS` forces the class, for the tests and for measuring a 64 GB budget on a
 128 GB box. `tests/test_boxmem.py` holds the thresholds to the boxes they were set from,
@@ -73,12 +108,44 @@ default voice speaks another language, that voice keeps answering all eleven: an
 would read a French text wrong. A name whose voice the lane lacks gets the default voice, not a
 400. The tests of the English box fail on the old code.
 
-**What an update does.** [to check on the reference box with the update itself] The cockpit
-restarts (its code changed), and with it the Agent tab's relay, which reconnects by itself. The
-engines keep running and no unit of a 128 GB box changes. A box that left a lane out with an older
+**Claude Code on the lane that serves (discussion #59).** #59 asked for Claude Code with the
+box's models the way `ollama launch claude` does, and the reply of 2026-10-22 gave a launcher to
+copy, with one pair of limits for the 27B and one for the rest. `claude-local` is that launcher
+in the repo: `install.sh` writes it in `~/.local/bin` beside `oc`, and `uninstall.sh` lists and
+removes it. A `claude-local` that is not this repo's is left where it is, but for the one that
+reply gave to copy there: it is kept beside as `claude-local.from-59`, in case it was edited, and
+replaced. For the one process it starts,
+it sets the proxy as Anthropic's endpoint, the box's key (read from its file at each launch and
+handed over in the environment only, never on a command line), the model the proxy serves, the
+timeouts `docs/clients.md` gives, and the context and answer budget of the lane that serves, then
+runs `claude` with your arguments. `~/.claude` is left alone, and a variable you set is kept. The
+pair follows the lane's opencode limits, which the installer and the cockpit fit to its pool, its
+window and the proxy's ceiling: Claude Code's longest prompt is `CLAUDE_CODE_MAX_CONTEXT_TOKENS`
+minus 23,000, so that variable is opencode's context plus 23,000, and `max_tokens` is opencode's
+answer budget (228,000 and 32,000 on Flash FP4-Local, 578,000 and 185,000 on the 27B in 1M). A
+lane without opencode limits gets 205,000 and 32,000, which fit every lane's window, every pool
+measured on a 128 GB box, and Bolt's on a 64 GB one. The 27B's pool on a 64 GB box is smaller
+(opencode's fit gives it 37,000 and 12,000 there, and claude-local 60,000 and 12,000): with opencode
+off, it is the proxy's refusal of a prompt past the pool that makes Claude Code compact. `CLAUDE_CODE_ATTRIBUTION_HEADER` is not set: on the Ornith lane
+Claude Code reused 36 to 38% of its prompts from the cache with it and without it.
+
+Measured against Claude Code 2.1.304 and a fake Anthropic server (2026-10-23): its effective
+window is the context minus min(its output setting, 20,000), it compacts 13,000 below that and
+blocks 3,000 below it, as on 2.1.239. Through the proxy on Flash FP4-Local, Claude Code read a
+file with its tool and answered in 9.8 s, its effective window 208,000, and no log held the key.
+`tests/test_claude_local.py` (15 tests) runs it against a fake proxy and a fake `claude`, and
+runs the installer's and the uninstaller's own lines, the reply's launcher byte for byte among
+what they find (the tests of that one fail on the old code).
+
+**What an update does.** The cockpit restarts (its code changed, `boxmem.py` with it), and with it
+the Agent tab's relay, which reconnects by itself; opencode-web keeps running. The proxy and the
+engines keep running, and no unit of a 128 GB box changes. `~/.local/bin/claude-local` is written:
+the one #59's reply gave is kept beside as `claude-local.from-59`, and any other file of that name
+that is not this repo's is left there, and the run says so. A box that left a lane out with an older
 release is told once that the choice is no longer remembered, and that lane comes back in that
 run with its units only, unless it was already prepared on the box. The speech lane is not touched
-by an update, as before: run `./install-speech.sh` again to get the voices of #53.
+by an update, as before: run `./install-speech.sh` again to get the voices of #53. No 64 GB box ran
+an older release (step 1 refused it): one installs for the first time, and ends on Bolt.
 
 ## v1.39.0 (2026-10-23): the 27B lane moves to SGLang v0.5.22, faster at one and four streams, and CI tests the Agent tab against a real opencode
 
