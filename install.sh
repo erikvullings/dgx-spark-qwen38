@@ -588,7 +588,9 @@ without a terminal.
   --no-start            install everything but don't start the service now
   --no-service          no systemd, no sudo: just prepare one text lane (image,
                         checkpoints, key, template), then run it in the
-                        foreground anytime with ./run.sh (Ctrl+C stops it)
+                        foreground anytime with ./run.sh (Ctrl+C stops it).
+                        A 128 GB DGX Spark: a 64 GB one refuses it, as
+                        ./run.sh runs a 128 GB box's memory settings
   --no-opencode         skip the opencode integration (no generated config, no
                         oc launcher, and switch-model.sh leaves your opencode
                         default model alone). Remembered by later runs, each of

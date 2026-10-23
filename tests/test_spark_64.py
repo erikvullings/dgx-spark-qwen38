@@ -237,6 +237,20 @@ class TheRunSaysIt(unittest.TestCase):
                 (self.assertIn if cls == "64" else self.assertNotIn)(said, r.stderr)
                 self.assertEqual(wall.reached(record), [])
 
+    def test_the_help_and_the_readme_say_it_too(self):
+        # the refusal was said in the README's 64 GB section only: the help, the table of choices
+        # and the line that gives the path offered --no-service with no word of it (found in review,
+        # 2026-10-23)
+        help_text = re.sub(r"\s+", " ", between(INSTALL, "  --no-service ", "  --no-opencode"))
+        self.assertIn("a 64 GB one refuses it", help_text)
+        readme = (REPO / "README.md").read_text()
+        row = [ln for ln in readme.splitlines() if ln.startswith("| systemd service |")]
+        self.assertEqual(len(row), 1)
+        self.assertIn("refused on a 64 GB DGX Spark", row[0])
+        path = [ln for ln in readme.splitlines() if ln.startswith("- **Don't want a systemd service?**")]
+        self.assertEqual(len(path), 1)
+        self.assertIn("a 64 GB one refuses both", path[0])
+
     def test_prepare_lane_says_a_side_lane_needs_128_gb_not_an_install(self):
         # its unit is never there on a 64 GB box, and ./install.sh leaves the lane out: the old
         # answer sent the owner round in a circle (found in review, 2026-10-23). Walled before the
