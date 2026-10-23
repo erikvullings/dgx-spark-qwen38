@@ -1109,7 +1109,8 @@ jobs:
           grep -q 'HF_HUB_OFFLINE=1' qwen38-sglang.service.template \
             || { echo "the native template lost HF_HUB_OFFLINE"; exit 1; }
           # the 64 GB DGX Spark's unit (boxmem.py): the native one, with memory knobs of its own
-          filt64() { grep -vE 'Description=|--memory |--mem-fraction-static|--cuda-graph-max-bs-decode|--max-mamba-cache-size'; }
+          # its comments are its own too: each measured value says where it comes from (found in review, 2026-10-23)
+          filt64() { grep -vE '^[[:space:]]*#|Description=|--memory |--mem-fraction-static|--cuda-graph-max-bs-decode|--max-mamba-cache-size'; }
           diff <(filt64 < qwen38-sglang.service.template) <(filt64 < qwen38-sglang-64.service.template)
 
       - name: Anti-drift, run.sh serves the native unit's exact flag set and constants
