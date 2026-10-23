@@ -1,5 +1,79 @@
 # Changelog
 
+## v1.40.0 (2026-10-23): the 64 GB DGX Spark gets the lanes that fit it, a --no-<lane> counts for its run only, and OpenAI's voice names each speak
+
+<!-- PROVISIONAL 64 GB VALUES, NOT MEASURED YET: measure every [bracket] below, and set the date to the release day, before this ships -->
+
+**The 64 GB DGX Spark.** NVIDIA's partners ship it from 2026-10-23: the same GB10, on the same
+256-bit bus at 273 GB/s (NVIDIA's product page), with half the memory, and NVIDIA names Bolt 24GB
+and Qwen3.8 27B among what it runs (its blog of 2026-10-21). `install.sh` refused it at step 1, as
+any box under 110 GiB of MemTotal ("This config needs a ~121 GB unified-memory machine", a number
+in GiB called GB), so it could install nothing. `boxmem.py` now reads the box's class from
+MemTotal, as the kernel counts it in GiB: a 128 GB box from 110 GiB (121.6 GiB on the reference
+box, 112.3 on a 128 GB box on the 7.0 kernel without `kho=off`), a 64 GB one from 48 GiB, and
+below that step 1 refuses, saying the box's GiB. It says which lanes and targets fit each class,
+and names the box from its DMI. ASUS sells both sizes under one product name, so the DMI names the
+box and never decides its class.
+
+On a 64 GB box a run installs:
+
+- the 27B in NVFP4, serving its native window from `qwen38-sglang-64.service.template`, the native
+  unit with memory settings of its own: [fraction, container memory, mamba cache, requests],
+  [pool] tokens, [X] tok/s on one stream
+- Nemotron 3.5 Bolt with a memory share of its own ([share]), [Z] tok/s on one stream
+- the speech lane, which runs on the CPU, as on every box
+
+It refuses what a 64 GB box cannot hold before anything moves: the flash lane, `CONTEXT_MODE=1m`
+and the FP8 targets in `install.sh`, every other lane's installer as soon as it has its library,
+`switch-model.sh` for such a target, and so the cockpit's Load. The lanes left out are named once,
+and `--with-<lane>` for one of them is refused. `conformity.py` recommends the native window
+there.
+
+The cockpit names the box over its pool ("ASUS Ascent GX10, 128 GB"), the Machine view gives it a
+row, and a lane a 64 GB box cannot hold says it needs a 128 GB DGX Spark, in its bay, on its card
+and in the toast, where a lane left out names the command that installs it. Its recipes compare a
+64 GB box with the unit sized for it, whose memory settings would otherwise read as drift.
+
+**Measured** [how: on the reference box with 64 GiB held aside, 57.6 GiB of MemTotal left, the
+same GB10 and the same 273 GB/s, N runs, the median], [the table: the 27B and Bolt, one stream,
+pool, boot, the memory floor at the peak, the same probes as v1.39.0].
+
+`QWEN38_MEMORY_CLASS` forces the class, for the tests and for measuring a 64 GB budget on a
+128 GB box. `tests/test_boxmem.py` holds the thresholds to the boxes they were set from,
+`tests/test_spark_64.py` runs each installer's own refusal with the class forced (none of them
+fetches, pulls or writes before it), `dashboard/tests/test_cockpit_box.py` and the page's own
+tests hold the cockpit to the box, and CI checks that the 64 GB unit differs from the native one
+in its memory settings only.
+
+**A `--no-<lane>` counts for the run that passes it.** It wrote a marker that left the lane out of
+every update after it, said in one line of the log and nowhere else, so a box fell behind on that
+lane in silence. It leaves the lane out of the run that passes it now, and writes nothing. A
+marker an older release wrote is said once ("Your earlier --no-image is no longer remembered") and
+removed, except by `--plan`. The cockpit's and opencode's choices are kept, as before, since an
+update must not turn a network service or an agent that runs commands back on: the end of every
+run says each, with the day it was asked. Issue #57's downloads stay off without the marker: on a
+box that boots a side lane, the text lane it served last gets its units only while it is left out
+or not prepared (its image or its checkpoint not on the box), unless it is named or
+`--all-weights` is passed, and the run says which. The help, the end of a run and the docs say the
+new rule. The tests that held the marker to its old meaning hold it to this one, and the new ones
+fail on the old code (a lane not prepared, with no flag at all, was fetched whole).
+
+**OpenAI's voice names each speak (issue #53).** Its eleven voice names, which clients such as
+Open WebUI send, all answered with the lane's default voice, so a picker of those names changed
+nothing anyone could hear (found by Quadrant6630, whose table this is). Each is now an English
+voice of its own, checked against the 41 the lane serves, two of them British. The lane takes a
+voice's language from its name, so on a box whose default voice speaks another language, that
+voice keeps answering all eleven: an English voice would read a French text wrong. A name whose
+voice the lane lacks gets the default voice, not a 400. The test of the English box fails on the
+old code.
+
+**What an update does.** [to check on the reference box with the update itself] The cockpit
+restarts (its code changed), and with it the Agent tab's relay, which reconnects by itself. The
+engines keep running and no unit of a 128 GB box changes. A box that left a lane out with an older
+release is told once that the choice is no longer remembered, and that lane comes back in that
+run with its units only, unless it was already prepared on the box. The speech lane is not touched
+by an update, as before: run `./install-speech.sh` again to get the voices of #53.
+
 ## v1.39.0 (2026-10-23): the 27B lane moves to SGLang v0.5.22, faster at one and four streams, and CI tests the Agent tab against a real opencode
 
 The 27B lane serves `lmsysorg/sglang@sha256:e3a4f060...` (`v0.5.22`, 2026-10-16) instead of
