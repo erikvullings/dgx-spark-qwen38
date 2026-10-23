@@ -222,7 +222,7 @@ class TheCheckPins(PinsBase):
         self.assertTrue(all("FAIL" in ln for ln in images), out)
 
     def test_a_deleted_image_fails(self):
-        rc, out = self.run_pins({"registry-1.docker.io/v2/lmsysorg/sglang/manifests/sha256:b125": [404, ""]})
+        rc, out = self.run_pins({"registry-1.docker.io/v2/lmsysorg/sglang/manifests/sha256:e3a4": [404, ""]})
         self.assertEqual(rc, 1, out)
         self.assertIn("HTTP 404", out)
 
@@ -232,18 +232,18 @@ class TheCheckPins(PinsBase):
     def test_an_image_without_linux_arm64_fails(self):
         """The box is aarch64: a digest of no linux/arm64 image pulls, then runs nothing, and the
         watch asked for an HTTP 200 alone (found in the audit of 2026-10-16)."""
-        def index(*platforms):   # an index, as Docker Hub answers for lmsysorg/sglang:v0.5.21
+        def index(*platforms):   # an index, as Docker Hub answers for lmsysorg/sglang:v0.5.22
             return json.dumps({"mediaType": "application/vnd.oci.image.index.v1+json", "manifests": [
                 {"digest": "sha256:" + str(n) * 64, "platform": {"os": p.split("/")[0], "architecture": p.split("/")[1]}}
                 for n, p in enumerate(platforms)]})
-        rc, out = self.run_pins({"bodies": {"/manifests/sha256:b125": index("linux/amd64", "unknown/unknown")}})
+        rc, out = self.run_pins({"bodies": {"/manifests/sha256:e3a4": index("linux/amd64", "unknown/unknown")}})
         self.assertEqual(rc, 1, out)
         line = self.image_line(out, "27b-base")
         self.assertIn("FAIL", line)
         self.assertIn("no linux/arm64 image: an index of linux/amd64", line)
         self.assertIn("ok", self.image_line(out, "flash-base"), out)
         # and an index that names it passes, with no blob to fetch: amd64, its attestation, arm64
-        rc, out = self.run_pins({"bodies": {"/manifests/sha256:b125": index("linux/amd64", "unknown/unknown", "linux/arm64")}}, None, "27b-base")
+        rc, out = self.run_pins({"bodies": {"/manifests/sha256:e3a4": index("linux/amd64", "unknown/unknown", "linux/arm64")}}, None, "27b-base")
         self.assertEqual(rc, 0, out)
         self.assertIn("(linux/arm64)", self.image_line(out, "27b-base"), out)
 
@@ -270,7 +270,7 @@ class TheCheckPins(PinsBase):
                 self.assertIn("https://registry-1.docker.io" + blob, [c["url"] for c in self.calls()])
 
     def test_a_registry_answer_that_is_not_json_is_not_asked(self):
-        rc, out = self.run_pins({"bodies": {"/manifests/sha256:b125": "<html>upstream connect error</html>"}}, None, "27b-base")
+        rc, out = self.run_pins({"bodies": {"/manifests/sha256:e3a4": "<html>upstream connect error</html>"}}, None, "27b-base")
         self.assertEqual(rc, 1, out)
         self.assertIn("not JSON, so not checked", self.image_line(out, "27b-base"), out)
         self.assertIn("could not be asked about", out)
@@ -517,7 +517,7 @@ class TheEndpointsThatDoNotAnswer(PinsBase):
         for scen, label, said in (({"huggingface.co/RadixArk/Qwen3.8-27B-NVFP4/": [503, ""]}, "stock", "HTTP 503 from Hugging Face, so not checked"),
                                   ({"huggingface.co/RadixArk/Qwen3.8-27B-NVFP4/": ["000", ""]}, "stock", "no answer from Hugging Face, so not checked"),
                                   ({"bodies": {"pypi.org": "upstream connect error"}}, "sglang-wheel", "no answer from PyPI, so not checked"),
-                                  ({"registry-1.docker.io/v2/lmsysorg/sglang/manifests/sha256:b125": [502, ""]}, "27b-base", "HTTP 502 from the registry, so not checked")):
+                                  ({"registry-1.docker.io/v2/lmsysorg/sglang/manifests/sha256:e3a4": [502, ""]}, "27b-base", "HTTP 502 from the registry, so not checked")):
             with self.subTest(label=label, said=said):
                 rc, out = self.run_pins(scen)
                 self.assertEqual(rc, 1, out)

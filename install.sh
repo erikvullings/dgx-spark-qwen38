@@ -146,7 +146,21 @@ fi
 # as ambiguous; the units say --cuda-graph-max-bs-decode, which v0.5.19 resolves to the
 # same settings, so IMAGE= with the v0.5.19 digest still rolls back (booted that way on
 # the box: the 18 production checks pass). cuBLAS and PyTorch are the same in both.
-IMAGE="${IMAGE:-lmsysorg/sglang@sha256:b1259f3ea3275f66237c498ea388919729018bc9f01c3d638391e06e2cf3f469}"  # = lmsysorg/sglang:v0.5.21, 2026-10-01
+# v1.39.0 moves the lane from v0.5.21 to v0.5.22 (2026-10-23), which lmsysorg/sglang:latest, the
+# cookbook's DGX Spark image for this model, names since 2026-10-16: it carries sglang#41872 (a
+# scheduler stall at admission v0.5.21 has, sglang#41841) and #41737 (DFlash2's greedy selector
+# took a neighbouring row's candidates when a row of scores was all NaN). Measured on the box,
+# both images started from this unit's own command line, in the order v0.5.21, v0.5.22, v0.5.22,
+# v0.5.21, same client and probes: decoding at 1 stream 38.8, 38.5 and 38.8 tok/s against 31.8,
+# 31.8 and 36.7 (inter-token 10.9 ms against 13.8 to 17.9), at 4 streams 81.7 and 81.6 against
+# 77.5, 77.8 and 74.7; the draft's accepted length 5.05 on both boots against 3.96 and 4.59;
+# GSM8K 244 against 246 of 250; needle exact at 120,196 and 299,901 tokens on both;
+# conc-check 40/40 and 160/160 on both; pool 869,920 and 874,145 against 872,921 and 898,513;
+# a 30-minute agent session up to 518,252 tokens with no error. Prefill log-probabilities are
+# deterministic on each and differ between them (0.20 nats a token on average over 30 texts),
+# with no bias: mean NLL 1.786 against 1.802. torch 2.14.1, FlashInfer 0.7.1; cuBLAS 13.1 and
+# CUDA 13.0 unchanged. IMAGE= with the v0.5.21 digest rolls back: the unit's flags are the same.
+IMAGE="${IMAGE:-lmsysorg/sglang@sha256:e3a4f06001a29542fc4a8638536d9ffc5eb9c9942b08603c09b19a56eae4a1ae}"  # = lmsysorg/sglang:v0.5.22, 2026-10-16
 # Target model choice: "stock" (validated censored base, default) or "uncensored"
 # (huihui-ai abliteration re-quantized with the identical RadixArk modelopt
 # NVFP4 recipe: same architecture, chat template, MTP + vision, ~22 GB).
