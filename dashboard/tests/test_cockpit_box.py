@@ -9,6 +9,7 @@ import shutil
 import sys
 import tempfile
 import unittest
+from unittest import mock
 from pathlib import Path
 
 HERE = Path(__file__).resolve()
@@ -47,8 +48,9 @@ class TheBox(unittest.TestCase):
         shutil.rmtree(cls.tmp, ignore_errors=True)
 
     def box(self, cls):
-        os.environ["QWEN38_MEMORY_CLASS"] = cls
-        self.addCleanup(os.environ.pop, "QWEN38_MEMORY_CLASS", None)
+        patch = mock.patch.dict(os.environ, {"QWEN38_MEMORY_CLASS": cls})
+        patch.start()
+        self.addCleanup(patch.stop)
         self.cp._BOX.clear()
         self.addCleanup(self.cp._BOX.clear)
         return self.cp.box_info()
@@ -67,8 +69,9 @@ class TheBox(unittest.TestCase):
         self.assertEqual(self.cp.collect_machine()["box"]["cls"], "64")
 
     def test_a_box_that_cannot_be_read_is_unknown_not_a_failed_panel(self):
-        os.environ["QWEN38_MEMORY_CLASS"] = "96"      # boxmem.py refuses it
-        self.addCleanup(os.environ.pop, "QWEN38_MEMORY_CLASS", None)
+        patch = mock.patch.dict(os.environ, {"QWEN38_MEMORY_CLASS": "96"})      # boxmem.py refuses it
+        patch.start()
+        self.addCleanup(patch.stop)
         self.cp._BOX.clear()
         self.addCleanup(self.cp._BOX.clear)
         self.assertEqual(self.cp.box_info(), {"cls": None, "name": None, "fits": None})

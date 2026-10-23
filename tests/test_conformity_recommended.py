@@ -24,6 +24,20 @@ import installer_wall as wall  # noqa: E402
 REPO = pathlib.Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO))
 import conformity  # noqa: E402
+from unittest import mock  # noqa: E402
+
+# conformity.py recommends by the box's class (the native window on a 64 GB one): these hold a
+# 128 GB box's state, so the class is that one whatever the machine running them is, and an
+# exported QWEN38_MEMORY_CLASS is back as it was after them (found in review, 2026-10-23).
+_ENV = mock.patch.dict(os.environ, {"QWEN38_MEMORY_CLASS": "128"})
+
+
+def setUpModule():
+    _ENV.start()
+
+
+def tearDownModule():
+    _ENV.stop()
 
 INSTALL = (REPO / "install.sh").read_text()
 CHANGELOG = (REPO / "CHANGELOG.md").read_text()

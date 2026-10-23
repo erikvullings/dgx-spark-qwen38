@@ -742,7 +742,7 @@ class TheWholeScripts(unittest.TestCase):
         small = copy.parent / "meminfo-32"
         small.write_text("MemTotal:       32505856 kB\n")      # 31.0 GiB, below the 64 GB class
         copy.write_text(copy.read_text().replace("/proc/meminfo", str(small)))
-        r, out, record = self.run_install(box, str(copy))
+        r, out, record = self.run_install(box, str(copy), QWEN38_MEMINFO=str(small))
         self.assertIn("This box has 31.0 GiB of memory (MemTotal), and the lanes here need a 64 GB or a 128 GB DGX Spark.", out)
         self.assertEqual(box.sudo_calls(), [])
 
@@ -754,7 +754,7 @@ class TheWholeScripts(unittest.TestCase):
         mem = copy.parent / "meminfo-64"
         mem.write_text("MemTotal:       60397977 kB\n")      # 57.6 GiB: 64 GiB held aside on the reference box
         copy.write_text(copy.read_text().replace("/proc/meminfo", str(mem)))
-        r, out, record = self.run_install(box, str(copy))
+        r, out, record = self.run_install(box, str(copy), QWEN38_MEMINFO=str(mem))
         self.assertIn(wall.WALL, out, out[-800:])
         self.assertIn("This box is a 64 GB DGX Spark: the lanes that fit it are the 27B and Nemotron 3.5 Bolt here", out)
         self.assertIn("Left out, as they need a 128 GB one: image (Qwen-Image 2.1), video (MiniMax-H3), flash 176B, Kolibri-1, "
@@ -775,7 +775,7 @@ class TheWholeScripts(unittest.TestCase):
                 mem = copy.parent / "meminfo-64"
                 mem.write_text("MemTotal:       60397977 kB\n")
                 copy.write_text(copy.read_text().replace("/proc/meminfo", str(mem)))
-                r, out, record = self.run_install(box, str(copy), *args, **env)
+                r, out, record = self.run_install(box, str(copy), *args, **{**env, "QWEN38_MEMINFO": str(mem)})
                 self.assertEqual(r.returncode, 1, out[-800:])
                 self.assertIn(said, out)
                 self.assertNotIn(wall.WALL, out)

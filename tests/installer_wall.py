@@ -125,13 +125,25 @@ def fence(enabled=()):
     return str(d), record
 
 
+def meminfo_128():
+    """A /proc/meminfo of the reference box, a 128 GB DGX Spark (121.6 GiB of MemTotal)."""
+    path = _tmp("meminfo-") / "meminfo"
+    path.write_text("MemTotal:       127533104 kB\nMemAvailable:   121000000 kB\n")
+    return path
+
+
 def fenced_env(home=None, enabled=(), first=None, **extra):
     """(env, record): a minimal environment whose PATH starts with the fence (after
-    `first`, a directory of the test's own stubs, when given) and a throwaway HOME."""
+    `first`, a directory of the test's own stubs, when given) and a throwaway HOME.
+    install.sh reads the box's class and its GiB from QWEN38_MEMINFO (/proc/meminfo by
+    default): a walled run reads a 128 GB box's unless the test gives its own, so it does not
+    depend on the machine the tests run on (on a 64 GB one, 10 of the context mode's tests
+    failed, found in review, 2026-10-23)."""
     entry, record = fence(enabled)
     path = ":".join(p for p in (first, entry, "/usr/local/bin:/usr/bin:/bin") if p)
     env = {"PATH": path, "HOME": str(home or _tmp("home-"))}
     env.update({k: str(v) for k, v in extra.items()})
+    env.setdefault("QWEN38_MEMINFO", str(meminfo_128()))
     return env, record
 
 

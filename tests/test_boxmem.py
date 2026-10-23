@@ -14,6 +14,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from unittest import mock
 
 REPO = pathlib.Path(__file__).resolve().parents[1]
 spec = importlib.util.spec_from_file_location("boxmem", REPO / "boxmem.py")
@@ -32,6 +33,12 @@ class Base(unittest.TestCase):
         self.d = pathlib.Path(tempfile.mkdtemp(prefix="boxmem-"))
         self.addCleanup(lambda: subprocess.run(["rm", "-rf", str(self.d)]))
         self.env = {k: v for k, v in os.environ.items() if not k.startswith("QWEN38_")}
+        # the in-process checks read os.environ: none of an exported QWEN38_* reaches them, and
+        # all of it is back after each test (a pop lost it for the tests after, found in review,
+        # 2026-10-23)
+        patch = mock.patch.dict(os.environ, clear=True, values=self.env)
+        patch.start()
+        self.addCleanup(patch.stop)
 
     def meminfo(self, kb):
         p = self.d / f"meminfo-{kb}"      # one file per size: a test that reads two keeps both
@@ -62,7 +69,6 @@ class MemClass(Base):
 
     def test_forced_for_the_proofs_and_only_to_a_class(self):
         os.environ["QWEN38_MEMORY_CLASS"] = "64"
-        self.addCleanup(os.environ.pop, "QWEN38_MEMORY_CLASS", None)
         self.assertEqual(boxmem.mem_class(self.meminfo(REFERENCE_KB)), "64")
         os.environ["QWEN38_MEMORY_CLASS"] = "96"
         with self.assertRaises(ValueError):
