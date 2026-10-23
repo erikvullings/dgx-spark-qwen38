@@ -433,6 +433,26 @@ class CpuTracker:
 CPU = CpuTracker()
 
 
+_BOX: dict = {}
+
+
+def box_info():
+    """{cls, name, fits}: the box's memory class (128, 64 or None) and the name its maker sells it
+    under, as boxmem.py at the root of the repo reads them (loaded the way conformity.py is), and
+    the lanes' units that fit it. Read once: neither changes while the cockpit runs."""
+    if "info" not in _BOX:
+        try:
+            spec = importlib.util.spec_from_file_location("boxmem_for_cockpit", REPO_DIR / "boxmem.py")
+            mod = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(mod)
+            cls = mod.mem_class()
+            _BOX["info"] = {"cls": cls, "name": mod.machine()["name"],
+                            "fits": sorted(u for lane, u in UNIT_OF_LANE.items() if mod.fits(lane, cls))}
+        except Exception:  # noqa: BLE001 (a box that cannot be read is said as unknown, never a failed panel)
+            _BOX["info"] = {"cls": None, "name": None, "fits": None}
+    return _BOX["info"]
+
+
 @guard
 def collect_machine():
     mem = {}
@@ -450,7 +470,7 @@ def collect_machine():
         except OSError:
             pass
     return {"node_id": "local", "mem": mem, "cpu_pct": CPU.sample(),
-            "load": [load1, load5, load15], "disks": disks, "ts": time.time()}
+            "load": [load1, load5, load15], "disks": disks, "box": box_info(), "ts": time.time()}
 
 
 @guard
@@ -5061,8 +5081,11 @@ def recipes_snapshot(max_age: float = 60.0) -> dict:
                     "installed": bool(inst) and inst["model"].get("revision") == rec["model"]["revision"]
                     and inst["model"].get("repo") == rec["model"]["repo"]}
 
-        # derive the 27B recipes from the unit template this box actually runs
+        # derive the 27B recipes from the unit template this box actually runs: on a 64 GB DGX
+        # Spark the native window is the unit sized for it
         mode = rp.context_mode_of(installed.get("27b"))
+        if mode == "native" and box_info().get("cls") == "64":
+            mode = "64"
         builtin = [enrich(r) for r in rp.builtins(assigns, templates, mode)]
         custom = []
         for item in rp.load_custom(CONFIG_DIR / "recipes"):

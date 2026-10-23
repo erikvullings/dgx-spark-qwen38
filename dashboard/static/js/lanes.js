@@ -169,7 +169,7 @@ function renderLanes(){
       // installed on demand: its runtime is built at its first Load (LANE_RUNTIME says what)
       ['Runtime', has && SIDE_LANE[unit] && (F.lanesReady || {})[SIDE_LANE[unit]] === false ? `built at its first Load: ${LANE_RUNTIME[SIDE_LANE[unit]]}` : null],
       ['Up for', seated && e && e.elapsed && (st === 'ready' || st === 'degraded') ? fmtDur(e.elapsed) : null],
-      ['Install', !has ? LANE_INSTALL[unit] : null, 'code']]);
+      !has && !laneFits(unit) ? ['Install', NEEDS_128] : ['Install', !has ? LANE_INSTALL[unit] : null, 'code']]);
     c.root.classList.toggle('seated-card', seated);
     c.root.style.borderColor = seated && (st === 'ready' || st === 'degraded') ? 'color-mix(in srgb, var(--ok) 45%, transparent)' : '';
     if (e) bootChart(c.hist, e, unit); else clear(c.hist);

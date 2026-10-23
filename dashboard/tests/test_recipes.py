@@ -306,6 +306,15 @@ class Drift(unittest.TestCase):
         self.assertIn("serve.context_length", keys)
         self.assertIn("serve.mem_fraction", keys)
 
+    def test_a_64_gb_box_running_its_own_unit_reports_no_drift(self):
+        # the cockpit compares a 64 GB DGX Spark with the unit sized for it (boxmem.py): against
+        # the native recipe its memory knobs read as drift, a false alarm on every such box
+        unit = (REPO / "qwen38-sglang-64.service.template").read_text()
+        own = {r["key"] for r in rc.drift(rc.builtin("stock", ASSIGNS, TEMPLATES, "64"), rc.profile_from_text(unit))}
+        self.assertFalse({k for k in own if k.startswith(("serve.", "docker.", "engine."))}, own)
+        native = {r["key"] for r in rc.drift(rc.builtin("stock", ASSIGNS, TEMPLATES, "native"), rc.profile_from_text(unit))}
+        self.assertIn("serve.mem_fraction", native)
+
 
 class Switches(unittest.TestCase):
     """Value-less flags. FLAGS holds "flag -> value" pairs, so this whole class of

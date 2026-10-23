@@ -22,10 +22,12 @@ ALGORITHMS = ("DFLASH", "NEXTN", "none")
 # box. Comparing a 1M installation against the native template reported the three
 # markers of 1M (context length, mem fraction, the overwrite env) as drift forever,
 # which is a false alarm on the one panel whose job is to raise true ones.
+# A 64 GB DGX Spark (boxmem.py) runs a third: the native window in a unit sized for its memory.
 LANE_TEMPLATE = {"27b": "qwen38-sglang.service.template",
                  "27b-1m": "qwen38-sglang-1m.service.template",
+                 "27b-64": "qwen38-sglang-64.service.template",
                  "flash": "qwen38-flash-launch.sh.template"}
-CONTEXT_MODES = ("native", "1m")
+CONTEXT_MODES = ("native", "1m", "64")
 # The flash lane's two cookbook-verified tiers, the same strings install.sh
 # renders into the launcher. Kept here so a recipe read from the repo matches
 # the launcher on the box flag for flag.
@@ -246,7 +248,7 @@ def builtin(recipe_id: str, assigns: dict[str, str], templates: dict[str, str],
     if context_mode not in CONTEXT_MODES:
         raise ValueError(f"context_mode: {context_mode!r} not in {CONTEXT_MODES}")
     lane = "flash" if recipe_id.startswith("flash") else "27b"
-    key = "27b-1m" if (lane == "27b" and context_mode == "1m") else lane
+    key = f"27b-{context_mode}" if (lane == "27b" and context_mode in ("1m", "64")) else lane
     text = templates[LANE_TEMPLATE[key]]
     if lane == "flash":
         pfx = {"flash-nvda": "FLASH_NVDA", "flash-uncensored": "FLASH_UNC"}.get(recipe_id, "FLASH")

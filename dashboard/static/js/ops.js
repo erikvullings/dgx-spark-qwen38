@@ -169,6 +169,9 @@ on('reqguard', d => {
 // ── Machine ───────────────────────────────────────────────────────────────────
 on('machine', d => {
   const m = d.mem || {};
+  const bx = d.box || {};
+  setText('mm-box', !bx.cls ? 'unknown' : bx.cls === '64'
+    ? `${boxName(bx)}: the lanes that fit it, the others say they need 128 GB` : boxName(bx));
   if (m.MemTotal){
     const used = m.MemTotal - m.MemAvailable;
     // the colour follows headroom in gibibytes, not a percentage: a loaded lane sits past

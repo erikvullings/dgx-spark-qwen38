@@ -190,6 +190,18 @@ const LANE_INSTALL = {[U27]: './install.sh --with-27b', [UFLASH]: './install.sh 
                       [VIDEO_UNIT]: './install.sh --with-video', [KOLIBRI_UNIT]: './install.sh --with-kolibri',
                       [NEMOTRON_UNIT]: './install.sh --with-nemotron', [NEMOTRON_SUPER_UNIT]: './install.sh --with-nemotron-super',
                       [FLASH_LOCAL_UNIT]: './install.sh --with-flash-local', [ORNITH_UNIT]: './install.sh --with-ornith-122b'};
+// A lane a 64 GB DGX Spark cannot hold (boxmem.py, which the machine panel carries): where another
+// lane names the command that installs it, it says it needs a 128 GB box. Unknown is no refusal.
+const laneFits = unit => {
+  const box = (F.machine || {}).box || {};
+  return box.cls !== '64' || !Array.isArray(box.fits) || box.fits.includes(unit);
+};
+const NEEDS_128 = 'needs a 128 GB DGX Spark';
+const installHint = unit => laneFits(unit) ? `Install it on the box: ${LANE_INSTALL[unit]}`
+  : `It ${NEEDS_128}, and this box is a 64 GB one.`;
+// What the box is, from the same panel: the name its maker sells it under and its memory class
+// ("ASUS Ascent GX10, 128 GB"), or null while unknown.
+const boxName = (box = (F.machine || {}).box || {}) => box.cls ? `${box.name || 'GB10 box'}, ${box.cls} GB` : null;
 
 // ── the facts every view shares (each guarded against missing data) ──────────
 const F = {life: null, units: {}, config: {}, job: null, load: {}, pool: null, window: 262144, ceiling: 0, usable: 0.92,
@@ -774,7 +786,7 @@ function askJourney(target, opts = {}){
   if (F.job && F.job.current) return toast(busyWhy(), 'warn');
   if (!$('scrim').hidden) return;
   const unit = TARGET_UNIT(target);
-  if (!installed(unit)) return toast(`${LANE_NAME[unit]} is not installed on this box: ${LANE_INSTALL[unit]}`, 'warn', 7000);
+  if (!installed(unit)) return toast(`${LANE_NAME[unit]} is not installed on this box. ${installHint(unit)}`, 'warn', 7000);
   const steps = laneJourneySteps(target);
   if (!steps.length) return toast(`${TARGET_NAME[target]} is already serving.`, 'ok');
   setText('sh-title', `Load ${TARGET_NAME[target]}`);

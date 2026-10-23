@@ -30,6 +30,8 @@ const FLOOR = () => ((F.memFloor || {}).gib || 3) * GIB;
 
 function renderPool(){
   const p = poolParts(); if (!p) return;
+  // the box it is, once the cockpit has read it: a 64 GB DGX Spark shows its own scale and name
+  setText('h-pool', boxName() ? `Unified memory of this ${boxName()}, shared by CPU and GPU` : 'Unified memory, shared by CPU and GPU');
   const s = servingEngine();
   const laneName = s ? laneLabel(s[0]) : null;
   setText('pool-used', (p.inUse / GIB).toFixed(1));
@@ -102,7 +104,7 @@ function bay(unit){
   b = {root, state, h, desc, boot, line, act, note, sig: ''};
   root.addEventListener('click', () => {
     const e = engines()[unit];
-    if (!installed(unit)) return toast(`${LANE_NAME[unit]} is not installed on this box. Install it on the box: ${LANE_INSTALL[unit]}`, 'warn', 8000);
+    if (!installed(unit)) return toast(`${LANE_NAME[unit]} is not installed on this box. ${installHint(unit)}`, 'warn', 8000);
     const s = servingEngine();
     if (s && s[0] === unit && e && (e.state === 'ready' || e.state === 'degraded')) return showView(LANE_META[unit].view);
     if (s && s[0] === unit) return showView('lanes');
@@ -148,7 +150,7 @@ function renderRack(){
     const en = (F.units[unit] || {}).enabled;
     // installed on demand: a lane whose runtime is not built yet says its first Load builds it
     const unbuilt = has && SIDE_LANE[unit] && (F.lanesReady || {})[SIDE_LANE[unit]] === false;
-    setText(b.note, !has ? LANE_INSTALL[unit] : unbuilt ? 'built at its first Load' : en === 'enabled' ? 'starts at boot' : en === '?' ? '' : 'manual start');
+    setText(b.note, !has ? (laneFits(unit) ? LANE_INSTALL[unit] : NEEDS_128) : unbuilt ? 'built at its first Load' : en === 'enabled' ? 'starts at boot' : en === '?' ? '' : 'manual start');
     setText(b.act, !has ? 'Not installed' : seated ? (st === 'ready' || st === 'degraded' ? `Open ${LANE_META[unit].view === 'agent' ? 'the agent' : LANE_META[unit].view}` : 'Details') : 'Load this lane');
     b.root.setAttribute('aria-label', `${LANE_META[unit].title}: ${!has ? 'not installed' : stateLabel(e)}. ${b.act.textContent}.`);
   });

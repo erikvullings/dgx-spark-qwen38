@@ -2250,5 +2250,46 @@ class AReadyLaneIsTheTimelinesGreen(unittest.TestCase):
         self.assertEqual(r, ["ok", "gold", "clay", "ember", "cool"])
 
 
+
+class TheBoxItIs(unittest.TestCase):
+    """A 64 GB DGX Spark (2026-10-23) has the lanes that fit it and no other: where a lane left out
+    named the command that installs it, one it cannot hold says it needs a 128 GB box, and the page
+    says which box it is (boxmem.py, through the machine panel)."""
+    BODY = r"""
+    const units = JSON.parse(JSON.stringify(UNITS));
+    const BIG = ['qwen38-flash.service', 'qwen38-image.service', 'qwen38-video.service', 'qwen38-kolibri.service',
+                 'qwen38-nemotron-super.service', 'qwen38-flash-local.service', 'qwen38-ornith-122b.service'];
+    for (const u of BIG) units.units[u].enabled = '';
+    const fits = %s === '64' ? ['qwen38-nemotron.service', 'qwen38-sglang.service'] : Object.keys(units.units);
+    feed({config: CONFIG, units, lifecycle: life({'qwen38-sglang.service': eng('ready')}),
+          machine: {mem: {MemTotal: %s * GIB, MemAvailable: 20 * GIB, Cached: 2 * GIB, SwapTotal: 0, SwapFree: 0},
+                    box: {cls: %s, name: 'ASUS Ascent GX10', fits}, cpu_pct: {cpu: 1}, load: [0, 0, 0], disks: {}}});
+    const notes = BIG.map(u => BAYS.get(u).note.textContent);
+    showView('lanes');
+    const install = [...document.querySelectorAll('#view-lanes dt')].filter(d => d.textContent === 'Install').map(d => d.nextSibling.textContent);
+    BAYS.get('qwen38-flash.service').root.click();
+    report({notes, install, pool: txt('h-pool'), box: txt('mm-box'), toast: toastText()});
+    """
+
+    def page(self, cls, gib):
+        return run(self, self.BODY % (repr(cls), gib, repr(cls)))
+
+    def test_a_64_gb_box_says_what_it_cannot_hold_and_which_box_it_is(self):
+        r = self.page("64", 57.6)
+        self.assertEqual(r["notes"], ["needs a 128 GB DGX Spark"] * 7, r)
+        self.assertEqual(r["install"], ["needs a 128 GB DGX Spark"] * 7, r)
+        self.assertEqual(r["pool"], "Unified memory of this ASUS Ascent GX10, 64 GB, shared by CPU and GPU")
+        self.assertEqual(r["box"], "ASUS Ascent GX10, 64 GB: the lanes that fit it, the others say they need 128 GB")
+        self.assertIn("is not installed on this box. It needs a 128 GB DGX Spark, and this box is a 64 GB one.", r["toast"])
+
+    def test_a_128_gb_box_still_names_the_command_that_installs_a_lane_left_out(self):
+        r = self.page("128", 121.6)
+        self.assertIn("./install.sh --with-flash", r["notes"][0])
+        self.assertTrue(all(i.startswith("./install.sh --with-") for i in r["install"]), r["install"])
+        self.assertEqual(r["pool"], "Unified memory of this ASUS Ascent GX10, 128 GB, shared by CPU and GPU")
+        self.assertEqual(r["box"], "ASUS Ascent GX10, 128 GB")
+        self.assertIn("is not installed on this box. Install it on the box: ./install.sh --with-flash", r["toast"])
+
+
 if __name__ == "__main__":
     unittest.main()
