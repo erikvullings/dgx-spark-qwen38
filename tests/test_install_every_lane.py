@@ -53,8 +53,8 @@ class EachLaneIsWantedUnlessLeftOut(unittest.TestCase):
             cfg.mkdir(parents=True)
             (cfg / "image.off").write_text("left out\n")
         # PLAN_ONLY=0 and RECOMMENDED=0 as install.sh sets them before its flags (--plan leaves the
-        # markers alone, --recommended removes them)
-        script = (f'set -euo pipefail\nRECOMMENDED=0\nCONFIG_DIR="{cfg}"\nPLAN_ONLY={plan}\n{self.FUNC}\n'
+        # markers alone, --recommended removes them), and MEM_CLASS as its top reads it, here a 128 GB box
+        script = (f'set -euo pipefail\nRECOMMENDED=0\nMEM_CLASS=128\nCONFIG_DIR="{cfg}"\nPLAN_ONLY={plan}\n{self.FUNC}\n'
                   f'lane_wanted image {no} {with_}\necho "WANT=$WANT"\n')
         r = subprocess.run(["bash", "-c", script], capture_output=True, text=True, timeout=30,
                            env={"PATH": "/usr/bin:/bin"})
