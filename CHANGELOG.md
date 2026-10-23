@@ -23,9 +23,13 @@ On a 64 GB box a run installs:
 - Nemotron 3.5 Bolt with a memory share of its own ([share]), [Z] tok/s on one stream
 - the speech lane, which runs on the CPU, as on every box
 
-It refuses what a 64 GB box cannot hold before anything moves: the flash lane, `CONTEXT_MODE=1m`
-and the FP8 targets in `install.sh`, every other lane's installer as soon as it has its library,
-`switch-model.sh` for such a target, and so the cockpit's Load. The lanes left out are named once,
+It refuses what a 64 GB box cannot hold before anything moves: the flash lane, `CONTEXT_MODE=1m`,
+the FP8 targets and `--no-service` (whose `run.sh` serves a 128 GB box's settings) in `install.sh`,
+every other lane's installer as soon as it has its library (its `--uninstall` still runs),
+`prepare-lane.sh` and `switch-model.sh` for such a lane or target, and so the cockpit's Load, whose
+page shows them and does not offer them. opencode's limits are fitted to the pool the 27B boots to,
+by the installer as on the 1M window and by the cockpit at each Load, since the native pair was
+sized on a 128 GB box's pool. The lanes left out are named once,
 and `--with-<lane>` for one of them is refused. `conformity.py` recommends the native window
 there.
 

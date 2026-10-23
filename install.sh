@@ -3457,7 +3457,9 @@ except Exception as e:
     # oc-fit-limits.py in the first place (2026-08-30). That was a documented
     # manual step while 1m was opt-in. It cannot stay one now that 1m is what a
     # plain install serves.
-    if [ "$CONTEXT_MODE" = "1m" ] && [ "$OPENCODE" -eq 1 ]; then
+    # A 64 GB box too, on its native window: its pool is far smaller than the one the native pair
+    # was sized on, and the pair's worst case ran past it (found in review, 2026-10-23).
+    if { [ "$CONTEXT_MODE" = "1m" ] || [ "$MEM_CLASS" = 64 ]; } && [ "$OPENCODE" -eq 1 ]; then
       echo "fitting the opencode limits to the KV pool this boot actually got:"
       # --restart-agent: opencode-web was restarted above, before this fit rewrote its
       # config, and it reads that config only at startup.
@@ -3668,7 +3670,7 @@ except Exception as e:
         sleep 2
       done
       [ "$PROXY_OK" = 1 ] || die "the keepalive proxy did not come back on :$PROXY_PORT. Check: journalctl -u $KEEPALIVE_UNIT -n 30"
-      if [ "$CONTEXT_MODE" = "1m" ] && [ "$OPENCODE" -eq 1 ]; then
+      if { [ "$CONTEXT_MODE" = "1m" ] || [ "$MEM_CLASS" = 64 ]; } && [ "$OPENCODE" -eq 1 ]; then
         python3 "$REPO_DIR/oc-fit-limits.py" --engine "http://127.0.0.1:$PORT" --restart-agent \
           || echo "  NOTE: could not fit them; run python3 oc-fit-limits.py yourself, or the cockpit's button"
       fi

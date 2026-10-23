@@ -194,6 +194,21 @@ class TheRunSaysIt(unittest.TestCase):
                 self.assertEqual(r.returncode, 1, r.stderr[-400:])
                 self.assertIn(said, r.stderr)
 
+    def test_opencode_s_limits_are_fitted_to_the_pool_on_a_64_gb_box(self):
+        # the native pair was sized on a 128 GB box's pool: a 64 GB box gets the fit 1m gets
+        # (found in review, 2026-10-23)
+        cond = '{ [ "$CONTEXT_MODE" = "1m" ] || [ "$MEM_CLASS" = 64 ]; } && [ "$OPENCODE" -eq 1 ]'
+        self.assertEqual(INSTALL.count(f"if {cond}; then"), 2)
+        self.assertNotIn('if [ "$CONTEXT_MODE" = "1m" ] && [ "$OPENCODE" -eq 1 ]; then', INSTALL)
+        block = between(INSTALL, f"    if {cond}; then\n      echo", "\n    fi\n")
+        for mode, cls, opencode, fits in (("native", "64", 1, True), ("1m", "128", 1, True),
+                                          ("native", "128", 1, False), ("native", "64", 0, False)):
+            with self.subTest(mode=mode, cls=cls, opencode=opencode):
+                rc, out, err = bash(f"CONTEXT_MODE={mode}\nMEM_CLASS={cls}\nOPENCODE={opencode}\nREPO_DIR=R\nPORT=30000\n"
+                                    f"python3(){{ echo FIT; }}\n{block}", cls)
+                self.assertEqual(rc, 0, err)
+                self.assertEqual("FIT" in out, fits, out)
+
     def test_the_lanes_that_fit_come_from_boxmem(self):
         r = subprocess.run([sys.executable, "-I", str(REPO / "boxmem.py"), "fitting", "--class", "64"],
                            capture_output=True, text=True)

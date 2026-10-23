@@ -224,7 +224,8 @@ a 64 GB box it installs what fits it, and nothing else:
 Each refusal comes before a byte is fetched or pulled: in `install.sh`, in each lane's installer, in
 `switch-model.sh`, and so in the cockpit's Load, where a lane a 64 GB box cannot hold says it needs
 a 128 GB DGX Spark. `--no-service` is refused there too, as `./run.sh` serves a 128 GB box's
-settings: the service's unit is the one sized for 64 GB. The cockpit names the box over its pool,
+settings: the service's unit is the one sized for 64 GB. opencode's limits are fitted to the pool
+the 27B boots to, by the installer and at each Load, as on the 1M window. The cockpit names the box over its pool,
 from its DMI ("ASUS Ascent GX10, 64 GB"). Measured [how: on the reference box with 64 GiB held aside, N runs, the median].
 
 ### Your choices, and how they combine
