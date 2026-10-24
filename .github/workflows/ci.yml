@@ -1614,10 +1614,11 @@ jobs:
         # opencode 1.19.4 sends two system messages before the user's, and the Ornith lane's
         # published template refused the second: a 400 on every opencode request from v1.38.6 to
         # v1.40.1, as each release proved the clients on the lane that served (found 2026-10-24).
-        # This fetches each text lane's template at its pin, patches it as its installer does,
-        # and renders the shapes the real clients send (tests/fixtures/client-shapes.json), with
-        # tools and without, the way transformers does (144 renders identical to its own on the
-        # reference box). A template that raises fails here, and so does an unknown text lane.
+        # This fetches each text target's template at its pin (each of switch-model.sh's targets
+        # but the image and video lanes), patches it as its installer does, and renders the shapes
+        # the real clients send (tests/fixtures/client-shapes.json), with tools and without, the
+        # way transformers does (156 renders identical to its own on the reference box). A
+        # template that raises fails here, and so does a text target the check does not know.
         run: |
           pip install 'jinja2==3.1.6'
           "$(./tests/testpy.sh jinja2)" tests/lane-templates-check.py

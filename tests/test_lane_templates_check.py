@@ -23,17 +23,30 @@ class TheLanesItKnows(unittest.TestCase):
         specs = {name: env for name, _, _, env in ltc.lane_specs()}
         self.assertEqual(sorted(specs), sorted(["stock", "uncensored", "fp8", "uncensored-fp8", "flash", "flash-nvda",
                                                 "flash-uncensored", "flash-local", "ornith-122b", "kolibri",
-                                                "nemotron", "nemotron-super"]))
+                                                "kolibri-nvfp4", "nemotron", "nemotron-super"]))
         self.assertEqual(specs["ornith-122b"], {"TEMPLATE_PATCHES": "system-reminder"})
         self.assertEqual(specs["stock"], {})
         self.assertIsNone(specs["kolibri"])
 
+    def test_each_kolibri_checkpoint_at_its_own_pin(self):
+        # the check read only the NVFP4's pin, while the FP8 is the lane's default (2026-10-24)
+        repos = {name: repo for name, repo, _, _ in ltc.lane_specs()}
+        self.assertEqual(repos["kolibri"], "Aleph-Alpha/Kolibri-1")
+        self.assertEqual(repos["kolibri-nvfp4"], "Quantinine/Kolibri-1-NVFP4A16-FP8")
+
     def copy(self):
         d = pathlib.Path(tempfile.mkdtemp(prefix="ltc-"))
         self.addCleanup(shutil.rmtree, d, True)
-        for f in [REPO / "install.sh", *REPO.glob("install-*.sh")]:
+        for f in [REPO / "install.sh", REPO / "switch-model.sh", *REPO.glob("install-*.sh")]:
             shutil.copy(f, d / f.name)
         return d
+
+    def test_a_switch_target_it_does_not_know_stops_it(self):
+        d = self.copy()
+        f = d / "switch-model.sh"
+        f.write_text(f.read_text().replace('case "$CHOICE" in stock|', 'case "$CHOICE" in stock|newlane|', 1))
+        with self.assertRaisesRegex(SystemExit, r"text targets \['newlane'\] this check does not know"):
+            ltc.lane_specs(d)
 
     def test_a_vllm_lane_it_does_not_know_stops_it(self):
         d = self.copy()

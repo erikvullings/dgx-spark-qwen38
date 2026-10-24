@@ -10,8 +10,10 @@ This takes each text lane's chat template at its pinned revision on Hugging Face
 or the chat_template of tokenizer_config.json), patches it as its installer does (patch-template.py,
 with the lane's TEMPLATE_PATCHES), and renders, as transformers renders it for vLLM and SGLang, every
 message shape the real clients send (tests/fixtures/client-shapes.json), with tools and without. A
-template that raises fails the run, naming the lane and the client. So do a text lane this check
-does not know and a lane whose installer patches its template otherwise than the table below says.
+template that raises fails the run, naming the lane and the client. So do a text target of
+switch-model.sh this check does not know (a variant is a target: Kolibri's FP8, its default, and its
+NVFP4 each have their pin) and a lane whose installer patches its template otherwise than the table
+below says.
 
 Network: the templates come from huggingface.co. Usage: lane-templates-check.py (no argument).
 """
@@ -30,15 +32,20 @@ from pathlib import Path
 REPO = Path(__file__).resolve().parents[1]
 SHAPES = REPO / "tests" / "fixtures" / "client-shapes.json"
 
-# How each vLLM lane's installer serves its template: None as published, else the environment its
+# How each vLLM target's installer serves its template: None as published, else the environment its
 # installer runs patch-template.py with. lane_specs() checks this against the installers themselves.
+# A target, not a lane: the Kolibri lane's two checkpoints each have their pin, and the check read only
+# the NVFP4's while the FP8 is the lane's default (found in review, 2026-10-24).
 VLLM_LANES = {
     "flash-local": ("install-flash-local.sh", "FLASH_LOCAL", {"LEAN_DEFAULT": "0"}),
     "ornith-122b": ("install-ornith-122b.sh", "ORNITH_122B", {"TEMPLATE_PATCHES": "system-reminder"}),
-    "kolibri": ("install-kolibri.sh", "KOLIBRI_NVFP4", None),
+    "kolibri": ("install-kolibri.sh", "KOLIBRI_FP8", None),
+    "kolibri-nvfp4": ("install-kolibri.sh", "KOLIBRI_NVFP4", None),
     "nemotron": ("install-nemotron.sh", "NEMOTRON_BOLT", None),
     "nemotron-super": ("install-nemotron-super.sh", "NEMOTRON_SUPER", None),
 }
+# switch-model.sh's targets that serve no chat template
+NOT_TEXT = {"image", "image-turbo", "video"}
 
 
 def pin(text, prefix):
@@ -51,16 +58,17 @@ def pin(text, prefix):
 
 
 def lane_specs(repo_dir=REPO):
-    """Every text lane: (name, repo, revision, patch environment or None). The 27B and flash targets
+    """Every text target: (name, repo, revision, patch environment or None). The 27B and flash targets
     are install.sh's (its case of MODEL_REPO lines), patched with the four fixes at every install and
-    switch; the vLLM lanes are VLLM_LANES, checked against what each installer does."""
+    switch; the vLLM targets are VLLM_LANES, checked against what each installer does. Together they
+    are every target of switch-model.sh but NOT_TEXT, or this stops."""
     install = (repo_dir / "install.sh").read_text()
     targets = re.findall(r'^\s+([a-z0-9-]+)\)\s+MODEL_REPO="\$([A-Z0-9_]+)_REPO"', install, re.M)
     if not targets:
         raise SystemExit("install.sh no longer maps its targets the way this check reads them")
     specs = [(t, *pin(install, p), {}) for t, p in targets]
     installers = sorted(f.name for f in repo_dir.glob("install-*.sh") if "vlane_put_unit" in f.read_text())
-    known = sorted(f for f, _, _ in VLLM_LANES.values())
+    known = sorted({f for f, _, _ in VLLM_LANES.values()})
     if installers != known:
         raise SystemExit(f"the vLLM lanes are {installers}, this check knows {known}: add the new lane to VLLM_LANES")
     for name, (installer, prefix, env) in VLLM_LANES.items():
@@ -70,6 +78,13 @@ def lane_specs(repo_dir=REPO):
         if patched != (env is not None) or (asked.group(1) if asked else None) != (env or {}).get("TEMPLATE_PATCHES"):
             raise SystemExit(f"{installer} serves its template otherwise than VLLM_LANES says for {name}")
         specs.append((name, *pin(text, prefix), env))
+    switch = re.search(r'^case "\$CHOICE" in ([a-z0-9|-]+)\) ;;', (repo_dir / "switch-model.sh").read_text(), re.M)
+    if not switch:
+        raise SystemExit("switch-model.sh no longer lists its targets the way this check reads them")
+    served, checked = set(switch.group(1).split("|")) - NOT_TEXT, {name for name, _, _, _ in specs}
+    if served != checked:
+        raise SystemExit(f"switch-model.sh serves the text targets {sorted(served - checked)} this check does not"
+                         f" know, and it knows {sorted(checked - served)} the switch does not serve: add them")
     return specs
 
 
