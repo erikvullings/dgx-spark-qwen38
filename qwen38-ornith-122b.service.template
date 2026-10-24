@@ -58,14 +58,18 @@ ExecStartPre=/bin/bash __HOME__/.config/qwen38/engine-preflight.sh qwen38-ornith
 # generation_config.json, which vLLM applies to any request that does not set them.
 # VLLM_NO_USAGE_STATS and DO_NOT_TRACK: vLLM reports anonymous usage to its authors by default; a
 # box that serves its owner's data sends nothing anywhere.
-# Of the config directory, the one file the engine reads, read-only, and nothing else: its key. The
-# image is a community build, and the directory holds the cockpit's own secret and the other
+# Of the config directory, the two files the engine reads, read-only, and nothing else: its key and
+# its chat template. The image is a community build, and the directory holds the cockpit's own secret and the other
 # services' keys, which a read-only mount still shows (the Flash FP4-Local lane's rule). --mount, not
 # -v: a source that is not there fails the start, where -v made a directory in its place, owned by root.
 # vllm_engine_auth.RequireKey asks the key on every route but /health and /metrics, as on the
 # other lanes. No --api-key and no --config: this build would put /metrics behind the key, which
 # the cockpit and the proxy read without one, and the middleware already asks it everywhere else.
 # Media only inside the request: no local file and no URL fetched (the one domain allowed does not exist).
+# --chat-template: the checkpoint's own, with the one fix it needs (install-ornith-122b.sh writes it
+# at every install and every switch): a system message past the first one, which opencode 1.19.4
+# sends, made the template raise and every opencode request a 400 (2026-10-24). It becomes a
+# <system-reminder>, as on the 27B and the two flash lanes.
 ExecStart=/bin/bash -c 'exec /usr/bin/docker run --rm --name qwen38-ornith-122b --gpus all \
   --memory 110g --memory-swap 110g --shm-size 16g --network host --ipc=host \
   --ulimit memlock=-1 --ulimit stack=67108864 \
@@ -87,10 +91,12 @@ ExecStart=/bin/bash -c 'exec /usr/bin/docker run --rm --name qwen38-ornith-122b 
   -v __HOME__/.config/qwen38/ornith-122b-cache/triton:/root/.triton \
   -v __HF_CACHE__:/root/.cache/huggingface \
   --mount type=bind,source=__HOME__/.config/qwen38/api-key,target=/out/api-key,readonly \
+  --mount type=bind,source=__HOME__/.config/qwen38/chat-template-ornith-122b.jinja,target=/out/chat-template-ornith-122b.jinja,readonly \
   -v __HOME__/.config/qwen38/vllm-auth:/opt/qwen38-auth:ro \
   __IMAGE__ \
   vllm serve __MODEL__ --revision __REV__ \
     --served-model-name ornith-1.5-122b \
+    --chat-template /out/chat-template-ornith-122b.jinja \
     --quantization modelopt_mixed --load-format b12x \
     --dtype bfloat16 --kv-cache-dtype fp8 --block-size 16 \
     --mamba-cache-mode align --enable-prefix-caching --enable-chunked-prefill \

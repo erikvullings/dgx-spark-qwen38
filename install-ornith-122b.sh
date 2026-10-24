@@ -109,6 +109,7 @@ if [ "$ACTION" = uninstall ]; then
   # its local tag goes alone (lanes.sh), the Flash FP4-Local lane's own staying.
   vlane_uninstall_runtime qwen38-ornith-122b "$FLASH_LOCAL_IMAGE" "$ORNITH_122B_REPO"
   pin_untag ornith-122b
+  rm -f "$CONFIG_DIR/chat-template-ornith-122b.jinja"
   # The seccomp profile is the Flash FP4-Local lane's too: it stays while that lane's unit reads it.
   if [ -f "$LANES_UNIT_DIR/qwen38-flash-local.service" ]; then
     echo "seccomp-io-uring.json kept: the Flash FP4-Local lane reads it too"
@@ -128,6 +129,18 @@ render_unit(){
       "$HERE/$UNIT.template" > "$1"
 }
 
+# The checkpoint's chat template with the one fix it needs (patch-template.py, TEMPLATE_PATCHES): it
+# refused a system message past the first one, which opencode 1.19.4 sends, and every opencode request
+# on this lane got a 400 (2026-10-24); that message becomes a <system-reminder>, as on the 27B and the
+# two flash lanes. The template has no reasoning effort of its own (the proxy gives it one through
+# enable_thinking), so that is its only fix. Written again at every install and every switch, and left
+# as it is, mtime included, when nothing changed.
+TEMPLATE="$CONFIG_DIR/chat-template-ornith-122b.jinja"
+lane_template(){
+  TEMPLATE_PATCHES=system-reminder python3 "$HERE/patch-template.py" "$HF_CACHE" "$TEMPLATE" "$MODEL_REV" "$MODEL" \
+    || die "the chat template could not be patched (the lines above say why)"
+}
+
 # This lane's own folders: vLLM's compile cache, FlashInfer's and Triton's kernels and b12x's
 # kernel choices, built at the first boot.
 CACHES=("$CONFIG_DIR/ornith-122b-cache/vllm" "$CONFIG_DIR/ornith-122b-cache/flashinfer"
@@ -145,9 +158,9 @@ install_service(){
     || install -m 644 "$HERE/seccomp-io-uring.json" "$CONFIG_DIR/seccomp-io-uring.json"
   RENDER="$(mktemp)"; trap 'rm -f "$RENDER"' EXIT
   render_unit "$RENDER"
-  # with what the engine reads at its start besides the unit: a lane started before it changed
-  # serves the old one (vllm-lane.sh)
-  vlane_put_unit "$RENDER" "$CONFIG_DIR/seccomp-io-uring.json"
+  # with what the engine reads at its start besides the unit: a lane started before they changed
+  # serves the old ones (vllm-lane.sh)
+  vlane_put_unit "$RENDER" "$CONFIG_DIR/seccomp-io-uring.json" "$TEMPLATE"
   # Installed, not switched to: the lane this box serves stays the lane it serves.
   echo "installed as a lane of its own. Switch to it like any lane:"
   echo "  the cockpit: Load on Ornith 1.5 122B in the Lanes view"
@@ -160,6 +173,7 @@ install_service(){
 # caches made as the user, so that docker does not make them as root, and its filter only when it
 # is missing.
 if [ "$MODE" = stage ]; then
+  lane_template >&2
   mkdir -p "${CACHES[@]}"
   [ -f "$CONFIG_DIR/seccomp-io-uring.json" ] || install -m 644 "$HERE/seccomp-io-uring.json" "$CONFIG_DIR/seccomp-io-uring.json"
   render_unit "$STAGE_OUT"
@@ -169,7 +183,7 @@ fi
 
 step "1/5 Preflight (Ornith 1.5 122B: $MODEL @ ${MODEL_REV:0:12})"
 vlane_preflight engine-preflight.sh engine-secrets.sh vllm_engine_auth.py ckpt-fetch.py seccomp-io-uring.json \
-  install-flash-local.sh
+  install-flash-local.sh patch-template.py
 vlane_room "$FLASH_LOCAL_IMAGE" "$MODEL"
 if [ "$MODE" = units ]; then
   echo "OK: $(uname -m), key present; the image and the checkpoint come with the lane's first Load"
@@ -198,8 +212,9 @@ if [ "$MODE" = prepare ]; then
   exit 0
 fi
 
-step "3/5 Checkpoint ($MODEL @ ${MODEL_REV:0:12}, resumable)"
+step "3/5 Checkpoint ($MODEL @ ${MODEL_REV:0:12}, resumable) and its chat template"
 vlane_fetch "$MODEL" "$MODEL_REV"
+lane_template
 
 install_service
 

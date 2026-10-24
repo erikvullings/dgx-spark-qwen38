@@ -6,6 +6,7 @@ the image (each lane its own local tag on it) and the seccomp profile b12x's loa
 --stage runs the installer as written, in a throwaway home, with no sudo and no docker. The uninstall
 blocks of both lanes run whole against a fake unit folder and a fake config directory, sudo,
 systemctl and docker stubs writing down every call, as in test_flash_local_uninstall.py."""
+import importlib.util
 import json
 import os
 import pathlib
@@ -22,6 +23,11 @@ PINS = {k: v.strip('"') for k, v in (ln.split("=", 1) for ln in TEXT.splitlines(
                                        if ln.startswith("ORNITH_122B_") and "=" in ln)}
 FL_TEXT = (REPO / "install-flash-local.sh").read_text()
 FL_IMAGE = re.search(r'^FLASH_LOCAL_IMAGE="([^"]+)"', FL_TEXT, re.M).group(1)
+_spec = importlib.util.spec_from_file_location("patch_template", REPO / "patch-template.py")
+PT = importlib.util.module_from_spec(_spec)
+_spec.loader.exec_module(PT)
+# The checkpoint's template as the patcher finds it: its system-message check, as upstream wrote it.
+TEMPLATE_AT_PIN = "HEAD\n" + PT.SYSTEM_ANCHOR + "\nTAIL\n"
 
 
 def exec_command(unit: str) -> str:
@@ -43,6 +49,10 @@ class TheStagedUnit(unittest.TestCase):
         self.units.mkdir()
         self.hf = self.t / "hf"
         self.out = self.t / "stage.service"
+        self.snap = (self.hf / "hub" / f"models--{PINS['ORNITH_122B_REPO'].replace('/', '--')}" / "snapshots"
+                     / PINS["ORNITH_122B_REV"])
+        self.snap.mkdir(parents=True)
+        (self.snap / "chat_template.jinja").write_text(TEMPLATE_AT_PIN)
 
     def tearDown(self):
         shutil.rmtree(self.t, ignore_errors=True)
@@ -76,6 +86,33 @@ class TheStagedUnit(unittest.TestCase):
         for d in ("vllm", "flashinfer", "b12x", "triton"):
             self.assertTrue((self.cfg / "ornith-122b-cache" / d).is_dir(), d)
             self.assertIn(f"-v {self.cfg}/ornith-122b-cache/{d}:", unit)
+
+    def test_the_stage_writes_the_chat_template_with_its_one_fix(self):
+        """Ornith's template refused a system message past the first one, which opencode 1.19.4
+        sends: every opencode request on this lane got a 400 (2026-10-24). The stage writes the
+        checkpoint's template with that one fix, as the unit's engine reads it at its start."""
+        rc, out = self.stage()
+        self.assertEqual(rc, 0, out)
+        tpl = self.cfg / "chat-template-ornith-122b.jinja"
+        self.assertEqual(tpl.read_text(), TEMPLATE_AT_PIN.replace(PT.SYSTEM_ANCHOR, PT.SYSTEM_PATCHED))
+        unit = self.out.read_text()
+        self.assertIn(f"--mount type=bind,source={self.cfg}/chat-template-ornith-122b.jinja,"
+                      "target=/out/chat-template-ornith-122b.jinja,readonly", unit)
+        self.assertIn("--chat-template /out/chat-template-ornith-122b.jinja", unit)
+
+    def test_a_stage_with_no_template_in_the_cache_writes_no_unit(self):
+        (self.snap / "chat_template.jinja").unlink()
+        rc, out = self.stage()
+        self.assertNotEqual(rc, 0, out)
+        self.assertIn("the chat template could not be patched", out)
+        self.assertFalse(self.out.exists(), "a unit naming a template that is not there")
+
+    def test_the_install_writes_it_after_the_checkpoint_and_checks_its_patcher(self):
+        step3 = TEXT[TEXT.index('step "3/5 Checkpoint'):TEXT.index("install_service\n\nif [ \"$SMOKE\"")]
+        self.assertLess(step3.index('vlane_fetch "$MODEL" "$MODEL_REV"'), step3.index("lane_template"))
+        pre = TEXT[TEXT.index("vlane_preflight "):TEXT.index("vlane_room ")]
+        self.assertIn("patch-template.py", pre)
+        self.assertIn("TEMPLATE_PATCHES=system-reminder python3", TEXT)
 
     def test_the_window_is_a_million_with_yarn_written_where_the_layers_read_it(self):
         # The model card's form, --hf-overrides '{"rope_scaling": ...}', sets a field at the top of the
@@ -123,15 +160,19 @@ class TheStagedUnit(unittest.TestCase):
         self.assertEqual(args[args.index("--mamba-cache-mode") + 1], "align")
         self.assertEqual(args[args.index("--speculative-config.method") + 1], "mtp")
 
-    def test_the_engine_sees_its_key_alone_and_runs_no_code_of_the_checkpoint(self):
-        # the image is a community build: of the config directory, only the key, read-only; the
-        # checkpoint's chat template as published (Hasan's choice, 2026-10-21), and no remote code
+    def test_the_engine_sees_its_key_and_its_template_alone_and_runs_no_code_of_the_checkpoint(self):
+        # the image is a community build: of the config directory, the key and the chat template,
+        # each read-only, and nothing else; no remote code. The template is the checkpoint's with
+        # one fix (Hasan, 2026-10-24, where 2026-10-21 had chosen it as published: opencode 1.19.4
+        # sends a second system message, which the published one refuses)
         rc, out = self.stage()
         self.assertEqual(rc, 0, out)
         cmd = exec_command(self.out.read_text())
         self.assertIn(f"--mount type=bind,source={self.cfg}/api-key,target=/out/api-key,readonly", cmd)
+        self.assertIn(f"--mount type=bind,source={self.cfg}/chat-template-ornith-122b.jinja,"
+                      "target=/out/chat-template-ornith-122b.jinja,readonly", cmd)
         self.assertNotRegex(cmd, rf"-v {re.escape(str(self.cfg))}:")
-        self.assertNotIn("--chat-template", cmd)
+        self.assertEqual(re.findall(r"--chat-template (\S+)", cmd), ["/out/chat-template-ornith-122b.jinja"])
         self.assertNotIn("--trust-remote-code", cmd)
         self.assertIn("--middleware vllm_engine_auth.RequireKey", cmd)
         self.assertIn("--allowed-media-domains media.invalid", cmd)
@@ -218,6 +259,11 @@ class TheUninstalls(unittest.TestCase):
         self.assertFalse((self.cfg / "seccomp-io-uring.json").exists())
         self.assertIn("docker rm -f qwen38-ornith-122b", calls)
         self.assertIn("rm -f", calls)
+
+    def test_its_template_goes_with_it(self):
+        (self.cfg / "chat-template-ornith-122b.jinja").write_text("x\n")
+        self.run_block("ornith-122b")
+        self.assertFalse((self.cfg / "chat-template-ornith-122b.jinja").exists())
 
     def test_beside_flash_local_ornith_leaves_the_profile(self):
         out, _ = self.run_block("ornith-122b", others=["flash-local"])

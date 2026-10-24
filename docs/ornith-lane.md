@@ -20,8 +20,14 @@ ones marked so on a second ASUS Ascent GX10, with the scripts and their raw outp
 The lane pins the authors' own build at its revision of 2026-10-21 08:31 UTC. Its 23 files are those
 of the revision measured here (dde0b1af, 2026-10-20 17:37 UTC) but its model card, whose introduction
 was rewritten four times since: checked file by file against Hugging Face's own sha256 of each. Its
-chat template is served as published: reasoning between `<think>` tags, on by default and turned off by
-`enable_thinking: false`, tool calls in Qwen's XML form, and no reasoning effort. Its sampling
+chat template is served as published but for one line: reasoning between `<think>` tags, on by default
+and turned off by `enable_thinking: false`, tool calls in Qwen's XML form, and no reasoning effort. The
+one line: a system message past the first one made the published template raise "System message must
+be at the beginning", and opencode 1.19.4 sends two system messages before the user's, so every
+opencode request on this lane got a 400 until v1.40.2. `patch-template.py` renders such a message as a
+`<system-reminder>` block, as on the 27B and the two flash lanes (`TEMPLATE_PATCHES=system-reminder`,
+the template having no effort of its own); a conversation with one system message renders byte for
+byte as before. Its sampling
 defaults, which vLLM applies to a request that sets none, are its `generation_config.json`'s:
 temperature 0.6, top_k 20, top_p 0.95. Its tokenizer counts text as Qwen3.8's does (the same
 vocabulary, merges and pre-tokenizer, seven audio tokens fewer), so the limits measured for the Qwen
