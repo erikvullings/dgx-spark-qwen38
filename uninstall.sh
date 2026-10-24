@@ -170,6 +170,11 @@ fi
 if grep -q 'dgx-spark-qwen38' "$HOME/.local/bin/claude-local" 2>/dev/null; then
   echo "  launcher  $HOME/.local/bin/claude-local (this repo's Claude Code launcher)"
 fi
+# the launcher #59's reply gave, which an install moved aside: the user's, listed, never removed
+# (found in review, 2026-10-24)
+if [ -e "$HOME/.local/bin/claude-local.from-59" ]; then
+  echo "  kept      $HOME/.local/bin/claude-local.from-59 (your copy of the launcher #59's reply gave, which an install moved aside: yours to delete)"
+fi
 # install.sh installs opencode itself only when a box had none; it marks that in the
 # PATH line it adds to ~/.bashrc. Listed, never removed: from then on it is the user's
 # opencode as much as this repo's, with its own sessions under ~/.local/share/opencode.

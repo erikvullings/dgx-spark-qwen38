@@ -327,6 +327,20 @@ class TheInstallerWritesIt(unittest.TestCase):
                 self.assertFalse((self.bindir / "claude-local.from-59").exists())
                 self.assertIn("an unrelated 'claude-local' exists", r.stdout)
 
+    def test_the_uninstaller_lists_the_copy_it_does_not_remove(self):
+        # the launcher #59's reply gave, moved aside by an install, is the user's: listed, kept
+        text = (REPO / "uninstall.sh").read_text()
+        self.assertIn('if [ -e "$HOME/.local/bin/claude-local.from-59" ]; then', text)
+        self.assertNotIn('rm -f "$HOME/.local/bin/claude-local.from-59"', text)
+        home = pathlib.Path(tempfile.mkdtemp(prefix="claude-local-un-"))
+        self.addCleanup(lambda: subprocess.run(["rm", "-rf", str(home)]))
+        (home / ".local/bin").mkdir(parents=True)
+        (home / ".local/bin/claude-local.from-59").write_bytes(FROM_59)
+        line = next(ln for ln in text.splitlines() if "claude-local.from-59 (your copy" in ln)
+        r = subprocess.run(["bash", "-c", f'HOME="{home}"\nif [ -e "$HOME/.local/bin/claude-local.from-59" ]; then\n{line}\nfi\n'],
+                           capture_output=True, text=True, timeout=30)
+        self.assertIn(f"kept      {home}/.local/bin/claude-local.from-59", r.stdout)
+
     def test_the_uninstaller_lists_and_removes_only_ours(self):
         text = (REPO / "uninstall.sh").read_text()
         self.assertIn("""if grep -q 'dgx-spark-qwen38' "$HOME/.local/bin/claude-local" 2>/dev/null; then
