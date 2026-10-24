@@ -57,7 +57,7 @@ class TheLanesItKnows(unittest.TestCase):
     def test_an_installer_that_serves_its_template_otherwise_stops_it(self):
         d = self.copy()
         f = d / "install-ornith-122b.sh"
-        f.write_text(f.read_text().replace(" --patches=system-reminder ", " "))
+        f.write_text(f.read_text().replace("TEMPLATE_FIXES=(--patches=system-reminder)", "TEMPLATE_FIXES=()"))
         with self.assertRaisesRegex(SystemExit, "install-ornith-122b.sh serves its template otherwise"):
             ltc.lane_specs(d)
 

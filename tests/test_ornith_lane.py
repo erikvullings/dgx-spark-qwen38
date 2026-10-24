@@ -112,7 +112,7 @@ class TheStagedUnit(unittest.TestCase):
         self.assertLess(step3.index('vlane_fetch "$MODEL" "$MODEL_REV"'), step3.index("lane_template"))
         pre = TEXT[TEXT.index("vlane_preflight "):TEXT.index("vlane_room ")]
         self.assertIn("patch-template.py", pre)
-        self.assertIn('patch-template.py" --patches=system-reminder ', TEXT)
+        self.assertIn("TEMPLATE_FIXES=(--patches=system-reminder)", TEXT)
 
     def test_the_window_is_a_million_with_yarn_written_where_the_layers_read_it(self):
         # The model card's form, --hf-overrides '{"rope_scaling": ...}', sets a field at the top of the

@@ -160,10 +160,8 @@ fi
 # it. Written again at every install and every switch; left as it is, mtime included, when nothing
 # changed.
 TEMPLATE="$CONFIG_DIR/chat-template-flash-local.jinja"
-lane_template(){
-  LEAN_DEFAULT=0 python3 "$HERE/patch-template.py" "$HF_CACHE" "$TEMPLATE" "$MODEL_REV" "$MODEL" \
-    || die "the chat template could not be patched (the lines above say why)"
-}
+TEMPLATE_FIXES=(LEAN_DEFAULT=0)
+lane_template(){ vlane_template "$TEMPLATE" "${TEMPLATE_FIXES[@]}"; }
 
 # The n-gram table: where the engine reads it, copied first when the cache is on another disk than
 # the home directory's (ple-table.py). TABLE_MOUNTS is the unit's -v arguments for the copies, empty
@@ -283,6 +281,7 @@ if [ "$MODE" = units ]; then
   echo "OK: $(uname -m), key present; the image and the checkpoint come with the lane's first Load"
   # a checkpoint already in the cache (an install.sh run after a Load) keeps the table's mounts
   lane_table mounts
+  vlane_template_if_cached "$TEMPLATE" "${TEMPLATE_FIXES[@]}"
   install_service
   step "Done: the Flash FP4-Local lane is installed; its first Load prepares it"
   echo "  the cockpit: Load on Flash FP4-Local (NVIDIA) in the Lanes view pulls its image (about 18 GB, 10 to"

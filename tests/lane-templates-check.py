@@ -62,6 +62,20 @@ def pin(text, prefix):
     return repo.group(1), rev.group(1)
 
 
+def fixes_of(installer_text):
+    """What an installer tells patch-template.py, from its one TEMPLATE_FIXES line (vlane_template in
+    vllm-lane.sh runs it with them): None when it patches nothing, else {"patches": its --patches, and
+    each VAR=value of its environment}."""
+    m = re.search(r"^TEMPLATE_FIXES=\(([^)]*)\)$", installer_text, re.M)
+    if not m:
+        return None if "vlane_template" not in installer_text else {"unread": "TEMPLATE_FIXES"}
+    spec = {}
+    for item in m.group(1).split():
+        key, _, value = item.lstrip("-").partition("=")
+        spec[key] = value
+    return spec
+
+
 def lane_specs(repo_dir=REPO):
     """Every text target: (name, repo, revision, patch environment or None). The 27B and flash targets
     are install.sh's (its case of MODEL_REPO lines), patched with the four fixes at every install and
@@ -78,9 +92,7 @@ def lane_specs(repo_dir=REPO):
         raise SystemExit(f"the vLLM lanes are {installers}, this check knows {known}: add the new lane to VLLM_LANES")
     for name, (installer, prefix, env) in VLLM_LANES.items():
         text = (repo_dir / installer).read_text()
-        patched = "patch-template.py" in text
-        asked = re.search(r'patch-template\.py" --patches=(\S+) ', text)
-        if patched != (env is not None) or (asked.group(1) if asked else None) != (env or {}).get("patches"):
+        if fixes_of(text) != env:
             raise SystemExit(f"{installer} serves its template otherwise than VLLM_LANES says for {name}")
         specs.append((name, *pin(text, prefix), env))
     switch = re.search(r'^case "\$CHOICE" in ([a-z0-9|-]+)\) ;;', (repo_dir / "switch-model.sh").read_text(), re.M)

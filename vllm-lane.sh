@@ -161,6 +161,30 @@ vlane_service_files(){  # $1... the lane's cache folders
     || install -m 644 "$HERE/vllm_engine_auth.py" "$CONFIG_DIR/vllm-auth/vllm_engine_auth.py"
 }
 
+# The checkpoint's own chat template with this lane's fixes (patch-template.py), written to $1: again at
+# every install and every switch, and left as it is, mtime included, when nothing changed. The rest is
+# the lane's TEMPLATE_FIXES: VAR=value for patch-template.py's environment, --options for its command
+# line. One function for the vLLM lanes that patch their template (Flash FP4-Local, Ornith), which had
+# the same lines each (code review, 2026-10-24).
+vlane_template(){  # $1 the file, then the lane's TEMPLATE_FIXES
+  local out="$1" a envs=() opts=()
+  shift
+  for a in "$@"; do
+    case "$a" in --*) opts+=("$a") ;; *=*) envs+=("$a") ;; *) die "vlane_template: $a is neither VAR=value nor --option" ;; esac
+  done
+  env ${envs[@]+"${envs[@]}"} python3 "$HERE/patch-template.py" ${opts[@]+"${opts[@]}"} "$HF_CACHE" "$out" "$MODEL_REV" "$MODEL" \
+    || die "the chat template could not be patched (the lines above say why)"
+}
+
+# The same when the units alone are installed (--units-only), if the pinned checkpoint is in the cache
+# already: the unit mounts the template, and an update that took this path on a box that had served the
+# lane (its image pruned since) put a unit whose start docker refuses (code review, 2026-10-24). Without
+# the checkpoint, the lane's first Load writes it before starting it.
+vlane_template_if_cached(){  # $1 the file, then the lane's TEMPLATE_FIXES
+  [ -f "$HF_CACHE/hub/models--${MODEL//\//--}/snapshots/$MODEL_REV/chat_template.jinja" ] || return 0
+  vlane_template "$@"
+}
+
 # The rendered unit put in place (lanes.sh's unit_put), and what that means for a lane that serves:
 # it goes on serving the unit, the runtime and the start scripts it started with, said here when no
 # proof follows to restart it, whether this run or an earlier update changed them (an update leaves

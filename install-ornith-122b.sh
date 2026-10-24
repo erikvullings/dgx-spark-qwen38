@@ -129,17 +129,15 @@ render_unit(){
       "$HERE/$UNIT.template" > "$1"
 }
 
-# The checkpoint's chat template with the one fix it needs (patch-template.py --patches): it
+# The checkpoint's chat template with the one fix it needs (vlane_template, TEMPLATE_FIXES): it
 # refused a system message past the first one, which opencode 1.19.4 sends, and every opencode request
 # on this lane got a 400 (2026-10-24); that message becomes a <system-reminder>, as on the 27B and the
 # two flash lanes. The template has no reasoning effort of its own (the proxy gives it one through
 # enable_thinking), so that is its only fix. Written again at every install and every switch, and left
 # as it is, mtime included, when nothing changed.
 TEMPLATE="$CONFIG_DIR/chat-template-ornith-122b.jinja"
-lane_template(){
-  python3 "$HERE/patch-template.py" --patches=system-reminder "$HF_CACHE" "$TEMPLATE" "$MODEL_REV" "$MODEL" \
-    || die "the chat template could not be patched (the lines above say why)"
-}
+TEMPLATE_FIXES=(--patches=system-reminder)
+lane_template(){ vlane_template "$TEMPLATE" "${TEMPLATE_FIXES[@]}"; }
 
 # This lane's own folders: vLLM's compile cache, FlashInfer's and Triton's kernels and b12x's
 # kernel choices, built at the first boot.
@@ -187,6 +185,7 @@ vlane_preflight engine-preflight.sh engine-secrets.sh vllm_engine_auth.py ckpt-f
 vlane_room "$FLASH_LOCAL_IMAGE" "$MODEL"
 if [ "$MODE" = units ]; then
   echo "OK: $(uname -m), key present; the image and the checkpoint come with the lane's first Load"
+  vlane_template_if_cached "$TEMPLATE" "${TEMPLATE_FIXES[@]}"
   install_service
   step "Done: the Ornith 1.5 122B lane is installed; its first Load prepares it"
   echo "  the cockpit: Load on Ornith 1.5 122B in the Lanes view pulls its image (the Flash FP4-Local lane's,"
