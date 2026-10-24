@@ -169,6 +169,21 @@ vlane_service_files(){  # $1... the lane's cache folders
 vlane_put_unit(){  # $1 the rendered unit, $2... what else the lane's start reads (its own files)
   grep -q '__[A-Z][A-Z0-9_]*__' "$1" \
     && die "the unit template still holds an unsubstituted placeholder: $(grep -o '__[A-Z][A-Z0-9_]*__' "$1" | sort -u | tr '\n' ' ')"
+  # A lane that starts at boot keeps the unit it has when the new one mounts a file not written yet:
+  # an update that found the lane's checkpoint out of reach (its cache on a disk absent then) runs its
+  # installer --units-only, which writes no chat template, and docker refuses an absent source, so the
+  # lane would not have come back at the next boot (found in review, 2026-10-24). A lane that does not
+  # start at boot takes the new unit: its next Load writes what it mounts before it starts.
+  if ! cmp -s "$1" "$INSTALLED" && systemctl is-enabled --quiet "$UNIT" 2>/dev/null; then
+    local src missing=""
+    for src in $(grep -o 'type=bind,source=[^,]*' "$1" | cut -d= -f3); do
+      [ -e "$src" ] || missing="$missing $src"
+    done
+    if [ -n "$missing" ]; then
+      echo "NOTE: $VLANE_SHORT starts at boot, and its new unit mounts what is not there yet:$missing. The unit it has is kept; a Load, or ./install.sh once its checkpoint is in reach, brings the new one."
+      return 0
+    fi
+  fi
   local put
   put="$(unit_put "$1" "$INSTALLED")"
   shift
