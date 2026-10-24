@@ -12,13 +12,14 @@ empty reply (found in a cloud review). On the reference box (aarch64, Python 3.1
 three runs each: 3.99 times a 24 MiB body and 4.01 times a 250 MiB one, the proxy going from 31
 to 1033 MiB for the larger, the same for the proxy of v1.36.2.
 
-This measures that rate on the machine that runs it, on the real proxy as a process, with a
-24 MiB body in the shape of the largest legitimate bodies (an image as base64, ASCII), and holds
-the unit to it: the idle proxy plus the budget at that rate fits under MemoryMax, with a tenth to
-spare. Text in several bytes per character costs the proxy more, as its rewrite escapes every
-such character: 6.73 times for Chinese and 9.98 for emoji on the reference box (2026-10-18), so
-384 MiB of it would not fit. No context window takes that much text, and only a holder of the
-key can send it; the rewrite is to stop escaping, and the ceiling to follow the costliest shape.
+This measures that rate on the machine that runs it, on the real proxy as a process, for three
+24 MiB bodies sent as UTF-8, as clients send them: an image as base64 (ASCII, the shape of the
+largest legitimate bodies), Chinese text and emoji, each on a proxy of its own (its peak only
+grows), and holds the unit to the costliest: the idle proxy plus the budget at that rate fits
+under MemoryMax, with a tenth to spare. Until the rewrite kept the text as UTF-8 (v6.46), text in
+several bytes per character cost more, as the rewrite escaped every such character: measured on
+the reference box on 2026-10-24 with these bodies, 5.65 times for Chinese and 7.98 for emoji on
+v6.45, against 3.98 and 3.99 on v6.46, and 3.98 to 3.99 for base64 on both (three runs each).
 """
 import http.client
 import http.server
@@ -107,6 +108,14 @@ def proxy_default(name):
     return value
 
 
+SHAPES = {
+    "base64": lambda: [{"type": "text", "text": "describe"},
+                       {"type": "image_url", "image_url": {"url": "data:image/png;base64," + "A" * (BODY_MIB << 20)}}],
+    "chinese": lambda: "中" * ((BODY_MIB << 20) // 3),
+    "emoji": lambda: "😀" * ((BODY_MIB << 20) // 4),
+}
+
+
 class TheCeilingHoldsTheBudget(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
@@ -115,31 +124,45 @@ class TheCeilingHoldsTheBudget(unittest.TestCase):
         cls.home = pathlib.Path(tempfile.mkdtemp(prefix="kp-ceiling-"))
         (cls.home / ".config" / "qwen38").mkdir(parents=True)
         (cls.home / ".config" / "qwen38" / "api-key").write_text("k-test\n")
-        cls.port = free_port()
-        env = {"PATH": os.environ["PATH"], "HOME": str(cls.home), "PROXY_BIND": "127.0.0.1",
-               "UPSTREAM": f"http://127.0.0.1:{cls.engine.server_address[1]}", "PROXY_HOLD_UNITS": ""}
-        cls.proxy = subprocess.Popen([sys.executable, str(REPO / "keepalive-proxy.py"), str(cls.port)], env=env,
-                                     stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-        end = time.time() + 20
-        while time.time() < end:
-            try:
-                socket.create_connection(("127.0.0.1", cls.port), timeout=0.5).close()
-                break
-            except OSError:
-                time.sleep(0.1)
 
     @classmethod
     def tearDownClass(cls):
-        cls.proxy.terminate()
-        cls.proxy.wait(10)
         cls.engine.shutdown()
         cls.engine.server_close()
         shutil.rmtree(cls.home, ignore_errors=True)
 
-    def send(self, doc):
-        c = http.client.HTTPConnection("127.0.0.1", self.port, timeout=120)
+    def rate(self, shape):
+        """The proxy's peak resident growth for one body of this shape, over the body's bytes, on a proxy
+        of its own: its peak (VmHWM) only grows, so a second body would measure from the first's peak."""
+        port = free_port()
+        env = {"PATH": os.environ["PATH"], "HOME": str(self.home), "PROXY_BIND": "127.0.0.1",
+               "UPSTREAM": f"http://127.0.0.1:{self.engine.server_address[1]}", "PROXY_HOLD_UNITS": ""}
+        proxy = subprocess.Popen([sys.executable, str(REPO / "keepalive-proxy.py"), str(port)], env=env,
+                                 stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         try:
-            c.request("POST", "/v1/chat/completions", body=json.dumps(doc).encode(),
+            end = time.time() + 20
+            while time.time() < end:
+                try:
+                    socket.create_connection(("127.0.0.1", port), timeout=0.5).close()
+                    break
+                except OSError:
+                    time.sleep(0.1)
+            self.send(port, {"model": "qwen3.8-27b", "messages": [{"role": "user", "content": "2+2?"}]})
+            idle = peak_mib(proxy.pid)
+            body = json.dumps({"model": "qwen3.8-27b", "reasoning_effort": "lean",
+                               "messages": [{"role": "user", "content": SHAPES[shape]()}]}, ensure_ascii=False).encode()
+            self.assertIsNotNone(self.send(port, body))
+            self.assertIsNone(proxy.poll(), f"the proxy died on the {shape} body")
+            return idle, (peak_mib(proxy.pid) - idle) / (len(body) / 2**20)
+        finally:
+            proxy.terminate()
+            proxy.wait(10)
+
+    def send(self, port, doc):
+        c = http.client.HTTPConnection("127.0.0.1", port, timeout=120)
+        try:
+            body = doc if isinstance(doc, bytes) else json.dumps(doc).encode()
+            c.request("POST", "/v1/chat/completions", body=body,
                       headers={"Content-Type": "application/json", "Authorization": "Bearer k-test"})
             r = c.getresponse()
             r.read()
@@ -147,22 +170,19 @@ class TheCeilingHoldsTheBudget(unittest.TestCase):
         finally:
             c.close()
 
-    def test_the_idle_proxy_and_the_budget_at_the_measured_rate_fit_under_memorymax(self):
-        self.send({"model": "qwen3.8-27b", "messages": [{"role": "user", "content": "2+2?"}]})
-        idle = peak_mib(self.proxy.pid)
-        body = {"model": "qwen3.8-27b", "reasoning_effort": "lean", "messages": [{"role": "user", "content": [
-            {"type": "text", "text": "describe"},
-            {"type": "image_url", "image_url": {"url": "data:image/png;base64," + "A" * (BODY_MIB << 20)}}]}]}
-        self.assertIsNotNone(self.send(body))
-        self.assertIsNone(self.proxy.poll(), "the proxy died on the body")
-        rate = (peak_mib(self.proxy.pid) - idle) / BODY_MIB
-        self.assertGreater(rate, 1, "the body did not reach the guards: the measurement measured nothing")
+    def test_the_idle_proxy_and_the_budget_at_the_costliest_rate_fit_under_memorymax(self):
+        rates = {}
+        for shape in SHAPES:
+            idle, rates[shape] = self.rate(shape)
+            self.assertGreater(rates[shape], 1, f"the {shape} body did not reach the guards: the measurement measured nothing")
+        shape, rate = max(rates.items(), key=lambda kv: kv[1])
         budget = proxy_default("BODY_BUDGET_BYTES") / 2**20
         ceiling = unit_bytes("MemoryMax") / 2**20
         need = idle + rate * max(budget, proxy_default("MAX_BODY_BYTES") / 2**20)
         self.assertLessEqual(need, 0.9 * ceiling,
-                             f"idle {idle:.0f} MiB + {rate:.1f} x a budget of {budget:.0f} MiB = {need:.0f} MiB, "
-                             f"over nine tenths of MemoryMax ({ceiling:.0f} MiB): the kernel kills the proxy first")
+                             f"rates {', '.join(f'{k} {v:.2f}' for k, v in rates.items())}: idle {idle:.0f} MiB + {rate:.1f} "
+                             f"({shape}) x a budget of {budget:.0f} MiB = {need:.0f} MiB, over nine tenths of MemoryMax "
+                             f"({ceiling:.0f} MiB): the kernel kills the proxy first")
 
     def test_the_ceiling_is_not_moved_to_swap(self):
         # with swap on the box, MemoryMax alone moves the excess to swap (measured 2026-10-08)
