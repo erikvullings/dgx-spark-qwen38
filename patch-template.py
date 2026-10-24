@@ -12,6 +12,8 @@ The 'minimal' -> 'low' mapping (an OpenAI effort tier) was contributed
 by forum user helge: https://forums.developer.nvidia.com/t/380257/10
 
 Usage: patch-template.py <hf_cache_dir> <output_path> [revision] [repo]
+TEMPLATE_PATCHES=system-reminder (comma-separated names) applies those fixes alone, for a
+template with no reasoning effort of its own; unset, all four.
 Idempotent: succeeds if the patches are already applied. When a revision is
 given (sha or ref name like 'main'), the template is taken from that exact
 snapshot; otherwise the most recently modified snapshot is used. The optional
@@ -97,6 +99,11 @@ SYSTEM_PATCHED = (
 )
 
 
+# The four fixes by name, in the order they are applied (TEMPLATE_PATCHES picks among them).
+PATCHES = ("reasoning_effort", "lean", "effort-message", "system-reminder")
+EFFORT_PATCHES = {"reasoning_effort", "lean", "effort-message"}
+
+
 def main() -> None:
     if len(sys.argv) not in (3, 4, 5):
         sys.exit(__doc__)
@@ -124,6 +131,16 @@ def main() -> None:
             print(f"note: {len(hits)} snapshots present, using the most recent: {chosen.split('/')[-2][:12]}")
     tpl = open(chosen, encoding="utf-8").read()
 
+    # The fixes this lane asks for: all four unless it says otherwise, as the Qwen3.8 27B and
+    # flash templates carry the anchors of all four. A checkpoint whose template has no reasoning
+    # effort of its own asks for system-reminder alone (Ornith 1.5 122B, 2026-10-24: the proxy
+    # gives it its effort as enable_thinking). A fix it asks for whose anchor is gone still stops
+    # the install, as before.
+    wanted = [p.strip() for p in os.environ.get("TEMPLATE_PATCHES", ",".join(PATCHES)).split(",") if p.strip()]
+    unknown = sorted(set(wanted) - set(PATCHES))
+    if unknown or not wanted:
+        sys.exit(f"TEMPLATE_PATCHES names {', '.join(unknown) or 'no fix'}: the fixes are {', '.join(PATCHES)}")
+
     # LEAN_DEFAULT=0 installs the level without making it the default, for a box
     # that wants Qwen's shipped behaviour until it has run its own numbers. Unset, the
     # template already installed decides: the choice was read from the environment of
@@ -136,24 +153,26 @@ def main() -> None:
     # asking for it (a user's box, 2026-10-05: every bench.sh probe measured other text).
     # Only a template that offers lean and still defaults to xhigh was installed with
     # LEAN_DEFAULT=0.
-    asked = os.environ.get("LEAN_DEFAULT")
-    installed, why = "", ""
-    if asked is not None:
-        lean_default = asked != "0"
-    else:
-        try:
-            with open(out_path, encoding="utf-8") as f:
-                installed = f.read()
-        except OSError:
-            installed = ""
-        has_lean = LEAN_MARKER in installed
-        lean_default = not (has_lean and "reasoning_effort|default('xhigh')" in installed)
-        if installed:
-            why = (" (kept from the installed template)" if has_lean
-                   else " (the installed template predates the lean level and chose nothing)")
-    effort_patched = EFFORT_PATCHED.replace("@@DEF@@", "lean" if lean_default else "xhigh")
-    msg_patched = MSG_PATCHED.replace("@@LEVELS@@", MSG_LEVELS[lean_default])
-    print(f"default reasoning effort: {'lean' if lean_default else 'xhigh'}{why}")
+    effort_patched = msg_patched = ""
+    if EFFORT_PATCHES & set(wanted):
+        asked = os.environ.get("LEAN_DEFAULT")
+        installed, why = "", ""
+        if asked is not None:
+            lean_default = asked != "0"
+        else:
+            try:
+                with open(out_path, encoding="utf-8") as f:
+                    installed = f.read()
+            except OSError:
+                installed = ""
+            has_lean = LEAN_MARKER in installed
+            lean_default = not (has_lean and "reasoning_effort|default('xhigh')" in installed)
+            if installed:
+                why = (" (kept from the installed template)" if has_lean
+                       else " (the installed template predates the lean level and chose nothing)")
+        effort_patched = EFFORT_PATCHED.replace("@@DEF@@", "lean" if lean_default else "xhigh")
+        msg_patched = MSG_PATCHED.replace("@@LEVELS@@", MSG_LEVELS[lean_default])
+        print(f"default reasoning effort: {'lean' if lean_default else 'xhigh'}{why}")
 
     for name, anchor, patched, marker in (
         ("reasoning_effort", EFFORT_ANCHOR, effort_patched, "'minimal'"),
@@ -161,6 +180,8 @@ def main() -> None:
         ("effort-message", MSG_ANCHOR, msg_patched, "Supported types are lean"),
         ("system-reminder", SYSTEM_ANCHOR, SYSTEM_PATCHED, "<system-reminder>"),
     ):
+        if name not in wanted:
+            continue
         if anchor in tpl:
             tpl = tpl.replace(anchor, patched, 1)
             print(f"patch '{name}': applied")

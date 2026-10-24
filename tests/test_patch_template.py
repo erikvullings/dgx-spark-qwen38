@@ -72,6 +72,27 @@ def main() -> None:
         os.utime(decoy, None)
         run(base, out, sha, repo)
         assert not open(out).read().startswith("DECOY"), "pinned snapshot must win"
+        # A lane whose template has no reasoning effort of its own asks for one fix by name
+        # (Ornith 1.5 122B, 2026-10-24, whose template refused a system message past the first one,
+        # as opencode 1.19.4 sends): that fix alone, no effort line, every other byte kept. Without
+        # the name the patcher refuses that template, as it refuses an upstream change.
+        orn_repo, orn_sha = "org/no-effort", "e" * 40
+        orn_body = "HEAD\n" + pt.SYSTEM_ANCHOR + "\nTAIL\n"
+        make_fixture(base, orn_repo, orn_sha, orn_body)
+        orn_out = os.path.join(base, "orn.jinja")
+        env = {k: v for k, v in os.environ.items() if k not in ("TEMPLATE_PATCHES", "LEAN_DEFAULT")}
+        argv = [sys.executable, SCRIPT, base, orn_out, orn_sha, orn_repo]
+        r = subprocess.run(argv, capture_output=True, text=True, env={**env, "TEMPLATE_PATCHES": "system-reminder"})
+        assert r.returncode == 0, r.stdout + r.stderr
+        assert "patch 'system-reminder': applied" in r.stdout, r.stdout
+        assert "reasoning effort" not in r.stdout and r.stdout.count("patch '") == 1, r.stdout
+        assert open(orn_out).read() == orn_body.replace(pt.SYSTEM_ANCHOR, pt.SYSTEM_PATCHED)
+        os.remove(orn_out)
+        r = subprocess.run(argv, capture_output=True, text=True, env=env)
+        assert r.returncode != 0 and "anchor not found" in r.stdout + r.stderr, r.stdout + r.stderr
+        assert not os.path.exists(orn_out), "a refused template was written"
+        r = subprocess.run(argv, capture_output=True, text=True, env={**env, "TEMPLATE_PATCHES": "system-reminders"})
+        assert r.returncode != 0 and "the fixes are" in r.stdout + r.stderr, r.stdout + r.stderr
         print("test_patch_template: OK")
     finally:
         shutil.rmtree(base, ignore_errors=True)
