@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Keepalive proxy in front of SGLang or vLLM (v6.45). No content logging, and the only
+"""Keepalive proxy in front of SGLang or vLLM (v6.46). No content logging, and the only
 rewriting is the tool-schema guard (role 4); one route, POST /v1/systemone, is answered
 here instead of relayed (role 5).
 
@@ -40,6 +40,17 @@ Six roles, nothing else:
    PROXY_HOLD_MAX_S, instead of failing at once. A streamed one hears from the proxy at
    once (200, then the keepalives of role 1); see "Holding a request" below.
 
+v6.46: a body the proxy writes again for the engine keeps its text as UTF-8. Seven guards parse a
+body and write it again (the reasoning effort routes, the Qwen, Nemotron and Ornith effort
+translations, the tool schema patterns, the model name on vLLM), and the prompt counter writes the
+text it sends the engine's tokenizer. They wrote it with json.dumps' default, which escapes every
+character outside ASCII: a Chinese character took 6 bytes instead of 3 and an emoji 12 instead of 4,
+so the engine got a body two to three times the one sent, the proxy held it at 5.65 and 7.98 times
+its size while its guards worked on it, against 3.98 for an image as base64 (reference box,
+2026-10-24, 24 MiB bodies sent as UTF-8; 3.98 and 3.99 now), and the counter measured a prompt against
+COUNT_BODY_MAX_BYTES at that inflated size.
+They write it through rewritten(), in UTF-8; a lone surrogate, which a JSON escape allows and UTF-8
+cannot carry, keeps its escape.
 v6.45: the Ornith 1.5 122B lane (Ornith AI's model on vLLM) takes a reasoning effort as its chat
 template reads it, enable_thinking alone: none and minimal turn the reasoning off, every other
 level keeps it whole, as the box decided (2026-10-21). Its template reads no effort, and a "none"
@@ -891,6 +902,19 @@ def _tool_param_schemas(j):
 
 
 
+def rewritten(doc):
+    """A body the proxy writes again for the engine, in UTF-8, as clients send it (v6.46). With
+    json.dumps' default every character outside ASCII came back escaped: a Chinese character took
+    6 bytes instead of 3 and an emoji 12 instead of 4, so the engine got a body two to three times
+    the one sent, and the proxy held it at 5.65 and 7.98 times its size while its guards worked on
+    it, against 3.98 for an image as base64 (reference box, 2026-10-24). A lone surrogate, which a
+    JSON escape allows and UTF-8 cannot carry, keeps its escape."""
+    try:
+        return json.dumps(doc, ensure_ascii=False).encode()
+    except UnicodeEncodeError:
+        return json.dumps(doc).encode()
+
+
 # SGLang validates reasoning_effort at the API boundary against a literal enum
 # compiled into its own request model: none, minimal, low, medium, high, xhigh,
 # max. A level this repo adds to the chat template is therefore refused with a
@@ -934,14 +958,14 @@ def route_reasoning_effort(body, path):
         # a 400 (v6.30): it goes, the open door's level stays.
         del j["reasoning_effort"]
         try:
-            return json.dumps(j).encode(), None, eff
+            return rewritten(j), None, eff
         except Exception:
             return body, None, None
     kw["reasoning_effort"] = eff
     j["chat_template_kwargs"] = kw
     del j["reasoning_effort"]
     try:
-        return json.dumps(j).encode(), eff, None
+        return rewritten(j), eff, None
     except Exception:
         return body, None, None
 
@@ -982,7 +1006,7 @@ def qwen_effort_none(body, path):
     j.pop("reasoning_effort", None)
     j["chat_template_kwargs"] = kw
     try:
-        return json.dumps(j).encode(), True
+        return rewritten(j), True
     except Exception:
         return body, False
 
@@ -1030,7 +1054,7 @@ def nemotron_effort(body, path):
             kw["medium_effort"] = True
     j["chat_template_kwargs"] = kw
     try:
-        return json.dumps(j).encode(), level
+        return rewritten(j), level
     except Exception:
         return body, None
 
@@ -1077,7 +1101,7 @@ def ornith_effort(body, path):
         kw["enable_thinking"] = True
     j["chat_template_kwargs"] = kw
     try:
-        return json.dumps(j).encode(), level
+        return rewritten(j), level
     except Exception:
         return body, None
 
@@ -1350,7 +1374,7 @@ def sanitize_tool_schemas(body, path):
         log("tool schema nested past depth 48: patterns below were not inspected, the engine may still 400")
     if not dropped:
         return body, []
-    return json.dumps(j).encode(), dropped
+    return rewritten(j), dropped
 
 
 def _image_dims(raw):
@@ -1730,7 +1754,7 @@ def tokenize_count(body, path):
             req["prompt"] = j["text"]
         else:
             return None
-        payload = json.dumps(req).encode()
+        payload = rewritten(req)
         key = _api_key()
     except Exception:
         return None
@@ -2926,7 +2950,7 @@ def route_model_name(body, path):
         return body, None
     was, j["model"] = j["model"], names[0]
     try:
-        return json.dumps(j).encode(), was
+        return rewritten(j), was
     except Exception:
         return body, None
 
@@ -5041,7 +5065,7 @@ if __name__ == "__main__":
     holds = (f"holds requests up to {HOLD_MAX_S:.0f}s while {' or '.join(HOLD_UNITS)} comes back"
              if HOLD_UNITS and HOLD_MAX_S > 0 else "holds nothing")
     # one f-string: the cockpit's tests render this line from the source
-    log(f"v6.45 on {BIND}:{port} -> {UPSTREAM} (keepalive {KEEPALIVE_S:.0f}s, max silence {MAX_SILENCE_S:.0f}s, {holds})")
+    log(f"v6.46 on {BIND}:{port} -> {UPSTREAM} (keepalive {KEEPALIVE_S:.0f}s, max silence {MAX_SILENCE_S:.0f}s, {holds})")
     if FLASH_PROMPT_CEILING_TOKENS > 0:
         log(f"one-prompt ceiling {FLASH_PROMPT_CEILING_TOKENS} tokens while the flash lane serves"
             + (f", {PROMPT_CEILING_TOKENS} on any lane" if PROMPT_CEILING_TOKENS > 0 else ""))
