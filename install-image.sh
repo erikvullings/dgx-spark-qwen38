@@ -126,6 +126,10 @@ case "$IMAGE_BIND" in
   127.0.0.1|localhost) ;;
   *) echo "WARNING: binding $IMAGE_BIND. This lane has no API key (the diffusion runtime has"
      echo "         no --api-key), so anyone who can reach that address can generate on your GPU."
+     if [ "$IMAGE_BIND" = 0.0.0.0 ]; then
+       echo "         0.0.0.0 is every interface: the LAN, the tailnet and any added later."
+     fi
+     echo "         The scheduler's own channel stays on 127.0.0.1 whatever this bind (scheduler-loopback)."
      echo "         Loopback plus the cockpit is the intended shape." ;;
 esac
 case "$IMAGE_BIND" in
@@ -342,16 +346,23 @@ fi
 #     and a generation holds one for as long as it runs. A Stop during a 2048x2048 request
 #     sat 60 s in "stopping" until systemd killed the lane and marked the unit failed
 #     (2026-09-23). Now 5 s, then the requests in flight are cancelled and it stops clean.
+#   scheduler-loopback: the scheduler takes its requests on a ZMQ socket that unpickles what it
+#     is sent, and upstream derives that socket's address from --host: a lane bound to an
+#     address other machines reach took requests on that channel from them too, with no key
+#     (found in a security review, 2026-10-24). It stays on 127.0.0.1 now, whatever --host is:
+#     here the HTTP server and the scheduler always run on the same machine. Upstream's main
+#     pins only 0.0.0.0 and IPv6 to loopback and keeps an explicit address.
 # The other three are sgl-project/sglang#43391, merged upstream on 2026-10-10 and in SGLang
 # v0.5.22 (2026-10-16), the release after this pin, one file each: the Turbo checkpoint's eight-step sigma grid, which its
 # model_index.json carries, reaches the sampler. Without them the Turbo weights load and
 # sample on a uniform schedule from num_inference_steps, which is not how it was trained;
 # with them the base checkpoint, which has no grid, samples exactly as before.
 # One line: CI reads this list with a one-line pattern.
-PATCHES=(scheduler-idle-poll http-graceful-timeout qwen-image21-turbo-sigma-config qwen-image21-turbo-sigma-pipeline qwen-image21-turbo-sigma-stage)
+PATCHES=(scheduler-idle-poll http-graceful-timeout scheduler-loopback qwen-image21-turbo-sigma-config qwen-image21-turbo-sigma-pipeline qwen-image21-turbo-sigma-stage)
 declare -A PATCH_FIXES=(
   [scheduler-idle-poll]="an idle lane no longer holds a CPU core"
   [http-graceful-timeout]="a stop during a generation takes 5 s instead of timing out"
+  [scheduler-loopback]="the scheduler's channel stays on 127.0.0.1 whatever --host"
   [qwen-image21-turbo-sigma-config]="the Turbo's sigma grid has a place in the pipeline config"
   [qwen-image21-turbo-sigma-pipeline]="the Turbo's sigma grid is read from its model_index.json"
   [qwen-image21-turbo-sigma-stage]="a Turbo request samples on that grid, eight steps"

@@ -186,6 +186,17 @@ authenticated door in front of it. That bind does not follow `ENGINE_BIND`, whic
 to the lane that does have a key; `IMAGE_BIND=<addr>` overrides it, and the installer says
 out loud what that costs.
 
+Behind the HTTP API, the diffusion runtime's scheduler takes its requests on a ZMQ socket
+that unpickles what it is sent, and upstream derives that socket's address from the same
+`--host`. Until v1.40.1, a lane bound to an address other machines reach took requests on
+that channel from them too, with no key, which let them run code as the lane's user
+(found in a security review, 2026-10-24). `image-sglang/scheduler-loopback.patch` keeps it
+on 127.0.0.1 whatever `--host` is, for this lane and the video lane: here the HTTP server and
+the scheduler always run on the same machine. Upstream's `main` pins only `0.0.0.0` and IPv6
+to loopback and keeps an explicit address. A side effect, the same path every lane on
+loopback already took: with a local channel, the scheduler hands large outputs over through
+a temporary file instead of in the message.
+
 ## The Turbo checkpoint
 
 [`Qwen/Qwen-Image-2.1-Turbo`](https://huggingface.co/Qwen/Qwen-Image-2.1-Turbo), published by

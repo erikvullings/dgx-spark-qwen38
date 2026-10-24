@@ -134,6 +134,7 @@ case "$VIDEO_BIND" in
   0.0.0.0) die "VIDEO_BIND=0.0.0.0 puts a keyless video generator on EVERY interface (LAN, tailnet, future NICs). This lane has no --api-key; bind loopback (the cockpit is the door) or name one specific address." ;;
   *) echo "WARNING: binding $VIDEO_BIND. This lane has no API key (the diffusion runtime has"
      echo "         no --api-key), so anyone who can reach that address can generate on your GPU."
+     echo "         The scheduler's own channel stays on 127.0.0.1 whatever this bind (scheduler-loopback)."
      echo "         Loopback plus the cockpit is the intended shape." ;;
 esac
 case "$VIDEO_BIND" in
@@ -325,9 +326,11 @@ fi
 if [ ! -d "$SRC/.git" ]; then
   git clone --quiet https://github.com/sgl-project/sglang "$SRC" || die "could not clone SGLang."
 fi
-# One local change to the pinned source, the image lane's scheduler-idle-poll (one file
-# in image-sglang/ for both lanes, which applies to the pin of each). The diffusion
-# scheduler's loop never waits: recv_reqs() polls its socket without blocking and nothing
+# Two local changes to the pinned source, the image lane's scheduler-idle-poll and
+# scheduler-loopback (one file each in image-sglang/ for both lanes, which applies to the
+# pin of each). scheduler-loopback keeps the scheduler's own channel, a socket that
+# unpickles what it is sent, on 127.0.0.1 whatever --host is (install-image.sh says why,
+# 2026-10-24). For scheduler-idle-poll: the diffusion scheduler's loop never waits: recv_reqs() polls its socket without blocking and nothing
 # else in the loop sleeps, so a lane with nothing to do held one CPU core at 100%, kept
 # the box's hottest zone near 61 C at rest (43 C with no lane loaded) and its fans
 # loud. The patch waits on the request socket for up to a second, as the LLM scheduler's
@@ -339,9 +342,10 @@ fi
 # template (a stop cancels the generation in flight, measured under a second on all
 # seven logged stops, with TimeoutStopSec as a ceiling, not a wait) and in
 # docs/video-lane.md.
-PATCHES=(scheduler-idle-poll)
+PATCHES=(scheduler-idle-poll scheduler-loopback)
 declare -A PATCH_FIXES=(
   [scheduler-idle-poll]="an idle lane no longer holds a CPU core"
+  [scheduler-loopback]="the scheduler's channel stays on 127.0.0.1 whatever --host"
 )
 CURRENT="$(git -C "$SRC" rev-parse HEAD 2>/dev/null || true)"
 if [ "$CURRENT" != "$PIN" ]; then

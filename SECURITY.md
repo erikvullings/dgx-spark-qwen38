@@ -104,6 +104,17 @@ counted by the engine on the proxy's own key before the engine refused it. Paths
 under `/health`, `/ready` and `/metrics` stay open, as the engine keeps them (`/ready`
 since v1.26.1).
 
+**The image and video lanes take no key, and their scheduler's channel stays on
+loopback** (since v1.40.1). Their HTTP API binds where `IMAGE_BIND` and `VIDEO_BIND` say,
+loopback by default, and the installer says what another address costs: anyone who reaches
+it generates on the GPU. Behind it, the diffusion runtime's scheduler takes its requests on a
+ZMQ socket that unpickles what it is sent, and upstream derives that socket's address from
+the same `--host`: until v1.40.1 a lane bound off loopback took requests on that channel from
+the network too, which let anyone who reached it run code as the lane's user (found in a
+security review, 2026-10-24). `image-sglang/scheduler-loopback.patch` keeps it on 127.0.0.1
+whatever `--host` is. An image or video lane that serves during an update keeps the code it
+started with until it restarts.
+
 **The cockpit (`dashboard/`, :30090)** runs as the user who installed the box,
 and that user is already root-equivalent: `install.sh` requires it to be in the
 `docker` group, and a member of that group can start a container with the host's

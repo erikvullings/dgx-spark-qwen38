@@ -266,12 +266,14 @@ class TheInstaller(unittest.TestCase):
     def test_the_source_overlay_needs_no_rust_toolchain(self):
         self.assertIn("SGLANG_BUILD_RUST_EXTS=none", self.text)
 
-    def test_it_carries_the_image_lanes_idle_patch_and_nothing_else(self):
+    def test_it_carries_the_image_lanes_idle_and_loopback_patches_and_nothing_else(self):
         """Hasan, 2026-09-25: the official recommendations, nothing added on top. Hasan,
-        2026-10-06: except the idle wait, measured holding one core at rest. The patch is
-        the image lane's own file: one copy for both lanes, so no video-sglang directory."""
+        2026-10-06: except the idle wait, measured holding one core at rest. Hasan,
+        2026-10-24: and the scheduler's channel kept on loopback, a security fix (D01). The
+        patches are the image lane's own files: one copy for both lanes, so no video-sglang
+        directory."""
         listed = re.search(r"^PATCHES=\((.*)\)$", self.text, re.M).group(1).split()
-        self.assertEqual(listed, ["scheduler-idle-poll"])
+        self.assertEqual(listed, ["scheduler-idle-poll", "scheduler-loopback"])
         self.assertFalse((REPO / "video-sglang").exists())
         self.assertIn('PF="$HERE/image-sglang/$P.patch"', self.text)
         self.assertTrue((REPO / "image-sglang" / "scheduler-idle-poll.patch").is_file())
@@ -382,6 +384,16 @@ class TheInstaller(unittest.TestCase):
 
 
 PATCHED = "python/sglang/multimodal_gen/runtime/managers/scheduler.py"
+LOOPBACK_PATCH = REPO / "image-sglang" / "scheduler-loopback.patch"
+LOOPBACK_PATCHED = "python/sglang/multimodal_gen/runtime/server_args/server_args.py"
+
+
+def pre_image(patch):
+    """The patched file as the patch expects to find it: its context and removed lines."""
+    out = [ln[1:] if ln else "" for ln in patch.read_text().splitlines()
+           if not ln.startswith(("diff --git", "index ", "--- ", "+++ ", "@@")) and (ln.startswith((" ", "-")) or ln == "")]
+    return "\n".join(out) + "\n"
+
 # The hunk's context as it stands at the pin, three lines either side of the insertion:
 # the same as tests/test_image_lane.py's, since both lanes serve the same commit.
 CONTEXT_AT_PIN = (
@@ -414,8 +426,9 @@ class TheIdlePatch(unittest.TestCase):
         d = pathlib.Path(tempfile.mkdtemp(prefix="vid-src-"))
         self.addCleanup(shutil.rmtree, d, True)
         self._git(d, "init", "-q")
-        (d / PATCHED).parent.mkdir(parents=True, exist_ok=True)
-        (d / PATCHED).write_text(sched)
+        for rel, text in ((PATCHED, sched), (LOOPBACK_PATCHED, pre_image(LOOPBACK_PATCH))):
+            (d / rel).parent.mkdir(parents=True, exist_ok=True)
+            (d / rel).write_text(text)
         self._git(d, "add", "-A")
         self._git(d, "commit", "-qm", "pin")
         self._git(d, "remote", "add", "origin", str(d))
@@ -442,6 +455,8 @@ class TheIdlePatch(unittest.TestCase):
         rc, out = self._install(src, pin)
         self.assertEqual(rc, 0, out)
         self.assertIn("scheduler-idle-poll: applied", out)
+        self.assertIn("scheduler-loopback: applied", out)
+        self.assertNotIn("NOTE:", out)
         # the commit is noted for the cockpit's Turbo (video_runtime_stale), and a run that
         # changes nothing leaves the note's date alone: a lane started since keeps its Turbo
         self.assertEqual(self.note.read_text().strip(), pin)
@@ -453,7 +468,9 @@ class TheIdlePatch(unittest.TestCase):
         rc, out = self._install(src, pin)
         self.assertEqual(rc, 0, out)
         self.assertIn("scheduler-idle-poll: already applied", out)
+        self.assertIn("scheduler-loopback: already applied", out)
         self.assertEqual((src / PATCHED).read_text().count("self._poller.poll(timeout=1000)"), 1)
+        self.assertNotIn("scheduler_host = self.host", (src / LOOPBACK_PATCHED).read_text())
         self.assertEqual(int(self.note.stat().st_mtime), 1_000_000)
         self.assertEqual(int(runtime.stat().st_mtime), 1_000_000, "nothing changed: the date stays")
 

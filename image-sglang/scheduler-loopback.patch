@@ -1,0 +1,17 @@
+diff --git a/python/sglang/multimodal_gen/runtime/server_args/server_args.py b/python/sglang/multimodal_gen/runtime/server_args/server_args.py
+index 75b683f..44b7192 100644
+--- a/python/sglang/multimodal_gen/runtime/server_args/server_args.py
++++ b/python/sglang/multimodal_gen/runtime/server_args/server_args.py
+@@ -3112,9 +3112,9 @@
+ 
+     def scheduler_endpoint_for(self, replica: int) -> str:
+         """Ingress endpoint of one DP replica's driver rank."""
+-        scheduler_host = self.host
+-        if scheduler_host is None or scheduler_host == "localhost":
+-            scheduler_host = "127.0.0.1"
++        # dgx-spark-qwen38: the scheduler's ROUTER unpickles what it is sent, so it stays
++        # on loopback whatever --host the HTTP API is given (these lanes run on one machine).
++        scheduler_host = "127.0.0.1"
+         if self.scheduler_ports is not None:
+             port = self.scheduler_ports[replica]
+         else:

@@ -314,6 +314,8 @@ PATCH = REPO / "image-sglang" / "scheduler-idle-poll.patch"
 PATCHED = "python/sglang/multimodal_gen/runtime/managers/scheduler.py"
 HTTP_PATCH = REPO / "image-sglang" / "http-graceful-timeout.patch"
 HTTP_PATCHED = "python/sglang/multimodal_gen/runtime/launch_server.py"
+LOOPBACK_PATCH = REPO / "image-sglang" / "scheduler-loopback.patch"
+LOOPBACK_PATCHED = "python/sglang/multimodal_gen/runtime/server_args/server_args.py"
 # Each hunk's context as it stands at the pin, three lines either side of the insertion.
 CONTEXT_AT_PIN = (
     "                        self._poller.poll(timeout=remaining_ms)\n"
@@ -435,6 +437,50 @@ class TheLocalPatches(unittest.TestCase):
     def test_the_http_patch_only_bounds_the_graceful_shutdown(self):
         self.assertEqual(added_code(HTTP_PATCH), ["timeout_graceful_shutdown=5,"])
 
+    def test_the_loopback_patch_takes_the_scheduler_off_the_http_host(self):
+        """The scheduler takes its requests on a ZMQ ROUTER that unpickles what it is sent, and
+        upstream derived its address from --host: a lane bound off loopback took requests on it
+        from the network, with no key (D01 of the 2026-10-24 security review). The patch takes
+        out exactly upstream's three lines and puts loopback in their place."""
+        diff = LOOPBACK_PATCH.read_text()
+        self.assertEqual(re.findall(r"^\+\+\+ b/(.+)$", diff, re.M), [LOOPBACK_PATCHED])
+        self.assertIn(" def scheduler_endpoint_for(self, replica: int) -> str:", diff)
+        removed = [ln[1:] for ln in diff.splitlines() if ln.startswith("-") and not ln.startswith("---")]
+        self.assertEqual(removed, ['        scheduler_host = self.host',
+                                   '        if scheduler_host is None or scheduler_host == "localhost":',
+                                   '            scheduler_host = "127.0.0.1"'])
+        self.assertEqual(added_code(LOOPBACK_PATCH), ['scheduler_host = "127.0.0.1"'])
+
+    def test_both_diffusion_lanes_keep_their_scheduler_on_loopback(self):
+        for inst in (INSTALLER, REPO / "install-video.sh"):
+            text = inst.read_text()
+            self.assertIn("scheduler-loopback", re.search(r"^PATCHES=\((.*)\)$", text, re.M).group(1).split(), inst.name)
+            self.assertIn('[scheduler-loopback]="', text, inst.name)
+
+    def _bind(self, value):
+        """The installer's own lines for the bind, run as they are written."""
+        t = INSTALLER.read_text()
+        block = t[t.index('IMAGE_BIND="${IMAGE_BIND:-$(unit_flag --host)}"'):t.index("WEIGHTS_GB=")]
+        r = subprocess.run(["bash", "-c", 'set -euo pipefail\ndie(){ echo "DIE: $*"; exit 1; }\n' + block],
+                           capture_output=True, text=True, timeout=30, env={"PATH": "/usr/bin:/bin", "IMAGE_BIND": value})
+        return r.returncode, r.stdout + r.stderr
+
+    def test_the_image_lane_still_takes_every_interface_when_asked(self):
+        """Hasan, 2026-10-24: no refusal of 0.0.0.0 here. The proxy relays no image route, so a
+        client on another machine or in a container (Open WebUI) reaches this lane by its bind,
+        and with the scheduler on loopback what 0.0.0.0 still costs is what the warning says."""
+        rc, out = self._bind("0.0.0.0")
+        self.assertEqual(rc, 0, out)
+        self.assertIn("anyone who can reach that address can generate on your GPU", out)
+        self.assertIn("0.0.0.0 is every interface", out)
+        self.assertIn("The scheduler's own channel stays on 127.0.0.1 whatever this bind", out)
+        rc, out = self._bind("192.168.1.20")
+        self.assertEqual(rc, 0, out)
+        self.assertIn("The scheduler's own channel stays on 127.0.0.1 whatever this bind", out)
+        self.assertNotIn("every interface", out)
+        rc, out = self._bind("127.0.0.1")
+        self.assertEqual((rc, out), (0, ""))
+
     def test_the_installer_applies_exactly_the_patches_in_the_repo(self):
         listed = re.search(r"^PATCHES=\((.*)\)$", INSTALLER.read_text(), re.M).group(1).split()
         on_disk = sorted(f.stem for f in (REPO / "image-sglang").glob("*.patch"))
@@ -457,7 +503,7 @@ class TheLocalPatches(unittest.TestCase):
         self._git(d, "init", "-q")
         turbo = [(re.search(r"^\+\+\+ b/(.+)$", f.read_text(), re.M).group(1), pre_image(f))
                  for f in TURBO_PATCHES.values()]
-        for rel, text in [(PATCHED, sched), (HTTP_PATCHED, http)] + turbo:
+        for rel, text in [(PATCHED, sched), (HTTP_PATCHED, http), (LOOPBACK_PATCHED, pre_image(LOOPBACK_PATCH))] + turbo:
             (d / rel).parent.mkdir(parents=True, exist_ok=True)
             (d / rel).write_text(text)
         self._git(d, "add", "-A")
@@ -479,6 +525,7 @@ class TheLocalPatches(unittest.TestCase):
         self.assertEqual(rc, 0, out)
         self.assertIn("scheduler-idle-poll: applied", out)
         self.assertIn("http-graceful-timeout: applied", out)
+        self.assertIn("scheduler-loopback: applied", out)
         for name in TURBO_PATCHES:
             self.assertIn(f"{name}: applied", out)
         self.assertNotIn("NOTE:", out)
@@ -491,7 +538,9 @@ class TheLocalPatches(unittest.TestCase):
         self.assertEqual(note.stat().st_mtime, 1_000_000, "nothing changed: the date stays")
         self.assertIn("scheduler-idle-poll: already applied", out)
         self.assertIn("http-graceful-timeout: already applied", out)
+        self.assertIn("scheduler-loopback: already applied", out)
         self.assertEqual((src / PATCHED).read_text().count("self._poller.poll(timeout=1000)"), 1)
+        self.assertNotIn("scheduler_host = self.host", (src / LOOPBACK_PATCHED).read_text())
         self.assertEqual((src / HTTP_PATCHED).read_text().count("timeout_graceful_shutdown=5"), 1)
 
     def test_a_new_pin_checks_out_over_a_patched_tree(self):
