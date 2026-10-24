@@ -144,8 +144,11 @@ def claude_pair(limits: tuple[int, int] | None, window: int, cc_output: int) -> 
 # Anthropic's); these cut what it leaves on: the claude.ai connectors of a signed-in account, the
 # official marketplace's registration, and auto mode's wait for checks the box's engine cannot
 # make (its notice held the first command). These win over your shell's, as the endpoint and the
-# key do. Your own MCP servers stay: they are yours, and Anthropic hosts none of them.
+# key do, the first one included: Claude Code 2.1.304 reads it as set whatever its value but an empty
+# one, so a shell's 0 kept the traffic off, but a reading of it as a switch would not (2026-10-24).
+# Your own MCP servers stay: they are yours, and Anthropic hosts none of them.
 NO_ANTHROPIC_ENV = {
+    "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": "1",
     "ENABLE_CLAUDEAI_MCP_SERVERS": "false",
     "CLAUDE_CODE_DISABLE_OFFICIAL_MARKETPLACE_AUTOINSTALL": "1",
     "CLAUDE_CODE_AUTO_MODE_SERVER": "0",
@@ -208,7 +211,6 @@ def main(argv: list[str]) -> int:
         "API_TIMEOUT_MS": env.get("API_TIMEOUT_MS") or "3600000",
         "CLAUDE_STREAM_IDLE_TIMEOUT_MS": env.get("CLAUDE_STREAM_IDLE_TIMEOUT_MS") or "1800000",
         "CLAUDE_BYTE_STREAM_IDLE_TIMEOUT_MS": env.get("CLAUDE_BYTE_STREAM_IDLE_TIMEOUT_MS") or "1800000",
-        "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": env.get("CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC") or "1",
         **NO_ANTHROPIC_ENV,
     })
     # the box itself, never through a proxy the shell names (Claude Code reads HTTPS_PROXY too)

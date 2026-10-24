@@ -147,7 +147,8 @@ class EndToEnd(unittest.TestCase):
         claude.ai connectors, the official marketplace's registration, auto mode's wait for the
         server's checks, and WebFetch's hostname check at api.anthropic.com. A shell that says
         otherwise does not undo it."""
-        r, saw = self.launch("-p", "hello", env={"ENABLE_CLAUDEAI_MCP_SERVERS": "true", "CLAUDE_CODE_AUTO_MODE_SERVER": "1"})
+        r, saw = self.launch("-p", "hello", env={"ENABLE_CLAUDEAI_MCP_SERVERS": "true", "CLAUDE_CODE_AUTO_MODE_SERVER": "1",
+                                                 "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": "0"})
         self.assertEqual(r.returncode, 0, r.stderr)
         env = saw["env"]
         self.assertEqual(env["CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC"], "1")
