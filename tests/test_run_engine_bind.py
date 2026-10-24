@@ -6,7 +6,8 @@ run.sh runs the engine in the foreground with no proxy in front, and it passed
 was open to anyone on the network holding the key, while SECURITY.md said it is not on
 the network at all (found in review, 2026-09-24). This runs the real run.sh in a
 throwaway HOME, with docker, systemctl, ss and nvidia-smi replaced by stubs, and reads
-the `docker run` it execs."""
+the `docker run` it execs. Its memory is the reference box's, by QWEN38_MEMINFO: run.sh refuses
+a 64 GB box, and the test read the memory of the machine it ran on (found in review, 2026-10-24)."""
 import pathlib
 import re
 import shutil
@@ -46,6 +47,8 @@ class TheEngineBind(unittest.TestCase):
             snap.mkdir(parents=True)
             (snap / "model.safetensors").write_text("w")
             (snap / "config.json").write_text('{"architectures": ["X"]}')
+        self.meminfo = self.home / "meminfo"
+        self.meminfo.write_text("MemTotal:       127535272 kB\n")
         self.bin = self.home / "bin"
         self.bin.mkdir()
         for name, body in STUBS.items():
@@ -54,7 +57,8 @@ class TheEngineBind(unittest.TestCase):
 
     def run_sh(self, **env):
         r = subprocess.run(["bash", str(REPO / "run.sh")], capture_output=True, text=True, timeout=60,
-                           env={"PATH": f"{self.bin}:/usr/bin:/bin", "HOME": str(self.home), **env})
+                           env={"PATH": f"{self.bin}:/usr/bin:/bin", "HOME": str(self.home),
+                                "QWEN38_MEMINFO": str(self.meminfo), **env})
         argv = self.home / "docker-run.argv"
         return r, argv.read_text().split("\n") if argv.exists() else []
 
