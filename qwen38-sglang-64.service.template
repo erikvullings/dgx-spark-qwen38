@@ -15,7 +15,7 @@ After=network-online.target docker.service qwen38-flash.service qwen38-image.ser
 # box at the fraction that gives SGLang the same absolute budget, as it sizes the pool from the memory
 # free before its weights load). 0.65 is the highest fraction that left 6 GiB at the peak under four
 # requests filling the pool (6.2 GiB; 0.70 left 3.7). The Mamba cache, which SGLang sizes per
-# running request, holds 12 slots: 4.4 GB of the budget where 24 took 7.5, and SGLang runs two
+# running request, holds 12 slots: 4.4 GiB of the budget where 24 took 7.5, and SGLang runs two
 # requests at a time with them (six slots each), whatever --max-running-requests says. The pool came
 # to 59,625 tokens on that boot, and moves from one boot to the next with the page cache reading the
 # weights fills. A 64 GB box serves Nemotron 3.5 Bolt; this lane is a Load away (install.sh).

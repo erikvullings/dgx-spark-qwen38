@@ -19,7 +19,7 @@ On a 64 GB box a run installs:
   vLLM reads it): 667,874 tokens of KV on that budget, 2.55 times its 262,144-token window, at a
   110.8 tok/s greedy median on bench.sh
 - the 27B in NVFP4, a Load away, serving its native window from `qwen38-sglang-64.service.template`,
-  the native unit with memory settings of its own: a fraction of 0.65, 32 GB for its container, 12
+  the native unit with memory settings of its own: a fraction of 0.65, 32 GiB for its container, 12
   Mamba slots, two requests at a time; 59,625 tokens of KV on that budget, at a 67.2 tok/s greedy
   median
 - the speech lane, which runs on the CPU, as on every box
@@ -77,7 +77,7 @@ for Bolt), bench.sh's probes, and for the settings kept the probes of v1.39.0.
 
 The kept settings are the highest that leave at least 6 GiB at the peak. On that budget the 27B's
 Mamba cache, which SGLang sizes per running request (six slots each with these settings), takes
-much of what the weights leave: 7.5 GB for 24 slots, 4.4 for 12. And the pool moves from one boot
+much of what the weights leave: 7.5 GiB for 24 slots, 4.4 for 12. And the pool moves from one boot
 to the next at the same settings (46,700 then 92,415): the page cache that reading the weights
 fills changes the free memory SGLang reads before and after, and the pool is the difference.
 Bolt's prefix cache serves an agent's turns as on a 128 GB box (31,808 of 40,000 tokens a turn,
