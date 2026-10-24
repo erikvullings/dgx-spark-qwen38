@@ -150,6 +150,30 @@ class SystemOneIsAnsweredByATextLane(Base):
         with self.ck.STATE_LOCK:
             self.ck.STATE["engine_info"] = {"data": {"info": {}}, "ts": 0}
 
+    def box(self, cls):
+        # the box's class as box_info() keeps it, read once from boxmem.py
+        old = dict(self.ck._BOX)
+        self.ck._BOX["info"] = {"cls": cls, "name": "ASUS Ascent GX10", "fits": None, "targets": None}
+        self.addCleanup(lambda: (self.ck._BOX.clear(), self.ck._BOX.update(old)))
+
+    def test_a_64_gb_box_names_the_27b_alone(self):
+        # the reason said the 27B or the flash lane answers it on a 64 GB box too, which holds no flash
+        # lane, over a button that loads the 27B: what such a box shows by default, Bolt serving (found in
+        # review, 2026-10-24)
+        for cls in ("64", "128"):
+            with self.subTest(cls=cls):
+                self.box(cls)
+                said = []
+                for states in ({"nemotron": "ready"}, {"sglang": "stopped"}):
+                    self.states(**states)
+                    self.ck.SYSTEMONE_CACHE.update(data=None, ts=0.0)
+                    said.append(self.ck.systemone_available(max_age=0.0)["reason"])
+                for reason in said:
+                    self.assertIn("answered by the 27B", reason)
+                    (self.assertNotIn if cls == "64" else self.assertIn)("flash", reason)
+                self.assertIn("a Nemotron lane is serving", said[0])
+                self.assertIn("no text lane is serving", said[1])
+
     def test_nothing_serving(self):
         self.states(sglang="stopped", flash="stopped")
         out = self.ck.systemone_available(max_age=0.0)

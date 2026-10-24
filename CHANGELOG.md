@@ -51,7 +51,9 @@ there.
 
 The cockpit names the box over its pool ("ASUS Ascent GX10, 128 GB"), the Machine view gives it a
 row, and a lane a 64 GB box cannot hold says it needs a 128 GB DGX Spark, in its bay, on its card
-and in the toast, where a lane left out names the command that installs it. Its recipes compare a
+and in the toast, where a lane left out names the command that installs it. Where System One is not
+served, the Decide view offers to load the 27B there, and says the 27B alone answers it (it named
+the flash lane too, found in review, 2026-10-24). Its recipes compare a
 64 GB box with the unit sized for it, whose memory settings would otherwise read as drift.
 
 **Measured** on the reference box at the memory a 64 GB box gives each engine (2026-10-24, this

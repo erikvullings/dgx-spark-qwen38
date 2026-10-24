@@ -3225,25 +3225,29 @@ def systemone_available(max_age: float = 60.0) -> dict:
     with LIFE_LOCK:
         states = dict(LIFE.get("states", {}))
     text = next(((u, states[u]) for u in lc.TEXT_UNITS if states.get(u) in lc.BUSY_STATES), None)
+    # the lanes that answer it on this box: a 64 GB box holds no flash lane, and the reason named it
+    # there over a button that loads the 27B (found in review, 2026-10-24)
+    who, one = (("the 27B", "it") if box_info().get("cls") == "64"
+                else ("the 27B or the flash lane", "one of them"))
     if text is None and states.get(KOLIBRI_UNIT) in lc.BUSY_STATES:
         # the proxy refuses it there (v6.37): its labels are measured on the Qwen tokenizer
         return {"available": False, "lane": "", "status": None,
-                "reason": "the Kolibri lane is serving: System One is answered by the 27B or the flash "
-                          "lane (its options are measured on the Qwen tokenizer), so load one of them"}
+                "reason": f"the Kolibri lane is serving: System One is answered by {who} "
+                          f"(its options are measured on the Qwen tokenizer), so load {one}"}
     if text is None and states.get(FLASH_LOCAL_UNIT) in lc.BUSY_STATES:
         # the proxy refuses it on every vLLM lane (v6.43), this Qwen one included
         return {"available": False, "lane": "", "status": None,
-                "reason": "the Flash FP4-Local lane is serving: System One is answered by the 27B or the "
-                          "flash lane, on SGLang, so load one of them"}
+                "reason": f"the Flash FP4-Local lane is serving: System One is answered by {who}, "
+                          f"on SGLang, so load {one}"}
     if text is None and states.get(ORNITH_UNIT) in lc.BUSY_STATES:
         # the same refusal (v6.43), before the family's rule below names it a Nemotron lane
         return {"available": False, "lane": "", "status": None,
-                "reason": "the Ornith lane is serving: System One is answered by the 27B or the "
-                          "flash lane, on SGLang, so load one of them"}
+                "reason": f"the Ornith lane is serving: System One is answered by {who}, "
+                          f"on SGLang, so load {one}"}
     if text is None and any(states.get(u) in lc.BUSY_STATES for u in NEMOTRON_LANES):
         return {"available": False, "lane": "", "status": None,
-                "reason": "a Nemotron lane is serving: System One is answered by the 27B or the flash "
-                          "lane (its options are measured on the Qwen tokenizer), so load one of them"}
+                "reason": f"a Nemotron lane is serving: System One is answered by {who} "
+                          f"(its options are measured on the Qwen tokenizer), so load {one}"}
     key = (text, served_model_name() if text else "")
     with SYSTEMONE_LOCK:
         if (SYSTEMONE_CACHE["data"] and SYSTEMONE_CACHE.get("key") == key
@@ -3253,8 +3257,8 @@ def systemone_available(max_age: float = 60.0) -> dict:
             lane = "flash" if text and "flash" in text[0] else "27B"
             out = {"available": False, "lane": "", "status": None,
                    "reason": (f"the {lane} lane is {text[1]}: System One answers once it is ready" if text
-                              else "no text lane is serving: System One is answered by the 27B or the "
-                                   "flash lane, so start one of them (the image lane cannot answer it)")}
+                              else f"no text lane is serving: System One is answered by {who}, "
+                                   f"so start {one} (the image lane cannot answer it)")}
             SYSTEMONE_CACHE.update(data=out, ts=time.time(), key=key)
             return out
         out = {"available": False, "lane": key[1], "reason": "", "status": None}
