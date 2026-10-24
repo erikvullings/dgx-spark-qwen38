@@ -203,7 +203,23 @@ below (`0` turns a ceiling off).
   on the Ornith lane Claude Code reused 36 to 38% of its prompts from the cache
   with it and without it (2026-10-22).
 
-  By hand, the env block that makes it behave:
+  Since v1.40.2 a `claude-local` session starts in Claude Code's normal permission
+  mode, which asks before each command, unless you pass a mode of your own
+  (`--permission-mode auto`, or `--dangerously-skip-permissions`): an account set to
+  auto mode had the box's own model judge which commands ran unasked. And nothing of
+  the session goes to Anthropic. The model's requests, auto mode's classifier among
+  them, go to the box, and `claude-local` cuts the rest: Claude Code's nonessential
+  traffic (telemetry, error reports, `/feedback`, updates, feature flags), the
+  claude.ai connectors of a signed-in account (`ENABLE_CLAUDEAI_MCP_SERVERS=false`),
+  the official marketplace's registration, auto mode's wait for the server's checks
+  (`CLAUDE_CODE_AUTO_MODE_SERVER=0`) and WebFetch's hostname check at
+  api.anthropic.com (`skipWebFetchPreflight`, passed with `--settings` unless you pass
+  settings of your own). Your own MCP servers stay. Claude Code's built-in WebSearch
+  runs at Anthropic and does not work on a local model: an MCP server of your own does
+  the searching instead.
+
+  By hand, the env block that makes it behave (the last two lines keep it off
+  Anthropic, with `"skipWebFetchPreflight": true` in your settings):
 
   ```bash
   ANTHROPIC_BASE_URL=http://<host>:30001   ANTHROPIC_AUTH_TOKEN="<key>"
@@ -212,6 +228,8 @@ below (`0` turns a ceiling off).
   API_TIMEOUT_MS=3600000
   CLAUDE_BYTE_STREAM_IDLE_TIMEOUT_MS=1800000
   CLAUDE_STREAM_IDLE_TIMEOUT_MS=1800000
+  CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1   ENABLE_CLAUDEAI_MCP_SERVERS=false
+  CLAUDE_CODE_DISABLE_OFFICIAL_MARKETPLACE_AUTOINSTALL=1   CLAUDE_CODE_AUTO_MODE_SERVER=0
   ```
 
   With `CONTEXT_MODE=1m` the limit is the KV pool, not the 1M window.

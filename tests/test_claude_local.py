@@ -128,7 +128,8 @@ class EndToEnd(unittest.TestCase):
     def test_claude_gets_the_lane_the_key_and_the_limits(self):
         r, saw = self.launch("-p", "hello")
         self.assertEqual(r.returncode, 0, r.stderr)
-        self.assertEqual(saw["argv"][1:], ["-p", "hello"])
+        self.assertEqual(saw["argv"][1:], ["--permission-mode", "default", "--settings",
+                                           '{"skipWebFetchPreflight": true}', "-p", "hello"])
         env = saw["env"]
         self.assertEqual(env["ANTHROPIC_BASE_URL"], self.base)
         self.assertEqual(env["ANTHROPIC_AUTH_TOKEN"], KEY)
@@ -139,6 +140,44 @@ class EndToEnd(unittest.TestCase):
         self.assertNotIn("CLAUDE_CODE_ATTRIBUTION_HEADER", env, "measured to change nothing (2026-10-22)")
         # the proxy was asked with the key, as a header
         self.assertEqual(Fake.seen, [("/v1/models", f"Bearer {KEY}")])
+
+    def test_nothing_of_the_session_goes_to_anthropic(self):
+        """Hasan, 2026-10-24: claude-local sends nothing to Anthropic and costs nothing. The model's
+        requests go to the box; these cut what CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC leaves on: the
+        claude.ai connectors, the official marketplace's registration, auto mode's wait for the
+        server's checks, and WebFetch's hostname check at api.anthropic.com. A shell that says
+        otherwise does not undo it."""
+        r, saw = self.launch("-p", "hello", env={"ENABLE_CLAUDEAI_MCP_SERVERS": "true", "CLAUDE_CODE_AUTO_MODE_SERVER": "1"})
+        self.assertEqual(r.returncode, 0, r.stderr)
+        env = saw["env"]
+        self.assertEqual(env["CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC"], "1")
+        self.assertEqual(env["ENABLE_CLAUDEAI_MCP_SERVERS"], "false")
+        self.assertEqual(env["CLAUDE_CODE_DISABLE_OFFICIAL_MARKETPLACE_AUTOINSTALL"], "1")
+        self.assertEqual(env["CLAUDE_CODE_AUTO_MODE_SERVER"], "0")
+        settings = json.loads(saw["argv"][saw["argv"].index("--settings") + 1])
+        self.assertIs(settings["skipWebFetchPreflight"], True)
+
+    def test_a_session_asks_before_each_command_unless_you_say_otherwise(self):
+        """An account set to auto mode had the box's own model judge which commands ran unasked."""
+        for mine in (["--permission-mode", "auto"], ["--permission-mode=plan"], ["--dangerously-skip-permissions"]):
+            with self.subTest(mine=mine):
+                r, saw = self.launch(*mine, "-p", "hello")
+                self.assertEqual(r.returncode, 0, r.stderr)
+                self.assertEqual(saw["argv"][1:][-(len(mine) + 2):], [*mine, "-p", "hello"])
+                self.assertEqual(sum(a.startswith("--permission-mode") for a in saw["argv"]),
+                                 sum(a.startswith("--permission-mode") for a in mine))
+
+    def test_settings_of_yours_are_left_to_you(self):
+        r, saw = self.launch("--settings", "/somewhere/mine.json", "-p", "hello")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(saw["argv"].count("--settings"), 1)
+        self.assertEqual(saw["argv"][saw["argv"].index("--settings") + 1], "/somewhere/mine.json")
+
+    def test_claude_codes_own_commands_get_the_environment_and_no_session_flag(self):
+        r, saw = self.launch("mcp", "list")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(saw["argv"][1:], ["mcp", "list"])
+        self.assertEqual(saw["env"]["ENABLE_CLAUDEAI_MCP_SERVERS"], "false")
 
     def test_the_key_is_never_on_a_command_line(self):
         r, saw = self.launch("-p", "hello")

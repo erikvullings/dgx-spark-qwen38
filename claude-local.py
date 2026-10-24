@@ -25,6 +25,10 @@ opencode's own context limit on this lane, with opencode's answer budget. openco
 reach one worst step further (oc-fit-limits.py), and that step is what is left over here, for
 what Claude Code adds to a prompt and only estimates: whatever fits opencode fits it too.
 
+A session starts in Claude Code's normal permission mode, which asks before each command, unless
+you pass a mode of your own, and nothing of it goes to Anthropic (NO_ANTHROPIC_ENV below): the
+model's requests go to the box, and Claude Code's own traffic to Anthropic is cut.
+
 CLAUDE_CODE_ATTRIBUTION_HEADER is not set: with and without it, Claude Code on the Ornith
 lane reused 36 to 38% of its prompts from the cache (2026-10-22), so it changes nothing here.
 """
@@ -133,6 +137,43 @@ def claude_pair(limits: tuple[int, int] | None, window: int, cc_output: int) -> 
     return context, output, "the pair that fits every lane (no opencode limits for this lane)"
 
 
+# Nothing of a claude-local session goes to Anthropic (Hasan, 2026-10-24): the model's requests,
+# auto mode's classifier among them, go to the box, and Claude Code's other traffic is cut here.
+# CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC cuts telemetry, error reports, /feedback, updates and
+# feature flags (Remote Control with them, as it is off anyway for a base URL other than
+# Anthropic's); these cut what it leaves on: the claude.ai connectors of a signed-in account, the
+# official marketplace's registration, and auto mode's wait for checks the box's engine cannot
+# make (its notice held the first command). These win over your shell's, as the endpoint and the
+# key do. Your own MCP servers stay: they are yours, and Anthropic hosts none of them.
+NO_ANTHROPIC_ENV = {
+    "ENABLE_CLAUDEAI_MCP_SERVERS": "false",
+    "CLAUDE_CODE_DISABLE_OFFICIAL_MARKETPLACE_AUTOINSTALL": "1",
+    "CLAUDE_CODE_AUTO_MODE_SERVER": "0",
+}
+# WebFetch sends each hostname to api.anthropic.com before it fetches, whatever the provider: a
+# setting, not a variable, so it goes on the session's command line, with the permission mode.
+NO_ANTHROPIC_SETTINGS = {"skipWebFetchPreflight": True}
+# A session starts in the normal mode, which asks before each command: an account set to auto mode
+# had the box's own model judge which commands ran unasked (Hasan, 2026-10-24). One you pass wins,
+# and --dangerously-skip-permissions stays yours to pass.
+PERMISSION_FLAGS = ("--permission-mode", "--dangerously-skip-permissions")
+# Claude Code's own commands take the environment and none of a session's flags.
+CLAUDE_COMMANDS = frozenset({"agents", "attach", "auth", "auto-mode", "doctor", "gateway", "import", "install",
+                             "logs", "mcp", "plugin", "purge", "respawn", "rm", "setup-token", "stop",
+                             "ultrareview", "update"})
+
+
+def session_flags(argv: list[str]) -> list[str]:
+    """The flags a session gets ahead of yours: none for one of Claude Code's own commands."""
+    if argv and argv[0] in CLAUDE_COMMANDS:
+        return []
+    given = {a.split("=", 1)[0] for a in argv if a.startswith("--")}
+    flags = [] if given & set(PERMISSION_FLAGS) else ["--permission-mode", "default"]
+    if "--settings" not in given:
+        flags += ["--settings", json.dumps(NO_ANTHROPIC_SETTINGS)]
+    return flags
+
+
 def main(argv: list[str]) -> int:
     claude = shutil.which("claude") or str(Path.home() / ".local/bin/claude")
     if not os.access(claude, os.X_OK):
@@ -161,6 +202,7 @@ def main(argv: list[str]) -> int:
         "CLAUDE_STREAM_IDLE_TIMEOUT_MS": env.get("CLAUDE_STREAM_IDLE_TIMEOUT_MS") or "1800000",
         "CLAUDE_BYTE_STREAM_IDLE_TIMEOUT_MS": env.get("CLAUDE_BYTE_STREAM_IDLE_TIMEOUT_MS") or "1800000",
         "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": env.get("CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC") or "1",
+        **NO_ANTHROPIC_ENV,
     })
     # the box itself, never through a proxy the shell names (Claude Code reads HTTPS_PROXY too)
     host = urllib.parse.urlsplit(base).hostname or ""
@@ -185,7 +227,7 @@ def main(argv: list[str]) -> int:
         mine = "CLAUDE_CODE_MAX_CONTEXT_TOKENS" in os.environ or "CLAUDE_CODE_EXTRA_BODY" in os.environ
         say(f"{env['ANTHROPIC_MODEL']} through {base}, context {env['CLAUDE_CODE_MAX_CONTEXT_TOKENS']}, "
             f"extra body {env['CLAUDE_CODE_EXTRA_BODY']} ({'yours, kept' if mine else why})")
-    os.execve(claude, [claude, *argv], env)
+    os.execve(claude, [claude, *session_flags(argv), *argv], env)
     return 0  # not reached
 
 
