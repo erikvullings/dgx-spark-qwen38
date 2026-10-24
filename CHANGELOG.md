@@ -1,5 +1,76 @@
 # Changelog
 
+## v1.40.2 (2026-10-24): opencode runs on the Ornith lane again, claude-local asks before each command and sends nothing to Anthropic, and CI renders what the real clients send through every lane's chat template
+
+**opencode on the Ornith lane.** opencode 1.19.4 sends two system messages before the user's
+(captured on the reference box on 2026-10-24, roles only), and the Ornith 1.5 122B checkpoint's
+published chat template refuses the second ("System message must be at the beginning."): every
+opencode request on that lane got a 400, and the Agent tab with it, from v1.38.6, which moved
+opencode from 1.18.35 to 1.19.4, to v1.40.1, whose notes said so. With 1.18.35, in v1.38.0,
+opencode ran four turns on it. The lane's installer now writes the checkpoint's template with the
+one fix the 27B and the two flash lanes already serve theirs with: a system message past the
+first one becomes a `<system-reminder>` block (`patch-template.py`, which now takes
+`TEMPLATE_PATCHES=system-reminder` for a template with no reasoning effort of its own). It writes
+it at every install and every switch, and the unit mounts it read-only and passes it to vLLM.
+Rendered with transformers 5.12.1's own template compiler on the pinned template: opencode's two
+shapes raised before and render now, and a conversation with one system message renders byte for
+byte as before.
+
+**How it got through, and what now stops it.** Each release proved the real clients on the lane
+that served that day: opencode's move to 1.19.4 was proven on another lane, and nothing held a new
+lane to the template fix the others had. A new CI step, `tests/lane-templates-check.py`, fetches
+every text lane's chat template at its pinned revision (the seven targets of the 27B and flash
+lanes, and the six of the vLLM lanes, Kolibri's FP8 and NVFP4 each at its own pin), patches it as
+its installer does, and renders the message shapes the real clients send
+(`tests/fixtures/client-shapes.json`: opencode, Hermes Agent and pi, each with a tool round and
+without, the SDKs, fetch and LiteLLM, and an agent's reminder after its first turn), with tools
+and without, as transformers does. Its 156 renders were identical to transformers' own, refusals
+included. The step fails on a template that raises, on a text target of `switch-model.sh` it does
+not know, and on an installer that serves its template otherwise than its table says. It first
+renders a template that refuses a second system message, and fails unless it sees that refusal: a
+renderer that saw none would pass anything. Before each release, the eight clients now also run on
+every text lane, each loaded in turn.
+
+**claude-local asks before each command, and sends nothing to Anthropic.** An account set to
+Claude Code's auto mode gave claude-local's sessions auto mode, where the box's own model judged
+which commands ran unasked (auto mode's classifier requests go to the box like every other
+request), and its notice ("this session isn't eligible") held the first command until Enter. A
+session now starts in the normal permission mode, which asks before each command, unless you
+pass a mode of your own (`--permission-mode auto`, `--dangerously-skip-permissions`). And nothing
+of a session goes to Anthropic, so nothing is billed there. The model's requests went to the box
+already, and Claude Code's nonessential traffic was off. claude-local now also turns off the
+claude.ai connectors (`ENABLE_CLAUDEAI_MCP_SERVERS=false`), the official marketplace's
+registration, auto mode's request for the server's checks, which the box cannot give, and its
+notice with it (`CLAUDE_CODE_AUTO_MODE_SERVER=0`), and WebFetch's hostname check at
+api.anthropic.com (`skipWebFetchPreflight`). Traced on the reference box (every socket call of a
+session, the user's own configuration): asked to read a page with WebFetch, the old claude-local
+looked up api.anthropic.com and connected to it, the new one neither, and still answered. Your own
+MCP servers stay. Claude Code's built-in WebSearch is run by Anthropic's API, and a local engine
+refuses its request (a 400 on the Ornith lane, 2026-10-24): an MCP server of your own does the
+searching instead.
+
+**install.sh's help names the 27B image it pins.** Its help still offered
+`IMAGE=lmsysorg/sglang:v0.5.21` and dated the 27B image's validation 2026-10-09, and the advice a
+failed `docker pull` gives named v0.5.21, though the pin has been v0.5.22 since v1.39.0. Both now
+say v0.5.22, validated on the reference box on 2026-10-23, and the file's header keeps no date it
+cannot source. The box itself prepared it: the Ornith lane, through claude-local, in two passes,
+the second after a review that corrected its date.
+
+**What an update does.** The cockpit restarts, to name the new release. The Ornith lane's unit
+and template change. A box that serves Ornith keeps serving it with the template it booted with,
+and the installer says so: Load it again from the cockpit, or run
+`sudo systemctl restart qwen38-ornith-122b.service` (its boot took 6 min 17 s on the reference box
+on 2026-10-24), and opencode runs on it. A box that serves another lane keeps it running, and
+Ornith's next Load takes the new unit. The proxy and the Agent tab's server do not change.
+`claude-local` runs the new launcher at its next start.
+
+**Tests.** Each change has tests that fail on the old tree: `tests/test_patch_template.py` on the
+old patcher, `tests/test_ornith_lane.py` (5 of 19) on the old installer,
+`tests/test_claude_local.py` (3 of 28) on the old launcher,
+`tests/test_install_help_names_the_image_pin.py` (3 of 3) on the old help, and
+`tests/test_lane_templates_check.py` (3 of 7), which holds the check's table to the installers and
+to the switch's targets without the network, on the old Ornith installer.
+
 ## v1.40.1 (2026-10-24): a security release: the image and video lanes keep their scheduler's channel on loopback, GET /health generates nothing, the proxy bounds a network peer's headers and body and writes bodies again in UTF-8, and the 27B says what its prefix cache served
 
 **Who should update first.** If `IMAGE_BIND` or `VIDEO_BIND` puts your image or video lane on an
