@@ -1,75 +1,123 @@
 # Changelog
 
-## v1.40.2 (2026-10-24): opencode runs on the Ornith lane again, claude-local asks before each command and sends nothing to Anthropic, and CI renders what the real clients send through every lane's chat template
+## v1.40.2 (2026-10-24): opencode runs on the Ornith lane again, claude-local asks before each command and keeps a session on the box, and CI renders the real clients' message shapes through every lane's chat template, as each engine hands them
 
 **opencode on the Ornith lane.** opencode 1.19.4 sends two system messages before the user's
 (captured on the reference box on 2026-10-24, roles only), and the Ornith 1.5 122B checkpoint's
 published chat template refuses the second ("System message must be at the beginning."): every
 opencode request on that lane got a 400, and the Agent tab with it, from v1.38.6, which moved
-opencode from 1.18.35 to 1.19.4, to v1.40.1, whose notes said so. With 1.18.35, in v1.38.0,
-opencode ran four turns on it. The lane's installer now writes the checkpoint's template with the
-one fix the 27B and the two flash lanes already serve theirs with: a system message past the
-first one becomes a `<system-reminder>` block (`patch-template.py`, which now takes
-`TEMPLATE_PATCHES=system-reminder` for a template with no reasoning effort of its own). It writes
-it at every install and every switch, and the unit mounts it read-only and passes it to vLLM.
-Rendered with transformers 5.12.1's own template compiler on the pinned template: opencode's two
-shapes raised before and render now, and a conversation with one system message renders byte for
-byte as before.
+opencode from 1.18.35 to 1.19.4, to v1.40.1, whose notes said so. With 1.18.35, in v1.38.0, opencode
+ran four turns on it. The lane's installer now writes the checkpoint's template with the one fix the
+27B and the two flash lanes already serve theirs with: a system message past the first one becomes a
+`<system-reminder>` block (`patch-template.py --patches=system-reminder`, for a template with no
+reasoning effort of its own). It writes it at every install and every switch, and on an install of
+the units alone when the pinned checkpoint is in the cache already (otherwise the lane's first Load
+writes it before it starts the lane), and the unit mounts it read-only and passes it to vLLM.
+Rendered with transformers 5.12.1's own template compiler on the pinned template, opencode's shapes
+raised before and render now, and a conversation with one system message renders byte for byte as
+before. Proven end to end on the reference box before the tag: the lane restarted on its new unit
+and template, and served 2 min 50 s later, its container with `--chat-template` and the template
+mounted, and the eight clients ran on it, opencode among them.
 
-**How it got through, and what now stops it.** Each release proved the real clients on the lane
-that served that day: opencode's move to 1.19.4 was proven on another lane, and nothing held a new
-lane to the template fix the others had. A new CI step, `tests/lane-templates-check.py`, fetches
-every text lane's chat template at its pinned revision (the seven targets of the 27B and flash
-lanes, and the six of the vLLM lanes, Kolibri's FP8 and NVFP4 each at its own pin), patches it as
-its installer does, and renders the message shapes the real clients send
-(`tests/fixtures/client-shapes.json`: opencode, Hermes Agent and pi, each with a tool round and
-without, the SDKs, fetch and LiteLLM, and an agent's reminder after its first turn), with tools
-and without, as transformers does. Its 156 renders were identical to transformers' own, refusals
-included. The step fails on a template that raises, on a text target of `switch-model.sh` it does
-not know, and on an installer that serves its template otherwise than its table says. It first
-renders a template that refuses a second system message, and fails unless it sees that refusal: a
-renderer that saw none would pass anything. Before each release, the eight clients now also run on
-every text lane, each loaded in turn.
+**How it got through, and what now stops it.** Each release proved the real clients on the lane that
+served that day: opencode's move to 1.19.4 was proven on another lane, and nothing held a new lane
+to the template fix the others had. A new CI step, `tests/lane-templates-check.py`, fetches every
+text lane's chat template at its pinned revision (the seven targets of the 27B and flash lanes, and
+the six of the vLLM lanes, Kolibri's FP8 and NVFP4 each at its own pin), as transformers assembles
+it, patches it as its installer does, and renders the message shapes of the real clients
+(`tests/fixtures/client-shapes.json`, roles captured on the reference box: opencode's two requests,
+Hermes Agent and pi with a tool round and without, the OpenAI SDK, fetch and LiteLLM, and two
+derived from them, opencode's tool round and an agent's reminder after its first turn), with tools
+and without, sent as strings and as lists of parts, and handed to the template as each engine hands
+them. Both engines' code for it is ported from their sources at the versions the lanes pin: vLLM
+reads the template, gives one that loops over the content every content as a list of text parts, and
+joins them for any other, SGLang leaves a string a string, and both make a tool's answer one string.
+It renders as transformers does, with the template named tool_use when tools are sent. It renders no
+request's own parameters yet (a reasoning effort, thinking on or off), and a template that refused
+one of them would pass it, nor a vision lane's processor template, which vLLM reads first and which
+is the tokenizer's own on the two Nemotron lanes today. On the reference box, its 364 renders, none
+refused, were identical to transformers' own, and its reading of each template is the one its
+engine's own code gives, run from its sources. With the Ornith lane served as v1.40.1 served it, the
+step fails: 16 of that lane's 28 renders refused. It also fails on a text target of
+`switch-model.sh` it does not know, on an installer that serves its template otherwise than its
+table says or runs `patch-template.py` outside its `TEMPLATE_FIXES`, on `install.sh` or
+`switch-model.sh` running it with fixes of their own, and on a patched lane without the
+chat_template.jinja its installer patches. It first renders a template that refuses a second system
+message, and fails unless it sees that refusal: a renderer that saw none would pass anything. A 429
+from Hugging Face is waited out until the end of the window its RateLimit header names (up to five
+minutes), and a brief 5xx or a cut connection is tried again. Before each release, the eight clients
+now also run on every text lane, each loaded in turn.
 
-**claude-local asks before each command, and sends nothing to Anthropic.** An account set to
-Claude Code's auto mode gave claude-local's sessions auto mode, where the box's own model judged
-which commands ran unasked (auto mode's classifier requests go to the box like every other
-request), and its notice ("this session isn't eligible") held the first command until Enter. A
-session now starts in the normal permission mode, which asks before each command, unless you
-pass a mode of your own (`--permission-mode auto`, `--dangerously-skip-permissions`). And nothing
-of a session goes to Anthropic, so nothing is billed there. The model's requests went to the box
-already, and Claude Code's nonessential traffic was off. claude-local now also turns off the
-claude.ai connectors (`ENABLE_CLAUDEAI_MCP_SERVERS=false`), the official marketplace's
-registration, auto mode's request for the server's checks, which the box cannot give, and its
-notice with it (`CLAUDE_CODE_AUTO_MODE_SERVER=0`), and WebFetch's hostname check at
-api.anthropic.com (`skipWebFetchPreflight`). Traced on the reference box (every socket call of a
-session, the user's own configuration): asked to read a page with WebFetch, the old claude-local
-looked up api.anthropic.com and connected to it, the new one neither, and still answered. Your own
-MCP servers stay. Claude Code's built-in WebSearch is run by Anthropic's API, and a local engine
-refuses its request (a 400 on the Ornith lane, 2026-10-24): an MCP server of your own does the
-searching instead.
+**claude-local asks before each command, and keeps a session on the box.** An account set to Claude
+Code's auto mode gave claude-local's sessions auto mode, where the box's own model judged which
+commands ran unasked (auto mode's classifier requests go to the box like every other request), and
+its notice ("this session isn't eligible") held the first command until Enter. A session now starts
+in the normal permission mode, which asks before each command, unless you pass a mode of your own
+(`--permission-mode auto`, `--dangerously-skip-permissions`). Claude Code's own commands, their
+aliases (`kill`, `plugins`, `upgrade`) and what it reads as its first argument but its help does not
+list (`daemon`, Remote Control's `remote-control`, `rc`, `remote`, `sync` and `bridge`, and
+`self-hosted-runner`) get none of a session's flags: a flag in front made `claude-local kill <name>`
+open a session where it should stop one (a short id still passed), and `--update` alone gets none
+either. `agents`, which starts sessions of its own, gets them, and hands them to those sessions. And
+nothing of a session goes to Anthropic, so nothing is billed there, nor to the other providers
+Claude Code reads from the environment. The model's requests went to the box already, and Claude
+Code's nonessential traffic was off already, unless a settings file emptied its variable.
+claude-local also turns off the claude.ai connectors (`ENABLE_CLAUDEAI_MCP_SERVERS=false`), the
+official marketplace's registration, auto mode's request for the server's checks, which the box
+cannot give, and its notice with it (`CLAUDE_CODE_AUTO_MODE_SERVER=0`), WebFetch's hostname check at
+api.anthropic.com (`skipWebFetchPreflight`), and Claude Code's other providers (Bedrock, Vertex,
+Foundry and the others it reads before the endpoint, left set in a shell or a settings file). The
+settings it passes carry the same environment, with the endpoint and never the key: Claude Code
+applies a settings file's env over its own, and a user's settings with that traffic variable empty
+turned it back on, where these come after it (`claude doctor`, 2.1.304). With settings of your own
+(`--settings`), claude-local passes none, and these are yours to set. A settings file of yours that
+sets its own key or model (`ANTHROPIC_AUTH_TOKEN`, `ANTHROPIC_MODEL`) still wins over
+claude-local's, as the key cannot ride on the command line: leave them out of it. Traced on the
+reference box (every socket call of a session, the user's own configuration): asked to read a page
+with WebFetch, the old claude-local looked up api.anthropic.com and connected to it, the new one
+neither, and still answered. Your own MCP servers stay. Claude Code's built-in WebSearch is run by
+Anthropic's API, and a local engine refuses its request (a 400 on the Ornith lane, 2026-10-24): an
+MCP server of your own does the searching instead.
 
-**install.sh's help names the 27B image it pins.** Its help still offered
-`IMAGE=lmsysorg/sglang:v0.5.21` and dated the 27B image's validation 2026-10-09, and the advice a
-failed `docker pull` gives named v0.5.21, though the pin has been v0.5.22 since v1.39.0. Both now
-say v0.5.22, validated on the reference box on 2026-10-23, and the file's header keeps no date it
-cannot source. The box itself prepared it: the Ornith lane, through claude-local, in two passes,
-the second after a review that corrected its date.
+**install.sh names the images it pins.** Its help still offered `IMAGE=lmsysorg/sglang:v0.5.21` and
+dated the 27B image's validation 2026-10-09, and the advice a failed `docker pull` gives named
+v0.5.21, though the pin has been v0.5.22 since v1.39.0: both now say v0.5.22, validated on the
+reference box on 2026-10-23, and the file's header keeps no date it cannot source. The box itself
+prepared it: the Ornith lane, through claude-local, in two passes, the second after a review that
+corrected its date. The flash lane's advice offered `dev-qwen38-next-local`, its image of v1.8: it
+now says that the pinned image went with its dated tag, and to update the repo.
 
-**What an update does.** The cockpit restarts, to name the new release. The Ornith lane's unit
-and template change. A box that serves Ornith keeps serving it with the template it booted with,
-and the installer says so: Load it again from the cockpit, or run
-`sudo systemctl restart qwen38-ornith-122b.service` (its boot took 6 min 17 s on the reference box
-on 2026-10-24), and opencode runs on it. A box that serves another lane keeps it running, and
-Ornith's next Load takes the new unit. The proxy and the Agent tab's server do not change.
-`claude-local` runs the new launcher at its next start.
+**Reviewed before the tag.** This release went to main first as it stood after its CI, then through
+a code review and two independent reviews, and its fixes through the same again, and these are fixed
+here before its tag. A vLLM lane that starts at boot, updated while its checkpoint is out of reach,
+keeps the unit it has and says so: it got a unit mounting a template not yet written, which docker
+refuses at the next boot, and the box served nothing until a Load. The fixes a template takes are
+chosen on `patch-template.py`'s command line: TEMPLATE_PATCHES, read from the environment, made
+`./install.sh` write the 27B's template without its effort fixes when a shell had it set. The Flash
+FP4-Local and Ornith lanes write their template through one function of `vllm-lane.sh`. A test
+reloaded the box's systemd through the system's sudo, and runs on stubs now. And the claude-local
+commands and settings, the flash advice, opencode's second request, Hugging Face's window and the
+check's reading of templates and messages, above. A box that took this release as first pushed while
+its Ornith lane started at boot with the checkpoint out of reach got a unit that mounts a template
+not yet written, and that lane does not start until a Load, or `./install.sh` once the checkpoint is
+back, writes it (one whose image had been pruned instead gets its template at this update).
 
-**Tests.** Each change has tests that fail on the old tree: `tests/test_patch_template.py` on the
-old patcher, `tests/test_ornith_lane.py` (5 of 19) on the old installer,
-`tests/test_claude_local.py` (3 of 28) on the old launcher,
-`tests/test_install_help_names_the_image_pin.py` (3 of 3) on the old help, and
-`tests/test_lane_templates_check.py` (3 of 7), which holds the check's table to the installers and
-to the switch's targets without the network, on the old Ornith installer.
+**What an update does.** The cockpit restarts, to name the new release. The Ornith lane's unit and
+template change. A box that serves Ornith keeps serving it with the template it booted with, and the
+installer says so: Load it again from the cockpit, or run `sudo systemctl restart
+qwen38-ornith-122b.service` (it served again after 6 min 17 s, and after 2 min 50 s, at two restarts
+on the reference box on 2026-10-24), and opencode runs on it. A box that serves another lane keeps
+it running, and Ornith's next Load takes the new unit. The 27B, flash and Flash FP4-Local templates
+come out byte for byte as v1.40.1 wrote them (their eight targets, compared at their pins). The
+proxy and the Agent tab's server do not change. `claude-local` runs the new launcher at its next
+start.
+
+**Tests.** Each change has tests that fail on v1.40.1: `tests/test_patch_template.py` on the old
+patcher, `tests/test_ornith_lane.py` (5 of 19), `tests/test_claude_local.py` (7 of 32),
+`tests/test_install_help_names_the_image_pin.py` (4 of 4), `tests/test_lane_templates_check.py` (15
+of 35), which holds the check's table to the installers and to the switch's targets, and its reading
+of templates and messages to the engines', without the network, `tests/test_vlane_boot_unit_kept.py`
+(1 of 4) and `tests/test_vlane_template.py` (3 of 3).
 
 ## v1.40.1 (2026-10-24): a security release: the image and video lanes keep their scheduler's channel on loopback, GET /health generates nothing, the proxy bounds a network peer's headers and body and writes bodies again in UTF-8, and the 27B says what its prefix cache served
 
