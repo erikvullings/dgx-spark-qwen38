@@ -128,8 +128,10 @@ class EndToEnd(unittest.TestCase):
     def test_claude_gets_the_lane_the_key_and_the_limits(self):
         r, saw = self.launch("-p", "hello")
         self.assertEqual(r.returncode, 0, r.stderr)
-        self.assertEqual(saw["argv"][1:], ["--permission-mode", "default", "--settings",
-                                           '{"skipWebFetchPreflight": true}', "-p", "hello"])
+        self.assertEqual(saw["argv"][1:4], ["--permission-mode", "default", "--settings"])
+        self.assertEqual(saw["argv"][5:], ["-p", "hello"])
+        self.assertEqual(json.loads(saw["argv"][4]), {"skipWebFetchPreflight": True,
+                                                      "env": {**cl.NO_ANTHROPIC_ENV, "ANTHROPIC_BASE_URL": self.base}})
         env = saw["env"]
         self.assertEqual(env["ANTHROPIC_BASE_URL"], self.base)
         self.assertEqual(env["ANTHROPIC_AUTH_TOKEN"], KEY)
@@ -157,6 +159,20 @@ class EndToEnd(unittest.TestCase):
         self.assertEqual(env["CLAUDE_CODE_AUTO_MODE_SERVER"], "0")
         settings = json.loads(saw["argv"][saw["argv"].index("--settings") + 1])
         self.assertIs(settings["skipWebFetchPreflight"], True)
+
+    def test_neither_the_shell_nor_a_settings_file_takes_the_session_elsewhere(self):
+        """A provider switch left in a shell sent the session to that provider, and a settings file's env
+        wins over the process's in Claude Code: the session's own settings carry the same values, with the
+        endpoint and without the key (code review, 2026-10-24)."""
+        r, saw = self.launch("-p", "hello", env={"CLAUDE_CODE_USE_BEDROCK": "1", "CLAUDE_CODE_USE_VERTEX": "true"})
+        self.assertEqual(r.returncode, 0, r.stderr)
+        for name in cl.PROVIDER_SWITCHES:
+            self.assertEqual(saw["env"][name], "", name)
+        settings_env = json.loads(saw["argv"][saw["argv"].index("--settings") + 1])["env"]
+        self.assertEqual(settings_env["CLAUDE_CODE_USE_BEDROCK"], "")
+        self.assertEqual(settings_env["CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC"], "1")
+        self.assertEqual(settings_env["ANTHROPIC_BASE_URL"], self.base)
+        self.assertNotIn(KEY, " ".join(saw["argv"]))
 
     def test_a_session_asks_before_each_command_unless_you_say_otherwise(self):
         """An account set to auto mode had the box's own model judge which commands ran unasked."""
@@ -288,9 +304,22 @@ class TheCommandsOfClaudeCode(unittest.TestCase):
         # Remote Control's names and the self-hosted runner's among them (code review, 2026-10-24)
         hidden = {"daemon", "remote-control", "rc", "remote", "sync", "bridge", "self-hosted-runner"}
         self.assertGreaterEqual(len(listed), 20, listed)
-        self.assertEqual(sorted((listed | hidden) - cl.CLAUDE_COMMANDS), [])
-        for name in sorted(listed | hidden):
+        self.assertEqual(sorted((listed | hidden) - cl.CLAUDE_COMMANDS), ["agents"])
+        for name in sorted((listed | hidden) - {"agents"}):
             self.assertEqual(cl.session_flags([name, "x"]), [], name)
+
+    def test_agents_hands_the_session_flags_to_the_sessions_it_starts(self):
+        # Claude Code 2.1.304 takes them in front of `agents` and gives them to what it launches: without
+        # them, those sessions ran in an account's auto mode, their settings unlocked (code review, 2026-10-24)
+        flags = cl.session_flags(["agents"], "http://127.0.0.1:30001")
+        self.assertEqual(flags[:2], ["--permission-mode", "default"])
+        self.assertIn("--settings", flags)
+
+    def test_the_updater_alone_gets_no_flag(self):
+        # `claude --update` updates, `claude --permission-mode default --update` is an unknown option
+        self.assertEqual(cl.session_flags(["--update"]), [])
+        self.assertEqual(cl.session_flags(["--upgrade"]), [])
+        self.assertNotEqual(cl.session_flags(["--update", "--help"]), [])
 
 
 class TheProxyItReaches(unittest.TestCase):

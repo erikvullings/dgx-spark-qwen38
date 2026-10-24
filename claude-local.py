@@ -147,11 +147,19 @@ def claude_pair(limits: tuple[int, int] | None, window: int, cc_output: int) -> 
 # key do, the first one included: Claude Code 2.1.304 reads it as set whatever its value but an empty
 # one, so a shell's 0 kept the traffic off, but a reading of it as a switch would not (2026-10-24).
 # Your own MCP servers stay: they are yours, and Anthropic hosts none of them.
+# Nor to another provider: Claude Code picks Bedrock, Vertex, Foundry, its AWS and Google Cloud ways, Mantle
+# or a gateway from these before it reads ANTHROPIC_BASE_URL (2.1.304), so one left set by a shell or a
+# settings file sent the session's prompts and files there, under the box's model name (code review,
+# 2026-10-24). Empty is off, as Claude Code reads them.
+PROVIDER_SWITCHES = ("CLAUDE_CODE_USE_BEDROCK", "CLAUDE_CODE_USE_VERTEX", "CLAUDE_CODE_USE_FOUNDRY",
+                     "CLAUDE_CODE_USE_ANTHROPIC_AWS", "CLAUDE_CODE_USE_ANTHROPIC_GOOGLE_CLOUD",
+                     "CLAUDE_CODE_USE_MANTLE", "CLAUDE_CODE_USE_GATEWAY")
 NO_ANTHROPIC_ENV = {
     "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": "1",
     "ENABLE_CLAUDEAI_MCP_SERVERS": "false",
     "CLAUDE_CODE_DISABLE_OFFICIAL_MARKETPLACE_AUTOINSTALL": "1",
     "CLAUDE_CODE_AUTO_MODE_SERVER": "0",
+    **{name: "" for name in PROVIDER_SWITCHES},
 }
 # WebFetch sends each hostname to api.anthropic.com before it fetches, whatever the provider: a
 # setting, not a variable, so it goes on the session's command line, with the permission mode.
@@ -167,20 +175,27 @@ PERMISSION_FLAGS = ("--permission-mode", "--dangerously-skip-permissions")
 # made it a prompt, or Remote Control's refusal, and `claude-local kill <name>` opened a session instead
 # of stopping one, where a short id still passed (found in review, 2026-10-24;
 # tests/fixtures/claude-code-commands.txt is Claude Code 2.1.304's own list).
-CLAUDE_COMMANDS = frozenset({"agents", "attach", "auth", "auto-mode", "doctor", "gateway", "import", "install",
+# `agents` is not one of them: it starts sessions of its own and hands them the flags in front of it, so
+# it gets a session's, or the sessions it started ran in an account's auto mode with their settings
+# unlocked (code review, 2026-10-24). `--update` and `--upgrade` are the updater alone only.
+CLAUDE_COMMANDS = frozenset({"attach", "auth", "auto-mode", "doctor", "gateway", "import", "install",
                              "logs", "mcp", "plugin", "plugins", "purge", "respawn", "rm", "setup-token", "stop",
                              "kill", "ultrareview", "update", "upgrade", "daemon", "remote-control", "rc",
                              "remote", "sync", "bridge", "self-hosted-runner"})
 
 
-def session_flags(argv: list[str]) -> list[str]:
-    """The flags a session gets ahead of yours: none for one of Claude Code's own commands."""
-    if argv and argv[0] in CLAUDE_COMMANDS:
+def session_flags(argv: list[str], base: str | None = None) -> list[str]:
+    """The flags a session gets ahead of yours: none for one of Claude Code's own commands. Its settings
+    carry the environment that keeps the session on the box, the endpoint with it and never the key:
+    Claude Code applies each settings file's env over its own, so a user's or a project's set the
+    traffic back on, and these come after them (measured with `claude doctor`, 2.1.304, 2026-10-24)."""
+    if argv and argv[0] in CLAUDE_COMMANDS or argv in (["--update"], ["--upgrade"]):
         return []
     given = {a.split("=", 1)[0] for a in argv if a.startswith("--")}
     flags = [] if given & set(PERMISSION_FLAGS) else ["--permission-mode", "default"]
     if "--settings" not in given:
-        flags += ["--settings", json.dumps(NO_ANTHROPIC_SETTINGS)]
+        env = {**NO_ANTHROPIC_ENV, **({"ANTHROPIC_BASE_URL": base} if base else {})}
+        flags += ["--settings", json.dumps({**NO_ANTHROPIC_SETTINGS, "env": env})]
     return flags
 
 
@@ -236,7 +251,7 @@ def main(argv: list[str]) -> int:
         mine = "CLAUDE_CODE_MAX_CONTEXT_TOKENS" in os.environ or "CLAUDE_CODE_EXTRA_BODY" in os.environ
         say(f"{env['ANTHROPIC_MODEL']} through {base}, context {env['CLAUDE_CODE_MAX_CONTEXT_TOKENS']}, "
             f"extra body {env['CLAUDE_CODE_EXTRA_BODY']} ({'yours, kept' if mine else why})")
-    os.execve(claude, [claude, *session_flags(argv), *argv], env)
+    os.execve(claude, [claude, *session_flags(argv, base), *argv], env)
     return 0  # not reached
 
 
