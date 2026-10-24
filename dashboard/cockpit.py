@@ -864,8 +864,10 @@ def collect_engine_fast():
     elif now - HEALTH["ts"] >= (HEALTH_RECHECK_S if HEALTH["ok"] else 2.0):
         # In these SGLang builds GET /health is /health_generate: it runs a one-token
         # generation whenever the engine is idle (2,394 generations in the last hour of the
-        # 30/08 instance at 1 Hz, and the 01:15 GPU fault happened inside one of them). So
-        # it is only asked when the engine has nothing to do: every 2 s until it answers
+        # 30/08 instance at 1 Hz, and the 01:15 GPU fault happened inside one of them),
+        # unless SGLANG_ENABLE_HEALTH_ENDPOINT_GENERATION=0, which the units of this repo
+        # pass since v1.40.1: it then answers from the server's state (503 while it starts).
+        # So it is only asked when the engine has nothing to do: every 2 s until it answers
         # 200, then every 30 s; the 90 s canary remains the probe that tells a wedged
         # scheduler from a healthy one.
         try:
@@ -1115,7 +1117,8 @@ PROGRESS_RE = re.compile(r"(Prefill|Decode) batch")
 USAGE_RE = re.compile(r"token usage: ([\d.]+)")
 MAMBA_RE = re.compile(r"mamba usage: ([\d.]+)")
 # This cockpit's own GET /health: in these builds it runs a one-token generation
-# (input_ids=[0], max_new_tokens=1), which the scheduler logs like any prefill. It is
+# (input_ids=[0], max_new_tokens=1), which the scheduler logs like any prefill, on an engine
+# started before v1.40.1 turned that generation off (SGLANG_ENABLE_HEALTH_ENDPOINT_GENERATION=0). It is
 # not a client. Counted as one, every 30 s, it kept the canary waiting for a quiet
 # minute that never came (0 canaries in the reference box's audit log, 334 probe
 # lines in 3 h, 2026-09-24), and it wrote its idle 0.00 over the last real pool

@@ -100,9 +100,11 @@ Without the identity wall, the engine's key is the proxy port's one gate, and th
 proxy applies it itself, with the engine's own rule and the engine's own 401,
 before it reads a byte of the body. Until then a caller with no key, or a wrong
 one, had its body read whole (up to `MAX_BODY_BYTES`) and, when it was large,
-counted by the engine on the proxy's own key before the engine refused it. Paths
-under `/health`, `/ready` and `/metrics` stay open, as the engine keeps them (`/ready`
-since v1.26.1).
+counted by the engine on the proxy's own key before the engine refused it. `/health`,
+`/ready` and `/metrics` stay open, as the engine keeps them (`/ready` since v1.26.1);
+since v1.40.1 those three routes only, where the door opened every path under them as the
+engine does: `/health_generate`, which runs a one-token generation on an idle engine,
+needs the key, and the SGLang units turn off the generation `/health` itself ran.
 
 **The image and video lanes take no key, and their scheduler's channel stays on
 loopback** (since v1.40.1). Their HTTP API binds where `IMAGE_BIND` and `VIDEO_BIND` say,

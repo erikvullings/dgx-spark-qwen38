@@ -246,15 +246,30 @@ class TheDoor(unittest.TestCase):
         self.assertEqual(Engine.seen, [])
 
     def test_the_routes_the_engine_leaves_open_need_no_key(self):
-        # the engine opens /health, /ready and /metrics by prefix (srt/utils/auth.py); /ready
-        # answered 200 with no key on the reference box and the door said 401 (2026-10-11)
-        for path in ("/health", "/health_generate", "/metrics", "/ready"):
+        # the engine opens /health, /ready and /metrics (srt/utils/auth.py); /ready answered
+        # 200 with no key on the reference box and the door said 401 (2026-10-11)
+        for path in ("/health", "/metrics", "/ready"):
             with self.subTest(path=path):
                 with Engine.lock:
                     Engine.seen = []
                 status, _ = self.request("GET", path)
                 self.assertEqual(status, 200)
                 self.assertIn(("GET", path), [s[:2] for s in Engine.seen])
+
+    def test_only_those_three_routes_are_open(self):
+        """The engine opens every path under them, /health_generate among them, which runs a
+        one-token generation on an idle engine: relayed with no key, anyone who reached the
+        proxy made the engine generate (D02 of the 2026-10-24 security review). The door asks
+        the key for every other path now, before it relays anything."""
+        for path in ("/health_generate", "/healthz", "/health/x", "/metrics/x", "/ready_check"):
+            with self.subTest(path=path):
+                with Engine.lock:
+                    Engine.seen = []
+                status, raw = self.request("GET", path)
+                self.assertEqual(status, 401, raw[:200])
+                self.assertEqual(Engine.seen, [])
+        status, raw = self.request("GET", "/health_generate", auth=f"Bearer {KEY}")
+        self.assertEqual(status, 200, raw[:200])
 
     def test_a_path_that_only_looks_like_ready_needs_the_key(self):
         # "/readiness" is not under "/ready" (r-e-a-d-i): the engine answered it 401 with no key

@@ -51,6 +51,11 @@ its size while its guards worked on it, against 3.98 for an image as base64 (ref
 COUNT_BODY_MAX_BYTES at that inflated size.
 They write it through rewritten(), in UTF-8; a lone surrogate, which a JSON escape allows and UTF-8
 cannot carry, keeps its escape.
+The door opens /health, /ready and /metrics themselves, where it opened every path under them as
+the engine does: /health_generate, which runs a one-token generation on an idle engine, was relayed
+from the network with no key (D02 of the 2026-10-24 security review). It and every other path under
+those three need the key now, and the SGLang units of this repo turn off the generation that /health
+itself ran (SGLANG_ENABLE_HEALTH_ENDPOINT_GENERATION=0).
 v6.45: the Ornith 1.5 122B lane (Ornith AI's model on vLLM) takes a reasoning effort as its chat
 template reads it, enable_thinking alone: none and minimal turn the reasoning off, every other
 level keeps it whole, as the box decided (2026-10-21). Its template reads no effort, and a "none"
@@ -746,7 +751,11 @@ CLIENT_ROUTES = SERVER_INFO_ROUTES | frozenset({
 # is a scheme spelled "bearer" in any case, one space, and the key exactly. "bearer KEY"
 # and "Bearer KEY " were admitted; "Bearer  KEY", "Bearer<TAB>KEY", "Token KEY", the key
 # alone and no header were 401.
-ENGINE_OPEN_PREFIXES = ("/health", "/ready", "/metrics")
+# The door is stricter than that rule since v6.46: it opens these three routes exactly, and
+# any other path under them needs the key, /health_generate first, which runs a one-token
+# generation on an idle engine and was relayed from the network with no key (D02 of the
+# 2026-10-24 security review).
+ENGINE_OPEN_ROUTES = frozenset({"/health", "/ready", "/metrics"})
 # The engine's own refusal, byte for byte, so a client gets the answer it always got.
 ENGINE_401_BODY = b'{"error":"Unauthorized"}'
 
@@ -5026,7 +5035,7 @@ class H(BaseHTTPRequestHandler):
         """True when this request does not carry the key the engine admits (v6.34). The
         wall, when on, decides instead; a route the engine leaves open, or a box whose key
         the proxy cannot read, stays the engine's own business."""
-        if CLIENT_KEYS or route.startswith(ENGINE_OPEN_PREFIXES):
+        if CLIENT_KEYS or route in ENGINE_OPEN_ROUTES:
             return False
         key = _door_key()
         return bool(key) and not engine_admits(self.headers.get("Authorization"), key)
