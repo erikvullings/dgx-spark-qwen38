@@ -25,7 +25,7 @@ and turned off by `enable_thinking: false`, tool calls in Qwen's XML form, and n
 one line: a system message past the first one made the published template raise "System message must
 be at the beginning", and opencode 1.19.4 sends two system messages before the user's, so every
 opencode request on this lane got a 400 until v1.40.2. `patch-template.py` renders such a message as a
-`<system-reminder>` block, as on the 27B and the two flash lanes (`TEMPLATE_PATCHES=system-reminder`,
+`<system-reminder>` block, as on the 27B and the two flash lanes (`patch-template.py --patches=system-reminder`,
 the template having no effort of its own); a conversation with one system message renders byte for
 byte as before. Its sampling
 defaults, which vLLM applies to a request that sets none, are its `generation_config.json`'s:

@@ -82,7 +82,7 @@ def main() -> None:
         orn_out = os.path.join(base, "orn.jinja")
         env = {k: v for k, v in os.environ.items() if k not in ("TEMPLATE_PATCHES", "LEAN_DEFAULT")}
         argv = [sys.executable, SCRIPT, base, orn_out, orn_sha, orn_repo]
-        r = subprocess.run(argv, capture_output=True, text=True, env={**env, "TEMPLATE_PATCHES": "system-reminder"})
+        r = subprocess.run(argv[:2] + ["--patches=system-reminder"] + argv[2:], capture_output=True, text=True, env=env)
         assert r.returncode == 0, r.stdout + r.stderr
         assert "patch 'system-reminder': applied" in r.stdout, r.stdout
         assert "reasoning effort" not in r.stdout and r.stdout.count("patch '") == 1, r.stdout
@@ -91,8 +91,16 @@ def main() -> None:
         r = subprocess.run(argv, capture_output=True, text=True, env=env)
         assert r.returncode != 0 and "anchor not found" in r.stdout + r.stderr, r.stdout + r.stderr
         assert not os.path.exists(orn_out), "a refused template was written"
-        r = subprocess.run(argv, capture_output=True, text=True, env={**env, "TEMPLATE_PATCHES": "system-reminders"})
+        r = subprocess.run(argv[:2] + ["--patches=system-reminders"] + argv[2:], capture_output=True, text=True, env=env)
         assert r.returncode != 0 and "the fixes are" in r.stdout + r.stderr, r.stdout + r.stderr
+        # A selection left in the shell reaches no caller: the 27B's template keeps its four fixes with
+        # TEMPLATE_PATCHES=system-reminder exported, which made ./install.sh drop its effort fixes when
+        # v1.40.2 as first pushed read it from the environment (found in review, 2026-10-24).
+        ambient = os.path.join(base, "ambient.jinja")
+        r = subprocess.run([sys.executable, SCRIPT, base, ambient, sha, repo], capture_output=True, text=True,
+                           env={**env, "TEMPLATE_PATCHES": "system-reminder"})
+        assert r.returncode == 0, r.stdout + r.stderr
+        assert r.stdout.count("patch '") == 4 and "reasoning_effort" in open(ambient).read(), r.stdout
         print("test_patch_template: OK")
     finally:
         shutil.rmtree(base, ignore_errors=True)

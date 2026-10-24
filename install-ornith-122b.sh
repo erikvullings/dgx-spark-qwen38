@@ -129,7 +129,7 @@ render_unit(){
       "$HERE/$UNIT.template" > "$1"
 }
 
-# The checkpoint's chat template with the one fix it needs (patch-template.py, TEMPLATE_PATCHES): it
+# The checkpoint's chat template with the one fix it needs (patch-template.py --patches): it
 # refused a system message past the first one, which opencode 1.19.4 sends, and every opencode request
 # on this lane got a 400 (2026-10-24); that message becomes a <system-reminder>, as on the 27B and the
 # two flash lanes. The template has no reasoning effort of its own (the proxy gives it one through
@@ -137,7 +137,7 @@ render_unit(){
 # as it is, mtime included, when nothing changed.
 TEMPLATE="$CONFIG_DIR/chat-template-ornith-122b.jinja"
 lane_template(){
-  TEMPLATE_PATCHES=system-reminder python3 "$HERE/patch-template.py" "$HF_CACHE" "$TEMPLATE" "$MODEL_REV" "$MODEL" \
+  python3 "$HERE/patch-template.py" --patches=system-reminder "$HF_CACHE" "$TEMPLATE" "$MODEL_REV" "$MODEL" \
     || die "the chat template could not be patched (the lines above say why)"
 }
 

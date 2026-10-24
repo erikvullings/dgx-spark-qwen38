@@ -11,9 +11,12 @@ Two surgical fixes, no behavior change otherwise:
 The 'minimal' -> 'low' mapping (an OpenAI effort tier) was contributed
 by forum user helge: https://forums.developer.nvidia.com/t/380257/10
 
-Usage: patch-template.py <hf_cache_dir> <output_path> [revision] [repo]
-TEMPLATE_PATCHES=system-reminder (comma-separated names) applies those fixes alone, for a
-template with no reasoning effort of its own; unset, all four.
+Usage: patch-template.py [--patches=NAMES] <hf_cache_dir> <output_path> [revision] [repo]
+--patches=system-reminder (comma-separated names) applies those fixes alone, for a template with
+no reasoning effort of its own; without it, all four. An option of the call, not a variable of the
+environment: TEMPLATE_PATCHES, which v1.40.2 read as first pushed, reached every caller, and one
+left in a shell made ./install.sh write the 27B's template without its effort fixes (found in
+review, 2026-10-24).
 Idempotent: succeeds if the patches are already applied. When a revision is
 given (sha or ref name like 'main'), the template is taken from that exact
 snapshot; otherwise the most recently modified snapshot is used. The optional
@@ -99,17 +102,19 @@ SYSTEM_PATCHED = (
 )
 
 
-# The four fixes by name, in the order they are applied (TEMPLATE_PATCHES picks among them).
+# The four fixes by name, in the order they are applied (--patches picks among them).
 PATCHES = ("reasoning_effort", "lean", "effort-message", "system-reminder")
 EFFORT_PATCHES = {"reasoning_effort", "lean", "effort-message"}
 
 
 def main() -> None:
-    if len(sys.argv) not in (3, 4, 5):
+    args = [a for a in sys.argv[1:] if not a.startswith("--patches=")]
+    asked_patches = [a[len("--patches="):] for a in sys.argv[1:] if a.startswith("--patches=")]
+    if len(args) not in (2, 3, 4) or len(asked_patches) > 1:
         sys.exit(__doc__)
-    hf_cache, out_path = sys.argv[1], sys.argv[2]
-    revision = sys.argv[3] if len(sys.argv) >= 4 else None
-    repo = sys.argv[4] if len(sys.argv) == 5 else "RadixArk/Qwen3.8-27B-NVFP4"
+    hf_cache, out_path = args[0], args[1]
+    revision = args[2] if len(args) >= 3 else None
+    repo = args[3] if len(args) == 4 else "RadixArk/Qwen3.8-27B-NVFP4"
     repo_dir = f"{hf_cache}/hub/models--{repo.replace('/', '--')}"
     chosen = None
     if revision:
@@ -136,10 +141,10 @@ def main() -> None:
     # effort of its own asks for system-reminder alone (Ornith 1.5 122B, 2026-10-24: the proxy
     # gives it its effort as enable_thinking). A fix it asks for whose anchor is gone still stops
     # the install, as before.
-    wanted = [p.strip() for p in os.environ.get("TEMPLATE_PATCHES", ",".join(PATCHES)).split(",") if p.strip()]
+    wanted = [p.strip() for p in (asked_patches[0] if asked_patches else ",".join(PATCHES)).split(",") if p.strip()]
     unknown = sorted(set(wanted) - set(PATCHES))
     if unknown or not wanted:
-        sys.exit(f"TEMPLATE_PATCHES names {', '.join(unknown) or 'no fix'}: the fixes are {', '.join(PATCHES)}")
+        sys.exit(f"--patches names {', '.join(unknown) or 'no fix'}: the fixes are {', '.join(PATCHES)}")
 
     # LEAN_DEFAULT=0 installs the level without making it the default, for a box
     # that wants Qwen's shipped behaviour until it has run its own numbers. Unset, the
@@ -155,10 +160,10 @@ def main() -> None:
     # LEAN_DEFAULT=0.
     effort_patched = msg_patched = ""
     if EFFORT_PATCHES & set(wanted):
-        asked = os.environ.get("LEAN_DEFAULT")
+        lean_env = os.environ.get("LEAN_DEFAULT")
         installed, why = "", ""
-        if asked is not None:
-            lean_default = asked != "0"
+        if lean_env is not None:
+            lean_default = lean_env != "0"
         else:
             try:
                 with open(out_path, encoding="utf-8") as f:
