@@ -158,9 +158,16 @@ NO_ANTHROPIC_SETTINGS = {"skipWebFetchPreflight": True}
 # and --dangerously-skip-permissions stays yours to pass.
 PERMISSION_FLAGS = ("--permission-mode", "--dangerously-skip-permissions")
 # Claude Code's own commands take the environment and none of a session's flags.
+# Claude Code's commands, their aliases (plugins, kill, upgrade) and the ones its help does not list
+# (daemon, and what its binary reads as its first argument before any option: Remote Control's
+# remote-control, rc, remote, sync and bridge, and self-hosted-runner): a session flag in front of one
+# made it a prompt, or Remote Control's refusal, and `claude-local kill <name>` opened a session instead
+# of stopping one, where a short id still passed (found in review, 2026-10-24;
+# tests/fixtures/claude-code-commands.txt is Claude Code 2.1.304's own list).
 CLAUDE_COMMANDS = frozenset({"agents", "attach", "auth", "auto-mode", "doctor", "gateway", "import", "install",
-                             "logs", "mcp", "plugin", "purge", "respawn", "rm", "setup-token", "stop",
-                             "ultrareview", "update"})
+                             "logs", "mcp", "plugin", "plugins", "purge", "respawn", "rm", "setup-token", "stop",
+                             "kill", "ultrareview", "update", "upgrade", "daemon", "remote-control", "rc",
+                             "remote", "sync", "bridge", "self-hosted-runner"})
 
 
 def session_flags(argv: list[str]) -> list[str]:

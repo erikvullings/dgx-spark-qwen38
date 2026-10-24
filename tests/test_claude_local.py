@@ -276,6 +276,22 @@ class EndToEnd(unittest.TestCase):
         self.assertIsNone(saw)
 
 
+class TheCommandsOfClaudeCode(unittest.TestCase):
+    def test_every_command_and_alias_of_claude_code_gets_no_session_flag(self):
+        # a session flag before `kill` made it a prompt: `claude-local kill <name>` opened a session
+        # instead of stopping one, where a short id still passed (found in review, 2026-10-24)
+        text = (REPO / "tests" / "fixtures" / "claude-code-commands.txt").read_text()
+        listed = {name for line in text.splitlines() if line[:2] == "  " and line[2:3].isalpha()
+                  for name in line.split()[0].split("|")}
+        # not in its help: what its binary (2.1.304) reads as its first argument before any option,
+        # Remote Control's names and the self-hosted runner's among them (code review, 2026-10-24)
+        hidden = {"daemon", "remote-control", "rc", "remote", "sync", "bridge", "self-hosted-runner"}
+        self.assertGreaterEqual(len(listed), 20, listed)
+        self.assertEqual(sorted((listed | hidden) - cl.CLAUDE_COMMANDS), [])
+        for name in sorted(listed | hidden):
+            self.assertEqual(cl.session_flags([name, "x"]), [], name)
+
+
 class TheProxyItReaches(unittest.TestCase):
     def test_with_no_opencode_config_the_launchers_port(self):
         # with --no-opencode there is no opencode.json, and the default port missed a box whose
