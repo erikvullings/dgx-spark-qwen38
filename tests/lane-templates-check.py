@@ -106,8 +106,21 @@ def lane_specs(repo_dir=REPO):
 
 
 # Hugging Face answers a runner's anonymous requests from shared addresses: a 429 or a brief 5xx
-# is waited out (its Retry-After when it gives one), not taken for a broken template (2026-10-24).
+# is waited out, not taken for a broken template (2026-10-24). Its quotas count over fixed windows of
+# five minutes, and its 429 tells when the window ends in its RateLimit header, `"resolvers";r=0;t=55`
+# (https://huggingface.co/docs/hub/en/rate-limits): that wait, or a Retry-After's, up to WAIT_MAX.
 RETRY = (408, 425, 429, 500, 502, 503, 504)
+WAIT_MAX = 300
+
+
+def server_wait(headers):
+    """The seconds the server asks for before the next try: RateLimit's t=, else Retry-After, else None."""
+    headers = headers or {}
+    left = re.search(r";\s*t=(\d+)", headers.get("RateLimit") or "")
+    after = (headers.get("Retry-After") or "").strip()
+    if left:
+        return min(int(left.group(1)) + 1, WAIT_MAX)
+    return min(int(after), WAIT_MAX) if after.isdigit() else None
 
 
 def fetch(repo, rev, tries=5, sleep=time.sleep):
@@ -125,8 +138,8 @@ def fetch(repo, rev, tries=5, sleep=time.sleep):
                     return None
                 if e.code not in RETRY or attempt == tries - 1:
                     raise
-                after = (e.headers or {}).get("Retry-After") or ""
-                wait = min(int(after), 60) if after.isdigit() else wait
+                asked = server_wait(e.headers)
+                wait = wait if asked is None else asked
             except (OSError, http.client.HTTPException):    # a reset, a timeout, a body cut short
                 if attempt == tries - 1:
                     raise

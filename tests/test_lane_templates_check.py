@@ -104,6 +104,31 @@ class WhatItRendersAsTheEnginesDo(unittest.TestCase):
             ltc.urllib.request.urlopen = real
         self.assertEqual((len(calls), slept), (3, [7, 7]))
 
+    def test_a_429_waits_for_the_end_of_hugging_faces_window(self):
+        # its quotas count over windows of five minutes and its 429 says when the window ends, in its
+        # RateLimit header: the doubling waits gave up after 30 s (code review, 2026-10-24)
+        self.assertEqual(ltc.server_wait({"RateLimit": '"resolvers";r=0;t=55'}), 56)
+        self.assertEqual(ltc.server_wait({"RateLimit": '"resolvers";r=0;t=3600', "Retry-After": "9"}), ltc.WAIT_MAX)
+        self.assertEqual(ltc.server_wait({"Retry-After": "9"}), 9)
+        self.assertIsNone(ltc.server_wait({"Retry-After": "Fri, 31 Oct 2026 07:28:00 GMT"}))
+        self.assertIsNone(ltc.server_wait(None))
+        import email.message
+        import urllib.error
+        headers = email.message.Message()
+        headers["ratelimit"] = '"resolvers";r=0;t=120'
+        slept = []
+
+        def urlopen(url, timeout=60):
+            raise urllib.error.HTTPError(url, 429, "busy", headers, None)
+        real = ltc.urllib.request.urlopen
+        ltc.urllib.request.urlopen = urlopen
+        try:
+            with self.assertRaises(urllib.error.HTTPError):
+                ltc.fetch("org/x", "a" * 40, tries=3, sleep=slept.append)
+        finally:
+            ltc.urllib.request.urlopen = real
+        self.assertEqual(slept, [121, 121])
+
 
 class TheContentFormEachEngineHands(unittest.TestCase):
     # vLLM turns a string into a list of parts for a template that loops over a message's content,
