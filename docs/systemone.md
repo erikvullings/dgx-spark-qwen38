@@ -62,8 +62,9 @@ one to ten levels, which is what the live API answers rather than what its docs 
 contract report what it has no room for: `x-systemone-label-mass` (how much of the model's
 first-token probability landed on any label; near 1 means the prompt worked),
 `x-systemone-branches`, and `x-systemone-cached-tokens` when the engine runs with
-`--enable-cache-report` (neither lane does today, so the fan-out table below reads the cache
-through latency instead).
+`--enable-cache-report`, as the 27B lane does since discussion #49 (0, then 2,176 on a second
+question about the same state, measured 2026-10-24). The flash lane does not, and the fan-out table
+below, measured before, reads the cache through latency.
 
 **Why `top_logprobs` on `/v1/chat/completions`, and never `token_ids_logprob` on `/generate`.**
 On the served build, `get_token_ids_logprobs_raw` appends a bare `[]` for a co-batched request
