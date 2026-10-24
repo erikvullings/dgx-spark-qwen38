@@ -1,5 +1,103 @@
 # Changelog
 
+## v1.40.1 (2026-10-24): a security release: the image and video lanes keep their scheduler's channel on loopback, GET /health generates nothing, the proxy bounds a network peer's headers and body and writes bodies again in UTF-8, and the 27B says what its prefix cache served
+
+**Who should update first.** If `IMAGE_BIND` or `VIDEO_BIND` puts your image or video lane on an
+address other machines reach (`0.0.0.0`, a LAN or a tailnet address), update now, then restart that
+lane if it serves (Load it again from the cockpit, or `sudo systemctl restart qwen38-image`, or
+`qwen38-video`): until then anyone who reached that address could run code on the box as the lane's
+user, a member of the `docker` group. A lane on `127.0.0.1`, the default, was out of reach of other
+machines. Seven findings came from a security review of 2026-10-24, D01 to D07, each checked against
+this code before it was taken: this release fixes five, and says below what it does not fix yet.
+
+**The scheduler's channel stays on loopback (D01).** Behind the HTTP API of the image and video
+lanes, the diffusion runtime's scheduler takes its requests on a ZMQ socket that unpickles what it is
+sent, and upstream derives that socket's address from the same `--host`: a lane bound off loopback
+took requests on that channel from the network too, with no key. `image-sglang/scheduler-loopback.patch`
+keeps it on `127.0.0.1` whatever `--host` is, for both lanes: here the HTTP server and the scheduler
+always run on one machine. Upstream's `main` pins only `0.0.0.0` and IPv6 to loopback and keeps an
+explicit address. Proved on the pinned file on the reference box (`e00930c5`): before the patch the
+endpoint followed `--host` (`0.0.0.0`, a LAN and a tailnet address, `::`, a hostname), after it, it is
+`tcp://127.0.0.1` for each, replicas included. With a local channel the scheduler hands large outputs
+over through a temporary file instead of in the message, the path every lane on loopback already
+took. `0.0.0.0` stays possible for the image lane: the proxy relays no image route, so a client on
+another machine or in a container reaches the lane by its bind. The installer now says that it means
+every interface, and that the channel stays on loopback.
+
+**GET /health generates nothing (D02).** In both pinned SGLang images, GET /health is
+/health_generate: on an idle engine it runs a one-token generation, and it takes no key. The proxy
+opened every path under /health, /ready and /metrics, as the engine does, so anyone who reached the
+proxy made the engine generate. The three 27B units, the flash launcher and `run.sh` pass
+`SGLANG_ENABLE_HEALTH_ENDPOINT_GENERATION=0`: /health answers from the server's state, 503 while it
+starts and 200 once it serves (read in both images: "0" reads as false, and the 503 comes first). The
+proxy opens those three routes exactly: /health_generate and any other path under them need the key.
+The cockpit reads /health as readiness, as before, and its 90 s canary is still what tells a wedged
+scheduler.
+
+**A network peer's headers and body are bounded (D03, D04, proxy v6.46).** The standard parser
+bounds each header line (64 KiB) and their number (100), not their sum: about 6.4 MiB for each
+connection the ceilings allow, before any key. A peer on the network now has 64 KiB for a request's
+line and headers in all (`HEADER_BYTES_MAX`) and gets 431 past it: the largest the box's eight
+clients sent, measured through a relay, was 952 bytes (Claude Code on /v1/messages, 21 headers). A
+body on /health, /ready or /metrics was read whole with no key, and up to 1 MiB it took nothing from
+the bodies' budget: those routes take no body now, refused unread with a 413. And a body read under
+`CLIENT_IO_S` held its thread and its room in the budget for 900 s a byte: a network peer's body that
+sends no byte for 30 s (`BODY_STALL_S`) is let go, its room given back at once. Only while the body
+comes in: a long prefill and the answer come after it, and the proxy then reads nothing from the
+client but its leaving. The clients on the box itself (127.0.0.1) keep the old delays and have no
+header budget. Live on the reference box, through its tailnet address and with Ornith 1.5 122B
+serving: 72 KiB of headers got the 431 at once and 2 KiB passed, 4 MiB announced on POST /health got
+the 413 unread, a body stopped at 100 kB of 2 MB was let go at 30.0 s, and /health_generate got a
+401 without the key and was relayed with it. Through that path, Claude Code, Hermes, pi, the OpenAI
+and Anthropic SDKs, fetch under Node and Bun and LiteLLM each did their task.
+
+**A body the proxy writes again stays UTF-8 (D07, proxy v6.46).** Seven guards parse a body and write
+it again for the engine (the reasoning effort routes, the Qwen, Nemotron and Ornith effort
+translations, the tool schema patterns, the model name on vLLM), and the prompt counter writes the
+text it sends the engine's tokenizer. They wrote it with `json.dumps`' default, which escapes every
+character outside ASCII: a Chinese character took 6 bytes instead of 3 and an emoji 12 instead of 4,
+so the engine got a body two to three times the one sent, and the proxy held it at 5.65 and 7.98
+times its size while its guards worked on it, against 3.98 for an image as base64 (24 MiB bodies,
+three runs each): 384 MiB of emoji in flight needed 3,101 MiB, over the 2G the unit holds, where
+the kernel kills the proxy and every stream in flight. They write UTF-8 now (3.99, 3.98 and
+3.99), and `tests/test_proxy_memory_ceiling.py` measures the three shapes and holds the unit to the
+costliest.
+
+**The 27B says what its prefix cache served (#49).** With `--enable-cache-report`, which discussion
+#49 asked for, each answer says how much of its prompt the prefix cache served:
+`usage.prompt_tokens_details.cached_tokens` on the OpenAI routes (8,192 then 9,472 of a 9,539-token
+prompt that repeats its system message), `cache_read_input_tokens` beside `input_tokens` on
+/v1/messages (31 and 9,600 where it said 9,631 before), and the proxy's `x-systemone-cached-tokens`
+(0, then 2,176). Measured on the 27B lane behind the proxy, with the flag and without: the SDKs, fetch
+under Node and Bun, LiteLLM, Claude Code, opencode, Hermes and pi each did their task. opencode 1.19.4
+recorded 33,536 of a turn's 33,650 prompt tokens as read from the cache, its total unchanged, so it
+compacts where it did. `bench.sh` gave 64.9 against 64.0 tok/s (three runs each, their spreads
+overlapping). The three 27B units and `run.sh` pass it. The flash lane, on another build, is not
+measured and does not pass it.
+
+**Not in this release.** D05: each engine opens PyTorch's distributed store on every interface, which
+SECURITY.md has said since 2026-09-30, with the firewall to put in front. Its fix, a bridge network
+for the docker lanes, is measured lane by lane first. D06: on the vLLM lanes, a structured-output
+request can end vLLM's engine process (GHSA-85xf-c7hm-whqw, fixed in vLLM 0.30.0). It takes the box's
+key, or a client's behind the identity wall, and its fix is each vLLM lane's update. And, found while
+proving this release: opencode 1.19.4 does not run on the Ornith lane, with this proxy or the one before,
+as Ornith's chat template refuses a system message that is not the first, which opencode sends. The
+27B's template renders those as `<system-reminder>` blocks, and the next release gives Ornith the same.
+
+**What an update does.** The proxy restarts once (v6.46), and so does the cockpit. The 27B units and
+the flash launcher change: a box that serves the 27B or the flash lane restarts that engine once (it
+boots in about 7 min for the 27B, 11 for the flash). A box that serves another lane keeps it running,
+and the new units take effect at the lane's next Load. The image and video lanes get the patch in
+their source tree: one that serves keeps the code it started with, the installer says so, and a
+restart closes the channel. The speech lane is not touched.
+
+**Tests.** Each fix has tests that fail on the old tree: `tests/test_image_lane.py` (7) and
+`tests/test_video_lane.py` (4) for D01, `tests/test_engine_health_no_generation.py` (8) and
+`tests/test_proxy_door.py` (5) for D02, `tests/test_proxy_connection_ceiling.py` (2),
+`tests/test_proxy_body_budget.py` (5) and the cockpit's closed list of the proxy's outcomes for D03
+and D04, `tests/test_proxy_body_utf8.py` (9 of 10) and `tests/test_proxy_memory_ceiling.py` for D07,
+`tests/test_engine_cache_report.py` for #49.
+
 ## v1.40.0 (2026-10-24): the 64 GB DGX Spark gets the lanes that fit it and serves Bolt, Claude Code a launcher for the lane that serves, a --no-<lane> counts for its run only, and OpenAI's voice names each speak
 
 **The 64 GB DGX Spark.** NVIDIA's partners ship it from 2026-10-23: the same GB10, on the same
