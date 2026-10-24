@@ -67,7 +67,7 @@ for Bolt), bench.sh's probes, and for the settings kept the probes of v1.39.0.
 | 27B, fraction 0.75, 24 Mamba slots | 86,732 | 4 | 65.8 tok/s (1 run) | 3.6 GiB, refused | 367 s |
 | 27B, fraction 0.70, 12 Mamba slots | 46,700 and 92,415 (two boots) | 2 | 64.2 tok/s (1 run) | 3.7 GiB, refused | 296 s |
 | 27B, fraction 0.65, 12 Mamba slots | 59,625 | 2 | 67.2 tok/s (median of 3) | 6.2 GiB | 301 s |
-| Bolt, share 0.60 | 667,874 (2.55 windows) | 16 | 110.8 tok/s (median of 3) | 7.1 GiB | 332 s |
+| Bolt, share 0.60 | 667,874 and 721,883 (two boots, 2.55 and 2.75 windows) | 16 | 110.8 tok/s (median of 3) | 7.1 GiB | 332 s, 292 s |
 
 The kept settings are the highest that leave at least 6 GiB at the peak. On that budget the 27B's
 Mamba cache, which SGLang sizes per running request (six slots each with these settings), takes
@@ -76,6 +76,18 @@ to the next at the same settings (46,700 then 92,415): the page cache that readi
 fills changes the free memory SGLang reads before and after, and the pool is the difference.
 Bolt's prefix cache serves an agent's turns as on a 128 GB box (31,808 of 40,000 tokens a turn,
 5.2 s to the first token).
+
+On the settings kept, the 27B passed `checks_27b.py` but for one check, a 300 kB prompt that its pool
+cannot hold, which the proxy refused as too long, as it should; it gave 44.8 tok/s at one stream and
+55.3 at four on SGLang's own benchmark (8,192 tokens in, 1,024 out; two run at a time, so the other
+two wait); its prefix cache served 99 to 100% of each turn of an agent's conversation, with and
+without reasoning (13,000 tokens: one of 40,000 does not fit its pool, nor does the needle's
+calibration, which the proxy refused the same way); and the Anthropic SDK, fetch under Node and
+Bun, LiteLLM, Claude Code, opencode, Hermes and pi each did their task. On Bolt, the SDK, fetch,
+LiteLLM and opencode did theirs under its own name; Claude Code, Hermes and pi, which the test
+harness runs with the 27B's and the flash lane's names, were refused by vLLM, as the proxy that
+gives a vLLM lane its own name follows the engines' systemd units, and these test engines were
+none (a lane a box loads is one).
 
 `QWEN38_MEMORY_CLASS` forces the class, for the tests and for measuring a 64 GB budget on a
 128 GB box. `tests/test_boxmem.py` holds the thresholds to the boxes they were set from,
