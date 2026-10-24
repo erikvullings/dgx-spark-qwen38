@@ -138,7 +138,8 @@ answer budget (228,000 and 32,000 on Flash FP4-Local, 578,000 and 185,000 on the
 lane without opencode limits gets 205,000 and 32,000, which fit every lane's window, every pool
 measured on a 128 GB box, and Bolt's on a 64 GB one. The 27B's pool on a 64 GB box is smaller
 (opencode's fit gives it 37,000 and 12,000 there, and claude-local 60,000 and 12,000): with opencode
-off, it is the proxy's refusal of a prompt past the pool that makes Claude Code compact. `CLAUDE_CODE_ATTRIBUTION_HEADER` is not set: on the Ornith lane
+off, it is the proxy's refusal of a prompt past the pool that makes Claude Code compact (2.1.304, refused
+once with that 400 word for word on 2026-10-24, compacted and carried on). `CLAUDE_CODE_ATTRIBUTION_HEADER` is not set: on the Ornith lane
 Claude Code reused 36 to 38% of its prompts from the cache with it and without it.
 
 Measured against Claude Code 2.1.304 and a fake Anthropic server (2026-10-23): its effective
