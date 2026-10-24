@@ -15,6 +15,7 @@ import subprocess
 import sys
 import tempfile
 import threading
+import time
 
 REPO_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 BENCH = os.path.join(REPO_DIR, "bench.sh")
@@ -78,7 +79,7 @@ def run_bench(model):
     try:
         r = subprocess.run(["bash", BENCH], capture_output=True, text=True, timeout=180,
                            cwd=REPO_DIR,
-                           env={**os.environ, "PORT": str(srv.server_port), "HOME": home})
+                           env={**os.environ, "PORT": str(srv.server_port), "HOME": home, "HOGS_WINDOW": "0.5"})
     finally:
         srv.shutdown()
         shutil.rmtree(home, ignore_errors=True)
@@ -106,7 +107,23 @@ def main():
     if set(SERVED) != {"qwen3.8-flash-next"}:
         fails.append(f"the served model name was not used in the request: {set(SERVED)}")
 
+    # A process that holds a core before the run is named with its share, and the median says so
+    # (cpu-hogs.py): on a GB10 the CPU and the GPU share one power budget (2026-10-24)
+    spin = subprocess.Popen([sys.executable, "-c", "while True: pass"])
+    try:
+        time.sleep(0.3)
+        out = run_bench("qwen3.8-27b")
+    finally:
+        spin.kill()
+        spin.wait()
+    if f"  {spin.pid} " not in out or "of a core" not in out:
+        fails.append(f"a process spinning a core before the run was not named:\n{out[:700]}")
+    if "held a core before the run" not in out:
+        fails.append("the median does not say that a process held a core before the run")
+
     out = run_bench("qwen3.8-27b")
+    if "busy before the run" not in out:
+        fails.append("bench.sh no longer says what held a core before the run")
     if "Qwen3.8-27B NVFP4+DFlash2" not in out:
         fails.append(f"the 27B header is gone:\n{out[:400]}")
     if "Flash-Next" in out:

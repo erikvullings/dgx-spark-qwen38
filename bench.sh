@@ -11,7 +11,14 @@ for i in 1 2 3; do
   sleep 5
 done
 
-KEY="$(cat "$KEY_FILE")" PORT="$PORT" python3 - <<'PYEOF'
+# Who holds a CPU core outside the engine before the run, from one window (3 s) while the engine
+# waits for its first request: on a GB10 the CPU and the GPU share one power budget, and three
+# command-line calls left behind by old sessions held a core each for days on another DGX Spark
+# (October 2026), seen only in the load average (cpu-hogs.py).
+HOGS_WINDOW="${HOGS_WINDOW:-3}"
+HOGS="$(python3 "$(dirname "$0")/cpu-hogs.py" --window "$HOGS_WINDOW" 2>/dev/null || true)"
+
+KEY="$(cat "$KEY_FILE")" PORT="$PORT" HOGS="$HOGS" HOGS_WINDOW="$HOGS_WINDOW" python3 - <<'PYEOF'
 import json, os, statistics, time, urllib.request
 
 KEY, PORT = os.environ["KEY"], os.environ["PORT"]
@@ -124,6 +131,15 @@ title, reference = HEADERS.get(LANE) or (f"{MODEL or 'unknown model'} benchmark 
 print(title)
 print(f"served model: {MODEL or 'unknown (the engine did not name it)'}")
 print(f"{reference}\n")
+# pid, share of a core, name and command line, tab-separated, from cpu-hogs.py
+HOGS = [line.split("\t") for line in os.environ.get("HOGS", "").splitlines() if line.count("\t") == 3]
+if HOGS:
+    print(f"busy before the run, outside the engine (half a core or more over {os.environ['HOGS_WINDOW']} s):")
+    for pid, share, name, cmd in HOGS:
+        print(f"  {pid} {name}: {float(share):.0%} of a core   {cmd[:90]}")
+    print("  the CPU and the GPU share one power budget: the numbers below can come out lower\n")
+else:
+    print("busy before the run: nothing outside the engine held half a core\n")
 all_greedy = []
 untimed = 0
 for name, temp, prompt, mt in PROBES:
@@ -142,7 +158,8 @@ if not all_greedy:
     print("\n  greedy median: none, no greedy run could be timed")
     raise SystemExit(1)
 print(f"\n  greedy median: {statistics.median(all_greedy):.1f} tok/s"
-      + (f" ({untimed} run(s) could not be timed and are left out)" if untimed else ""))
+      + (f" ({untimed} run(s) could not be timed and are left out)" if untimed else "")
+      + (f" ({len(HOGS)} process(es) held a core before the run, see above)" if HOGS else ""))
 print("  (numbers vary with content: acceptance length drives everything;")
 if LANE == "27b":
     print("   math/code accept ~3.3-5.6 tokens/step, free prose ~1.5-2.2 in any")
