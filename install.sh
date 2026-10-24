@@ -2858,27 +2858,31 @@ fi
 # Never clobbers a claude-local that is not this repo's, but for the one discussion #59's reply of
 # 2026-10-22 gave to copy to that path until this launcher came (known by its first comment and
 # its last line): it is kept beside, in case it was edited, and replaced (Hasan, 2026-10-23).
+# None of it fails the install, as none of opencode's does: a launcher that could not be written
+# stopped a whole run before its units (found in review, 2026-10-24).
 if [ -z "$SECONDARY" ]; then
   CL_BIN="$HOME/.local/bin/claude-local"
   if [ -f "$CL_BIN" ] && grep -qx '# ~/.local/bin/claude-local: Claude Code on the lane the box serves' "$CL_BIN" \
      && grep -qx 'exec claude "$@"' "$CL_BIN"; then
-    mv -f "$CL_BIN" "$CL_BIN.from-59"
-    echo "the claude-local of discussion #59's reply is kept as $CL_BIN.from-59, and this repo's launcher replaces it"
+    if mv -f "$CL_BIN" "$CL_BIN.from-59"; then
+      echo "the claude-local of discussion #59's reply is kept as $CL_BIN.from-59, and this repo's launcher replaces it"
+    fi
   fi
   if [ -e "$CL_BIN" ] && ! grep -q 'dgx-spark-qwen38' "$CL_BIN" 2>/dev/null; then
     echo "NOTE: an unrelated 'claude-local' exists at $CL_BIN; not installing the launcher."
     echo "      Launch Claude Code on this box with:  python3 -I $REPO_DIR/claude-local.py"
-  else
-    mkdir -p "$HOME/.local/bin"
-    cat > "$CL_BIN" <<CLWRAP
+  elif mkdir -p "$HOME/.local/bin" && cat > "$CL_BIN" <<CLWRAP && chmod +x "$CL_BIN"; then
 #!/bin/bash
 # claude-local launcher installed by dgx-spark-qwen38: Claude Code on the lane this box serves.
 # The key, the model and the limits are read at each launch by claude-local.py in the clone.
-export CONFIG_DIR="\${CONFIG_DIR:-$CONFIG_DIR}"
+export QWEN38_CONFIG_DIR="\${QWEN38_CONFIG_DIR:-$CONFIG_DIR}"
+export QWEN38_PROXY_URL="\${QWEN38_PROXY_URL:-http://127.0.0.1:$PROXY_PORT}"
 exec python3 -I "$REPO_DIR/claude-local.py" "\$@"
 CLWRAP
-    chmod +x "$CL_BIN"
     echo "installed the claude-local launcher at $CL_BIN (Claude Code on the lane that serves)"
+  else
+    echo "NOTE: could not write the claude-local launcher at $CL_BIN (see above); the install goes on."
+    echo "      Launch Claude Code on this box with:  python3 -I $REPO_DIR/claude-local.py"
   fi
 fi
 

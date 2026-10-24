@@ -118,7 +118,7 @@ class EndToEnd(unittest.TestCase):
         Fake.seen = []
 
     def launch(self, *args, env=None, with_claude=True):
-        base_env = {"HOME": str(self.d), "CONFIG_DIR": str(self.cfg), "LANG": "C.UTF-8",
+        base_env = {"HOME": str(self.d), "QWEN38_CONFIG_DIR": str(self.cfg), "LANG": "C.UTF-8",
                     "PATH": (f"{self.bin}:" if with_claude else "") + "/usr/bin:/bin"}
         r = subprocess.run([sys.executable, "-I", str(SCRIPT), *args], capture_output=True, text=True,
                            timeout=60, env={**base_env, **(env or {})})
@@ -160,6 +160,68 @@ class EndToEnd(unittest.TestCase):
         self.assertEqual(r.returncode, 0, r.stderr)
         self.assertEqual(saw["env"]["CLAUDE_CODE_MAX_CONTEXT_TOKENS"], "205000")
 
+    def test_the_probe_goes_to_the_box_even_with_an_http_proxy_set(self):
+        # urllib followed http_proxy, and the key went out in clear to it unless no_proxy named
+        # 127.0.0.1 (found in review, 2026-10-24); Claude Code is told to go direct too
+        seen = []
+        class Proxy(BaseHTTPRequestHandler):
+            def log_message(self, *a):
+                pass
+            def do_GET(self):
+                seen.append((self.path, self.headers.get("Authorization")))
+                self.send_response(502); self.send_header("Content-Length", "0"); self.end_headers()
+        proxy = ThreadingHTTPServer(("127.0.0.1", 0), Proxy)
+        threading.Thread(target=proxy.serve_forever, daemon=True).start()
+        self.addCleanup(proxy.shutdown)
+        url = f"http://127.0.0.1:{proxy.server_address[1]}"
+        r, saw = self.launch(env={"http_proxy": url, "HTTP_PROXY": url, "no_proxy": "localhost"})
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(seen, [], "the probe went through the HTTP proxy")
+        self.assertIn("127.0.0.1", saw["env"]["NO_PROXY"].split(","))
+        self.assertEqual(saw["env"]["no_proxy"].split(",")[0], "localhost", "what was there is kept")
+
+    def test_an_answer_that_is_an_error_says_its_code(self):
+        Fake.models = {"error": "x"}
+        self.addCleanup(setattr, Fake, "models", {"data": [{"id": "qwen3.8-flash-next-fp4", "max_model_len": 262_144}]})
+        class Refusing(Fake):
+            def do_GET(self):
+                self.send_response(401); self.send_header("Content-Length", "0"); self.end_headers()
+        srv = ThreadingHTTPServer(("127.0.0.1", 0), Refusing)
+        threading.Thread(target=srv.serve_forever, daemon=True).start()
+        self.addCleanup(srv.shutdown)
+        r, saw = self.launch(env={"CLAUDE_LOCAL_URL": f"http://127.0.0.1:{srv.server_address[1]}"})
+        self.assertEqual(r.returncode, 1)
+        self.assertIn("answered HTTP 401: the box's key was refused", r.stderr)
+        self.assertNotIn("load one from the cockpit", r.stderr)
+        # a body that is not the list it should be is said, not a traceback
+        r, saw = self.launch()
+        self.assertEqual(r.returncode, 1)
+        self.assertIn("lists no model", r.stderr)
+        self.assertNotIn("Traceback", r.stderr)
+
+    def test_an_output_setting_that_is_not_a_number_is_said(self):
+        r, saw = self.launch(env={"CLAUDE_CODE_MAX_OUTPUT_TOKENS": "32k"})
+        self.assertEqual(r.returncode, 2)
+        self.assertIn("CLAUDE_CODE_MAX_OUTPUT_TOKENS=32k is not a number of tokens", r.stderr)
+        self.assertNotIn("Traceback", r.stderr)
+        self.assertIsNone(saw)
+
+    def test_an_extra_body_of_yours_keeps_the_lanes_answer_budget(self):
+        r, saw = self.launch(env={"CLAUDE_CODE_EXTRA_BODY": '{"temperature": 0.2}'})
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(json.loads(saw["env"]["CLAUDE_CODE_EXTRA_BODY"]), {"temperature": 0.2, "max_tokens": 32_000})
+
+    def test_a_claude_model_name_of_yours_is_said_to_undo_the_context(self):
+        r, saw = self.launch(env={"ANTHROPIC_MODEL": "claude-sonnet-4-5"})
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(saw["env"]["ANTHROPIC_MODEL"], "claude-sonnet-4-5")
+        self.assertIn("names a Claude model", r.stderr)
+
+    def test_a_config_dir_another_tool_exports_is_not_taken(self):
+        r, saw = self.launch(env={"CONFIG_DIR": str(self.d / "elsewhere")})
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(saw["env"]["ANTHROPIC_AUTH_TOKEN"], KEY)
+
     def test_no_claude_says_where_to_get_it(self):
         r, saw = self.launch(with_claude=False)
         self.assertEqual(r.returncode, 127)
@@ -175,6 +237,20 @@ class EndToEnd(unittest.TestCase):
         self.assertIsNone(saw)
 
 
+class TheProxyItReaches(unittest.TestCase):
+    def test_with_no_opencode_config_the_launchers_port(self):
+        # with --no-opencode there is no opencode.json, and the default port missed a box whose
+        # proxy listens elsewhere (found in review, 2026-10-24); checked in this process, so no old
+        # code ever reaches the proxy on this box's port
+        old = os.environ.get("QWEN38_PROXY_URL")
+        self.addCleanup(lambda: os.environ.__setitem__("QWEN38_PROXY_URL", old) if old is not None
+                        else os.environ.pop("QWEN38_PROXY_URL", None))
+        os.environ["QWEN38_PROXY_URL"] = "http://127.0.0.1:31001"
+        self.assertEqual(cl.proxy_base({}), "http://127.0.0.1:31001")
+        self.assertEqual(cl.proxy_base({"provider": {"x": {"options": {"baseURL": "http://127.0.0.1:30001/v1"}}}}),
+                         "http://127.0.0.1:30001")
+
+
 class TheInstallerWritesIt(unittest.TestCase):
     TEXT = (REPO / "install.sh").read_text()
     START = TEXT.index('if [ -z "$SECONDARY" ]; then\n  CL_BIN=')
@@ -188,7 +264,8 @@ class TheInstallerWritesIt(unittest.TestCase):
         if existing is not None:
             (bindir / "claude-local").write_bytes(existing)
         script = ("set -euo pipefail\n"
-                  f'HOME="{home}"; CONFIG_DIR="{home}/.config/qwen38"; REPO_DIR=/the/clone; SECONDARY=""\n' + self.BLOCK)
+                  f'HOME="{home}"; CONFIG_DIR="{home}/.config/qwen38"; REPO_DIR=/the/clone; SECONDARY=""; PROXY_PORT=31001\n'
+                  + self.BLOCK)
         r = subprocess.run(["bash", "-c", script], capture_output=True, text=True, timeout=30,
                            env={"PATH": "/usr/bin:/bin", "HOME": str(home)})
         out = bindir / "claude-local"
@@ -199,6 +276,25 @@ class TheInstallerWritesIt(unittest.TestCase):
         self.assertEqual(r.returncode, 0, r.stderr)
         self.assertIn(b"dgx-spark-qwen38", text)
         self.assertIn(b'exec python3 -I "/the/clone/claude-local.py" "$@"', text)
+        # its settings by names of this repo's own, the proxy's port the box's
+        self.assertIn(b'export QWEN38_CONFIG_DIR="${QWEN38_CONFIG_DIR:-', text)
+        self.assertIn(b'export QWEN38_PROXY_URL="${QWEN38_PROXY_URL:-http://127.0.0.1:31001}"', text)
+        self.assertNotIn(b"export CONFIG_DIR", text)
+
+    def test_a_launcher_that_cannot_be_written_does_not_stop_the_install(self):
+        # set -e stopped the whole run before its units (found in review, 2026-10-24)
+        home = pathlib.Path(tempfile.mkdtemp(prefix="claude-local-home-"))
+        self.addCleanup(lambda: subprocess.run(["rm", "-rf", str(home)]))
+        (home / ".local").mkdir()
+        (home / ".local/bin").write_text("a file where the folder goes\n")
+        script = ("set -euo pipefail\n"
+                  f'HOME="{home}"; CONFIG_DIR="{home}/.config/qwen38"; REPO_DIR=/the/clone; SECONDARY=""; PROXY_PORT=31001\n'
+                  + self.BLOCK + 'echo "went on"\n')
+        r = subprocess.run(["bash", "-c", script], capture_output=True, text=True, timeout=30,
+                           env={"PATH": "/usr/bin:/bin", "HOME": str(home)})
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("NOTE: could not write the claude-local launcher", r.stdout)
+        self.assertIn("went on", r.stdout)
 
     def test_a_foreign_claude_local_is_left_alone(self):
         foreign = b"#!/bin/sh\necho someone else's\n"

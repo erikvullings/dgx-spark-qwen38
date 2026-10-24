@@ -33,14 +33,18 @@ import os
 import shutil
 import sys
 import urllib.error
+import urllib.parse
 import urllib.request
 from pathlib import Path
 
-REPO_DIR = Path(__file__).resolve().parent
-CONFIG_DIR = Path(os.environ.get("CONFIG_DIR", Path.home() / ".config/qwen38"))
+# The box's config folder, by a name of this repo's own: a CONFIG_DIR another tool exports was
+# taken for it (found in review, 2026-10-24). The launcher install.sh writes sets it.
+CONFIG_DIR = Path(os.environ.get("QWEN38_CONFIG_DIR") or Path.home() / ".config/qwen38")
 DEFAULT_BASE = "http://127.0.0.1:30001"
-# What fits every lane's window (262,144 tokens on the smallest) and every pool this repo has
-# measured, for a box whose opencode limits say nothing about the lane that serves.
+# What fits every lane's window (262,144 tokens on the smallest), every pool measured on a 128 GB
+# box and Bolt's on a 64 GB one, for a box whose opencode limits say nothing about the lane that
+# serves. The 27B's pool on a 64 GB box is smaller: there the proxy refuses a prompt past it, and
+# Claude Code compacts on that refusal.
 FALLBACK = (205_000, 32_000)
 # Claude Code's own output setting, as it reads it (its default when unset)
 CC_OUTPUT_DEFAULT = 32_000
@@ -67,29 +71,45 @@ def opencode_config() -> dict:
 
 def proxy_base(cfg: dict) -> str:
     """The proxy, as the box's opencode config reaches it (the installer writes it with the
-    proxy's port), unless CLAUDE_LOCAL_URL names another."""
+    proxy's port), unless CLAUDE_LOCAL_URL names another; with no opencode config, the port the
+    launcher was written with (QWEN38_PROXY_URL): the default one missed a box on another port
+    (found in review, 2026-10-24)."""
     if os.environ.get("CLAUDE_LOCAL_URL"):
         return os.environ["CLAUDE_LOCAL_URL"].rstrip("/")
     for prov in (cfg.get("provider") or {}).values():
         url = ((prov or {}).get("options") or {}).get("baseURL") or ""
-        if url:
+        if isinstance(url, str) and url:
             return url.rstrip("/").removesuffix("/v1")
-    return DEFAULT_BASE
+    return (os.environ.get("QWEN38_PROXY_URL") or DEFAULT_BASE).rstrip("/")
+
+
+# The probe goes to the box itself, never through an HTTP proxy the shell names: urllib follows
+# http_proxy, and the box's key went out in clear to it unless no_proxy named 127.0.0.1 (found in
+# review, 2026-10-24).
+DIRECT = urllib.request.build_opener(urllib.request.ProxyHandler({}))
 
 
 def served_model(base: str, key: str) -> tuple[str, int]:
     """The model the proxy serves, and its window when the engine says it (vLLM does)."""
     req = urllib.request.Request(base + "/v1/models", headers={"Authorization": f"Bearer {key}"})
     try:
-        with urllib.request.urlopen(req, timeout=10) as r:
-            data = json.loads(r.read().decode()).get("data") or []
+        with DIRECT.open(req, timeout=10) as r:
+            body = json.loads(r.read().decode())
+    except urllib.error.HTTPError as e:
+        # an answer, so not a lane missing: a key this proxy refuses, or an engine booting
+        why = "the box's key was refused (another box's proxy?)" if e.code in (401, 403) else "a lane may be starting"
+        say(f"{base}/v1/models answered HTTP {e.code}: {why}")
+        raise SystemExit(1)
     except (urllib.error.URLError, OSError, ValueError) as e:
         say(f"no lane answers at {base} ({type(e).__name__}): load one from the cockpit first")
         raise SystemExit(1)
-    if not data or not data[0].get("id"):
+    data = body.get("data") if isinstance(body, dict) else None
+    first = data[0] if isinstance(data, list) and data and isinstance(data[0], dict) else {}
+    if not isinstance(first.get("id"), str) or not first["id"]:
         say(f"{base}/v1/models lists no model: load a lane from the cockpit first")
         raise SystemExit(1)
-    return data[0]["id"], int(data[0].get("max_model_len") or 0)
+    window = first.get("max_model_len")
+    return first["id"], window if isinstance(window, int) and window > 0 else 0
 
 
 def opencode_limits(cfg: dict, model: str) -> tuple[int, int] | None:
@@ -123,7 +143,11 @@ def main(argv: list[str]) -> int:
     cfg = opencode_config()
     base = proxy_base(cfg)
     model, window = served_model(base, key)
-    cc_output = int(os.environ.get("CLAUDE_CODE_MAX_OUTPUT_TOKENS") or CC_OUTPUT_DEFAULT)
+    try:
+        cc_output = int(os.environ.get("CLAUDE_CODE_MAX_OUTPUT_TOKENS") or CC_OUTPUT_DEFAULT)
+    except ValueError:
+        say(f"CLAUDE_CODE_MAX_OUTPUT_TOKENS={os.environ['CLAUDE_CODE_MAX_OUTPUT_TOKENS']} is not a number of tokens")
+        return 2
     context, output, why = claude_pair(opencode_limits(cfg, model), window, cc_output)
     env = dict(os.environ)
     env.update({
@@ -138,9 +162,25 @@ def main(argv: list[str]) -> int:
         "CLAUDE_BYTE_STREAM_IDLE_TIMEOUT_MS": env.get("CLAUDE_BYTE_STREAM_IDLE_TIMEOUT_MS") or "1800000",
         "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": env.get("CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC") or "1",
     })
-    # yours win: a context or an answer budget you set is kept as it is
+    # the box itself, never through a proxy the shell names (Claude Code reads HTTPS_PROXY too)
+    host = urllib.parse.urlsplit(base).hostname or ""
+    if host in ("127.0.0.1", "localhost", "::1"):
+        for name in ("NO_PROXY", "no_proxy"):
+            have = [h for h in env.get(name, "").split(",") if h.strip()]
+            env[name] = ",".join(have + [h for h in ("127.0.0.1", "localhost") if h not in have])
+    # yours win: a context or an answer budget you set is kept as it is; an extra body of yours
+    # without max_tokens gets the lane's, as it otherwise dropped it (found in review, 2026-10-24)
     env.setdefault("CLAUDE_CODE_MAX_CONTEXT_TOKENS", str(context))
-    env.setdefault("CLAUDE_CODE_EXTRA_BODY", json.dumps({"max_tokens": output}))
+    try:
+        extra = json.loads(env.get("CLAUDE_CODE_EXTRA_BODY") or "{}")
+    except ValueError:
+        extra = None
+    if isinstance(extra, dict) and "max_tokens" not in extra:
+        env["CLAUDE_CODE_EXTRA_BODY"] = json.dumps({**extra, "max_tokens": output})
+    # Claude Code applies CLAUDE_CODE_MAX_CONTEXT_TOKENS to a model it does not know only
+    if env["ANTHROPIC_MODEL"].lower().startswith("claude"):
+        say(f"ANTHROPIC_MODEL={env['ANTHROPIC_MODEL']} names a Claude model: Claude Code then sizes the context "
+            f"for that model, not for this lane; unset it to get the lane's ({model})")
     if sys.stderr.isatty():
         mine = "CLAUDE_CODE_MAX_CONTEXT_TOKENS" in os.environ or "CLAUDE_CODE_EXTRA_BODY" in os.environ
         say(f"{env['ANTHROPIC_MODEL']} through {base}, context {env['CLAUDE_CODE_MAX_CONTEXT_TOKENS']}, "
