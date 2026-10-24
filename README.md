@@ -224,7 +224,10 @@ Each refusal comes before a byte is fetched or pulled: in `install.sh`, in each 
 `switch-model.sh`, and so in the cockpit's Load, where a lane a 64 GB box cannot hold says it needs
 a 128 GB DGX Spark. `--no-service` is refused there too, as `./run.sh` serves a 128 GB box's
 settings: the service's unit is the one sized for 64 GB. opencode's limits are fitted to the pool
-the 27B boots to, by the installer and at each Load, as on the 1M window. The cockpit names the box over its pool,
+the 27B boots to, by the installer and at each Load, as on the 1M window. That pool holds an agent's turns, not
+its largest step: one as large as the largest measured here (43,863 tokens, over 2,156 opencode steps) can reach
+past what the proxy takes from a pool under 87,000 tokens, which refuses it as too long, and opencode and Claude
+Code compact on that refusal and carry on. Bolt's pool holds such a step many times over. The cockpit names the box over its pool,
 from its DMI ("ASUS Ascent GX10, 64 GB"). Measured on the reference box at the memory a 64 GB box gives
 each engine (2026-10-24), how and every setting tried in the [CHANGELOG](CHANGELOG.md) (v1.40.0).
 

@@ -39,7 +39,13 @@ every other lane's installer as soon as it has its library (its `--uninstall` st
 `prepare-lane.sh` and `switch-model.sh` for such a lane or target, and so the cockpit's Load, whose
 page shows them and does not offer them. opencode's limits are fitted to the pool the 27B boots to,
 by the installer as on the 1M window and by the cockpit at each Load, since the native pair was
-sized on a 128 GB box's pool. The lanes left out are named once,
+sized on a 128 GB box's pool. That fit keeps an agent's largest step inside the window, not inside
+the pool, where it keeps only the margin for the next boot: on a pool under 87,000 tokens one step
+as large as the largest measured (43,863 tokens, over 2,156 opencode steps) reaches past what the
+proxy takes (on 59,625 tokens the fit gives 37,000 and 12,000, and such a step can bring a prompt to
+68,863 where the proxy takes 54,855). The proxy refuses it as too long, and opencode and Claude Code
+compact on that refusal and carry on. The 27B's pool on a 128 GB box holds it many times over
+(found in review, 2026-10-24). The lanes left out are named once,
 and `--with-<lane>` for one of them is refused. `conformity.py` recommends the native window
 there.
 
