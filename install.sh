@@ -2,10 +2,9 @@
 # Qwen3.8 serving stack on DGX Spark (GB10): 27B (SGLang+DFlash2) or Flash-Next
 # 176B (SGLang+NEXTN, PLE table mmap-served from NVMe). Systemd, hardened.
 # Idempotent: safe to re-run at any time (uses local caches when present).
-# Everything is PINNED to versions validated on this hardware (the 27B image on
-# 2026-09-17, everything else on 2026-09-11); override with env vars if you want
-# to try newer builds (see --help). Since v1.14 BOTH lanes serve an OFFICIAL
-# SGLang image with nothing added and this script builds nothing by default: the
+# Everything is PINNED to versions validated on this hardware; override with env
+# vars if you want to try newer builds (see --help). Since v1.14 BOTH lanes serve
+# an OFFICIAL SGLang image with nothing added and this script builds nothing by default: the
 # flash lane crossed over in v1.8, the 27B lane followed once the two reasons it
 # had stayed behind were measured rather than restated (see the IMAGE pin below).
 # The flash lane's old overlay files stay in flash-sglang/ as the record of what
@@ -661,8 +660,8 @@ nothing records as chosen, moves to today's default (since v1.36.0); the list
 printed before step 1 says which, and --plan prints it alone.
 
 Env overrides (defaults are pinned to the versions validated on the reference
-box, the 27B image on 2026-10-09):
-  IMAGE=lmsysorg/sglang:v0.5.21      the moving tag of the pinned digest, instead
+box, the 27B image on 2026-10-23):
+  IMAGE=lmsysorg/sglang:v0.5.22      the moving tag of the pinned digest, instead
                                      of the digest itself (this run only: IMAGE
                                      is not remembered, pass it on every run)
   MODEL_REV=main                     use the latest target revision
@@ -1845,7 +1844,7 @@ elif [ "$LANE" = "flash" ]; then
   PULLED_IMAGE="$PULL_TARGET"
 else
   step "2/10 Pulling the SGLang image (~15 GB to download, 34 GB on disk, one-time, resumable)"
-  docker pull "$PULL_TARGET" || die "docker pull failed. Causes: no internet, Docker Hub rate limit (retry in a few minutes or 'docker login'), or the pinned digest was removed upstream: try IMAGE=lmsysorg/sglang:v0.5.21 ./install.sh, the moving tag of the same release"
+  docker pull "$PULL_TARGET" || die "docker pull failed. Causes: no internet, Docker Hub rate limit (retry in a few minutes or 'docker login'), or the pinned digest was removed upstream: try IMAGE=lmsysorg/sglang:v0.5.22 ./install.sh, the moving tag of the same release"
   PULLED_IMAGE="$PULL_TARGET"
 fi
 # pin_tag, the local tag a digest pull needs to survive a docker image prune: in lanes.sh
