@@ -40,7 +40,7 @@ FIRST = ["tests/test_text_lane.py", "tests/test_check_pins.py"]
 TEST_DEF = "def " + "test_"
 
 # Loaded by every python the suite starts (PYTHONPATH). It writes the environment changes of the
-# test file's own process only, the one whose script is the file under test.
+# test file's own process only, the one started with the file under test as its script.
 SITECUSTOMIZE = r'''
 import atexit, json, os, sys, traceback
 _START = dict(os.environ)
@@ -59,9 +59,13 @@ def _contact(event, args):
 if _PORTS and os.environ.get("QWEN38_CONTACT_LOG"):
     sys.addaudithook(_contact)
 
+# Decided now, from the command line as the runner gave it: a test can replace sys.argv (the proxy's
+# tests load it as keepalive-proxy.py) or change directory before its process exits.
+_MINE = bool(_START.get("QWEN38_ENV_FOR")) and sys.argv[:1] == [_START.get("QWEN38_ENV_FOR")]
+
 def _env_at_exit():
-    target, report = _START.get("QWEN38_ENV_FOR"), _START.get("QWEN38_ENV_REPORT")
-    if not (target and report and sys.argv and os.path.abspath(sys.argv[0]) == target):
+    report = _START.get("QWEN38_ENV_REPORT")
+    if not (_MINE and report):
         return
     now = dict(os.environ)
     changed = sorted(k for k in set(_START) | set(now) if _START.get(k) != now.get(k))
@@ -94,7 +98,7 @@ def run_one(f, probe, repo=REPO, timeout=1800):
     cwd, rel = (repo / "dashboard", "tests/" + path.name) if f.startswith("dashboard/") else (repo, f)
     env_report = probe / ("env-" + f.replace("/", "_") + ".json")
     env = {**os.environ, "PYTHONPATH": os.pathsep.join(filter(None, [str(probe), os.environ.get("PYTHONPATH")])),
-           "QWEN38_ENV_FOR": str(path), "QWEN38_ENV_REPORT": str(env_report)}
+           "QWEN38_ENV_FOR": rel, "QWEN38_ENV_REPORT": str(env_report)}
     t0 = time.monotonic()
     try:
         r = subprocess.run([sys.executable, rel], cwd=cwd, env=env, capture_output=True, text=True,

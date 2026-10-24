@@ -16,23 +16,29 @@ rs = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(rs)
 
 MAIN = '\n\nif __name__ == "__main__":\n    unittest.main()\n'
+# the fake files' tests are spelled TEST_ here and test_ on disk: the CI counts that string in this
+# file to know how many tests it declares
+TEST_DEF = "def " + "test_"
 FILES = {
-    "tests/test_ok.py": "import unittest\n\nclass T(unittest.TestCase):\n    def test_a(self):\n        pass\n\n"
-                        "    def test_b(self):\n        pass\n" + MAIN,
-    "tests/test_fails.py": "import unittest\n\nclass T(unittest.TestCase):\n    def test_a(self):\n"
+    "tests/test_ok.py": "import unittest\n\nclass T(unittest.TestCase):\n    def TEST_a(self):\n        pass\n\n"
+                        "    def TEST_b(self):\n        pass\n" + MAIN,
+    "tests/test_fails.py": "import unittest\n\nclass T(unittest.TestCase):\n    def TEST_a(self):\n"
                            "        self.assertEqual(1, 2)\n" + MAIN,
     # declares a test and runs none when invoked directly
-    "tests/test_no_main.py": "import unittest\n\nclass T(unittest.TestCase):\n    def test_a(self):\n        pass\n",
-    "tests/test_leaks.py": "import os, unittest\n\nclass T(unittest.TestCase):\n    def test_a(self):\n"
+    "tests/test_no_main.py": "import unittest\n\nclass T(unittest.TestCase):\n    def TEST_a(self):\n        pass\n",
+    "tests/test_leaks.py": "import os, unittest\n\nclass T(unittest.TestCase):\n    def TEST_a(self):\n"
                            "        os.environ['LEAKED_BY_A_TEST'] = '1'\n" + MAIN,
-    "tests/test_restores.py": "import os, unittest\n\nclass T(unittest.TestCase):\n    def test_a(self):\n"
+    "tests/test_restores.py": "import os, unittest\n\nclass T(unittest.TestCase):\n    def TEST_a(self):\n"
                               "        os.environ['SET_THEN_GONE'] = '1'\n        del os.environ['SET_THEN_GONE']\n" + MAIN,
-    "tests/test_contacts.py": "import socket, unittest\n\nclass T(unittest.TestCase):\n    def test_a(self):\n"
+    "tests/test_contacts.py": "import socket, unittest\n\nclass T(unittest.TestCase):\n    def TEST_a(self):\n"
                               "        s = socket.socket()\n        try:\n            s.connect(('127.0.0.1', 1))\n"
                               "        except OSError:\n            pass\n        finally:\n            s.close()\n" + MAIN,
-    "tests/test_takes_a_port.py": "import socket, unittest\n\nclass T(unittest.TestCase):\n    def test_a(self):\n"
+    "tests/test_takes_a_port.py": "import socket, unittest\n\nclass T(unittest.TestCase):\n    def TEST_a(self):\n"
                                   "        s = socket.socket(); s.bind(('127.0.0.1', 0)); s.getsockname()[1]; s.close()\n" + MAIN,
-    "dashboard/tests/test_cockpit_side.py": "import unittest\n\nclass T(unittest.TestCase):\n    def test_a(self):\n"
+    # loads a module as another script, as the proxy's tests do, and leaves the directory it started in
+    "tests/test_argv_and_cwd.py": "import os, sys, unittest\n\nclass T(unittest.TestCase):\n    def TEST_a(self):\n"
+                                  "        sys.argv = ['keepalive-proxy.py']\n        os.chdir('/')\n" + MAIN,
+    "dashboard/tests/test_cockpit_side.py": "import unittest\n\nclass T(unittest.TestCase):\n    def TEST_a(self):\n"
                                             "        pass\n" + MAIN,
 }
 
@@ -43,7 +49,7 @@ class OnPlantedDefects(unittest.TestCase):
         cls.repo = pathlib.Path(tempfile.mkdtemp(prefix="run-suite-repo-"))
         for rel, text in FILES.items():
             (cls.repo / rel).parent.mkdir(parents=True, exist_ok=True)
-            (cls.repo / rel).write_text(text)
+            (cls.repo / rel).write_text(text.replace("def TEST_", TEST_DEF))
         cls.probe = pathlib.Path(tempfile.mkdtemp(prefix="run-suite-probe-"))
         (cls.probe / "sitecustomize.py").write_text(rs.SITECUSTOMIZE)
 
@@ -83,6 +89,10 @@ class OnPlantedDefects(unittest.TestCase):
 
     def test_a_variable_set_and_removed_is_not(self):
         self.assertEqual(self.verdict("tests/test_restores.py")["problems"], [])
+
+    def test_a_file_that_replaces_its_argv_and_directory_still_reports(self):
+        # the proxy's tests set sys.argv to keepalive-proxy.py: their processes went unreported (2026-10-24)
+        self.assertEqual(self.verdict("tests/test_argv_and_cwd.py")["problems"], [])
 
     def test_a_cockpit_file_runs_from_the_dashboard(self):
         self.assertEqual(self.verdict("dashboard/tests/test_cockpit_side.py")["problems"], [])
