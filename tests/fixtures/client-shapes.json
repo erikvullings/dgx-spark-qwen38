@@ -1,0 +1,14 @@
+{
+  "about": "The message roles each real client sends on the OpenAI route, never their content: captured on the reference box on 2026-10-24 through a relay in front of the proxy (opencode 1.19.4, Hermes Agent, pi, the OpenAI SDK, fetch under Node and Bun, LiteLLM). tests/lane-templates-check.py renders each shape, with tools and without, through every text lane's chat template as its installer serves it. assistant_tool_call is an assistant turn that calls a tool, tool the tool's answer. A shape marked derived was not captured as such: the note says what it stands for.",
+  "shapes": [
+    {"client": "opencode 1.19.4", "roles": ["system", "system", "user"]},
+    {"client": "opencode 1.19.4, a tool round", "roles": ["system", "system", "user", "assistant_tool_call", "tool"],
+     "derived": "its first request, followed by the tool round the agents below send"},
+    {"client": "Hermes Agent and pi", "roles": ["system", "user"]},
+    {"client": "Hermes Agent and pi, a tool round", "roles": ["system", "user", "assistant_tool_call", "tool"]},
+    {"client": "the OpenAI SDK, fetch under Node and Bun, LiteLLM", "roles": ["user"]},
+    {"client": "an agent's reminder after its first turn", "roles": ["system", "user", "assistant", "system", "user"],
+     "derived": "what patch-template.py's system-reminder fix is for: a system message injected after the first turn"}
+  ],
+  "not_here": "Claude Code speaks Anthropic's /v1/messages, which each engine turns into chat messages itself: the clients matrix run before each release proves it on every text lane."
+}
