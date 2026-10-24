@@ -2890,6 +2890,33 @@ fi
 # one run and never recorded. The run for the other text lane (QWEN38_SECONDARY) writes
 # nothing: PORT, HF_CACHE and the binds reach it from this run, explicit-looking but not
 # choices of its own. Never fatal: without a record the next update classes the box by its age.
+ran_whole_before() {  # a run of this repo ended whole on this box before (installed.json)
+  python3 -c 'import json, sys; sys.exit(0 if json.load(open(sys.argv[1])).get("path") in ("full", "side-boot") else 1)' \
+    "$CONFIG_DIR/installed.json" 2>/dev/null
+}
+bolt_answers() {  # $1 seconds: Bolt's engine answers on its port before then, its unit not failed
+  local end=$((SECONDS + $1))
+  while [ "$SECONDS" -lt "$end" ]; do
+    [ "$(systemctl is-active qwen38-nemotron.service 2>/dev/null)" != failed ] || return 1
+    curl -sf -m 5 -o /dev/null "http://127.0.0.1:$PORT/health" && return 0
+    sleep 10
+  done
+  return 1
+}
+bolt_first_load() {  # Bolt loaded as the cockpit's Load does it; 0 when it answers, the box back on the 27B else
+  bash "$REPO_DIR/prepare-lane.sh" nemotron || return 1
+  if ! bash "$REPO_DIR/switch-model.sh" nemotron; then
+    bash "$REPO_DIR/switch-model.sh" "$MODEL_CHOICE" || true
+    return 1
+  fi
+  if sudo systemctl stop "$UNIT_NAME" && sudo systemctl start qwen38-nemotron.service && bolt_answers 1800; then
+    return 0
+  fi
+  sudo systemctl stop qwen38-nemotron.service || true
+  bash "$REPO_DIR/switch-model.sh" "$MODEL_CHOICE" || true
+  sudo systemctl start "$UNIT_NAME" || true
+  return 1
+}
 record_install() {  # $1 how the run ended: full, side-boot, no-start or no-service
   if [ -n "$SECONDARY" ]; then return 0; fi
   local chose=()
@@ -3817,16 +3844,23 @@ except Exception as e:
     # A 64 GB DGX Spark serves Nemotron 3.5 Bolt (Hasan, 2026-10-24): there the 27B gets two requests
     # and a pool of 59,625 tokens (measured on a 64 GB budget, 2026-10-24, its Mamba cache taking much
     # of what the weights leave), where Bolt holds its 262,144-token window 2.55 times over at a
-    # 110.8 tok/s greedy median. A new box has proved its 27B by now: Bolt is prepared and loaded as
-    # the cockpit's Load does it, and the 27B stays a Load away. A box that already boots a lane
-    # keeps it, and a run that names a 27B target, or leaves Bolt out, keeps the 27B.
-    if [ "$MEM_CLASS" = 64 ] && [ -z "$INSTALLED_CHOICE" ] && [ "$SIDE_BOOT" -eq 0 ] && [ -z "$SECONDARY" ] \
-       && [ -z "$_ENV_MODEL_CHOICE" ] && [ "$WANT_NEMOTRON" -eq 1 ]; then
-      step "A 64 GB DGX Spark serves Nemotron 3.5 Bolt: preparing it, then switching to it (the 27B stays installed)"
-      if bash "$REPO_DIR/prepare-lane.sh" nemotron && bash "$REPO_DIR/switch-model.sh" nemotron; then
-        echo "  Nemotron 3.5 Bolt serves now, and at boot; the 27B is a Load away (the cockpit, or ./switch-model.sh stock)"
+    # 110.8 tok/s greedy median. A new box has proved its 27B by now: Bolt is loaded the way the
+    # cockpit's Load does it (prepare-lane.sh, switch-model.sh, which only points the boot and
+    # opencode at it, then the 27B stopped and Bolt started), and the 27B stays a Load away. A Bolt
+    # that does not come up puts the box back on the 27B. New: no run ever ended whole here
+    # (installed.json), so a first run that died, or stopped at --no-start, still counts, and
+    # --recommended, what a new box gets. A box that boots a lane, a run that names a 27B target,
+    # or one that leaves Bolt out keeps the 27B.
+    if [ "$MEM_CLASS" = 64 ] && [ "$SIDE_BOOT" -eq 0 ] && [ -z "$SECONDARY" ] && [ -z "$_ENV_MODEL_CHOICE" ] \
+       && [ "$WANT_NEMOTRON" -eq 1 ] && { [ "$RECOMMENDED" -eq 1 ] || ! ran_whole_before; }; then
+      step "A 64 GB DGX Spark serves Nemotron 3.5 Bolt: loading it as the cockpit does (the 27B stays installed)"
+      if bolt_first_load; then
+        python3 "$REPO_DIR/oc-fit-limits.py" --engine "http://127.0.0.1:$PORT" --restart-agent \
+          || echo "  NOTE: opencode's limits were not fitted to Bolt; the cockpit's button fits them"
+        echo "  Nemotron 3.5 Bolt serves now, and at boot; the 27B is a Load away in the cockpit"
       else
-        echo "NOTE: Bolt did not come up (see above), so the 27B keeps serving. Load Bolt from the cockpit to try again."
+        echo "NOTE: Bolt did not come up (see above), so the 27B serves this box (if it was stopped, it starts"
+        echo "      again and answers in a few minutes). Load Bolt from the cockpit to try again."
       fi
     fi
     record_install full

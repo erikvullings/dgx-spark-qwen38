@@ -5,6 +5,7 @@ The 64 GB DGX Spark ships from 2026-10-23 (boxmem.py says how it is told apart).
 it the 27B in a unit sized for it and Bolt; the lanes' installers, the switch and the 27B's heavier
 targets refuse the rest there, each before it fetches, pulls or writes anything. These run each
 script's own lines with the class forced (QWEN38_MEMORY_CLASS), so no installer runs here."""
+import json
 import os
 import pathlib
 import re
@@ -146,37 +147,87 @@ PREPARE_SIDE = '    exec bash "$HERE/install-$1.sh" --prepare ;;\n'
 
 class ANew64GBBoxServesBolt(unittest.TestCase):
     """A 64 GB DGX Spark serves Nemotron 3.5 Bolt (Hasan, 2026-10-24): the 27B gets 2 requests and a
-    small pool on that budget. A new box ends its install on Bolt, prepared and loaded as the
-    cockpit's Load does it; a box that boots a lane keeps it. install.sh's own lines run here, with
-    prepare-lane.sh, switch-model.sh and systemctl replaced by stubs that write down their calls."""
+    small pool on that budget. A new box ends its install on Bolt, loaded as the cockpit's Load
+    does it: prepare-lane.sh, switch-model.sh (which only points the boot and opencode at it), the
+    27B stopped, Bolt started and answering; anything that fails puts the box back on the 27B.
+    install.sh's own lines run here, with prepare-lane.sh, switch-model.sh, sudo, systemctl, curl
+    and oc-fit-limits.py replaced by stubs that write down their calls (found in review, 2026-10-24:
+    the first epilogue stopped at the switch and said Bolt served while the 27B did)."""
 
-    def epilogue(self, cls="64", installed="", side_boot="0", secondary="", env_choice="", want="1", prep_rc=0):
+    def epilogue(self, cls="64", side_boot="0", secondary="", env_choice="", want="1", recommended="0",
+                 ran_before=None, fail=(), health="ok"):
         d = pathlib.Path(tempfile.mkdtemp(prefix="bolt-first-"))
         self.addCleanup(shutil.rmtree, d, True)
-        for name, rc in (("prepare-lane.sh", prep_rc), ("switch-model.sh", 0)):
-            (d / name).write_text(f'echo "{name} $*" >> "{d}/calls"\nexit {rc}\n')
+        calls = d / "calls"
+        def stub(name, body):
+            (d / name).write_text("#!/bin/bash\n" + body)
+            (d / name).chmod(0o755)
+        for name in ("prepare-lane.sh", "switch-model.sh"):
+            rc = 1 if any(f == name or f == f"{name} nemotron" for f in fail) else 0
+            (d / name).write_text(f'echo "{name} $*" >> "{calls}"\n'
+                                  f'[ "$*" = nemotron ] && exit {rc}\nexit 0\n')
+        (d / "oc-fit-limits.py").write_text(f'open("{calls}", "a").write("oc-fit-limits.py\\n")\n')
+        start_rc = 1 if "start" in fail else 0
+        stub("sudo", f'echo "sudo $*" >> "{calls}"\n[ "$2" = start ] && [ "$3" = qwen38-nemotron.service ] && exit {start_rc}\nexit 0\n')
+        stub("systemctl", 'echo "active"\n' if health != "failed" else 'case "$*" in *nemotron*) echo failed ;; *) echo active ;; esac\n')
+        stub("curl", f'echo "curl $*" >> "{calls}"\nexit {0 if health == "ok" else 7}\n')
+        stub("sleep", "exit 0\n")
+        cfg = d / "cfg"
+        cfg.mkdir()
+        if ran_before:
+            (cfg / "installed.json").write_text(json.dumps({"path": ran_before}))
+        helpers = between(INSTALL, "ran_whole_before() {", "record_install() {")
+        helpers = helpers[:helpers.rindex("record_install() {")]
         block = between(INSTALL, '    [ "$LANE" = "27b" ] && echo "  Benchmark  : ./bench.sh"\n', "    record_install full\n")
         script = ("set -euo pipefail\nstep(){ echo \"== $*\"; }\nrecord_install(){ :; }\n"
-                  f'REPO_DIR="{d}"; LANE=27b; MEM_CLASS={cls}; INSTALLED_CHOICE="{installed}"; SIDE_BOOT={side_boot}\n'
-                  f'SECONDARY="{secondary}"; _ENV_MODEL_CHOICE="{env_choice}"; WANT_NEMOTRON={want}\n' + block)
-        r = subprocess.run(["bash", "-c", script], capture_output=True, text=True, timeout=30)
+                  f'PATH="{d}:$PATH"; REPO_DIR="{d}"; CONFIG_DIR="{cfg}"; PORT=30000; UNIT_NAME=qwen38-sglang.service\n'
+                  f'MODEL_CHOICE=stock; LANE=27b; MEM_CLASS={cls}; SIDE_BOOT={side_boot}; SECONDARY="{secondary}"\n'
+                  f'_ENV_MODEL_CHOICE="{env_choice}"; WANT_NEMOTRON={want}; RECOMMENDED={recommended}\n'
+                  + helpers + block)
+        r = subprocess.run(["bash", "-c", script], capture_output=True, text=True, timeout=60)
         self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
-        calls = (d / "calls").read_text().splitlines() if (d / "calls").exists() else []
-        return r.stdout, calls
+        return r.stdout, calls.read_text().splitlines() if calls.exists() else []
 
-    def test_a_new_64_gb_box_ends_its_install_on_bolt(self):
+    LOAD = ["prepare-lane.sh nemotron", "switch-model.sh nemotron", "sudo systemctl stop qwen38-sglang.service",
+            "sudo systemctl start qwen38-nemotron.service"]
+
+    def test_a_new_64_gb_box_ends_its_install_on_bolt_serving(self):
         out, calls = self.epilogue()
-        self.assertEqual(calls, ["prepare-lane.sh nemotron", "switch-model.sh nemotron"])
+        self.assertEqual(calls[:4], self.LOAD)
+        self.assertTrue(calls[4].startswith("curl ") and "/health" in calls[4], calls)
+        self.assertEqual(calls[5:], ["oc-fit-limits.py"])
         self.assertIn("Nemotron 3.5 Bolt serves now, and at boot", out)
 
-    def test_a_bolt_that_does_not_come_up_leaves_the_27b_serving(self):
-        out, calls = self.epilogue(prep_rc=1)
+    def test_a_bolt_that_does_not_answer_puts_the_box_back_on_the_27b(self):
+        for fail, health in (((), "failed"), (("start",), "ok")):
+            with self.subTest(fail=fail, health=health):
+                out, calls = self.epilogue(fail=fail, health=health)
+                self.assertEqual(calls[:4], self.LOAD)
+                tail = [c for c in calls[4:] if not c.startswith("curl ")]
+                self.assertEqual(tail, ["sudo systemctl stop qwen38-nemotron.service", "switch-model.sh stock",
+                                        "sudo systemctl start qwen38-sglang.service"])
+                self.assertIn("so the 27B serves this box", out)
+                self.assertNotIn("Bolt serves now", out)
+
+    def test_a_prepare_or_a_switch_that_fails_stops_nothing(self):
+        out, calls = self.epilogue(fail=("prepare-lane.sh",))
         self.assertEqual(calls, ["prepare-lane.sh nemotron"])
-        self.assertIn("the 27B keeps serving", out)
+        out, calls = self.epilogue(fail=("switch-model.sh nemotron",))
+        self.assertEqual(calls, ["prepare-lane.sh nemotron", "switch-model.sh nemotron", "switch-model.sh stock"])
+        self.assertNotIn("Bolt serves now", out)
+
+    def test_a_first_run_that_did_not_end_whole_is_new_and_one_that_did_is_not(self):
+        for ran, moved in ((None, True), ("no-start", True), ("full", False), ("side-boot", False)):
+            with self.subTest(ran=ran):
+                out, calls = self.epilogue(ran_before=ran)
+                self.assertEqual(calls[:1] == ["prepare-lane.sh nemotron"], moved, calls)
+        # --recommended is what a new box gets
+        out, calls = self.epilogue(ran_before="full", recommended="1")
+        self.assertEqual(calls[:4], self.LOAD)
 
     def test_nothing_else_is_moved(self):
-        for kw in ({"cls": "128"}, {"installed": "27b"}, {"side_boot": "1"}, {"secondary": "27b"},
-                   {"env_choice": "uncensored"}, {"want": "0"}):
+        for kw in ({"cls": "128"}, {"side_boot": "1"}, {"secondary": "27b"}, {"env_choice": "uncensored"},
+                   {"want": "0"}):
             with self.subTest(**kw):
                 out, calls = self.epilogue(**kw)
                 self.assertEqual(calls, [])
