@@ -8,8 +8,11 @@
 set -u
 FILTER="${1:-}"
 python3 - "$FILTER" <<'PY'
-import os, re, signal, subprocess, sys, yaml, shutil, tempfile
+import os, re, signal, subprocess, sys, yaml, shutil, tempfile, time
 flt = sys.argv[1]
+# Each step's wall time, said on its line and summed up at the end: where a run's hour goes
+# is the first thing to know before making it shorter (2026-10-24).
+took, t_run = [], time.monotonic()
 d = yaml.safe_load(open(".github/workflows/ci.yml"))
 ok = fail = skip = 0
 # A run stopped through its process group gets SIGTERM, which ended python without its
@@ -76,19 +79,26 @@ try:
                 if need:
                     print(f"  SKIP {name} (missing: {', '.join(need)})"); skip += 1; continue
                 script = "\n".join(ln for ln in run.splitlines() if "pip install" not in ln)
+                t0 = time.monotonic()
                 r = subprocess.run(["bash", "-e", "-c", script], capture_output=True, text=True,
                                    cwd=os.getcwd(), env=env)
+                dt = time.monotonic() - t0
+                took.append((dt, name))
                 tools = sorted(set(open(called).read().split())) if os.path.exists(called) else []
             finally:
                 shutil.rmtree(home, ignore_errors=True)
             if tools:
                 print(f"  SKIP {name} (missing: {', '.join(tools)})"); skip += 1
             elif r.returncode == 0:
-                print(f"  ok   {name}"); ok += 1
+                print(f"  ok   {name} ({dt:.0f} s)"); ok += 1
             else:
-                print(f"  FAIL {name} (rc={r.returncode})"); print("       " + (r.stdout + r.stderr).strip().replace("\n", "\n       ")[-600:]); fail += 1
+                print(f"  FAIL {name} (rc={r.returncode}, {dt:.0f} s)"); print("       " + (r.stdout + r.stderr).strip().replace("\n", "\n       ")[-600:]); fail += 1
 finally:
     shutil.rmtree(stubs, ignore_errors=True)
+if took:
+    print(f"\nslowest steps, of {time.monotonic() - t_run:.0f} s in all:")
+    for dt, name in sorted(took, reverse=True)[:10]:
+        print(f"  {dt:6.0f} s  {name}")
 print(f"\nCI local: {ok} ok, {fail} echecs, {skip} sautes")
 if fail:
     sys.exit(1)
