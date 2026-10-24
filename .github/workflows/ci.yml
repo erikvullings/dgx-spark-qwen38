@@ -1610,16 +1610,17 @@ jobs:
             echo " $listed " | grep -q " $name " || { echo "$f is in the repo and install-image.sh never applies it"; exit 1; }
           done
 
-      - name: Every text lane's chat template takes what the real clients send
+      - name: Every text lane's chat template takes the message shapes the real clients send
         # opencode 1.19.4 sends two system messages before the user's, and the Ornith lane's
         # published template refused the second: a 400 on every opencode request from v1.38.6 to
         # v1.40.1, as each release proved the clients on the lane that served (found 2026-10-24).
         # This fetches each text target's template at its pin (each of switch-model.sh's targets
         # but the image and video lanes), patches it as its installer does, and renders the shapes
-        # the real clients send (tests/fixtures/client-shapes.json), with tools and without, each
-        # content in the form its engine hands it (vLLM's and SGLang's own reading of the template),
-        # the way transformers does (280 renders identical to its own on the reference box). A
-        # template that raises fails here, and so does a text target the check does not know.
+        # the real clients send (tests/fixtures/client-shapes.json), with tools and without, sent as
+        # strings and as lists of parts and handed on as each engine hands them (vLLM's and SGLang's
+        # own reading of the template and conversion of the messages), the way transformers does
+        # (364 renders identical to its own on the reference box). A template that raises fails
+        # here, and so do a text target the check does not know and an installer it cannot read.
         run: |
           pip install 'jinja2==3.1.6'
           "$(./tests/testpy.sh jinja2)" tests/lane-templates-check.py
