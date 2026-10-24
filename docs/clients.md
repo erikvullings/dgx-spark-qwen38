@@ -153,8 +153,14 @@ The network's share of the port is bounded (proxy v6.41). Another machine holds
 at most 64 connections open at a time (`PROXY_MAX_CONN_PER_ADDRESS`) and the
 network 256 in all (`PROXY_MAX_REMOTE_CONN`): past either, a new connection is
 closed before it is read, and the proxy's journal says why, once a minute. Such
-a connection has 30 s to send its request line and headers (`CLIENT_HEADER_S`).
-The clients on the box itself (127.0.0.1) are not counted. The request bodies in
+a connection has 30 s to send its request line and headers (`CLIENT_HEADER_S`),
+64 KiB of them in all (`HEADER_BYTES_MAX`, a 431 past it: the largest the box's
+clients send is under 1 KiB), and once they are in, 30 s at most without a byte
+while its body comes in (`BODY_STALL_S`; the prefill and the answer come after,
+and nothing waits on the client then). The clients on the box itself (127.0.0.1)
+are not counted. `/health`, `/ready` and `/metrics` need no key and take no body:
+a body there gets a 413 before it is read, and any other path under them, such
+as `/health_generate`, needs the key. The request bodies in
 flight share 384 MiB (`BODY_BUDGET_BYTES`), taken as their bytes arrive: one
 that finds no room gets a 503 with `Retry-After` (the oldest one being read waits
 up to 30 s for room first), and a body of 1 MiB or less always comes in. A compressed body (`Content-Encoding: gzip` and the like) gets a 415:

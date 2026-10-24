@@ -47,7 +47,10 @@ enabled for the repository.
 **The keepalive proxy (`keepalive-proxy.py`, :30001)** is the only component
 that reads bytes it does not control: every client request. Its guards are
 its contract: bodies over `MAX_BODY_BYTES` (256 MiB) get 413 before a byte is
-read, a lying `Content-Length` cannot decide an allocation, tool schemas are
+read, a peer on the network has 64 KiB for a request's line and headers
+(`HEADER_BYTES_MAX`, 431 past it) and 30 s without a byte while its body comes
+in (`BODY_STALL_S`), the routes open without a key take no body (both since
+v1.40.1), a lying `Content-Length` cannot decide an allocation, tool schemas are
 sanitized at bounded depth and only for patterns Python cannot compile,
 image parts are priced from their own headers, and the corruption tripwire
 aborts a decode that emits runs of token id 0. Fuzzed and state-machine

@@ -79,6 +79,7 @@ class ConnectionCeiling(unittest.TestCase):
         # in a tuple: a function kept as a class attribute would come back as a bound method
         cls.real = (getattr(cls.mod, "_counted_peer", None),)
         cls.header_s = getattr(cls.mod, "CLIENT_HEADER_S", None)
+        cls.header_max = getattr(cls.mod, "HEADER_BYTES_MAX", None)
         cls.proxy = cls.mod.Server(("127.0.0.1", 0), cls.mod.H)
         threading.Thread(target=cls.proxy.serve_forever, daemon=True).start()
         cls.port = cls.proxy.server_address[1]
@@ -108,6 +109,7 @@ class ConnectionCeiling(unittest.TestCase):
                 pass
         self.mod._counted_peer = self.real[0]
         self.mod.CLIENT_HEADER_S = self.header_s
+        self.mod.HEADER_BYTES_MAX = self.header_max
 
     def silent(self):
         """A connection that says nothing, the shape that held a thread for CLIENT_IO_S."""
@@ -221,6 +223,54 @@ class ConnectionCeiling(unittest.TestCase):
                 break
             got += c
         self.assertTrue(got.startswith(b"HTTP/1.1 200"), got[:200])
+
+    def answer_to(self, head):
+        """The status line the proxy answers a request with these headers, and whether it then
+        ended the connection."""
+        s = self.silent()
+        s.sendall(head)
+        s.settimeout(10)
+        got = b""
+        try:
+            while True:
+                c = s.recv(4096)
+                if not c:
+                    break
+                got += c
+        except (ConnectionResetError, socket.timeout):
+            pass
+        return got.split(b"\r\n", 1)[0]
+
+    @staticmethod
+    def padded(lines, size):
+        return (b"GET /health HTTP/1.1\r\nHost: p\r\nConnection: close\r\n"
+                + b"".join(b"X-Pad-%d: %s\r\n" % (i, b"a" * size) for i in range(lines)) + b"\r\n")
+
+    def test_a_peer_past_the_header_budget_gets_431(self):
+        """The standard parser bounds each header line and their number, not their sum: about
+        6.4 MiB a connection before any key (D03 of the 2026-10-24 security review). Each line
+        here is far under its bound, the three together are past the budget."""
+        self.mod._counted_peer = lambda addr: True
+        self.mod.HEADER_BYTES_MAX = 4096
+        status = self.answer_to(self.padded(3, 2000))
+        self.assertTrue(status.startswith(b"HTTP/1.1 431"), status)
+
+    def test_headers_under_the_budget_pass(self):
+        self.mod._counted_peer = lambda addr: True
+        self.mod.HEADER_BYTES_MAX = 4096
+        status = self.answer_to(self.padded(3, 1000))
+        self.assertTrue(status.startswith(b"HTTP/1.1 200"), status)
+
+    def test_loopback_has_no_header_budget(self):
+        self.mod.HEADER_BYTES_MAX = 4096
+        status = self.answer_to(self.padded(3, 2000))
+        self.assertTrue(status.startswith(b"HTTP/1.1 200"), status)
+
+    def test_the_budget_holds_the_largest_client_many_times(self):
+        # 952 bytes: the largest request line and headers the box's eight clients sent, measured
+        # through a relay on 2026-10-24 (Claude Code on /v1/messages, 21 headers)
+        self.assertEqual(self.header_max, 64 * 1024)
+        self.assertGreater(self.header_max, 60 * 952)
 
     def test_loopback_keeps_the_normal_delay_before_its_headers(self):
         self.mod.CLIENT_HEADER_S = 1.0

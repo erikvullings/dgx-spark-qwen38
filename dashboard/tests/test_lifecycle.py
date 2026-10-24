@@ -731,6 +731,7 @@ class FeedOutcomes(unittest.TestCase):
         "400 oversize refused": "fail",
         "400 bad Content-Length": "fail",
         "413 body over cap": "fail",
+        "413 body on an open route": "fail",   # /health, /ready, /metrics take none (2026-10-24, D04)
         "415 body encoding": "fail",   # a compressed body, which no guard can read (2026-10-17)
         "503 bodies over budget": "fail",   # past BODY_BUDGET_BYTES in flight, not read (2026-10-16)
         "401 unknown client key": "fail",   # the identity wall's refusal (v6.16)

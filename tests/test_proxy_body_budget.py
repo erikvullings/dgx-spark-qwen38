@@ -184,6 +184,76 @@ class BodyBudget(unittest.TestCase):
             pass
         return got.split(b"\r\n", 1)[0]
 
+    def network_peer(self, stall_s=1.0):
+        """Loopback stands in for a peer on the network, with a short stall delay, both put back."""
+        self.addCleanup(setattr, self.mod, "_counted_peer", self.mod._counted_peer)
+        self.addCleanup(setattr, self.mod, "BODY_STALL_S", getattr(self.mod, "BODY_STALL_S", None))
+        self.mod._counted_peer = lambda addr: True
+        self.mod.BODY_STALL_S = stall_s
+
+    def raw_post(self, path, body, pieces=1, gap_s=0.0, announce=None):
+        """POST body to path on a raw socket, in pieces gap_s apart; the status line, or b"" when
+        the proxy ended the connection without an answer, and the seconds it took."""
+        s = socket.create_connection(("127.0.0.1", self.port), timeout=20)
+        self.addCleanup(s.close)
+        t0 = time.time()
+        s.sendall(b"POST %s HTTP/1.1\r\nHost: p\r\nContent-Type: application/json\r\n"
+                  b"Content-Length: %d\r\nConnection: close\r\n\r\n" % (path.encode(), announce or len(body)))
+        step = -(-len(body) // pieces) if body else 0
+        try:
+            for i in range(0, len(body), step or 1):
+                if i:
+                    time.sleep(gap_s)
+                s.sendall(body[i:i + step])
+        except OSError:
+            pass
+        got = b""
+        try:
+            while True:
+                c = s.recv(4096)
+                if not c:
+                    break
+                got += c
+        except (ConnectionResetError, socket.timeout):
+            pass
+        return got.split(b"\r\n", 1)[0], time.time() - t0
+
+    def test_a_body_on_an_open_route_is_refused_unread(self):
+        """/health, /ready and /metrics take no key and no body (the engine serves them on GET): a
+        body there was read whole, and up to BODY_SMALL_BYTES it took nothing from the budget
+        (D04 of the 2026-10-24 security review). Announced and never sent, it is refused at once."""
+        for path in ("/health", "/ready", "/metrics"):
+            with self.subTest(path=path):
+                status, took = self.raw_post(path, b"", announce=4 * 1024 * 1024)
+                self.assertTrue(status.startswith(b"HTTP/1.1 413"), status)
+                self.assertLess(took, 5)
+        self.assertEqual(Engine.received, [])
+        self.assertTrue(self.released())
+
+    def test_a_network_body_that_stops_is_let_go_and_its_room_goes_back(self):
+        """Read under CLIENT_IO_S, a body that stopped held its thread and its room in the budget
+        for 900 s a byte (D04). A network peer's now gets BODY_STALL_S without a byte."""
+        self.network_peer(stall_s=1.0)
+        status, took = self.raw_post("/v1/chat/completions", body_of(200_000)[:100_000],
+                                     announce=len(body_of(200_000)))
+        self.assertEqual(status, b"")
+        self.assertLess(took, 8)
+        self.assertTrue(self.released(), "a body that stopped kept its share of the budget")
+        self.assertEqual(Engine.received, [])
+
+    def test_a_slow_body_that_keeps_coming_is_read(self):
+        """No byte for BODY_STALL_S, not BODY_STALL_S in all: a large body on a slow link passes."""
+        self.network_peer(stall_s=1.0)
+        status, took = self.raw_post("/v1/chat/completions", body_of(200_000), pieces=6, gap_s=0.4)
+        self.assertTrue(status.startswith(b"HTTP/1.1 200"), status)
+        self.assertGreater(took, 1.5)                       # longer in all than the delay
+
+    def test_loopback_keeps_the_normal_delay_in_its_body(self):
+        self.addCleanup(setattr, self.mod, "BODY_STALL_S", getattr(self.mod, "BODY_STALL_S", None))
+        self.mod.BODY_STALL_S = 1.0
+        status, took = self.raw_post("/v1/chat/completions", body_of(200_000), pieces=2, gap_s=2.0)
+        self.assertTrue(status.startswith(b"HTTP/1.1 200"), status)
+
     def test_bytes_announced_and_never_sent_keep_no_body_out(self):
         s = self.announce(1_040_000)
         deadline = time.time() + 30    # a wait for a state, not a pace: a slow runner gets there too

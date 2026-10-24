@@ -56,6 +56,11 @@ the engine does: /health_generate, which runs a one-token generation on an idle 
 from the network with no key (D02 of the 2026-10-24 security review). It and every other path under
 those three need the key now, and the SGLang units of this repo turn off the generation that /health
 itself ran (SGLANG_ENABLE_HEALTH_ENDPOINT_GENERATION=0).
+A peer on the network has HEADER_BYTES_MAX (64 KiB) for a request's line and headers in all, where
+the standard parser bounded each line and their number but not their sum, about 6.4 MiB a
+connection before any key (D03); past it, 431. A body on /health, /ready or /metrics, which take
+none, is refused unread (413), and a network peer's body that sends no byte for BODY_STALL_S (30 s)
+is let go with its room in the budget, where it held both for 900 s a byte (D04).
 v6.45: the Ornith 1.5 122B lane (Ornith AI's model on vLLM) takes a reasoning effort as its chat
 template reads it, enable_thinking alone: none and minimal turn the reasoning off, every other
 level keeps it whole, as the box decided (2026-10-21). Its template reads no effort, and a "none"
@@ -580,6 +585,12 @@ BODY_BUDGET_BYTES = int(os.environ.get("BODY_BUDGET_BYTES", str(384 * 1024 * 102
 # until both were refused.
 BODY_SMALL_BYTES = int(os.environ.get("BODY_SMALL_BYTES", str(1024 * 1024)) or 0)
 BODY_WAIT_S = float(os.environ.get("BODY_WAIT_S", "30") or 0)
+# A network peer's body that sends no byte for BODY_STALL_S is let go, and the room it held in
+# BODY_BUDGET_BYTES goes back at once (2026-10-24): read under CLIENT_IO_S, a body held its thread
+# and that room for 900 s a byte (D04 of the 2026-10-24 security review). Only while the body comes
+# in: the engine's prefill and the answer come after it, and the proxy then reads nothing from the
+# client but its leaving. Loopback keeps CLIENT_IO_S.
+BODY_STALL_S = float(os.environ.get("BODY_STALL_S", "30") or 0)
 _BODY_BUDGET = {"used": 0, "seq": 0}
 _BODY_READERS = set()           # the admission numbers of the larger bodies being read now
 _BODY_BUDGET_LOCK = threading.Lock()
@@ -3450,6 +3461,40 @@ def _counted_peer(addr):
         return True
 
 
+# A peer on the network has HEADER_BYTES_MAX bytes in all for a request's line and headers
+# (2026-10-24). The standard parser bounds each line (64 KiB) and their number (100), not their
+# sum: about 6.4 MiB for each connection the ceilings allow, held before any key is asked (D03 of
+# the 2026-10-24 security review). The largest the box's eight clients sent, through a relay on
+# 2026-10-24, was 952 bytes (Claude Code, 21 headers): 64 KiB is 69 times that. Past it the peer
+# gets 431 and its connection ends. Loopback is not counted.
+HEADER_BYTES_MAX = int(os.environ.get("HEADER_BYTES_MAX", str(64 * 1024)) or 0)
+
+
+class _HeadersOverBudget(Exception):
+    """A request's line and headers past HEADER_BYTES_MAX (raised by _HeaderBudget)."""
+
+
+class _HeaderBudget:
+    """A network peer's reader while a request's line and headers come in: it counts what each
+    readline returns, exactly the line and the headers (a body is read with read()), and past
+    HEADER_BYTES_MAX raises before the parser keeps the line."""
+
+    def __init__(self, inner, handler):
+        self._inner, self._handler = inner, handler
+
+    def readline(self, limit=-1):
+        line = self._inner.readline(limit)
+        h = self._handler
+        if h._header_bytes is not None:
+            h._header_bytes += len(line)
+            if 0 < HEADER_BYTES_MAX < h._header_bytes:
+                raise _HeadersOverBudget()
+        return line
+
+    def __getattr__(self, name):
+        return getattr(self._inner, name)
+
+
 class _HeaderClock(io.RawIOBase):
     """A connection's reads under its handler's deadline while a request's line and headers
     come in (CLIENT_HEADER_S): each read gets the time left, so a byte at a time does not
@@ -3552,21 +3597,44 @@ class H(BaseHTTPRequestHandler):
     def handle_one_request(self):
         if getattr(self, "_header_clock", False):
             self._headers_until = time.monotonic() + min(CLIENT_HEADER_S, CLIENT_IO_S)
+        if getattr(self, "_header_budget", False):
+            self._header_bytes = 0
         try:
             BaseHTTPRequestHandler.handle_one_request(self)
         except (ConnectionResetError, BrokenPipeError, socket.timeout, TimeoutError):
             self.close_connection = True
+        except _HeadersOverBudget:
+            self._refuse_headers()
+
+    def _refuse_headers(self):
+        """431 to a request whose line and headers passed HEADER_BYTES_MAX, and the connection
+        ends: what is left of its headers is never read."""
+        self.close_connection = True
+        self._header_bytes = None
+        log(f"{self.client_address[0]}:{self.client_address[1]} REFUSED a request line and headers past "
+            f"{HEADER_BYTES_MAX} bytes (HEADER_BYTES_MAX), before any key was asked")
+        body = json.dumps({"error": {"type": "invalid_request", "message":
+                                     f"keepalive-proxy: a request's line and headers are limited to "
+                                     f"{HEADER_BYTES_MAX} bytes"}}).encode()
+        try:
+            self.wfile.write(b"HTTP/1.1 431 Request Header Fields Too Large\r\nContent-Type: application/json\r\n"
+                             b"Content-Length: %d\r\nConnection: close\r\n\r\n" % len(body) + body)
+            self.wfile.flush()
+        except OSError:
+            pass
 
     def parse_request(self):
         try:
             return BaseHTTPRequestHandler.parse_request(self)
         finally:
+            self._header_bytes = None                 # the headers are in: a body is not counted
             if self._headers_until is not None:       # the headers are in: CLIENT_IO_S again
                 self._headers_until = None
                 self.connection.settimeout(CLIENT_IO_S)
 
     def setup(self):
         self._headers_until = None
+        self._header_bytes = None
         BaseHTTPRequestHandler.setup(self)
         if isinstance(self.connection, ssl.SSLSocket):
             # S6: the listening socket is wrapped with do_handshake_on_connect=False, so
@@ -3590,6 +3658,10 @@ class H(BaseHTTPRequestHandler):
         self._header_clock = CLIENT_HEADER_S > 0 and _counted_peer(str(self.client_address[0]))
         if self._header_clock:
             self.rfile = io.BufferedReader(_HeaderClock(self.rfile.detach(), self))
+        # and HEADER_BYTES_MAX for those headers in all (2026-10-24)
+        self._header_budget = HEADER_BYTES_MAX > 0 and _counted_peer(str(self.client_address[0]))
+        if self._header_budget:
+            self.rfile = _HeaderBudget(self.rfile, self)
         # small frequent SSE events: without NODELAY, Nagle batches them (Tailscale)
         try: self.connection.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
         except OSError: pass
@@ -4392,6 +4464,16 @@ class H(BaseHTTPRequestHandler):
                         json.dumps({"error": {"type": "invalid_request",
                                               "message": "keepalive-proxy: Content-Length is not a number"}}).encode())
             self._done("400 bad Content-Length"); return
+        # The routes the door leaves open take no body: the engine serves them on GET. A body there
+        # was read whole, with no key, and up to BODY_SMALL_BYTES it took nothing from the budget,
+        # only a thread and its memory (D04 of the 2026-10-24 security review). Refused unread.
+        route = self.path.split("?")[0]
+        if with_body and route in ENGINE_OPEN_ROUTES and (n or self.headers.get("Transfer-Encoding")):
+            log(f"{self._peer} REFUSED a body on {route}, which takes none, before reading it")
+            self._plain(413, {"Content-Type": "application/json"},
+                        json.dumps({"error": {"type": "invalid_request",
+                                              "message": f"keepalive-proxy: {route} takes no request body"}}).encode())
+            self._done("413 body on an open route"); return
         # A body in a coding (gzip, deflate, br) reads as no JSON to every guard below, so each let
         # it pass, and an engine or a front that decodes it would take what no guard saw (found in
         # review, 2026-10-17): no client of this port compresses its body, and one that does is
@@ -4418,7 +4500,20 @@ class H(BaseHTTPRequestHandler):
             self._over_budget(n); return
         body = None
         if with_body and n:
-            body = self._read_body(n)
+            stall = BODY_STALL_S > 0 and _counted_peer(str(self.client_address[0]))
+            wait_s = min(BODY_STALL_S, CLIENT_IO_S) if stall else CLIENT_IO_S
+            if stall:
+                self.connection.settimeout(wait_s)
+            try:
+                body = self._read_body(n)
+            except (socket.timeout, TimeoutError):
+                log(f"{self._peer} let go: no byte of its body for {wait_s:g} s"
+                    f"{' (BODY_STALL_S)' if stall else ''}")
+                self.close_connection = True
+                self._done("CLIENT GONE before its body"); return
+            finally:
+                if stall:
+                    self.connection.settimeout(CLIENT_IO_S)
             if body is None:
                 self._over_budget(n); return
         self._body_read = True
