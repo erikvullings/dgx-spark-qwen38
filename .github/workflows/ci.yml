@@ -1618,7 +1618,7 @@ jobs:
         # but the image and video lanes), patches it as its installer does, and renders the shapes
         # the real clients send (tests/fixtures/client-shapes.json), with tools and without, each
         # content in the form its engine hands it (vLLM's and SGLang's own reading of the template),
-        # the way transformers does (240 renders identical to its own on the reference box). A
+        # the way transformers does (280 renders identical to its own on the reference box). A
         # template that raises fails here, and so does a text target the check does not know.
         run: |
           pip install 'jinja2==3.1.6'

@@ -135,6 +135,12 @@ class TheShapesItRenders(unittest.TestCase):
         shapes = json.loads(ltc.SHAPES.read_text())["shapes"]
         self.assertIn(["system", "system", "user"], [s["roles"] for s in shapes])
 
+    def test_opencodes_second_request_is_there(self):
+        # two user messages in a row after its two system messages, captured on 2026-10-24 and missing
+        # from the first fixture: a template that wants roles to alternate would refuse it
+        shapes = json.loads(ltc.SHAPES.read_text())["shapes"]
+        self.assertIn(["system", "system", "user", "user"], [s["roles"] for s in shapes])
+
     def test_a_tool_round_is_a_call_and_its_answer(self):
         m = ltc.messages(["system", "user", "assistant_tool_call", "tool"])
         self.assertEqual([x["role"] for x in m], ["system", "user", "assistant", "tool"])
