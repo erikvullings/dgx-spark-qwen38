@@ -69,6 +69,10 @@ def generate(lane, mode, unit_ctx=None, flash_unit=False, model="RadixArk/Qwen3.
               f'FLASH_LOCAL_UNIT_PATH="{flocal}"; FLASH_LOCAL_BOOT={1 if flocal_boot else 0}\n'
               f'ORNITH_122B_UNIT_PATH="{ornith}"; ORNITH_122B_BOOT={1 if ornith_boot else 0}\n'
               f'MODEL_CHOICE={"flash" if lane == "flash" else "stock"}\n'
+              # the box's class, which install.sh reads before this block: the block reads it since
+              # e65a364, and with no class here every generation stopped on an unbound variable
+              # (found by the CI, 2026-10-24)
+              'MEM_CLASS=128\n'
               f'REPO_DIR="{REPO}"; CONFIG_DIR="{t}"; OC_PORT=30001; OC_CTX={ctx}; OC_OUT={out}\n'
               'OC_LABEL=local; OPENCODE_PIN=1\n' + block())
     r = subprocess.run(["bash", "-c", script], capture_output=True, text=True, timeout=60,
