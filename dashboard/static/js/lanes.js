@@ -96,6 +96,12 @@ function renderLanes(){
     const served = laneTarget(unit);
     if (c.touched && served && served === c.target && (engines()[unit] || {}).state === 'ready') c.touched = false;
     if (!c.touched && served && c.target !== served) c.target = served;
+    // a version picked before the machine panel said the box cannot hold it gives way to one it can:
+    // it stayed the choice once disabled, and its Load ended on the switch's refusal (found in review,
+    // 2026-10-24)
+    if (c.target && c.target !== served && !targetFits(c.target)){
+      c.target = served && targetFits(served) ? served : LANE_TARGETS[unit].find(targetFits); c.touched = false;
+    }
     const target = c.target || LANE_TARGETS[unit][0];
     // a lane that is not here has no checkpoint to pick: it installs with its default one
     c.pickBox.hidden = !has;

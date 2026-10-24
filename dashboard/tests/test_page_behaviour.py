@@ -2349,6 +2349,45 @@ class TheBoxItIs(unittest.TestCase):
         self.assertEqual(r["focus"], "stock", "the arrow passes over the versions this box cannot hold")
         self.assertIn("needs a 128 GB DGX Spark", r["title"])
 
+    def test_a_version_picked_before_the_machine_panel_gives_way_to_one_the_box_holds(self):
+        # picked while the box's class was unknown, FP8 stayed the card's choice once disabled: its
+        # Load still named it, and ended on the switch's refusal (found in review, 2026-10-24)
+        r = run(self, r"""
+        feed({config: CONFIG, units: UNITS, lifecycle: life({'qwen38-nemotron.service': eng('ready')})});
+        showView('lanes');
+        const c = laneCard('qwen38-sglang.service');
+        const checked = () => c.opts.filter(b => b.getAttribute('aria-checked') === 'true').map(b => b.dataset.target);
+        c.opts.find(b => b.dataset.target === 'fp8').click();
+        const before = [checked(), c.load.textContent];
+        feed({machine: %s});
+        const after = [checked(), c.load.textContent, c.pickLine.textContent];
+        c.load.click(); await __settle();
+        report({before, after, title: txt('sh-title'), toast: toastText()});
+        """ % self.MACHINE_64)
+        self.assertEqual(r["before"][0], ["fp8"], r)
+        self.assertIn("FP8", r["before"][1], r)
+        self.assertEqual(r["after"][0], ["stock"], r)
+        self.assertNotIn("FP8", r["after"][1] + r["after"][2], r)
+        self.assertEqual(r["title"], "Load 27B stock, NVFP4", r)
+        self.assertNotIn("128 GB", r["toast"], r)
+
+    def test_decide_follows_a_machine_panel_that_comes_after_its_probe(self):
+        # the note's Load was chosen at the probe: one made before the box's class was known offered
+        # the flash lane on a 64 GB box until the view was opened again (found in review, 2026-10-24)
+        r = run(self, r"""
+        __fetch = async url => url === '/api/systemone' ? __response(200, {available: false, lane: '', reason: 'no text lane is serving'}) : new Promise(() => {});
+        feed({config: CONFIG, units: UNITS, lifecycle: life({'qwen38-nemotron.service': eng('ready')})});
+        showView('decide'); await __settle();
+        const label = () => { const b = $('s1-note').querySelector('button'); return b && b.textContent; };
+        const before = [label(), txt('s1-why')];
+        feed({machine: %s}); await __settle();
+        report({before, after: [label(), txt('s1-why')]});
+        """ % self.MACHINE_64)
+        self.assertEqual(r["before"][0], "Load flash 176B", r)
+        self.assertEqual(r["after"][0], "Load 27B stock", r)
+        self.assertIn("the 27B answers it", r["after"][1])
+        self.assertNotIn("flash", r["after"][1])
+
     def test_a_128_gb_box_still_names_the_command_that_installs_a_lane_left_out(self):
         r = self.page("128", 121.6)
         self.assertIn("./install.sh --with-flash", r["notes"][0])

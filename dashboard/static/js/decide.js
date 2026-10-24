@@ -189,6 +189,13 @@ on('lifecycle', () => {
   if (k !== s1LaneKey){ s1LaneKey = k; if (activeView === 'decide') s1Probe(); }
 });
 onShow('decide', s1Probe);
+// the note's Load follows the box's class, which comes with the machine panel: a probe made before it
+// offered the flash lane on a 64 GB box until the view was opened again (found in review, 2026-10-24)
+let s1BoxCls = null;
+on('machine', d => {
+  const cls = ((d || {}).box || {}).cls || null;
+  if (cls !== s1BoxCls){ s1BoxCls = cls; if (activeView === 'decide') s1Probe(); }
+});
 onLoadChange(s1Sync);
 function wireDecide(){
   Object.keys(S1_EXAMPLES).forEach(name => { const b = el('button', null, name); b.type = 'button'; b.setAttribute('aria-pressed', 'false'); b.addEventListener('click', () => s1Load(name)); $('s1-examples').append(b); });
