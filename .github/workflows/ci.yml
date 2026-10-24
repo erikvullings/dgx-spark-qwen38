@@ -249,22 +249,9 @@ jobs:
           # records a connect() to a serving port, with the test line that made it; a
           # shell test's curl is not seen. Kept outside the witness, which is hashed.
           probe="$(mktemp -d)"
-          cat > "$probe/sitecustomize.py" <<'PY'
-          import os, sys, traceback
-          PORTS = {int(p) for p in os.environ.get("QWEN38_SERVING_PORTS", "").split(",") if p}
-          def hook(event, args):
-              if event != "socket.connect":
-                  return
-              addr = args[1]
-              if isinstance(addr, tuple) and len(addr) >= 2 and addr[1] in PORTS:
-                  where = [f"{os.path.basename(f.filename)}:{f.lineno}" for f in traceback.extract_stack()
-                           if "/tests/" in f.filename]
-                  with open(os.environ["QWEN38_CONTACT_LOG"], "a") as fh:
-                      fh.write(f"{addr[0]}:{addr[1]} from {' '.join(where[-2:]) or sys.argv[0]}\n")
-          if PORTS and os.environ.get("QWEN38_CONTACT_LOG"):
-              sys.addaudithook(hook)
-          PY
-          export PYTHONPATH="$probe" QWEN38_CONTACT_LOG="$probe/contacts" QWEN38_SERVING_PORTS=30000,30001,30020,30090,30091,4096
+          # tests/run_suite.py loads the same hook into every python it starts (its sitecustomize.py),
+          # beside the one that compares each file's environment at its start and at its exit.
+          export QWEN38_CONTACT_LOG="$probe/contacts" QWEN38_SERVING_PORTS=30000,30001,30020,30090,30091,4096
           before="$(find "$witness" -type f -exec sha256sum {} + | sort)"
           ports_before="$(ss -Htln 2>/dev/null | awk '{print $4}' | sort || true)"
           # The suite runs under tests/suite_reaper.py, a child subreaper: every process it
@@ -272,71 +259,13 @@ jobs:
           # suite's own, named with the sockets it listens on, then stopped. Comparing every
           # listener of the machine instead failed twice on the reference box on 2026-10-03,
           # for ports VS Code opened while the suite ran.
-          cat > "$probe/suite.sh" <<'SH'
-          # Every test file runs here once, on its own, as a human runs it. A file
-          # that fails says how: a red run of 2026-10-03 said only
-          # "tests/test_proxy_hold.py failed", and left nothing to read. A unittest
-          # file must run the tests it declares: one without a __main__ block exits
-          # 0 having run nothing. The cockpit's files run together in the cockpit
-          # step and tests/' in "No test file in tests/ is left unrun"; each file also
-          # ran on its own in those two steps until 2026-10-18, three runs in all.
-          #
-          # Up to four files run at a time, the longest first: one after the other, they
-          # took 20 minutes on the reference box (2026-10-18). Not a file that takes a port
-          # number out of a socket it then closes (getsockname()[1]), to start a server
-          # on that port later or to have one where nothing listens: a file running
-          # beside it can be handed the same port meanwhile. Those run one at a time once
-          # the others are over; the last lines of this step count both and name the longest.
-          res="$(mktemp -d)"
-          trap 'rm -rf "$res"' EXIT
-          one() {   # one file on its own; its verdict is left in $res, read below
-            local f=$1 key dir rel out d r t0
-            key=$(printf '%s' "$f" | tr / _); t0=$(date +%s)
-            case "$f" in dashboard/*) dir=dashboard; rel="tests/${f##*/}" ;; *) dir=.; rel="$f" ;; esac
-            if out="$(cd "$dir" && python3 "$rel" 2>&1 </dev/null)"; then
-              if grep -q 'def test_' "$f"; then
-                d=$(grep -c 'def test_' "$f")
-                r=$(printf '%s\n' "$out" | grep -oE 'Ran [0-9]+' | grep -oE '[0-9]+' || echo 0)
-                [ "$r" = "$d" ] || echo "$f ran $r of its $d declared tests when invoked directly" > "$res/$key.fail"
-              fi
-            else
-              { echo "$f failed, the end of its output:"; printf '%s\n' "$out" | tail -60; } > "$res/$key.fail"
-            fi
-            echo "$(( $(date +%s) - t0 )) $f" > "$res/$key.done"
-          }
-          all=$(printf '%s ' dashboard/tests/test_*.py tests/test_*.py)
-          alone=" $(grep -lF 'getsockname()[1]' $all | tr '\n' ' ')"
-          # the longest of the others, which the last line of this step names again
-          first="tests/test_suite_isolation.py tests/test_text_lane.py tests/test_check_pins.py"
-          together=""
-          for f in $first $all; do
-            [ -f "$f" ] || { echo "$f, named as one of the longest, is gone: name them again"; exit 1; }
-            case "$alone $together " in *" $f "*) continue ;; esac
-            together="$together $f"
-          done
-          jobs=$(nproc); [ "$jobs" -le 4 ] || jobs=4
-          t0=$(date +%s); n=0
-          for f in $together; do
-            one "$f" &
-            n=$((n + 1))
-            [ "$n" -lt "$jobs" ] || { wait -n || true; n=$((n - 1)); }
-          done
-          wait
-          t1=$(date +%s)
-          for f in $alone; do one "$f"; done
-          t2=$(date +%s)
-          # A file with no verdict is a failure too: its runner stopped before writing it.
-          failed=0
-          for f in $together $alone; do
-            key=$(printf '%s' "$f" | tr / _)
-            if [ ! -f "$res/$key.done" ]; then echo "$f gave no verdict"; failed=1
-            elif [ -f "$res/$key.fail" ]; then cat "$res/$key.fail"; failed=1; fi
-          done
-          [ "$failed" = 0 ] || exit 1
-          echo "every test file ran its declared tests on its own: $(echo "$together" | wc -w) of them $jobs at a time in $((t1 - t0)) s, then $(echo "$alone" | wc -w) one at a time in $((t2 - t1)) s"
-          echo "  the longest: $(sort -rn "$res"/*.done | head -3 | awk '{printf "%s%s %d s", (NR > 1 ? ", " : ""), $2, $1}')"
-          SH
-          python3 tests/suite_reaper.py bash -e "$probe/suite.sh"
+          # Every test file runs once, on its own, as a human runs it, up to four at a time, the
+          # longest first, the files that take a port number out of a socket they close one at a
+          # time at the end (tests/run_suite.py): it fails, runs fewer tests than it declares, or
+          # leaves an environment variable changed, and it is named with what it did. The suite ran
+          # about four times per CI run until 2026-10-24: here, then each module again in
+          # tests/test_suite_isolation.py, which this step and the single-process pass both ran.
+          python3 tests/suite_reaper.py python3 tests/run_suite.py
           after="$(find "$witness" -type f -exec sha256sum {} + | sort)"
           if [ "$before" != "$after" ]; then
             echo "the offline suite wrote into HOME:"

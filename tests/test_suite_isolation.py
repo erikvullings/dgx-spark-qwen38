@@ -45,20 +45,11 @@ for path in sorted(pathlib.Path("tests").glob("test_*.py")):
 print("DONE")
 """
 
-# And running each one, in a process of its own, since a file can also leave the
-# environment changed on the way out: a teardown is the fix there. Only
-# tests/test_tools.py was run, and only HOME compared, while four files left UPSTREAM,
-# KEEPALIVE_S and the rest set for every module after them (found in review, 2026-09-24).
-RUN_PROBE = """
-import json, os, sys, unittest
-sys.path.insert(0, os.getcwd())
-before = dict(os.environ)
-suite = unittest.defaultTestLoader.loadTestsFromName("tests." + sys.argv[1])
-with open(os.devnull, "w") as null:
-    unittest.TextTestRunner(stream=null, verbosity=0).run(suite)
-after = dict(os.environ)
-print("CHANGED=" + json.dumps(sorted(k for k in set(before) | set(after) if before.get(k) != after.get(k))))
-"""
+# A file can also leave the environment changed on the way out, a teardown being the fix
+# there: four files left UPSTREAM, KEEPALIVE_S and the rest set for every module after them
+# (found in review, 2026-09-24). tests/run_suite.py checks that fact for every file, from the
+# one run of each it makes; this file ran every module again for it, in two CI steps, until
+# 2026-10-24.
 
 
 # The fixtures that give a proxy its engine key, set up the way unittest sets them up, in a
@@ -87,16 +78,6 @@ print("WROTE=" + json.dumps(wrote))
 """
 
 
-# spelled in two parts: the CI counts that string to know how many tests a file declares
-TEST_DEF = "def " + "test_"
-
-
-def modules():
-    """Every unittest module of tests/ but this one."""
-    return [p.stem for p in sorted((REPO / "tests").glob("test_*.py"))
-            if p.stem != "test_suite_isolation" and TEST_DEF in p.read_text()]
-
-
 def run(code, *args, timeout=600):
     return subprocess.run([sys.executable, "-c", code, *args], cwd=REPO,
                           capture_output=True, text=True, timeout=timeout,
@@ -111,20 +92,6 @@ class SuiteIsolation(unittest.TestCase):
                       f"the import probe did not finish:\n{proc.stdout}\n{proc.stderr[-2000:]}")
         leaks = [l for l in proc.stdout.splitlines() if l.startswith("LEAK=")]
         self.assertEqual(leaks, [], "importing these files moved HOME for every file after them")
-
-    def test_no_test_file_leaves_the_environment_changed(self):
-        """The same fact on the way out, for every file and every variable."""
-        from concurrent.futures import ThreadPoolExecutor
-        with ThreadPoolExecutor(max_workers=4) as pool:
-            procs = dict(zip(modules(), pool.map(lambda m: run(RUN_PROBE, m, timeout=1200), modules())))
-        leaks = {}
-        for name, proc in procs.items():
-            line = next((ln for ln in proc.stdout.splitlines() if ln.startswith("CHANGED=")), None)
-            self.assertIsNotNone(line, f"the probe of {name} did not finish:\n{proc.stderr[-2000:]}")
-            changed = json.loads(line[len("CHANGED="):])
-            if changed:
-                leaks[name] = changed
-        self.assertEqual(leaks, {}, "these files left environment variables changed for the files after them")
 
     def test_no_proxy_fixture_writes_a_key_into_home(self):
         """The engine key is handed to the proxy, never left in the HOME it runs from."""
