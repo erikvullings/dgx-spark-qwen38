@@ -530,7 +530,7 @@ class TheOtherTextLaneOnDemand(unittest.TestCase):
     they take: its first Load brings them (prepare-lane.sh, then its switch)."""
 
     def test_each_heavy_step_is_behind_the_on_demand_guard(self):
-        for marker in ('docker pull "$PULL_TARGET" || die "docker pull failed. Causes: no internet, Docker Hub rate limit (retry in a few minutes or \'docker login\'), or the pinned digest was removed upstream: try FLASH',
+        for marker in ('docker pull "$PULL_TARGET" || die "docker pull failed. Causes: no internet, Docker Hub rate limit (retry in a few minutes or \'docker login\'), or the pinned image was removed upstream, its dated tag',
                        'docker pull "$PULL_TARGET" || die "docker pull failed. Causes: no internet, Docker Hub rate limit (retry in a few minutes or \'docker login\'), or the pinned digest was removed upstream: try IMAGE',
                        'GPU_OUT="$(docker run', 'dl_fetch "$DL_MODEL_REPO" "$MODEL_REV"',
                        'flash_token_map "$FLASH_IMAGE"', 'python3 "$REPO_DIR/patch-template.py"'):

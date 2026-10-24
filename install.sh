@@ -1840,7 +1840,7 @@ if [ "$UNITS_ONLY" -eq 1 ]; then
   PULLED_IMAGE="$PULL_TARGET"
 elif [ "$LANE" = "flash" ]; then
   step "2/10 Pulling the official SGLang Flash-Next image (~16 GB to download, 35 GB on disk, one-time, resumable)"
-  docker pull "$PULL_TARGET" || die "docker pull failed. Causes: no internet, Docker Hub rate limit (retry in a few minutes or 'docker login'), or the pinned digest was removed upstream: try FLASH_IMAGE=lmsysorg/sglang:dev-qwen38-next-local ./install.sh"
+  docker pull "$PULL_TARGET" || die "docker pull failed. Causes: no internet, Docker Hub rate limit (retry in a few minutes or 'docker login'), or the pinned image was removed upstream, its dated tag (lmsysorg/sglang:nightly-cu134-20261011-53295c6) with it: update this repo, or open an issue on GitHub if it is up to date"
   PULLED_IMAGE="$PULL_TARGET"
 else
   step "2/10 Pulling the SGLang image (~15 GB to download, 34 GB on disk, one-time, resumable)"

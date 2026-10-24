@@ -73,6 +73,17 @@ class TestInstallHelpNamesTheImagePin(unittest.TestCase):
             f"help date {help_date()} precedes the pin image date {pin_date}",
         )
 
+    def test_flash_pull_advice_names_the_flash_pin_and_no_tag_to_try(self):
+        # the flash lane's advice named dev-qwen38-next-local, its image of v1.8, while the pin is a
+        # cu134 nightly; then the pin's own dated tag, which goes with the image it names and cannot
+        # stand in for it (found in review, 2026-10-24)
+        pin = re.search(r'^FLASH_IMAGE="\$\{FLASH_IMAGE:-lmsysorg/sglang@sha256:[0-9a-f]{64}\}"  # = (lmsysorg/sglang:\S+),',
+                        TEXT, re.M)
+        advice = re.search(r"its dated tag \((lmsysorg/sglang:\S+)\) with it: update this repo", TEXT)
+        self.assertTrue(pin and advice, "the flash pin or its pull advice moved")
+        self.assertEqual(advice.group(1), pin.group(1))
+        self.assertNotIn("try FLASH_IMAGE=", TEXT)
+
     def test_pull_advice_version_matches_pin(self):
         pin_version = image_pin()[0]
         self.assertEqual(
