@@ -150,7 +150,10 @@ class TheEndpoint(Base):
         self.assertEqual(st, 200, d)
         self.assertEqual(d["lines"], [f"{LOCAL_STAMP} server_args api_key='<masked>'",
                                       "[2026-10-02 18:37:17] INFO: ready"])
-        self.assertEqual((d["local_stamps"], d["tz"]), (2, "CEST"))
+        # the zone the page names is the box's now, in Luxembourg CEST in summer and CET in winter: written
+        # "CEST" in October, this failed from the night the clocks went back (2026-10-25)
+        self.assertEqual((d["local_stamps"], d["tz"]), (2, time.strftime("%Z")))
+        self.assertIn(d["tz"], ("CET", "CEST"))
         self.assertIn("--timestamps", next(c for c in self.calls if c[0] == "docker"))
 
     def test_a_journal_reads_in_local_time_and_masked(self):
