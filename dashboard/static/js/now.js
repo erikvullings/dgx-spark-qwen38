@@ -154,6 +154,32 @@ function renderRack(){
     setText(b.act, !has ? 'Not installed' : seated ? (st === 'ready' || st === 'degraded' ? `Open ${LANE_META[unit].view === 'agent' ? 'the agent' : LANE_META[unit].view}` : 'Details') : 'Load this lane');
     b.root.setAttribute('aria-label', `${LANE_META[unit].title}: ${!has ? 'not installed' : stateLabel(e)}. ${b.act.textContent}.`);
   });
+  soonBay();
+}
+// A lane to come (2026-10-25): Qwen named a Qwen4 27B at Apsara (22/09) with no date and has not
+// published its weights. Its card sits greyed after the 27B it will follow, says no more than that,
+// and loads nothing; the release that serves it replaces this card with its lane.
+const SOON = {title: 'Qwen4 27B', kind: 'Text, not released yet',
+              desc: "Qwen's next 27B. It arrives here as a lane, measured on this box, the day Qwen publishes its weights.",
+              note: 'announced by Qwen, no date yet', toast: 'Qwen4 27B is not released yet. It comes in an update.'};
+let SOON_BAY = null;
+function soonBay(){
+  if (!SOON_BAY){
+    const root = el('button', 'bay soon'); root.type = 'button'; root.setAttribute('role', 'listitem');
+    const top = el('div', 'top'); const state = el('span', 'cap');
+    top.append(makerMark(U27), state); cap(state, 'coming soon', '', false);
+    const foot = el('div', 'foot'); const note = el('span', 'faint', SOON.note); note.style.fontSize = '12px';
+    // an action of the same make, unseen and unread, gives the foot its neighbours' height: without it the
+    // card's rule sat 13.5 px under theirs (measured on the branch cockpit, 2026-10-25)
+    const room = el('span', 'act', 'Load this lane'); room.style.visibility = 'hidden'; room.setAttribute('aria-hidden', 'true');
+    foot.append(note, room);
+    root.append(top, el('h3', null, SOON.title), el('p', 'kind', SOON.kind), el('p', 'desc', SOON.desc), foot);
+    root.setAttribute('aria-label', `${SOON.title}: coming soon, not released yet.`);
+    root.addEventListener('click', () => toast(SOON.toast, '', 6000));
+    SOON_BAY = root;
+  }
+  const b27 = BAYS.get(U27);
+  if (b27 && b27.root.nextSibling !== SOON_BAY) $('rack').insertBefore(SOON_BAY, b27.root.nextSibling);
 }
 
 // ── the spine's serving capsule and the lede ──────────────────────────────────

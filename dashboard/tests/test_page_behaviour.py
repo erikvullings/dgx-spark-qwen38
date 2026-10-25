@@ -2095,6 +2095,41 @@ class EveryVersionOfALaneIsInSight(unittest.TestCase):
         self.assertEqual(missing, [], "a version declared halfway reads its long name on its segment and '. .' under it")
 
 
+class ALaneToComeIsGreyedAfterThe27B(unittest.TestCase):
+    """Hasan, 2026-10-25: a greyed card says Qwen4 27B is coming. It sits once after the 27B it
+    will follow however often the rack renders, says no date and no architecture (Qwen published
+    neither), and loads nothing: a click only says it is not out."""
+
+    def test_the_card_follows_the_27b_and_loads_nothing(self):
+        r = run(self, r"""
+        const mem = {MemTotal: 121.6 * GIB, MemAvailable: 16 * GIB, Cached: 12 * GIB, SwapTotal: 0, SwapFree: 0};
+        feed({config: CONFIG, units: UNITS, machine: {mem, cpu_pct: {}, disks: {}}, lifecycle: life({})});
+        feed({lifecycle: life({'qwen38-flash.service': eng('ready', {target: 'flash'})})});
+        feed({lifecycle: life({})});
+        const rack = [...$('rack').children], soon = document.querySelectorAll('#rack .bay.soon'), card = soon[0];
+        const before = __fetches.length;
+        clear($('toasts')); card.click(); await __settle();
+        report({n: soon.length, at: rack.indexOf(card), prev: rack[rack.indexOf(card) - 1].querySelector('h3').textContent,
+                bays: rack.length, title: card.querySelector('h3').textContent, cap: card.querySelector('.cap').textContent,
+                lamp: card.querySelectorAll('.cap .lamp').length, text: card.textContent, toast: toastText(),
+                fetched: __fetches.slice(before).map(x => x.url), aria: card.getAttribute('aria-label'),
+                room: [card.querySelector('.foot .act').style.visibility, card.querySelector('.foot .act').getAttribute('aria-hidden')]});
+        """)
+        self.assertEqual(r["n"], 1)
+        self.assertEqual(r["at"], 1)
+        self.assertTrue(r["prev"].startswith("Qwen3.8 27B"), r["prev"])
+        self.assertEqual(r["bays"], 10)   # the nine lanes and this card
+        self.assertEqual((r["title"], r["cap"], r["lamp"]), ("Qwen4 27B", "coming soon", 0))
+        self.assertIn("not released yet", r["text"])
+        self.assertIn("no date yet", r["text"])
+        self.assertIsNone(re.search(r"\b(dense|MoE|experts|October|November|20\d\d)\b", r["text"]), r["text"])
+        self.assertEqual(r["toast"], "Qwen4 27B is not released yet. It comes in an update.")
+        self.assertEqual(r["fetched"], [])
+        self.assertEqual(r["aria"], "Qwen4 27B: coming soon, not released yet.")
+        # the foot keeps its neighbours' height with an action nobody sees or hears
+        self.assertEqual(r["room"], ["hidden", "true"])
+
+
 class EachLaneWearsItsMakersMark(unittest.TestCase):
     """Four bays that looked alike (2026-10-11): each lane carries its maker's mark on its bay
     and its card in Lanes, the head's capsule shows the mark of what serves, and the lane's
@@ -2112,7 +2147,7 @@ class EachLaneWearsItsMakersMark(unittest.TestCase):
         const flash = now();
         feed({lifecycle: life({'qwen38-video.service': eng('ready', {target: 'video'})})});
         const video = now();
-        report({bays: [...document.querySelectorAll('#rack .bay')].map(b => logo(b.querySelector('.mark img'))),
+        report({bays: [...document.querySelectorAll('#rack .bay')].filter(b => !b.classList.contains('soon')).map(b => logo(b.querySelector('.mark img'))),
                 cards: [...document.querySelectorAll('#lanes-list .lane-panel')].map(c => logo(c.querySelector('.mark img'))),
                 alts: [...document.querySelectorAll('.mark img')].map(i => i.getAttribute('alt')),
                 hidden: [...document.querySelectorAll('#rack .mark, #lanes-list .mark')].map(m => m.getAttribute('aria-hidden')),
