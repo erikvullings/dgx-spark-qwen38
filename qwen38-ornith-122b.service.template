@@ -70,6 +70,9 @@ ExecStartPre=/bin/bash __HOME__/.config/qwen38/engine-preflight.sh qwen38-ornith
 # at every install and every switch): a system message past the first one, which opencode 1.19.4
 # sends, made the template raise and every opencode request a 400 (2026-10-24). It becomes a
 # <system-reminder>, as on the 27B and the two flash lanes.
+# --enable-prompt-tokens-details: each answer says how much of its prompt the prefix cache served
+# (usage.prompt_tokens_details.cached_tokens, and cache_read_input_tokens beside input_tokens on
+# /v1/messages, input_tokens then counting the rest), which the engine counts anyway: discussion #49.
 ExecStart=/bin/bash -c 'exec /usr/bin/docker run --rm --name qwen38-ornith-122b --gpus all \
   --memory 110g --memory-swap 110g --shm-size 16g --network host --ipc=host \
   --ulimit memlock=-1 --ulimit stack=67108864 \
@@ -114,7 +117,7 @@ ExecStart=/bin/bash -c 'exec /usr/bin/docker run --rm --name qwen38-ornith-122b 
     --linear-backend b12x --moe-backend b12x \
     --no-enable-flashinfer-autotune --mm-encoder-tp-mode data \
     --compilation-config.pass_config.fuse_act_quant true \
-    --reasoning-parser qwen3 --tool-call-parser qwen3_xml --enable-auto-tool-choice \
+    --reasoning-parser qwen3 --tool-call-parser qwen3_xml --enable-auto-tool-choice --enable-prompt-tokens-details \
     --allowed-media-domains media.invalid \
     --middleware vllm_engine_auth.RequireKey \
     --host __ENGINE_BIND__ --port __PORT__'

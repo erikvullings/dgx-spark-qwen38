@@ -30,6 +30,9 @@ ExecStartPre=/bin/bash __HOME__/.config/qwen38/engine-secrets.sh
 # /cohere, and /invocations (which runs chat and completions), /tokenize and /detokenize
 # answered without it; the middleware asks it everywhere but /health and /metrics, as the
 # SGLang lanes do. Its directory alone is mounted, read-only, and it reads the key file.
+# --enable-prompt-tokens-details: each answer says how much of its prompt the prefix cache served
+# (usage.prompt_tokens_details.cached_tokens, and cache_read_input_tokens beside input_tokens on
+# /v1/messages, input_tokens then counting the rest), which the engine counts anyway: discussion #49.
 ExecStart=/bin/bash -c 'exec /usr/bin/docker run --rm --name qwen38-kolibri --gpus all \
   --memory 100g --memory-swap 100g --shm-size 16g --network host --ipc=host \
   -e HF_HUB_OFFLINE=1 -e VLLM_NO_USAGE_STATS=1 -e DO_NOT_TRACK=1 \
@@ -43,7 +46,7 @@ ExecStart=/bin/bash -c 'exec /usr/bin/docker run --rm --name qwen38-kolibri --gp
     --served-model-name kolibri-1 \
     --max-model-len 262144 --kv-cache-dtype fp8 \
     --gpu-memory-utilization __GMU__ --max-num-seqs 16 \
-    --reasoning-parser kolibri1 --tool-call-parser kolibri1 --enable-auto-tool-choice \
+    --reasoning-parser kolibri1 --tool-call-parser kolibri1 --enable-auto-tool-choice --enable-prompt-tokens-details \
     --config /out/engine-secrets.yaml --middleware vllm_engine_auth.RequireKey \
     --host __ENGINE_BIND__ --port __PORT__'
 ExecStop=-/usr/bin/docker stop -t 20 qwen38-kolibri

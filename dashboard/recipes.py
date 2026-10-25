@@ -118,7 +118,7 @@ SWITCHES = (
                                     # endpoint every fleet asks for; unauthenticated
                                     # on the engine port, same trust model as that
                                     # port's whole surface (SECURITY.md)
-    "--enable-cache-report",         # 27B lanes: each answer says what the prefix cache served (#49)
+    "--enable-cache-report",         # SGLang lanes: each answer says what the prefix cache served (#49)
     "--disable-prefill-cuda-graph",
     "--ple-offload-embedding",      # flash lane: the only reason 176B fits one GB10
     "--trust-remote-code",
