@@ -12,16 +12,20 @@ the boot, a server left without its scheduler) is in [engine-restarts.md](engine
 **Killing an abandoned generation.** If a client dies mid-generation the server keeps
 decoding for nothing (symptom: power draw and GPU busy with no active session). Behind
 the keepalive proxy this heals itself: the proxy aborts the upstream the moment the
-client disconnects. For direct connections (`./run.sh`, curl, custom clients), abort
-everything in flight with:
+client disconnects. To stop everything in flight yourself, ask the proxy (the cockpit's
+Abort all does the same, since v1.40.3):
 
 ```bash
 printf 'Authorization: Bearer %s\n' "$(cat ~/.config/qwen38/api-key)" | curl -X POST -H @- \
-  -H 'Content-Type: application/json' -d '{"abort_all": true}' http://127.0.0.1:30000/abort_request
+  -H 'Content-Type: application/json' -d '{"kind": "operator"}' http://127.0.0.1:30001/proxy/stop
 ```
 
-The server keeps running; use it only when you know the in-flight work is abandoned,
-because it aborts EVERY request currently decoding, yours included.
+Each client of the proxy then sees its connection cut and retries. An abort sent to the engine
+itself (`{"abort_all": true}` to `http://127.0.0.1:30000/abort_request`) also stops direct
+connections (`./run.sh`, custom clients), but SGLang ends every aborted answer as a finished one
+(`end_turn` on `/v1/messages`), so a client takes the part it got for the whole answer. Either
+way the server keeps running; use it only when you know the in-flight work is abandoned,
+because it stops EVERY request currently decoding, yours included.
 
 `HF_HUB_OFFLINE=1` is fine **once every pinned checkpoint is cached**: the 1m unit sets it on
 purpose (it protects the YaRN-patched configs from any Hub re-resolution) and the reference

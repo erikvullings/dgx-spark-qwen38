@@ -1054,8 +1054,14 @@ function renderBanners(state, errors){
   const upd0 = sv && updateOwed(sv[0]);
   if (upd0) add('warn', `${laneLabel(sv[0])} runs what it started with, not what the update installed.`,
     `${upd0}. It applies at its next start: Restart ${LANE_NAME[sv[0]]} to apply the update, on its card in Lanes (it answers again in ${readyIn(sv[0])}).`);
-  if (F.memFloor && F.memFloor.aborts && F.memFloor.last_abort && Date.now() / 1000 - F.memFloor.last_abort < 600)
-    add('warn', 'The memory floor fired.', `Memory fell under ${F.memFloor.gib} GiB with requests running: every generation was aborted ${fmtDur(Date.now() / 1000 - F.memFloor.last_abort)} ago to keep the box out of a livelock.`);
+  // since v1.40.3 the stop goes through the proxy, which cuts each client instead of letting its
+  // stream end as if the answer were whole, and holds new generations back while memory is short
+  if (F.memFloor && F.memFloor.aborts && F.memFloor.last_abort && Date.now() / 1000 - F.memFloor.last_abort < 600){
+    const ago = fmtDur(Date.now() / 1000 - F.memFloor.last_abort);
+    add('warn', 'The memory floor fired.', F.memFloor.via === 'proxy'
+      ? `Memory fell under ${F.memFloor.gib} GiB with requests running: every generation was stopped ${ago} ago to keep the box out of a livelock. Their clients were cut and retry on their own; new requests wait a minute, and for as long as memory stays under the floor.`
+      : `Memory fell under ${F.memFloor.gib} GiB with requests running: every generation was aborted ${ago} ago to keep the box out of a livelock.`);
+  }
   const upd = F.update || {};
   // An update that runs now (install.sh keeps a file while it lasts, the cockpit checks its process):
   // the banners that ask for one wait, since one runs (an ASUS Ascent GX10, 2026-10-21: an update of

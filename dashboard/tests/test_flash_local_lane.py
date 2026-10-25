@@ -82,7 +82,9 @@ class Base(unittest.TestCase):
         threading.Thread(target=cls.engine.serve_forever, daemon=True).start()
         os.environ.update(COCKPIT_DRY_RUN="1", COCKPIT_CONFIG_DIR=str(cls.box), COCKPIT_REPO_DIR=str(REPO),
                           COCKPIT_PORT="0", COCKPIT_AGENT_PORT="0", COCKPIT_AUTOHEAL="0",
-                          COCKPIT_ENGINE=f"http://127.0.0.1:{cls.engine.server_port}")
+                          COCKPIT_ENGINE=f"http://127.0.0.1:{cls.engine.server_port}",
+                          # never the box's own proxy: a stop goes there first since v1.40.3
+                          COCKPIT_PROXY="http://127.0.0.1:1")
         (cls.box / "api-key").write_text("test-key\n")
         sys.path.insert(0, str(DASH))
         spec = importlib.util.spec_from_file_location("cockpit_flash_local_under_test", DASH / "cockpit.py")

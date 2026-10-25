@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
-"""Keepalive proxy in front of SGLang or vLLM (v6.46). No content logging, and the only
-rewriting is the tool-schema guard (role 4); one route, POST /v1/systemone, is answered
-here instead of relayed (role 5).
+"""Keepalive proxy in front of SGLang or vLLM (v6.47). No content logging, and the only
+rewriting is the tool-schema guard (role 4); two routes, POST /v1/systemone (role 5) and the
+operator's POST /proxy/stop (role 7), are answered here instead of relayed.
 
-Six roles, nothing else:
+Seven roles, nothing else:
 1. fill the silences of the SSE stream (SGLang's tool-call parser buffers the
    arguments: 127 s of measured silence for a 400-line file write) by injecting
    the OFFICIAL Anthropic "ping" event every KEEPALIVE_S seconds on the
@@ -38,8 +38,21 @@ Six roles, nothing else:
 6. keep a request through an engine restart: one that arrives while the engine does not
    answer and its unit (PROXY_HOLD_UNITS) is on its way back waits for it, at most
    PROXY_HOLD_MAX_S, instead of failing at once. A streamed one hears from the proxy at
-   once (200, then the keepalives of role 1); see "Holding a request" below.
+   once (200, then the keepalives of role 1); see "Holding a request" below;
+7. stop every generation when the cockpit's memory floor asks (POST /proxy/stop, from this machine
+   with the engine's key): each client's connection is cut, not ended, so that it never takes a cut
+   answer for a whole one, and new generations wait while the box is short of memory (see "The
+   memory floor's stop" below).
 
+v6.47: the memory floor's stop (role 7). SGLang ends an aborted generation as a finished one, end_turn
+on /v1/messages and finish_reason "abort" on the OpenAI routes, so a client of the cockpit's memory
+floor got the part generated before the stop as its whole answer: Claude Code kept a compaction summary
+cut in the middle of a word (the reference box, 2026-10-25), and Hermes, the Anthropic SDK's stream and
+LiteLLM do the same. The cockpit's stop comes here now: each generation relayed is stopped (by rid on
+SGLang, by closing its connection on vLLM, where the floor could stop nothing) and its client is cut,
+and for the floor's pause after a stop, or while MemAvailable stays under the floor, a new generation is
+refused with 529 overloaded_error (503 off /v1/messages) and the cause. On the OpenAI routes a stream
+the engine ends with finish_reason "abort", whatever aborted it, is cut instead of relayed.
 v6.46: a body the proxy writes again for the engine keeps its text as UTF-8. Seven guards parse a
 body and write it again (the reasoning effort routes, the Qwen, Nemotron and Ornith effort
 translations, the tool schema patterns, the model name on vLLM), and the prompt counter writes the
@@ -739,7 +752,8 @@ SERVER_INFO_ROUTES = frozenset({"/server_info", "/get_server_info"})
 # the weights, the profiler, pause_generation, slow_down, set_internal_state, flush_cache,
 # abort_request (found in review, 2026-10-16). A client of this port is not the engine's
 # operator, and the operator's own calls (the cockpit's) go to the engine directly, on
-# 127.0.0.1:30000, not through here. An allow list, not a deny list: the engine's route table
+# 127.0.0.1:30000, not through here, but for its stop (STOP_PATH, v6.47), which is the proxy's
+# own route and checks the engine's key itself. An allow list, not a deny list: the engine's route table
 # grows with every image (73 routes in the v0.5.21 the 27B lane serves).
 # 2026-10-17: and the reading routes of the other dialects, which only read in SGLang v0.5.21
 # (http_server.py): Ollama's /api/tags and /api/show (a model list, a model card), SageMaker's
@@ -3328,6 +3342,132 @@ ABORT_TIMEOUT_S = float(os.environ.get("ABORT_TIMEOUT_S", "5"))
 # flood: an engine writing into a socket nobody reads is silent, an engine whose state
 # was deleted logs one line per output batch.
 DRAIN_MAX_S = float(os.environ.get("DRAIN_MAX_S", "900"))
+
+# The memory floor's stop (v6.47, 2026-10-25). The cockpit stops every generation when the box's
+# MemAvailable falls under its floor with requests running: a prefill's activations can take the
+# box to the edge of a livelock (measured 29/08: 0.8 GiB after a 177k prompt). It asked SGLang
+# straight (/abort_request, abort_all), and SGLang ends an aborted generation as a finished one:
+# stop_reason end_turn on /v1/messages (its STOP_REASON_MAP has no "abort": v0.5.22, the flash
+# nightly and main, read 2026-10-25) and finish_reason "abort" on the OpenAI routes, which LiteLLM
+# reads as "stop". Claude Code kept a compaction summary cut in the middle of a word for a whole one
+# (the reference box, 2026-10-25 07:42), and so did Hermes, the Anthropic SDK's stream and LiteLLM
+# on a fake engine that ends as SGLang does. So the cockpit asks this proxy (STOP_PATH), and each
+# generation it relays is cut, not ended: its client reads the incomplete answer it is and retries.
+# Measured on that fake engine, the four agents retried with the whole answer and no duplicate,
+# where an error event made Claude Code fall back to a request without a stream and opencode and pi
+# give up. The generation itself is stopped the way that exists (an abort by rid on SGLang, closing
+# its connection on vLLM, where the cockpit could stop nothing), and on SGLang an abort_all takes
+# what no relay can name. The agents retry within 1 to 3 s and the floor waits FLOOR_HOLD_S between
+# two stops, so a new generation is refused (529 overloaded_error on /v1/messages, 503 elsewhere,
+# the cause in clear) for that long after a stop and while MemAvailable stays under the floor: a
+# refusal costs the engine nothing; the agents retried and got their answer once it ended, and under
+# a lasting one they stopped with its message, where under cuts alone Hermes sent 54 requests in
+# 400 s, each a whole prefill. MEM_FLOOR_GIB and FLOOR_HOLD_S default to the cockpit's floor and
+# pause (COCKPIT_MEM_FLOOR_GIB, decide_mem_floor's cooldown), which its stop carries; 0 turns each off.
+# The cockpit's own Abort all (an operator's stop, "kind": "operator") cuts the same way and holds
+# nothing back: it is no sign of a box short of memory.
+STOP_PATH = "/proxy/stop"
+STOP_PEERS = ("127.0.0.1", "::1", "::ffff:127.0.0.1")    # this machine: the cockpit runs here
+MEM_FLOOR_GIB = float(os.environ.get("PROXY_MEM_FLOOR_GIB", "3.0") or 0)
+FLOOR_HOLD_S = float(os.environ.get("PROXY_FLOOR_HOLD_S", "60") or 0)
+_FLOOR = {"at": None, "until": None, "why": "", "floor_gib": MEM_FLOOR_GIB}
+_GENERATIONS = set()                # the handlers a stop reaches: from their request going out to their _done
+_GEN_LOCK = threading.Lock()
+
+
+def mem_available_gib(path="/proc/meminfo"):
+    """MemAvailable in GiB, or None when it cannot be read."""
+    try:
+        with open(path, encoding="ascii") as f:
+            for line in f:
+                if line.startswith("MemAvailable:"):
+                    return int(line.split()[1]) / 1048576
+    except (OSError, ValueError, IndexError):
+        pass
+    return None
+
+
+def floor_refusal(now=None, avail=None):
+    """(why, seconds to wait) while a new generation must wait for memory, else None: for
+    _FLOOR's hold after a stop, then while MemAvailable stays under the floor."""
+    now = time.monotonic() if now is None else now
+    at, until = _FLOOR["at"], _FLOOR["until"]
+    if until is not None and now < until:
+        left = until - now
+        return (f"the memory floor stopped every generation {now - at:.0f}s ago "
+                f"({_FLOOR['why'] or 'memory low'}), and new ones wait {left:.0f}s more"), max(2, int(left + 0.999))
+    floor = _FLOOR["floor_gib"]
+    if floor > 0:
+        avail = mem_available_gib() if avail is None else avail
+        if avail is not None and avail < floor:
+            return f"MemAvailable is {avail:.1f} GiB, under the {floor:g} GiB memory floor", 5
+    return None
+
+
+def engine_aborted(rec):
+    """True when this SSE event ends an aborted generation on the OpenAI dialect: a choice whose
+    finish_reason is "abort", which SGLang sends for an abort that carries no status
+    (/abort_request, the end of a session) instead of an error (serving_chat.py, v0.5.22 and the
+    flash nightly). Whatever aborted it, the client must not take what it got for an answer."""
+    if b'"abort"' not in rec:
+        return False
+    for line in rec.split(b"\n"):
+        if not line.startswith(b"data:"):
+            continue
+        payload = line[5:].strip()
+        if not payload or payload == b"[DONE]":
+            continue
+        try:
+            j = json.loads(payload)
+        except ValueError:
+            continue
+        for ch in (j.get("choices") or []) if isinstance(j, dict) else ():
+            if isinstance(ch, dict) and ch.get("finish_reason") == "abort":
+                return True
+    return False
+
+
+def stop_generations(why, floor_gib=None, hold_s=None, floor=True):
+    """The cockpit's stop: every generation this proxy relays is cut and stopped, and after the
+    memory floor's, new ones wait (floor_refusal). (how many it reached, whether SGLang's abort_all
+    went)."""
+    with _GEN_LOCK:
+        targets = list(_GENERATIONS)
+        if floor:
+            now = time.monotonic()
+            hold = FLOOR_HOLD_S if hold_s is None else hold_s
+            _FLOOR.update(at=now, until=now + hold if hold > 0 else None, why=why[:200])
+            if floor_gib is not None:
+                _FLOOR["floor_gib"] = floor_gib
+    for h in targets:
+        h._stop_generation(why, floor)
+    if not _SERVED["engine"]:
+        try:
+            served_models()
+        except EngineUnreachable:
+            pass
+    if _SERVED["engine"] == "vllm":
+        return len(targets), False      # each relay closed its connection, which is vLLM's abort
+    key = _door_key()
+    hdrs = {"Content-Type": "application/json"}
+    if key:
+        hdrs["Authorization"] = "Bearer " + key
+    try:
+        urllib.request.urlopen(urllib.request.Request(UPSTREAM + "/abort_request",
+                                                      json.dumps({"abort_all": True}).encode(), hdrs),
+                               timeout=ABORT_TIMEOUT_S).read()
+        return len(targets), True
+    except Exception as e:  # noqa: BLE001 (the relays' own aborts went; said, not raised)
+        log(f"memory floor: abort_all failed: {type(e).__name__}: {str(e)[:120]}")
+        return len(targets), False
+
+
+def _gen_discard(handler):
+    """This handler's generation is over, or held: a stop no longer reaches it."""
+    with _GEN_LOCK:
+        _GENERATIONS.discard(handler)
+
+
 _rid_override_honoured = None       # None = never observed, True/False = what the engine did
 # Until an answer has shown it, the unit that serves now is the proof (2026-10-17): only a chat
 # or /generate stream shows it, and a box served by Claude Code alone never streams them, so every
@@ -3860,6 +4000,7 @@ class H(BaseHTTPRequestHandler):
     # ---- relay -------------------------------------------------------------
     def _done(self, outcome):
         self._ended = True
+        _gen_discard(self)
         st = ""
         if getattr(self, "_bytes", 0) or getattr(self, "_first", None) is not None:
             f = f"{self._first:.1f}s" if self._first is not None else "never"
@@ -3995,6 +4136,106 @@ class H(BaseHTTPRequestHandler):
             sock.shutdown(socket.SHUT_RDWR)
         except OSError:
             pass
+
+    def _stop_generation(self, why, floor=True):
+        """The cockpit stopped this request (v6.47), from the stop route's thread: its memory floor,
+        or its operator's Abort all. A relay that runs wakes on its queue and cuts its client; a
+        request still waiting for the engine's first byte has its generation stopped and its upstream
+        ended now, and _forward cuts its client."""
+        self._stop_floor = floor
+        self._stop_why = why
+        q = getattr(self, "_relay_q", None)
+        if q is not None:
+            try:
+                q.put_nowait(("s", b""))
+            except queue.Full:
+                pass                        # the loop reads _stop_why at its next event
+            return
+        self._abort_upstream("memory floor")
+        self._shut_upstream()
+
+    def _cut_stopped(self):
+        """The client of a generation the cockpit stopped (v6.47): its connection is cut, with no end
+        to its stream and no last chunk, so it reads the incomplete answer it is and retries, as the
+        agents measured did, instead of taking the part it got for the whole answer."""
+        floor = getattr(self, "_stop_floor", True)
+        log(f"{self._peer} stopped by the {'memory floor' if floor else 'cockpit'} ({self._stop_why}): "
+            f"the client's connection is cut, not ended, so it does not take what it got for an answer")
+        self.close_connection = True
+        try: self.connection.shutdown(socket.SHUT_RDWR)
+        except Exception: pass
+        self._done("STOPPED memory floor" if floor else "STOPPED by the cockpit")
+
+    def _floor_refused(self):
+        """True when this new generation was refused because the box is short of memory (v6.47):
+        a 529 overloaded_error on /v1/messages, a 503 elsewhere, with Retry-After and the cause in
+        clear. The agents measured retried after it and got their answer once it ended."""
+        got = floor_refusal()
+        if got is None:
+            return False
+        why, wait = got
+        msg = (f"keepalive-proxy: this box is short of memory: {why}. The request was not started, to "
+               f"keep the box out of a livelock. It goes through once memory is back: retry in {wait}s, "
+               f"and close what holds the memory if this lasts.")
+        if self.path.startswith("/v1/messages"):
+            status, err = 529, {"type": "error", "error": {"type": "overloaded_error", "message": msg}}
+        else:
+            status, err = 503, {"error": {"type": "overloaded_error", "code": "memory_floor", "message": msg}}
+        log(f"{self._peer} REFUSED a new generation: {why}")
+        self._answer(status, {"Content-Type": "application/json", "Retry-After": str(wait)},
+                     json.dumps(err).encode())
+        self._done("529 memory floor" if status == 529 else "503 memory floor")
+        return True
+
+    def _stop_route(self, with_body):
+        """POST STOP_PATH (v6.47): the cockpit stops every generation through this proxy, for its
+        memory floor or its operator's Abort all. Its operator's only: from this machine, with the key
+        the engine checks, never a client key. Body (optional): {"why", "kind": "floor" (the default)
+        or "operator", "floor_gib", "hold_s"}; answer {"stopped", "abort_all"}."""
+        refuse = None
+        if self.command != "POST":
+            refuse = (405, "takes POST")
+        elif str(self.client_address[0]) not in STOP_PEERS:
+            refuse = (403, "is reached from this machine only")
+        else:
+            key = _door_key()
+            if not key or not engine_admits(self.headers.get("Authorization"), key):
+                refuse = (401, "needs the key the engine checks")
+        n = parse_body_length(self.headers.get("Content-Length"))
+        if refuse is None and (n is None or n > 4096):
+            refuse = (413, "takes a body of at most 4096 bytes")
+        if refuse is not None:
+            log(f"{self._peer} REFUSED {STOP_PATH}: it {refuse[1]}")
+            self._plain(refuse[0], {"Content-Type": "application/json"},
+                        json.dumps({"error": {"type": "invalid_request",
+                                              "message": f"keepalive-proxy: {STOP_PATH} {refuse[1]}"}}).encode())
+            self._done("405 stop refused" if refuse[0] == 405 else "403 stop refused" if refuse[0] == 403
+                       else "401 stop refused" if refuse[0] == 401 else "413 stop refused"); return
+        args = {}
+        if with_body and n:
+            raw = self.rfile.read(n)
+            self._body_read = True
+            try:
+                args = json.loads(raw) if raw.strip() else {}
+            except ValueError:
+                args = None
+        if not isinstance(args, dict):
+            self._plain(400, {"Content-Type": "application/json"},
+                        json.dumps({"error": {"type": "invalid_request",
+                                              "message": f"keepalive-proxy: {STOP_PATH} takes a JSON object"}}).encode())
+            self._done("400 stop refused"); return
+
+        def number(k):
+            v = args.get(k)
+            return float(v) if isinstance(v, (int, float)) and not isinstance(v, bool) and v >= 0 else None
+        floor = args.get("kind", "floor") != "operator"
+        why = str(args.get("why") or ("memory floor" if floor else "Abort all, from the cockpit"))
+        stopped, all_sent = stop_generations(why, number("floor_gib"), number("hold_s"), floor)
+        log(f"{'memory floor' if floor else 'cockpit'}: {why}: {stopped} generation(s) stopped here"
+            + (", and SGLang's abort_all sent" if all_sent else ""))
+        self._plain(200, {"Content-Type": "application/json"},
+                    json.dumps({"stopped": stopped, "abort_all": all_sent}).encode())
+        self._done("ok stop")
 
     def _relay(self, resp):
         """A client that vanishes before the relay can start (30/08: a request that
@@ -4243,6 +4484,14 @@ class H(BaseHTTPRequestHandler):
 
     def _relay_inner(self, resp):
         sse = "text/event-stream" in (resp.headers.get("Content-Type") or "")
+        if getattr(self, "_stop_why", None):
+            # v6.47: the engine answered after the memory floor stopped this request: the part it
+            # generated is not relayed (a stream's generation is stopped first, before the close)
+            if sse:
+                self._abort_upstream("memory floor")
+            try: resp.close()
+            except Exception: pass
+            self._cut_stopped(); return
         if not sse and getattr(self, "_held_sse", False):
             # the stream this proxy opened while it held the request cannot carry a document:
             # the engine answered a streamed request without a stream, so say so in it
@@ -4308,6 +4557,7 @@ class H(BaseHTTPRequestHandler):
             self._done("ok non-sse"); return
 
         q = queue.Queue(maxsize=1024)
+        self._relay_q = q                   # v6.47: a stop wakes the loop below through it
         stop = threading.Event()
         drain = threading.Event()
         drain_t0 = [0.0]
@@ -4382,8 +4632,14 @@ class H(BaseHTTPRequestHandler):
         ka_bytes = KA_ANTHROPIC if anthropic else KA_OPENAI
         silence = 0.0
         while True:
+            if getattr(self, "_stop_why", None):
+                # v6.47: the memory floor stopped this generation: stopped upstream, its client cut
+                drop_upstream("memory floor")
+                self._cut_stopped(); return
             try:
                 kind, val = q.get(timeout=KEEPALIVE_S)
+                if kind == "s":
+                    continue                # a stop: read at the top of the loop
                 silence = 0.0
             except queue.Empty:
                 silence += KEEPALIVE_S
@@ -4420,6 +4676,20 @@ class H(BaseHTTPRequestHandler):
             if self._first is None: self._first = now
             self._last = now; self._bytes += len(val)
             self._note_rid(val)
+            if not anthropic and engine_aborted(val):
+                # v6.47: the engine ended this generation as aborted (finish_reason "abort", which
+                # LiteLLM reads as "stop", opencode as a reason to go on, pi as an error): the
+                # client's stream is cut instead, so it reads the incomplete answer it is and retries.
+                # Nothing to abort: the engine has let the generation go.
+                log(f"{self._peer} the engine aborted this generation (finish_reason abort): the "
+                    f"client's connection is cut, not ended")
+                stop.set()
+                self.close_connection = True
+                try: self.connection.shutdown(socket.SHUT_RDWR)
+                except Exception: pass
+                try: resp.close()
+                except Exception: pass
+                self._done("UPSTREAM ABORTED"); return
             if self._scan_corruption(val):
                 # The decode path lost its state; everything after this point is noise.
                 # Say so, rather than let the client read a wall of exclamation marks.
@@ -4456,6 +4726,10 @@ class H(BaseHTTPRequestHandler):
             self._done("400 suspect path"); return
         self._label_peer()
         log(f"{self._peer} -> {self.command} {self.path.split('?')[0]} body={n0}b")
+        # v6.47: a stop is this request's own, on a connection that serves several too
+        self._stop_why = None; self._stop_floor = True; self._relay_q = None
+        if self.path.split("?")[0] == STOP_PATH:
+            self._stop_route(with_body); return     # the operator's: its own checks, before the wall and the door
         if self._wall_refused() or self._door_refused():
             return
         n = parse_body_length(self.headers.get("Content-Length"))
@@ -4667,8 +4941,16 @@ class H(BaseHTTPRequestHandler):
         # S5: the prefix test alone let /generate and the Vertex and SageMaker aliases
         # slip through unmeasured; _is_prompt_route adds them without changing the
         # /v1/ behavior that was already correct.
+        gen = bool(body) and _is_prompt_route(self.path.split("?", 1)[0]) and not count_only
+        if gen:
+            # v6.47: a stop reaches this request from here on (STOP_PATH), and a new generation waits
+            # while the box is short of memory (floor_refusal)
+            with _GEN_LOCK:
+                _GENERATIONS.add(self)
+            if self._floor_refused():
+                return None
         # v6.34: every prompt body is measured: by its bound where a wedge is possible.
-        if body and _is_prompt_route(self.path.split("?", 1)[0]) and not count_only:
+        if gen:
             pool = pool_tokens()
             est = nomination_estimate(len(body), pool)
             if wedge_possible(pool):
@@ -4681,6 +4963,7 @@ class H(BaseHTTPRequestHandler):
                 # engine. 503, never 400: the request may be perfectly servable
                 # once the pool is known, so this is "try again", not "refused".
                 if warmup_hold(est, pool):
+                    _gen_discard(self)
                     return ("warming", "the engine restarted and its KV pool is not measured yet", int(est))
             elif est > prompt_limit(pool):
                 # v6.8: the size estimate only nominates; the engine's tokenizer decides
@@ -4743,6 +5026,11 @@ class H(BaseHTTPRequestHandler):
         # first chunk is out, after its queue and its prefill (_keep_waiting). Until then this
         # proxy waits inside _open, and the caller is watched for that wait: its leaving ends
         # the upstream, and a stream is kept alive meanwhile.
+        if getattr(self, "_stop_why", None):
+            # stopped before it went out: not sent, and refused as a new one is (cut if no refusal holds)
+            if not self._floor_refused():
+                self._cut_stopped()
+            return None
         done = threading.Event()
         self._wlock = threading.Lock()      # the keeper writes into the stream until _open returns
         whole = bool(body) and answered_whole(body)
@@ -4768,6 +5056,12 @@ class H(BaseHTTPRequestHandler):
                     except Exception: pass
             self._done("CLIENT GONE during non-sse wait" if whole else "CLIENT GONE before the engine answered")
             return None
+        if getattr(self, "_stop_why", None) and resp is None:
+            # the stop ended the upstream while the engine had not answered yet: its client is cut
+            if herr is not None:
+                try: herr.close()
+                except Exception: pass
+            self._cut_stopped(); return None
         silent = getattr(self, "_silent_before_head", None)
         if silent is not None:
             for r in (resp, herr):
@@ -4787,10 +5081,12 @@ class H(BaseHTTPRequestHandler):
             self._done("DROPPED upstream silent"); return None
         if cerr is not None:
             invalidate_pool()           # same: the next pool must be read fresh
+            _gen_discard(self)          # held, it is not in flight
             return ("unreachable", str(cerr), None)
         if herr is not None and herr.code in (502, 503, 504):
             try: herr.read(); herr.close()
             except Exception: pass
+            _gen_discard(self)
             return ("upstream", f"it answered HTTP {herr.code}, as it does while starting or shutting down", herr.code)
         if herr is not None: self._upstream_error(herr); return None
         self._relay(resp)
@@ -5056,6 +5352,8 @@ class H(BaseHTTPRequestHandler):
                                               "fragment, an escape left after one decode, or a byte "
                                               "outside printable ASCII, and is refused"}}).encode())
             self._done("400 suspect path"); return
+        if self.path.split("?")[0] == STOP_PATH:
+            self._stop_route(False); return     # v6.47: the proxy's own route, never the engine's
         if self._wall_refused() or self._door_refused():
             return
         resp, herr, cerr = self._open(None)
@@ -5169,7 +5467,12 @@ if __name__ == "__main__":
     holds = (f"holds requests up to {HOLD_MAX_S:.0f}s while {' or '.join(HOLD_UNITS)} comes back"
              if HOLD_UNITS and HOLD_MAX_S > 0 else "holds nothing")
     # one f-string: the cockpit's tests render this line from the source
-    log(f"v6.46 on {BIND}:{port} -> {UPSTREAM} (keepalive {KEEPALIVE_S:.0f}s, max silence {MAX_SILENCE_S:.0f}s, {holds})")
+    log(f"v6.47 on {BIND}:{port} -> {UPSTREAM} (keepalive {KEEPALIVE_S:.0f}s, max silence {MAX_SILENCE_S:.0f}s, {holds})")
+    # v6.47: what the memory floor's refusal reads, read once here, so the journal shows it works where
+    # the unit runs this proxy (its sandbox leaves /proc/meminfo readable)
+    avail = mem_available_gib()
+    log(f"memory floor {MEM_FLOOR_GIB:g} GiB, held {FLOOR_HOLD_S:g}s after a stop (POST {STOP_PATH}); "
+        f"MemAvailable now " + (f"{avail:.1f} GiB" if avail is not None else "unreadable: no refusal under the floor"))
     if FLASH_PROMPT_CEILING_TOKENS > 0:
         log(f"one-prompt ceiling {FLASH_PROMPT_CEILING_TOKENS} tokens while the flash lane serves"
             + (f", {PROMPT_CEILING_TOKENS} on any lane" if PROMPT_CEILING_TOKENS > 0 else ""))

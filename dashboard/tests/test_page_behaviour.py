@@ -179,15 +179,33 @@ class TheKolibriLaneIsSaidAsItIs(unittest.TestCase):
         self.assertNotIn("serves on vLLM", r["verdict"])
         self.assertIn("loading", r["verdict"])
 
-    def test_the_belts_say_they_cannot_act_there(self):
+    def test_the_pool_guard_says_it_cannot_act_there_and_the_floor_how_it_does(self):
+        # since v1.40.3 the floor stops vLLM's generations through the proxy, which closes their
+        # connections; the pool guard still has no flush route there
         r = run(self, self.KOLIBRI + r"""
         const L = life({'qwen38-kolibri.service': eng('ready', {target: 'kolibri'})},
                        {pool_guard: {enabled: true, threshold: 0.6, fails: 0, flushes: 0}});
         feed({lifecycle: L, engine_fast: {mem_floor: {gib: 3, aborts: 0}}});
         report({floor: txt('mm-floor'), guard: txt('mm-guard')});
         """)
-        self.assertIn("cannot act on the Kolibri lane", r["floor"])
+        self.assertEqual(r["floor"], "stops generations under 3 GiB through the proxy (on vLLM, by closing "
+                                     "their connections), never fired")
         self.assertIn("not on the Kolibri lane", r["guard"])
+
+    def test_the_floor_banner_says_the_clients_were_cut_and_retry(self):
+        r = run(self, r"""
+        const now = Date.now() / 1000;
+        feed({config: CONFIG, units: UNITS, lifecycle: life({'qwen38-flash.service': eng('ready', {target: 'flash'})})});
+        feed({engine_fast: {mem_floor: {gib: 3, aborts: 1, last_abort: now - 30, via: 'proxy'}}});
+        const proxy = txt('banners');
+        feed({engine_fast: {mem_floor: {gib: 3, aborts: 1, last_abort: now - 30, via: 'engine'}}});
+        report({proxy, engine: txt('banners'), floor: txt('mm-floor')});
+        """)
+        self.assertIn("every generation was stopped", r["proxy"])
+        self.assertIn("Their clients were cut and retry on their own; new requests wait a minute", r["proxy"])
+        self.assertIn("every generation was aborted", r["engine"])
+        self.assertNotIn("were cut", r["engine"])
+        self.assertEqual(r["floor"], "stops generations under 3 GiB through the proxy, fired 1 time")
 
     def test_the_floor_belts_line_wraps_like_the_guards(self):
         # its line is longer than the row, and it was cut with an ellipsis on the Machine view

@@ -22,7 +22,7 @@ Nothing shells out free-form; every action is a fixed argv template.
 | Keepalive proxy | `systemctl ... qwen38-keepalive` | Its row in the Lanes view: state, whether it starts at boot, the running version and whether it is the repo's copy, Start/Stop |
 | Switch target model | `./switch-model.sh <target>` | Switch: the confirmation shows the exact command, the job's live output shows what it changes. It writes the target's unit or launcher and never starts, stops or restarts an engine: Start is its own click |
 | Model revisions served | `--revision` in unit/launcher | Revision on the lane card; the Library view's Recipes compare it with the pin, and its Upstream watch compares each pin with Hugging Face's `main` |
-| Kill a stuck generation | proxy auto-abort / restart service | "Abort all": `POST /abort_request` with `abort_all` to the engine, confirmed first |
+| Kill a stuck generation | proxy auto-abort / restart service | "Abort all", confirmed first: through the proxy's `POST /proxy/stop` since v1.40.3, which cuts each client (it retries instead of keeping a cut answer for a whole one) and stops each generation; `POST /abort_request` with `abort_all` to the engine when the proxy does not take it |
 
 ## Observability
 | capability | shell today | UI |

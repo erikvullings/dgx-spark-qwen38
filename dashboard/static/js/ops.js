@@ -195,15 +195,18 @@ on('machine', d => {
   setText('dk-home', dk.home ? fmtGiB(dk.home.free) + ' free of ' + fmtGiB(dk.home.total) : 'n/a');
   setText('dk-docker', dk.docker ? fmtGiB(dk.docker.free) + ' free of ' + fmtGiB(dk.docker.total) : 'n/a');
 });
-// On the Kolibri lane neither belt can act: vLLM has no route that aborts a generation or
-// flushes its cache, and they read "armed" there (review, 2026-10-14).
+// On the Kolibri lane the pool guard cannot act: vLLM has no route that flushes its cache, and it
+// read "armed" there (review, 2026-10-14).
 const kolibriHolds = () => (servingEngine() || [])[0] === KOLIBRI_UNIT;
-// the Nemotron lanes and the Flash FP4-Local lane run on vLLM too: neither belt can act there either
+// the Nemotron lanes, the Flash FP4-Local lane and Ornith run on vLLM too
 const nemotronHolds = () => isB12x((servingEngine() || [])[0]);
+// The floor stops generations through the proxy since v1.40.3, on every lane: vLLM has no route that
+// aborts a generation, and the proxy closes its connection, which vLLM stops (it said "cannot act" there).
 on('engine_fast', d => {
-  if (kolibriHolds()){ setText('mm-floor', `cannot act on the Kolibri lane: vLLM has no route to abort a generation (stopping the lane stops them)`); return; }
-  if (nemotronHolds()){ setText('mm-floor', `cannot act on ${b12xName((servingEngine() || [])[0])}: vLLM has no route to abort a generation (stopping the lane stops them)`); return; }
-  if (d.mem_floor){ const f = d.mem_floor; setText('mm-floor', `aborts generations under ${f.gib} GiB` + (f.aborts ? `, fired ${f.aborts} time${f.aborts > 1 ? 's' : ''}` : ', never fired')); }
+  if (!d.mem_floor) return;
+  const f = d.mem_floor, how = kolibriHolds() || nemotronHolds() ? ' (on vLLM, by closing their connections)' : '';
+  setText('mm-floor', `stops generations under ${f.gib} GiB through the proxy${how}`
+    + (f.aborts ? `, fired ${f.aborts} time${f.aborts > 1 ? 's' : ''}` : ', never fired'));
 });
 on('lifecycle', d => {
   const g = d.pool_guard; if (!g) return;

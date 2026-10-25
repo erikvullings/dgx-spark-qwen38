@@ -758,6 +758,20 @@ class FeedOutcomes(unittest.TestCase):
         "CLIENT GONE before the engine answered": "gone",   # v6.31: a stream's caller left while it was queued
         "502 systemone upstream": "fail",
         "529 systemone overloaded": "fail",   # admission: the caller past SYSTEMONE_MAX_CALLS got no answer
+        # v6.47, the cockpit's stop (POST /proxy/stop): the generation was stopped and its client cut, for
+        # the memory floor or the operator's Abort all; a new one refused while the box is short of memory;
+        # an OpenAI stream the engine ended as aborted, cut instead of relayed; the stop's own answer
+        "STOPPED memory floor": "fail",
+        "STOPPED by the cockpit": "fail",
+        "529 memory floor": "fail",
+        "503 memory floor": "fail",
+        "UPSTREAM ABORTED": "fail",
+        "ok stop": "ok",
+        "400 stop refused": "fail",
+        "401 stop refused": "fail",
+        "403 stop refused": "fail",
+        "405 stop refused": "fail",
+        "413 stop refused": "fail",
     }
 
     @classmethod
