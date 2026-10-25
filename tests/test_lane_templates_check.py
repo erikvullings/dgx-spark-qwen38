@@ -91,7 +91,7 @@ class TheLanesItKnows(unittest.TestCase):
             ltc.lane_specs(d)
 
     def test_the_27b_and_flash_patcher_calls_are_read_too(self):
-        # the check gives their targets the four fixes: a call of install.sh or switch-model.sh with fixes
+        # the check gives their targets the five fixes: a call of install.sh or switch-model.sh with fixes
         # of its own would pass it unseen, as the first push of this release did (code review, 2026-10-24)
         for script in ("install.sh", "switch-model.sh"):
             with self.subTest(script=script):

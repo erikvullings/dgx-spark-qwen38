@@ -1,19 +1,25 @@
 #!/usr/bin/env python3
 """Patch RadixArk/Qwen3.8-27B-NVFP4's chat template for agentic clients (Claude Code).
 
-Two surgical fixes, no behavior change otherwise:
+Five surgical fixes, no behavior change otherwise:
   1. reasoning_effort 'max'/'high' -> 'xhigh' (clients like Claude Code send "max";
      the stock template only accepts xhigh/medium/low and raises a 500 otherwise).
   2. Mid-conversation system messages -> rendered as <system-reminder> blocks
      (Claude Code injects system-reminders after turn 1; the stock template raises
      'System message must be at the beginning').
+  3. The "lean" effort level, the default this box measured (LEAN.md).
+  4. The refusal message names the levels and default the template really has.
+  5. tool_reference content blocks (Claude Code 2.1.304's ToolSearch, Chrome's
+     MCP tools among them) -> a text marker before the tool's result. The
+     stock template ends its content loop with raise_exception('Unexpected item type
+     in content.'), so every request carrying the tool search's result was a 500.
 
 The 'minimal' -> 'low' mapping (an OpenAI effort tier) was contributed
 by forum user helge: https://forums.developer.nvidia.com/t/380257/10
 
 Usage: patch-template.py [--patches=NAMES] <hf_cache_dir> <output_path> [revision] [repo]
 --patches=system-reminder (comma-separated names) applies those fixes alone, for a template with
-no reasoning effort of its own; without it, all four. An option of the call, not a variable of the
+no reasoning effort of its own; without it, all five. An option of the call, not a variable of the
 environment: TEMPLATE_PATCHES, which v1.40.2 read as first pushed, reached every caller, and one
 left in a shell made ./install.sh write the 27B's template without its effort fixes (found in
 review, 2026-10-24).
@@ -101,9 +107,32 @@ SYSTEM_PATCHED = (
     "        {%- endif %}"
 )
 
+# Patch 5: Claude Code 2.1.304's ToolSearch (its tool search for MCP servers) answers a
+# tool call with a tool_result made of tool_reference blocks, not text. SGLang's Anthropic
+# endpoint hands those to the template as {"type": "tool_reference", "name": ...}; the stock
+# content loop knows only image, video and text and raises. The reference names the tools the
+# search loaded, whose schemas the next request carries, so its name is all the model needs
+# here (measured 2026-10-25: a real session with 10 Chrome DevTools references got 500 on
+# every turn, and the same block reproduced it alone; a text tool_result passed).
+TOOL_REF_ANCHOR = (
+    "            {%- elif 'text' in item %}\n"
+    "                {{- item.text }}\n"
+    "            {%- else %}\n"
+    "                {{- raise_exception('Unexpected item type in content.') }}\n"
+)
+TOOL_REF_PATCHED = (
+    "            {%- elif 'text' in item %}\n"
+    "                {{- item.text }}\n"
+    "            {%- elif item.type == 'tool_reference' %}\n"
+    "                {{- '[tool available: ' ~ (item.name or item.tool_name or 'unknown') ~ ']' }}\n"
+    "            {%- else %}\n"
+    "                {{- raise_exception('Unexpected item type in content.') }}\n"
+)
+TOOL_REF_MARKER = "item.type == 'tool_reference'"
 
-# The four fixes by name, in the order they are applied (--patches picks among them).
-PATCHES = ("reasoning_effort", "lean", "effort-message", "system-reminder")
+
+# The five fixes by name, in the order they are applied (--patches picks among them).
+PATCHES = ("reasoning_effort", "lean", "effort-message", "system-reminder", "tool-reference")
 EFFORT_PATCHES = {"reasoning_effort", "lean", "effort-message"}
 
 
@@ -136,8 +165,8 @@ def main() -> None:
             print(f"note: {len(hits)} snapshots present, using the most recent: {chosen.split('/')[-2][:12]}")
     tpl = open(chosen, encoding="utf-8").read()
 
-    # The fixes this lane asks for: all four unless it says otherwise, as the Qwen3.8 27B and
-    # flash templates carry the anchors of all four. A checkpoint whose template has no reasoning
+    # The fixes this lane asks for: all five unless it says otherwise, as the Qwen3.8 27B and
+    # flash templates carry the anchors of all five. A checkpoint whose template has no reasoning
     # effort of its own asks for system-reminder alone (Ornith 1.5 122B, 2026-10-24: the proxy
     # gives it its effort as enable_thinking). A fix it asks for whose anchor is gone still stops
     # the install, as before.
@@ -184,6 +213,7 @@ def main() -> None:
         ("lean", LEAN_ANCHOR, LEAN_PATCHED, LEAN_MARKER),
         ("effort-message", MSG_ANCHOR, msg_patched, "Supported types are lean"),
         ("system-reminder", SYSTEM_ANCHOR, SYSTEM_PATCHED, "<system-reminder>"),
+        ("tool-reference", TOOL_REF_ANCHOR, TOOL_REF_PATCHED, TOOL_REF_MARKER),
     ):
         if name not in wanted:
             continue
@@ -192,6 +222,8 @@ def main() -> None:
             print(f"patch '{name}': applied")
         elif marker in tpl:
             print(f"patch '{name}': already present upstream, nothing to do")
+        elif name == "tool-reference" and "render_content" not in tpl:
+            print("patch 'tool-reference': not needed (no render_content macro in this template)")
         else:
             sys.exit(
                 f"patch '{name}': anchor not found and fix not present: the upstream "

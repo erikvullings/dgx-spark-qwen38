@@ -2014,8 +2014,9 @@ cmp -s "$REPO_DIR/engine-preflight.sh" "$CONFIG_DIR/engine-preflight.sh" \
 cmp -s "$REPO_DIR/flash-ats-check.sh" "$CONFIG_DIR/flash-ats-check.sh" \
   || install -m 755 "$REPO_DIR/flash-ats-check.sh" "$CONFIG_DIR/flash-ats-check.sh"
 # One patched template per engine file name: the served template always follows
-# the served model (both fixes: reasoning_effort normalization + mid-conversation
-# system messages as <system-reminder> blocks; see patch-template.py).
+# the served model (the five fixes: reasoning_effort normalization, lean, the
+# refusal's wording, mid-conversation system messages as <system-reminder> blocks,
+# and Claude Code's tool_reference blocks as text; see patch-template.py).
 TEMPLATE_OUT="$CONFIG_DIR/chat-template-sglang.jinja"
 [ "$LANE" = "flash" ] && TEMPLATE_OUT="$CONFIG_DIR/chat-template-flashnext.jinja"
 if [ "$KEEP_MODEL_VERBATIM" -eq 1 ]; then
