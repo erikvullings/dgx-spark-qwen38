@@ -56,8 +56,8 @@ def engine_ids():
 
 def cgroup(pid, proc="/proc"):
     try:
-        with open(f"{proc}/{pid}/cgroup") as f:
-            return f.read()
+        with open(f"{proc}/{pid}/cgroup", "rb") as f:          # bytes, as stat: a path is not always UTF-8
+            return f.read().decode(errors="replace")
     except OSError:
         return ""
 
@@ -100,8 +100,10 @@ def hogs(window=3.0, floor=0.5, proc="/proc"):
 def printable(text):
     """A field of the tab-separated output: no tab or newline to split the line (bench.sh keeps lines of four
     fields, and a busy process with a tab in its argv vanished from its report), and no control character a
-    terminal would act on (an argv can carry an escape sequence) (verification, 2026-10-26)."""
-    return "".join(" " if ord(c) < 32 or 127 <= ord(c) < 160 else c for c in text)
+    terminal would act on (an argv can carry an escape sequence) (verification, 2026-10-26). Nothing that is
+    not printable: U+2028 and U+2029 end a line for splitlines() too, and a name holding one hid its busy
+    process from bench.sh's report (code review, 2026-10-26)."""
+    return "".join(c if c.isprintable() else " " for c in text)
 
 
 def main(argv):

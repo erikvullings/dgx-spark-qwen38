@@ -183,6 +183,12 @@ def main():
     out = run_bench("qwen3.8-27b", window="not-a-number")
     if "cpu-hogs failed" not in out:
         fails.append(f"a failing cpu-hogs did not say so:\n{out[:400]}")
+    # and why: its error was thrown away with its output (code review, 2026-10-26)
+    if "invalid float value" not in out:
+        fails.append(f"a failing cpu-hogs did not say why:\n{out[:400]}")
+    out = run_bench("qwen3.8-27b", window="0.3")
+    if "must be 0.5 to 60 s" not in out or "cpu-hogs failed (exit 2" not in out:
+        fails.append(f"a window under 0.5 s did not fail with its reason:\n{out[:400]}")
     if "nothing outside the engine held half a core" in out:
         fails.append("a failing cpu-hogs still let the quiet-box claim through")
 

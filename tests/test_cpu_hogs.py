@@ -127,6 +127,11 @@ class OnThisMachine(unittest.TestCase):
         self.assertEqual(len(mine[0]), 4, mine)
         self.assertNotIn("\x1b", r.stdout)
 
+    def test_no_line_or_paragraph_separator_reaches_the_output(self):
+        # U+2028 and U+2029 end a line for str.splitlines(), which bench.sh reads with: a name holding one
+        # hid its busy process from the report (code review, 2026-10-26)
+        self.assertEqual(hogs.printable("spin\u2028x\u2029y\x85z\tw"), "spin x y z w")
+
     def test_a_window_too_short_or_long_is_refused(self):
         # a window of 0 turned one clock tick into several cores: ghosts above 100 % (code review, 2026-10-26)
         for window in ("0", "0.1", "nan", "inf", "61"):

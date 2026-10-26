@@ -62,9 +62,16 @@ class TheMedian(unittest.TestCase):
         os.makedirs(os.path.join(home, ".config", "qwen38"))
         with open(os.path.join(home, ".config", "qwen38", "api-key"), "w") as f:
             f.write("test-key\n")
+        # cpu-hogs.py asks docker which containers are the engine's: the offline suite asks no docker
+        # (TESTING.md), so a docker that lists none comes first on PATH (code review, 2026-10-26)
+        os.makedirs(os.path.join(home, "bin"))
+        with open(os.path.join(home, "bin", "docker"), "w") as f:
+            f.write("#!/bin/sh\nexit 0\n")
+        os.chmod(os.path.join(home, "bin", "docker"), 0o755)
         try:
             r = subprocess.run(["bash", str(BENCH)], capture_output=True, text=True, timeout=120,
-                               env={**os.environ, "PORT": str(srv.server_port), "HOME": home})
+                               env={**os.environ, "PORT": str(srv.server_port), "HOME": home,
+                                    "PATH": os.path.join(home, "bin") + os.pathsep + os.environ.get("PATH", "")})
         finally:
             srv.shutdown()
             srv.server_close()

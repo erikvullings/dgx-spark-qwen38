@@ -19,13 +19,14 @@ HOGS_WINDOW="${HOGS_WINDOW:-3}"
 # A cpu-hogs that died must never read as a quiet box (revue 627, 2026-10-26): the
 # "2>/dev/null || true" used to swallow every failure (missing file, crash, a non-numeric
 # window from the caller) and the report then claimed nothing outside the engine held a core.
+# Its last line says why it failed (a window out of 0.5 to 60 s, a crash), which the report gives.
 if HOGS="$(python3 "$(dirname "$0")/cpu-hogs.py" --window "$HOGS_WINDOW" 2>&1)"; then
-  HOGS_FAILED=0
+  HOGS_FAILED=0; HOGS_ERR=""
 else
-  HOGS_FAILED=$?; HOGS=""
+  HOGS_FAILED=$?; HOGS_ERR="$(printf '%s\n' "$HOGS" | tail -n 1)"; HOGS=""
 fi
 
-KEY="$(cat "$KEY_FILE")" PORT="$PORT" HOGS="$HOGS" HOGS_FAILED="$HOGS_FAILED" HOGS_WINDOW="$HOGS_WINDOW" python3 - <<'PYEOF'
+KEY="$(cat "$KEY_FILE")" PORT="$PORT" HOGS="$HOGS" HOGS_FAILED="$HOGS_FAILED" HOGS_ERR="$HOGS_ERR" HOGS_WINDOW="$HOGS_WINDOW" python3 - <<'PYEOF'
 import json, os, statistics, time, urllib.request
 
 KEY, PORT = os.environ["KEY"], os.environ["PORT"]
@@ -141,7 +142,8 @@ print(f"{reference}\n")
 # pid, share of a core, name and command line, tab-separated, from cpu-hogs.py
 HOGS = [line.split("\t") for line in os.environ.get("HOGS", "").splitlines() if line.count("\t") == 3]
 if os.environ.get("HOGS_FAILED", "0") != "0":
-    print(f"busy before the run: cpu-hogs failed (exit {os.environ['HOGS_FAILED']}), the quiet outside the engine is NOT proven, do not publish these numbers as clean\n")
+    why = "".join(c if c.isprintable() else " " for c in os.environ.get("HOGS_ERR", ""))[:200]
+    print(f"busy before the run: cpu-hogs failed (exit {os.environ['HOGS_FAILED']}{': ' + why if why else ''}), the quiet outside the engine is NOT proven, do not publish these numbers as clean\n")
 elif HOGS:
     print(f"busy before the run, outside the engine (half a core or more over {os.environ['HOGS_WINDOW']} s):")
     # its pid and name, never its command line: this report gets pasted in public, and a command line can
