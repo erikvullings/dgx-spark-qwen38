@@ -21,13 +21,15 @@ The lane pins the authors' own build at its revision of 2026-10-21 08:31 UTC. It
 of the revision measured here (dde0b1af, 2026-10-20 17:37 UTC) but its model card, whose introduction
 was rewritten four times since: checked file by file against Hugging Face's own sha256 of each. Its
 chat template is served as published but for one line: reasoning between `<think>` tags, on by default
-and turned off by `enable_thinking: false`, tool calls in Qwen's XML form, and no reasoning effort. The
-one line: a system message past the first one made the published template raise "System message must
-be at the beginning", and opencode 1.19.4 sends two system messages before the user's, so every
-opencode request on this lane got a 400 until v1.40.2. `patch-template.py` renders such a message as a
-`<system-reminder>` block, as on the 27B and the two flash lanes (`patch-template.py --patches=system-reminder`,
-the template having no effort of its own); a conversation with one system message renders byte for
-byte as before. Its sampling
+and turned off by `enable_thinking: false`, tool calls in Qwen's XML form, and no reasoning effort. It
+takes two fixes. A system message past the first one made the published template raise "System message
+must be at the beginning", and opencode 1.19.4 sends two system messages before the user's, so every
+opencode request on this lane got a 400 until v1.40.2: `patch-template.py` renders such a message as a
+`<system-reminder>` block, as on the 27B and the two flash lanes. And its `render_content` loop raised
+"Unexpected item type in content." on the `tool_reference` blocks of a Claude Code ToolSearch result until
+v1.40.3: each now names its tool, as on the Qwen lanes (`patch-template.py
+--patches=system-reminder,tool-reference`, the template having no effort of its own). A conversation with
+one system message renders byte for byte as before. Its sampling
 defaults, which vLLM applies to a request that sets none, are its `generation_config.json`'s:
 temperature 0.6, top_k 20, top_p 0.95. Its tokenizer counts text as Qwen3.8's does (the same
 vocabulary, merges and pre-tokenizer, seven audio tokens fewer), so the limits measured for the Qwen
