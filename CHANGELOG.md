@@ -103,14 +103,18 @@ does (56 of 56 OK on 2026-10-26), the cache report and the ToolSearch result on 
 three times on each. A code review and two independent verifiers read it first, one on an existing box's
 update lane by lane, one on a fresh install, a 64 GB box and security, then two more code reviews read the
 fixes. Each defect they found is fixed with a test that fails on the code before it, and what waits is
-below.
+below. After the push, the reference box updated with the public one-liner (the proxy and the cockpit
+restarted, nothing else), the 8 real clients answered through the final proxy on the lane that serves,
+Flash FP4-Local, and the cockpit showed no banner on any of its views.
 
 **Known, for the next release.** "Abort all" on the vLLM lanes through the proxy, which can stop their
 generations by closing their connections. A stop when the proxy listens elsewhere than 127.0.0.1:30001, or
 behind its optional TLS: the cockpit falls back to the engine's `abort_all`, and an SGLang client then gets
 the cut answer as a whole one, as in v1.40.2. `/v1/systemone` is neither refused under the floor nor
 reached by a stop, and `/v1/tokenize` is counted as a generation. The floor's line in the Machine view says
-it stops through the proxy even when the proxy cannot take the stop.
+it stops through the proxy even when the proxy cannot take the stop. A non-streamed request whose client
+sends bytes while it waits, stopped before its connection to the engine opens, is cut only when its answer
+comes.
 
 **What an update does.** The proxy (v6.47) and the cockpit restart. The flash launcher and the five vLLM
 lane units take their new flag, and the 27B, flash, Flash FP4-Local and Ornith templates their
