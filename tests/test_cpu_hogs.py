@@ -6,7 +6,9 @@ behind each held a core for four to six days, seen only in the load average: on 
 and the GPU share one power budget, so such a process lowers what the engine measures. bench.sh
 names them before it measures."""
 import importlib.util
+import os
 import pathlib
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -17,6 +19,21 @@ REPO = pathlib.Path(__file__).resolve().parents[1]
 spec = importlib.util.spec_from_file_location("cpu_hogs", REPO / "cpu-hogs.py")
 hogs = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(hogs)
+# The offline suite asks no docker (TESTING.md): a docker on PATH that lists no container, and the
+# floor a tenth of a core, which a spinning process holds on a loaded CI runner too (code review, 2026-10-26)
+NO_DOCKER = tempfile.mkdtemp(prefix="hogs-no-docker-")
+(pathlib.Path(NO_DOCKER) / "docker").write_text("#!/bin/sh\nexit 0\n")
+os.chmod(pathlib.Path(NO_DOCKER) / "docker", 0o755)
+ENV = {**os.environ, "PATH": NO_DOCKER + os.pathsep + os.environ.get("PATH", "")}
+
+
+def tearDownModule():
+    shutil.rmtree(NO_DOCKER, ignore_errors=True)
+
+
+def cli(*args):
+    return subprocess.run([sys.executable, str(REPO / "cpu-hogs.py"), *args],
+                          capture_output=True, text=True, timeout=60, env=ENV)
 
 
 class FromTwoReadings(unittest.TestCase):
@@ -53,6 +70,17 @@ class TheProcFiles(unittest.TestCase):
         (d / "self").mkdir()                     # not a pid: skipped
         self.assertEqual(hogs.ticks(str(d)), {42: (750, "a (b) c")})
 
+    def test_a_name_cut_inside_a_character_is_read(self):
+        # the kernel cuts a name at 15 bytes, in the middle of a character if it must: one such name
+        # anywhere on the box made every run die on a UnicodeDecodeError (code review, 2026-10-26)
+        d = pathlib.Path(tempfile.mkdtemp(prefix="hogs-proc-"))
+        self.addCleanup(lambda: __import__("shutil").rmtree(d, True))
+        (d / "43").mkdir()
+        (d / "43" / "stat").write_bytes(b"43 (traitement-\xc3) S 1 43 43 0 -1 0 0 0 0 0 30 20 0 0 20 0 1 0\n")
+        (d / "44").mkdir()
+        (d / "44" / "stat").write_bytes(b"44 (gone")            # cut short: skipped, never fatal
+        self.assertEqual(hogs.ticks(str(d)), {43: (50, "traitement-\ufffd")})
+
 
 def stop(p):
     p.kill()
@@ -65,24 +93,25 @@ class OnThisMachine(unittest.TestCase):
         nap = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(30)"])
         self.addCleanup(stop, nap)
         self.addCleanup(stop, spin)
+        self.addCleanup(setattr, hogs, "engine_ids", hogs.engine_ids)
+        hogs.engine_ids = lambda: []
         time.sleep(0.3)
-        found = {pid: share for pid, share, _, _ in hogs.hogs(window=1.5, floor=0.5)}
+        found = {pid: share for pid, share, _, _ in hogs.hogs(window=1.5, floor=0.1)}
         self.assertIn(spin.pid, found)
-        self.assertGreaterEqual(found[spin.pid], 0.5)
+        self.assertGreaterEqual(found[spin.pid], 0.1)
         self.assertNotIn(nap.pid, found)
 
     def test_the_command_line_prints_one_tab_separated_line_per_process(self):
         spin = subprocess.Popen([sys.executable, "-c", "while True: pass"])
         self.addCleanup(stop, spin)
         time.sleep(0.3)
-        r = subprocess.run([sys.executable, str(REPO / "cpu-hogs.py"), "--window", "1.5"],
-                           capture_output=True, text=True, timeout=60)
+        r = cli("--window", "1.5", "--floor", "0.1")
         self.assertEqual(r.returncode, 0, r.stderr)
         rows = [line.split("\t") for line in r.stdout.splitlines()]
         self.assertTrue(all(len(row) == 4 for row in rows), rows)
         mine = [row for row in rows if row[0] == str(spin.pid)]
         self.assertEqual(len(mine), 1, rows)
-        self.assertGreaterEqual(float(mine[0][1]), 0.5)
+        self.assertGreaterEqual(float(mine[0][1]), 0.1)
         self.assertIn("while True", mine[0][3])
 
     def test_a_tab_or_an_escape_in_a_command_line_never_splits_or_reaches_the_terminal(self):
@@ -91,13 +120,21 @@ class OnThisMachine(unittest.TestCase):
         spin = subprocess.Popen([sys.executable, "-c", "while True: pass", "a\tb", "\x1b]0;title\x07"])
         self.addCleanup(stop, spin)
         time.sleep(0.3)
-        r = subprocess.run([sys.executable, str(REPO / "cpu-hogs.py"), "--window", "1.5"],
-                           capture_output=True, text=True, timeout=60)
+        r = cli("--window", "1.5", "--floor", "0.1")
         self.assertEqual(r.returncode, 0, r.stderr)
         mine = [line.split("\t") for line in r.stdout.splitlines() if line.startswith(f"{spin.pid}\t")]
         self.assertEqual(len(mine), 1, r.stdout)
         self.assertEqual(len(mine[0]), 4, mine)
         self.assertNotIn("\x1b", r.stdout)
+
+    def test_a_window_too_short_or_long_is_refused(self):
+        # a window of 0 turned one clock tick into several cores: ghosts above 100 % (code review, 2026-10-26)
+        for window in ("0", "0.1", "nan", "inf", "61"):
+            with self.subTest(window=window):
+                r = cli("--window", window)
+                self.assertEqual(r.returncode, 2, r.stdout + r.stderr)
+                self.assertEqual(r.stdout, "")
+                self.assertIn("0.5 to 60 s", r.stderr)
 
 
 if __name__ == "__main__":

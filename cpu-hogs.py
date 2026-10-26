@@ -14,6 +14,7 @@ box with the lane measured.
 Usage: cpu-hogs.py [--window SECONDS] [--floor SHARE]
   one line per process at or above FLOOR of a core over the window, the busiest first:
   pid, share of a core, name and command line, separated by tabs; nothing when none.
+  The window is 0.5 to 60 s: a shorter one turned a single clock tick into several cores.
 """
 import argparse
 import os
@@ -28,16 +29,18 @@ def ticks(proc="/proc"):
     for d in os.listdir(proc):
         if not d.isdigit():
             continue
+        # read as bytes: the kernel cuts a name at 15 bytes, in the middle of a character if it must, and one
+        # such name anywhere on the box made every run die on a UnicodeDecodeError (code review, 2026-10-26)
         try:
-            with open(f"{proc}/{d}/stat") as f:
-                raw = f.read()
-        except OSError:
+            with open(f"{proc}/{d}/stat", "rb") as f:
+                raw = f.read().decode(errors="replace")
+            # the name is in parentheses and may hold spaces and parentheses itself: the fields
+            # after it start past the last one
+            end = raw.rindex(")")
+            fields = raw[end + 2:].split()
+            out[int(d)] = (int(fields[11]) + int(fields[12]), raw[raw.index("(") + 1:end])
+        except (OSError, ValueError, IndexError):
             continue
-        # the name is in parentheses and may hold spaces and parentheses itself: the fields
-        # after it start past the last one
-        end = raw.rindex(")")
-        fields = raw[end + 2:].split()
-        out[int(d)] = (int(fields[11]) + int(fields[12]), raw[raw.index("(") + 1:end])
     return out
 
 
@@ -106,6 +109,8 @@ def main(argv):
     ap.add_argument("--window", type=float, default=3.0)
     ap.add_argument("--floor", type=float, default=0.5)
     a = ap.parse_args(argv)
+    if not 0.5 <= a.window <= 60:
+        ap.error(f"the window is {a.window} s: it must be 0.5 to 60 s")
     for pid, share, name, cmd in hogs(a.window, a.floor):
         print(f"{pid}\t{share:.2f}\t{printable(name)}\t{printable(cmd)[:160]}")
     return 0

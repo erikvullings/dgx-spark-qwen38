@@ -76,10 +76,18 @@ def run_bench(model, window="0.5"):
     os.makedirs(os.path.join(home, ".config", "qwen38"), exist_ok=True)
     with open(os.path.join(home, ".config", "qwen38", "api-key"), "w") as fh:
         fh.write("test-key\n")
+    # cpu-hogs.py asks docker which containers are the engine's: the offline suite asks no docker
+    # (TESTING.md), so a docker that lists none comes first on PATH (code review, 2026-10-26)
+    stub = os.path.join(home, "bin")
+    os.makedirs(stub)
+    with open(os.path.join(stub, "docker"), "w") as fh:
+        fh.write("#!/bin/sh\nexit 0\n")
+    os.chmod(os.path.join(stub, "docker"), 0o755)
     try:
         r = subprocess.run(["bash", BENCH], capture_output=True, text=True, timeout=180,
                            cwd=REPO_DIR,
-                           env={**os.environ, "PORT": str(srv.server_port), "HOME": home, "HOGS_WINDOW": window})
+                           env={**os.environ, "PORT": str(srv.server_port), "HOME": home, "HOGS_WINDOW": window,
+                                "PATH": stub + os.pathsep + os.environ.get("PATH", "")})
     finally:
         srv.shutdown()
         shutil.rmtree(home, ignore_errors=True)
@@ -112,7 +120,7 @@ def main():
     spin = subprocess.Popen([sys.executable, "-c", "while True: pass"])
     try:
         time.sleep(0.3)
-        out = run_bench("qwen3.8-27b")
+        out = run_bench("qwen3.8-27b", window="2.0")     # its share averaged over more turns of a loaded runner's scheduler
     finally:
         spin.kill()
         spin.wait()
@@ -183,7 +191,7 @@ def main():
     spin = subprocess.Popen([sys.executable, "-c", "while True: pass", "--token", "hf_NOT_A_REAL_TOKEN_42"])
     try:
         time.sleep(0.3)
-        out = run_bench("qwen3.8-27b", window="1.0")
+        out = run_bench("qwen3.8-27b", window="2.0")
     finally:
         spin.kill()
         spin.wait()
