@@ -1179,7 +1179,11 @@ jobs:
             || { echo "run.sh no longer preflights the YaRN state"; exit 1; }
 
       - name: patch-template fixture (anchors, idempotence, revision pin)
-        run: python3 tests/test_patch_template.py
+        run: |
+          # it renders the tool_reference fix with jinja2 (v1.40.3), which the runner's python3 is not
+          # known to carry before the step that installs it for the others (code review, 2026-10-26)
+          pip install 'jinja2==3.1.6'
+          python3 tests/test_patch_template.py
       - name: opencode limits fit the served pool (offline)
         run: python3 tests/test_oc_fit_limits.py
 

@@ -166,6 +166,24 @@ def main() -> None:
         both = open(both_out).read()
         assert pt.SYSTEM_PATCHED in both, "Ornith's fixes lost the system-reminder"
         assert pt.TOOL_REF_PATCHED in both, f"Ornith's fixes ({fixes.group(1)}) leave the tool_reference loop raising"
+        # A template that raises on an unknown item somewhere else than the loop the fix knows (a renamed
+        # macro, an inline loop, as a next checkpoint may have) stops the install, as an upstream change
+        # does for every other fix: the guard looked at the macro's name and let it through, every turn
+        # after a ToolSearch a 500 again (code review, 2026-10-26). One that raises on none needs no fix.
+        for body, ok in (("{%- for item in content %}{%- if item.type == 'text' %}{{ item.text }}{%- else %}"
+                          "{{ raise_exception('Unexpected item type in content.') }}{%- endif %}{%- endfor %}", False),
+                         ("{%- for item in content %}{{ item.text }}{%- endfor %}", True)):
+            other_repo, other_sha = "org/next-checkpoint", ("f" if ok else "a") * 40
+            make_fixture(base, other_repo, other_sha, body)
+            other_out = os.path.join(base, f"next-{ok}.jinja")
+            r = subprocess.run([sys.executable, SCRIPT, "--patches=tool-reference", base, other_out, other_sha,
+                                other_repo], capture_output=True, text=True, env=env)
+            if ok:
+                assert r.returncode == 0 and "patch 'tool-reference': not needed" in r.stdout, r.stdout + r.stderr
+            else:
+                assert r.returncode != 0, f"a loop that raises was let through:\n{r.stdout}{r.stderr}"
+                assert "anchor not found" in r.stdout + r.stderr, r.stdout + r.stderr
+                assert not os.path.exists(other_out), "a template the fix could not reach was written"
         print("test_patch_template: OK")
     finally:
         shutil.rmtree(base, ignore_errors=True)
