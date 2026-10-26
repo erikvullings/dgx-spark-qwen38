@@ -3370,6 +3370,11 @@ STOP_PATH = "/proxy/stop"
 STOP_PEERS = ("127.0.0.1", "::1", "::ffff:127.0.0.1")    # this machine: the cockpit runs here
 MEM_FLOOR_GIB = float(os.environ.get("PROXY_MEM_FLOOR_GIB", "3.0") or 0)
 FLOOR_HOLD_S = float(os.environ.get("PROXY_FLOOR_HOLD_S", "60") or 0)
+# A stop arms no wait past an hour and no floor past the box (revue 627, 2026-10-26): an
+# unbounded or infinite hold_s blackouts every lane, floor_refusal's int(left + 0.999) raising
+# OverflowError in every new generation's handler while _handle has no except to answer with a
+# 5xx. The cockpit never sends such numbers, which is exactly why the door says no to them.
+HOLD_CEIL_S, FLOOR_CEIL_GIB = 3600.0, 100.0
 _FLOOR = {"at": None, "until": None, "why": "", "floor_gib": MEM_FLOOR_GIB}
 _GENERATIONS = set()                # the handlers a stop reaches: from their request going out to their _done
 _GEN_LOCK = threading.Lock()
@@ -3430,15 +3435,18 @@ def engine_aborted(rec):
 def stop_generations(why, floor_gib=None, hold_s=None, floor=True):
     """The cockpit's stop: every generation this proxy relays is cut and stopped, and after the
     memory floor's, new ones wait (floor_refusal). (how many it reached, whether SGLang's abort_all
-    went)."""
+    went). The wait belongs to a cut (revue 627, 2026-10-26): a floor stop that found nothing to
+    cut holds nothing back, the box was blackout for 60 s for no generation at all. The floor_gib
+    the cockpit carries is recorded either way, it is how the proxy learns the cockpit's value."""
     with _GEN_LOCK:
         targets = list(_GENERATIONS)
         if floor:
-            now = time.monotonic()
-            hold = FLOOR_HOLD_S if hold_s is None else hold_s
-            _FLOOR.update(at=now, until=now + hold if hold > 0 else None, why=why[:200])
             if floor_gib is not None:
                 _FLOOR["floor_gib"] = floor_gib
+            if targets:
+                now = time.monotonic()
+                hold = FLOOR_HOLD_S if hold_s is None else hold_s
+                _FLOOR.update(at=now, until=now + hold if hold > 0 else None, why=why[:200])
     for h in targets:
         h._stop_generation(why, floor)
     if not _SERVED["engine"]:
@@ -4227,7 +4235,12 @@ class H(BaseHTTPRequestHandler):
 
         def number(k):
             v = args.get(k)
-            return float(v) if isinstance(v, (int, float)) and not isinstance(v, bool) and v >= 0 else None
+            if not isinstance(v, (int, float)) or isinstance(v, bool):
+                return None
+            v = float(v)
+            if not math.isfinite(v) or v < 0:
+                return None                      # Infinity and NaN read as "not given", the defaults hold
+            return min(v, HOLD_CEIL_S if k == "hold_s" else FLOOR_CEIL_GIB)
         floor = args.get("kind", "floor") != "operator"
         why = str(args.get("why") or ("memory floor" if floor else "Abort all, from the cockpit"))
         stopped, all_sent = stop_generations(why, number("floor_gib"), number("hold_s"), floor)

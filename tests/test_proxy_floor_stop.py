@@ -392,8 +392,15 @@ class FloorStop(unittest.TestCase):
 
     # ---- what waits after a stop, and while memory is short ----------------------------------
     def test_after_the_floors_stop_new_generations_wait_then_go(self):
-        status, out, _ = self._stop({"why": "test floor", "hold_s": 1.5})
-        self.assertEqual((status, out["stopped"]), (200, 0))
+        # the wait follows a real cut (revue 627, 26/10): a stop that finds nothing to cut holds
+        # nothing back, so this generation is streaming when the floor's stop comes
+        got, status, out = self._stream_then_stop(
+            "/v1/messages", {"model": "m", "max_tokens": 100,
+                             "messages": [{"role": "user", "content": "hi"}]},
+            {"why": "test floor", "hold_s": 1.5})
+        self.assertEqual((status, out["stopped"]), (200, 1))
+        with FakeEngine.lock:
+            FakeEngine.seen.clear()
         for path, code in (("/v1/messages", 529), ("/v1/chat/completions", 503)):
             with self.subTest(path=path):
                 s = self._post(path, {"model": "m", "max_tokens": 10, "stream": True,
@@ -446,6 +453,60 @@ class FloorStop(unittest.TestCase):
         got = self._read(s)
         s.close()
         self.assertIn(b"message_stop", got)
+
+    def test_a_stop_that_cut_nothing_holds_nothing_back(self):
+        # the wait belongs to a cut (revue 627, 26/10): generations running outside this proxy
+        # make a floor stop find nothing, and that was enough to blackout every new generation
+        # for the hold's 60 s on an idle box
+        status, out, _ = self._stop({"why": "test floor", "hold_s": 60})
+        self.assertEqual((status, out["stopped"]), (200, 0))
+        self.assertIsNone(self.mod._FLOOR["until"])
+        s = self._post("/v1/messages", {"model": "m", "max_tokens": 10, "stream": True,
+                                        "messages": [{"role": "user", "content": "hi"}]})
+        got = self._read(s)
+        s.close()
+        self.assertIn(b"message_stop", got)
+        self.assertNotIn(b"overloaded_error", got)
+
+    def test_a_stop_cannot_blackout_the_proxy_with_a_silly_number(self):
+        # Infinity in a stop body used to end the box for the session (revue 627, 26/10):
+        # _FLOOR["until"]=inf makes floor_refusal raise OverflowError in every new generation
+        # and _handle has no except, so the connection dies with no status at all. It takes the
+        # engine key, so no client can send it, but a cockpit bug must not blind every lane.
+        def disarm():   # the sane 60 s hold one stop armed must not block the next stop's stream
+            self.mod._FLOOR.update(at=None, until=None, why="", floor_gib=0.0)
+        for bad in (float("inf"), float("nan")):
+            with self.subTest(bad=bad):
+                disarm()
+                _, status, out = self._stream_then_stop(
+                    "/v1/messages", {"model": "m", "max_tokens": 100,
+                                     "messages": [{"role": "user", "content": "hi"}]},
+                    {"why": "test floor", "hold_s": bad})
+                self.assertEqual((status, out["stopped"]), (200, 1))
+                s = self._post("/v1/messages", {"model": "m", "max_tokens": 10, "stream": True,
+                                                "messages": [{"role": "user", "content": "hi"}]})
+                got = self._read(s)
+                s.close()
+                head = got.partition(b"\r\n\r\n")[0]
+                self.assertTrue(head.startswith(b"HTTP/1.1 529"), got[:80])
+                ra = [l for l in head.split(b"\r\n") if l.lower().startswith(b"retry-after")][0]
+                self.assertLessEqual(int(ra.split(b":")[1]), 60)    # the default hold, not forever
+        # a finite silly value is capped, not believed: the box has 128 GiB and a stop is no siege
+        disarm()
+        _, status, out = self._stream_then_stop(
+            "/v1/messages", {"model": "m", "max_tokens": 100,
+                             "messages": [{"role": "user", "content": "hi"}]},
+            {"why": "test floor", "hold_s": 1e9, "floor_gib": 1e9})
+        self.assertEqual(status, 200)
+        self.assertLessEqual(self.mod._FLOOR["floor_gib"], 100.0)
+        s = self._post("/v1/messages", {"model": "m", "max_tokens": 10, "stream": True,
+                                        "messages": [{"role": "user", "content": "hi"}]})
+        got = self._read(s)
+        s.close()
+        head = got.partition(b"\r\n\r\n")[0]
+        self.assertTrue(head.startswith(b"HTTP/1.1 529"), got[:80])
+        ra = [l for l in head.split(b"\r\n") if l.lower().startswith(b"retry-after")][0]
+        self.assertLessEqual(int(ra.split(b":")[1]), 3600)
 
     # ---- whose route it is ------------------------------------------------------------------
     def test_the_stop_is_the_operators_alone(self):
