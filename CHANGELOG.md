@@ -48,9 +48,9 @@ and 100.5, Super VL 57.8, 56.7 and 55.6.
 **A cut answer is never handed over as a whole one.** SGLang ends an aborted generation like a finished
 one: `stop_reason end_turn` on `/v1/messages` (its `STOP_REASON_MAP` has no `abort`) and a last chunk with
 `finish_reason "abort"` on the OpenAI routes, which LiteLLM reads as `stop`. The cockpit's memory floor
-aborted at the engine directly, so each client kept the part generated before the stop as its whole
-answer: on the reference box on 2026-10-25 at 07:42, Claude Code kept a compaction summary cut in the middle
-of a word. The floor and its Abort-all now ask the proxy (`POST /proxy/stop`, loopback only, engine key
+aborted at the engine directly, so each client kept the part generated before the stop as its whole answer:
+on the reference box on 2026-10-25 at 07:42, Claude Code kept a compaction summary cut in the middle of a
+word. The floor and its Abort-all now ask the proxy (`POST /proxy/stop`, loopback only, engine key
 required, fail-closed): each relayed generation is stopped the way its engine has (by rid on SGLang, by
 closing the connection on vLLM) and its client's connection is cut, so Claude Code, opencode, pi and Hermes
 retry and get the whole answer with no duplicate. SGLang's `abort_all` still goes at every floor stop, for
@@ -65,12 +65,13 @@ memory off and `PROXY_FLOOR_HOLD_S=0` the pause. The reviews before this release
 fixes, each finding fixed with a test that fails on the code before). A floor stop that found nothing to
 cut holds nothing back, a silly body (an infinite `hold_s`, a number of 310 digits, a chunked body) is
 refused or read as the default instead of blacking the box out, each stopped generation is marked before
-the engine hears of it, a vLLM request still in its prefill closes at once, `abort_all` goes before the
-aborts by rid and the cockpit has its answer without waiting for them, and the floor never claims an abort
-it could not make: on a vLLM lane where no generation ran through the proxy it says the abort failed, and
-its event and banner say how many were cut and whether new requests wait. One
-thing to know: "Abort all" cuts each client too, so an agent retries its request (end an agent's turn in
-the agent), and the cockpit still refuses it while a vLLM lane serves.
+the engine hears of it, a vLLM request still in its prefill closes at once, one still on its way to the
+engine is ended once its connection opens, `abort_all` goes first, the aborts by rid only when it did not
+(each in its own thread, the cockpit having its answer without waiting for them), and the floor never
+claims an abort it could not make: on a vLLM lane where no generation ran through the proxy it says the
+abort failed, and its event and banner say how many were cut and whether new requests wait. One thing to
+know: "Abort all" cuts each client too, so an agent retries its request (end an agent's turn in the agent),
+and the cockpit still refuses it while a vLLM lane serves.
 
 **bench.sh names what holds a CPU core before it measures, and says when it could not look.** On a GB10 the
 CPU and the GPU share one power budget, so a stray spinning process lowers what the engine measures and
@@ -107,10 +108,9 @@ below.
 **Known, for the next release.** "Abort all" on the vLLM lanes through the proxy, which can stop their
 generations by closing their connections. A stop when the proxy listens elsewhere than 127.0.0.1:30001, or
 behind its optional TLS: the cockpit falls back to the engine's `abort_all`, and an SGLang client then gets
-the cut answer as a whole one, as in v1.40.2. A stop that lands while a request is still being routed, before
-its connection to the engine opens, reaches it only at its first byte. `/v1/systemone` is neither refused
-under the floor nor reached by a stop, and `/v1/tokenize` is counted as a generation. The floor's line in
-the Machine view says it stops through the proxy even when the proxy cannot take the stop.
+the cut answer as a whole one, as in v1.40.2. `/v1/systemone` is neither refused under the floor nor
+reached by a stop, and `/v1/tokenize` is counted as a generation. The floor's line in the Machine view says
+it stops through the proxy even when the proxy cannot take the stop.
 
 **What an update does.** The proxy (v6.47) and the cockpit restart. The flash launcher and the five vLLM
 lane units take their new flag, and the 27B, flash, Flash FP4-Local and Ornith templates their
@@ -121,12 +121,11 @@ restarts with its new files. Nothing else restarts.
 **Tests.** Each change has tests that fail on the code before it: `tests/test_patch_template.py` renders a
 real `tool_reference` block, reads Ornith's own `TEMPLATE_FIXES` line and refuses a template that raises
 where the fix cannot reach, `tests/test_engine_cache_report.py` reads the six lanes' flags,
-`tests/test_proxy_floor_stop.py` (24 tests) drives the stop and the floor against a fake engine that ends
+`tests/test_proxy_floor_stop.py` (26 tests) drives the stop and the floor against a fake engine that ends
 as SGLang does, `dashboard/tests/test_cockpit_floor_stop.py` (9) checks what the cockpit sends and says,
 `tests/test_cpu_hogs.py` reads a name cut inside a character, and `tests/test_bench_lane.py` breaks
 `cpu-hogs.py` and rejects the quiet claim. `tests/lane-templates-check.py` renders every lane's pinned
 template with its installer's fixes: 364 renders, 0 refusals.
-
 ## v1.40.2 (2026-10-24): opencode runs on the Ornith lane again, claude-local asks before each command and keeps a session on the box, and CI renders the real clients' message shapes through every lane's chat template, as each engine hands them
 
 **opencode on the Ornith lane.** opencode 1.19.4 sends two system messages before the user's
