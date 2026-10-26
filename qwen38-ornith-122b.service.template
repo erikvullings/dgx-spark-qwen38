@@ -66,10 +66,11 @@ ExecStartPre=/bin/bash __HOME__/.config/qwen38/engine-preflight.sh qwen38-ornith
 # other lanes. No --api-key and no --config: this build would put /metrics behind the key, which
 # the cockpit and the proxy read without one, and the middleware already asks it everywhere else.
 # Media only inside the request: no local file and no URL fetched (the one domain allowed does not exist).
-# --chat-template: the checkpoint's own, with the one fix it needs (install-ornith-122b.sh writes it
+# --chat-template: the checkpoint's own, with the two fixes it needs (install-ornith-122b.sh writes it
 # at every install and every switch): a system message past the first one, which opencode 1.19.4
 # sends, made the template raise and every opencode request a 400 (2026-10-24). It becomes a
-# <system-reminder>, as on the 27B and the two flash lanes.
+# <system-reminder>, as on the 27B and the two flash lanes. And the tool_reference blocks of a Claude
+# Code ToolSearch result name their tool instead of raising (2026-10-26), as on the Qwen lanes.
 # --enable-prompt-tokens-details: each answer says how much of its prompt the prefix cache served
 # (usage.prompt_tokens_details.cached_tokens, and cache_read_input_tokens beside input_tokens on
 # /v1/messages, input_tokens then counting the rest), which the engine counts anyway: discussion #49.
