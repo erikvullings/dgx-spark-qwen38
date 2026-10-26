@@ -771,6 +771,7 @@ class FeedOutcomes(unittest.TestCase):
         "401 stop refused": "fail",
         "403 stop refused": "fail",
         "405 stop refused": "fail",
+        "411 stop refused": "fail",
         "413 stop refused": "fail",
     }
 

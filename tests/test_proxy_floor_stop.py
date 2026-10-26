@@ -19,6 +19,7 @@ import http.server
 import importlib.util
 import json
 import os
+import select
 import socket
 import sys
 import threading
@@ -54,7 +55,9 @@ class FakeEngine(http.server.BaseHTTPRequestHandler):
     abort_all = []               # one entry per abort_all
     abort_all_at = []            # when each abort_all came (time.monotonic())
     rid_abort_delay = 0.0        # an engine the memory floor finds slow: seconds before an abort by rid answers
+    abort_404_delay = 0.0        # vLLM under the same pressure: seconds before its 404 to /abort_request
     closed = []                  # rids whose reader went away mid-generation
+    closed_at = {}               # rid -> when its reader went away during the prefill (time.monotonic())
     finished = []                # rids written to their end
     seen = []                    # (path, rid, stream)
 
@@ -97,6 +100,7 @@ class FakeEngine(http.server.BaseHTTPRequestHandler):
         path = self.path.split("?")[0]
         if path == "/abort_request":
             if self.owner == "vllm":
+                time.sleep(self.abort_404_delay)
                 return self._json(404, {"detail": "Not Found"})
             j = json.loads(body or b"{}")
             if not j.get("abort_all") and self.rid_abort_delay:
@@ -123,8 +127,8 @@ class FakeEngine(http.server.BaseHTTPRequestHandler):
             FakeEngine.live[rid] = ev
             FakeEngine.seen.append((path, rid, stream))
         try:
-            if self.prefill:
-                ev.wait(self.prefill)
+            if self.prefill and self._prefill_until_closed(rid, ev):
+                return
             if path == "/v1/messages":
                 self._anthropic(rid, ev, stream)
             else:
@@ -135,6 +139,24 @@ class FakeEngine(http.server.BaseHTTPRequestHandler):
         finally:
             with self.lock:
                 FakeEngine.live.pop(rid, None)
+
+    def _prefill_until_closed(self, rid, ev):
+        """The prefill's silence, watching the reader: True when it went away meanwhile (vLLM stops a
+        request whose connection closes), with when it did."""
+        end = time.monotonic() + self.prefill
+        while time.monotonic() < end and not ev.is_set():
+            ready, _, _ = select.select([self.connection], [], [], 0.02)
+            if ready:
+                try:
+                    gone = self.connection.recv(1, socket.MSG_PEEK) == b""
+                except OSError:
+                    gone = True
+                if gone:
+                    with self.lock:
+                        FakeEngine.closed.append(rid)
+                        FakeEngine.closed_at[rid] = time.monotonic()
+                    return True
+        return False
 
     def _words(self, ev, limit=WORDS):
         for i in range(limit):
@@ -229,8 +251,9 @@ class FloorStop(unittest.TestCase):
             for name in ("aborted", "abort_all", "abort_all_at", "closed", "finished", "seen"):
                 getattr(FakeEngine, name).clear()
             FakeEngine.live.clear()
+            FakeEngine.closed_at.clear()
         FakeEngine.owner, FakeEngine.prefill, FakeEngine.self_abort_after = "sglang", 0.0, None
-        FakeEngine.rid_abort_delay = 0.0
+        FakeEngine.rid_abort_delay = FakeEngine.abort_404_delay = 0.0
         mod = self.mod
         mod._rid_override_honoured = True
         mod._SERVED.update(names=(), engine="", ts=0.0)
@@ -240,7 +263,7 @@ class FloorStop(unittest.TestCase):
             mod._FLOOR.update(at=None, until=None, why="", floor_gib=0.0, episode=False)
             with mod._GEN_LOCK:
                 mod._GENERATIONS.clear()
-        for name in ("STOP_PEERS", "mem_available_gib", "FLOOR_EPISODE_S", "MEM_FLOOR_GIB"):
+        for name in ("STOP_PEERS", "mem_available_gib", "FLOOR_EPISODE_S", "MEM_FLOOR_GIB", "FLOOR_HOLD_S"):
             if hasattr(mod, name):
                 self.addCleanup(setattr, mod, name, getattr(mod, name))
 
@@ -592,10 +615,78 @@ class FloorStop(unittest.TestCase):
 
     def test_a_number_too_big_for_a_float_reads_as_not_given(self):
         # float() of a 310-digit integer raised OverflowError before the finite check, and the stop's
-        # handler died with no answer (verification, 2026-10-26)
-        status, out, _ = self._stop({"why": "test floor", "hold_s": 10 ** 400, "floor_gib": 10 ** 400})
-        self.assertEqual(status, 200, out)
-        self.assertEqual(self.mod._FLOOR["floor_gib"], 0.0)
+        # handler died with no answer (verification, 2026-10-26). Beside a generation, so that the stop
+        # writes the floor and its pause: the defaults, never the ceilings (code review, 2026-10-26).
+        t0 = time.monotonic()
+        _, status, out = self._stream_then_stop(
+            "/v1/messages", {"model": "m", "max_tokens": 100, "messages": [{"role": "user", "content": "hi"}]},
+            {"why": "test floor", "hold_s": 10 ** 400, "floor_gib": 10 ** 400})
+        self.assertEqual((status, out["stopped"]), (200, 1), out)
+        self.assertEqual(self.mod._FLOOR["floor_gib"], self.mod.MEM_FLOOR_GIB)
+        self.assertLess(self.mod._FLOOR["until"] - t0, self.mod.FLOOR_HOLD_S + 15)
+
+    def test_on_vllm_a_waiting_request_closes_before_abort_alls_answer(self):
+        # closing is vLLM's abort, with no round trip: a request still in its prefill waited for
+        # abort_all's 404 first, 2 s here, up to ABORT_TIMEOUT_S under memory pressure (code review,
+        # 2026-10-26)
+        FakeEngine.owner, FakeEngine.prefill, FakeEngine.abort_404_delay = "vllm", 8.0, 2.0
+        s = self._post("/v1/messages", {"model": "m", "max_tokens": 10, "stream": False,
+                                        "messages": [{"role": "user", "content": "hi"}]})
+        self.assertTrue(self._wait(lambda: len(FakeEngine.live) == 1))
+        rid = next(iter(FakeEngine.live))
+        t0 = time.monotonic()
+        status, out, _ = self._stop({"why": "test floor", "hold_s": 0})
+        self.assertEqual((status, out["stopped"], out["abort_all"]), (200, 1, False), out)
+        self.assertTrue(self._wait(lambda: rid in FakeEngine.closed_at, timeout=5))
+        self.assertLess(FakeEngine.closed_at[rid] - t0, 1.0, "the prefill waited for abort_all's 404")
+        s.close()
+
+    def test_the_cockpit_has_its_answer_before_the_aborts_by_rid(self):
+        # each abort by rid of a request still waiting can take ABORT_TIMEOUT_S on a slow engine, and the
+        # answer waited for all of them: past the cockpit's 8 s, it took the stop for one the proxy had not
+        # made (code review, 2026-10-26)
+        FakeEngine.prefill, FakeEngine.rid_abort_delay = 8.0, 3.0
+        socks = [self._post("/v1/messages", {"model": "m", "max_tokens": 10, "stream": True,
+                                             "messages": [{"role": "user", "content": f"hi {i}"}]})
+                 for i in range(2)]
+        self.assertTrue(self._wait(lambda: len(FakeEngine.live) == 2))
+        t0 = time.monotonic()
+        status, out, _ = self._stop({"why": "test floor", "hold_s": 0})
+        took = time.monotonic() - t0
+        self.assertEqual((status, out["stopped"], out["abort_all"]), (200, 2, True), out)
+        self.assertLess(took, 2.0, "the answer waited for the aborts by rid")
+        for s in socks:
+            got = self._read(s, timeout=15)
+            s.close()
+            self.assertNotIn(b"message_stop", got)
+
+    def test_a_stop_meanwhile_keeps_its_episode(self):
+        # floor_refusal read the floor, read MemAvailable, then ended the episode without the lock: a
+        # stop that started another in between lost it, and after its pause a generation went through
+        # under the floor (code review, 2026-10-26)
+        mod = self.mod
+        now = time.monotonic()
+        mod._FLOOR.update(at=now - 10, until=None, why="before", floor_gib=3.0, episode=True)
+
+        def meanwhile(path="/proc/meminfo"):
+            mod._FLOOR.update(at=time.monotonic(), until=None, why="a new stop", episode=True)
+            return 3.4
+        mod.mem_available_gib = meanwhile
+        self.assertIsNone(mod.floor_refusal())
+        mod.mem_available_gib = lambda path="/proc/meminfo": 1.2
+        got = mod.floor_refusal()
+        self.assertIsNotNone(got, "the new stop's episode was lost")
+        self.assertIn("under the 3 GiB memory floor", got[0])
+
+    def test_a_proxy_pause_of_0_keeps_the_pause_off(self):
+        # PROXY_FLOOR_HOLD_S=0 said "off" and the cockpit's hold_s of 60 won anyway, where
+        # PROXY_MEM_FLOOR_GIB=0 wins over its floor_gib (code review, 2026-10-26)
+        self.mod.FLOOR_HOLD_S, self.mod.MEM_FLOOR_GIB = 0.0, 0.0
+        _, status, out = self._stream_then_stop(
+            "/v1/messages", {"model": "m", "max_tokens": 100, "messages": [{"role": "user", "content": "hi"}]},
+            {"why": "test floor", "hold_s": 60, "floor_gib": 3.0})
+        self.assertEqual((status, out["stopped"]), (200, 1))
+        self.assertIn(b"message_stop", self._message())
 
     def test_a_chunked_stop_is_refused_never_read_as_the_floors(self):
         # a chunked body has no Content-Length: it was never read, and an operator's stop read as the

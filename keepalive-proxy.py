@@ -41,8 +41,8 @@ Seven roles, nothing else:
    once (200, then the keepalives of role 1); see "Holding a request" below;
 7. stop every generation when the cockpit's memory floor asks (POST /proxy/stop, from this machine
    with the engine's key): each client's connection is cut, not ended, so that it never takes a cut
-   answer for a whole one, and new generations wait while the box is short of memory (see "The
-   memory floor's stop" below).
+   answer for a whole one, and after a stop that cut one, new generations wait while the box is short
+   of memory (see "The memory floor's stop" below).
 
 v6.47: the memory floor's stop (role 7). SGLang ends an aborted generation as a finished one, end_turn
 on /v1/messages and finish_reason "abort" on the OpenAI routes, so a client of the cockpit's memory
@@ -50,8 +50,9 @@ floor got the part generated before the stop as its whole answer: Claude Code ke
 cut in the middle of a word (the reference box, 2026-10-25), and Hermes, the Anthropic SDK's stream and
 LiteLLM do the same. The cockpit's stop comes here now: each generation relayed is stopped (by rid on
 SGLang, by closing its connection on vLLM, where the floor could stop nothing) and its client is cut,
-and for the floor's pause after a stop, or while MemAvailable stays under the floor, a new generation is
-refused with 529 overloaded_error (503 off /v1/messages) and the cause. On the OpenAI routes a stream
+and after a stop that cut one, for the floor's pause and then while MemAvailable stays under the floor
+(PROXY_FLOOR_EPISODE_S at most), a new generation is refused with 529 overloaded_error (503 off
+/v1/messages) and the cause. Memory alone refuses nothing. On the OpenAI routes a stream
 the engine ends with finish_reason "abort", whatever aborted it, is cut instead of relayed.
 v6.46: a body the proxy writes again for the engine keeps its text as UTF-8. Seven guards parse a
 body and write it again (the reasoning effort routes, the Qwen, Nemotron and Ornith effort
@@ -3358,12 +3359,13 @@ DRAIN_MAX_S = float(os.environ.get("DRAIN_MAX_S", "900"))
 # give up. The generation itself is stopped the way that exists (an abort by rid on SGLang, closing
 # its connection on vLLM, where the cockpit could stop nothing), and on SGLang an abort_all takes
 # what no relay can name. The agents retry within 1 to 3 s and the floor waits FLOOR_HOLD_S between
-# two stops, so a new generation is refused (529 overloaded_error on /v1/messages, 503 elsewhere,
-# the cause in clear) for that long after a stop and while MemAvailable stays under the floor: a
-# refusal costs the engine nothing; the agents retried and got their answer once it ended, and under
-# a lasting one they stopped with its message, where under cuts alone Hermes sent 54 requests in
-# 400 s, each a whole prefill. MEM_FLOOR_GIB and FLOOR_HOLD_S default to the cockpit's floor and
-# pause (COCKPIT_MEM_FLOOR_GIB, decide_mem_floor's cooldown), which its stop carries; 0 turns each off.
+# two stops, so after a stop that cut a generation a new one is refused (529 overloaded_error on
+# /v1/messages, 503 elsewhere, the cause in clear) for that long and then while MemAvailable stays under
+# the floor, FLOOR_EPISODE_S at most: a refusal costs the engine nothing; the agents retried and got
+# their answer once it ended, and under a lasting one they stopped with its message, where under cuts
+# alone Hermes sent 54 requests in 400 s, each a whole prefill. MEM_FLOOR_GIB and FLOOR_HOLD_S default
+# to the cockpit's floor and pause (COCKPIT_MEM_FLOOR_GIB, decide_mem_floor's cooldown), which its stop
+# carries; 0 turns each off, whatever the stop carries.
 # The cockpit's own Abort all (an operator's stop, "kind": "operator") cuts the same way and holds
 # nothing back: it is no sign of a box short of memory.
 STOP_PATH = "/proxy/stop"
@@ -3403,20 +3405,26 @@ def floor_refusal(now=None, avail=None):
     _FLOOR's hold after a floor stop that cut a generation, then while MemAvailable stays under
     the floor, FLOOR_EPISODE_S after that stop at most. Memory alone refuses nothing."""
     now = time.monotonic() if now is None else now
-    at, until = _FLOOR["at"], _FLOOR["until"]
+    with _GEN_LOCK:
+        at, until, why = _FLOOR["at"], _FLOOR["until"], _FLOOR["why"]
+        episode, floor = _FLOOR.get("episode"), _FLOOR["floor_gib"]
     if until is not None and now < until:
         left = until - now
         return (f"the memory floor stopped every generation {now - at:.0f}s ago "
-                f"({_FLOOR['why'] or 'memory low'}), and new ones wait {left:.0f}s more"), max(2, int(left + 0.999))
-    if not _FLOOR.get("episode") or at is None or now - at > FLOOR_EPISODE_S:
-        _FLOOR["episode"] = False
+                f"({why or 'memory low'}), and new ones wait {left:.0f}s more"), max(2, int(left + 0.999))
+    if not episode or at is None:
         return None
-    floor = _FLOOR["floor_gib"]
-    if floor > 0:
+    if now - at <= FLOOR_EPISODE_S and floor > 0:
         avail = mem_available_gib() if avail is None else avail
-        if avail is not None and avail < floor:
+        if avail is None:
+            return None                     # unread: nothing refused, and the episode goes on
+        if avail < floor:
             return f"MemAvailable is {avail:.1f} GiB, under the {floor:g} GiB memory floor", 5
-    _FLOOR["episode"] = False               # memory is back: the floor's episode ends
+    # memory is back, or the episode is over: it ends, unless a stop started another meanwhile, whose
+    # episode a write without the lock lost (code review, 2026-10-26)
+    with _GEN_LOCK:
+        if _FLOOR["at"] == at:
+            _FLOOR["episode"] = False
     return None
 
 
@@ -3448,13 +3456,13 @@ def stop_generations(why, floor_gib=None, hold_s=None, floor=True):
     memory floor's, new ones wait (floor_refusal). (how many it reached, whether SGLang's abort_all
     went). The wait belongs to a cut (revue 627, 2026-10-26): a floor stop that found nothing to
     cut holds nothing back, the box was blackout for 60 s for no generation at all. A stop that
-    cut one starts the floor's episode with the floor the cockpit carries (it fired at that value),
-    PROXY_MEM_FLOOR_GIB=0 keeping the refusal for memory off."""
+    cut one starts the floor's episode with the floor and the pause the cockpit carries (it fired at
+    those), PROXY_MEM_FLOOR_GIB=0 keeping the refusal for memory off and PROXY_FLOOR_HOLD_S=0 the pause."""
     with _GEN_LOCK:
         targets = list(_GENERATIONS)
         if floor and targets:
             now = time.monotonic()
-            hold = FLOOR_HOLD_S if hold_s is None else hold_s
+            hold = 0.0 if FLOOR_HOLD_S <= 0 else (FLOOR_HOLD_S if hold_s is None else hold_s)
             gib = 0.0 if MEM_FLOOR_GIB <= 0 else (MEM_FLOOR_GIB if floor_gib is None else floor_gib)
             _FLOOR.update(at=now, until=now + hold if hold > 0 else None, why=why[:200], floor_gib=gib,
                           episode=True)
@@ -3465,6 +3473,12 @@ def stop_generations(why, floor_gib=None, hold_s=None, floor=True):
     # could leave up to the cockpit's 8 s fallback later than v1.40.2 sent it (verification, 2026-10-26).
     for h in targets:
         h._mark_stopped(why, floor)
+    # A vLLM request still waiting for its first byte closes now: closing is its abort, with no round
+    # trip, and it waited for abort_all's 404 before, up to ABORT_TIMEOUT_S of prefill more on an engine
+    # under the very pressure the floor fights (code review, 2026-10-26).
+    vllm = [h for h in targets if (getattr(h, "_upstream_engine", "") or _SERVED["engine"]) == "vllm"]
+    for h in vllm:
+        h._stop_waiting()
     # SGLang's abort_all is always tried (code review, 2026-10-26): the lane this proxy last saw can be
     # an older one (a switch from a vLLM lane keeps _SERVED saying vllm until a request goes through),
     # and a generation sent to the engine straight (bench.sh, needle.sh, an eval) is no relay's to stop.
@@ -3484,8 +3498,13 @@ def stop_generations(why, floor_gib=None, hold_s=None, floor=True):
             log(f"memory floor: abort_all failed: HTTP {e.code}")
     except Exception as e:  # noqa: BLE001 (the requests' own aborts follow; said, not raised)
         log(f"memory floor: abort_all failed: {type(e).__name__}: {str(e)[:120]}")
-    for h in targets:
-        h._stop_waiting()               # on vLLM each relay's closed connection is the abort
+    # The aborts by rid of SGLang's requests still waiting go on in their own thread: one by one, each
+    # up to ABORT_TIMEOUT_S, they held the cockpit's answer past its 8 s, and the cockpit then took the
+    # stop for one the proxy had not made and hid the cuts it had (code review, 2026-10-26).
+    rest = [h for h in targets if h not in vllm]
+    if rest:
+        threading.Thread(target=lambda: [h._stop_waiting() for h in rest], name="stop-waiting",
+                         daemon=True).start()
     return len(targets), all_sent
 
 
@@ -4245,7 +4264,9 @@ class H(BaseHTTPRequestHandler):
             self._plain(refuse[0], {"Content-Type": "application/json"},
                         json.dumps({"error": {"type": "invalid_request",
                                               "message": f"keepalive-proxy: {STOP_PATH} {refuse[1]}"}}).encode())
-            self._done(f"{refuse[0]} stop refused"); return
+            self._done("405 stop refused" if refuse[0] == 405 else "403 stop refused" if refuse[0] == 403
+                       else "401 stop refused" if refuse[0] == 401 else "411 stop refused" if refuse[0] == 411
+                       else "413 stop refused"); return
         args = {}
         if with_body and n:
             raw = self.rfile.read(n)
@@ -5515,7 +5536,8 @@ if __name__ == "__main__":
     # v6.47: what the memory floor's refusal reads, read once here, so the journal shows it works where
     # the unit runs this proxy (its sandbox leaves /proc/meminfo readable)
     avail = mem_available_gib()
-    log(f"memory floor {MEM_FLOOR_GIB:g} GiB, held {FLOOR_HOLD_S:g}s after a stop (POST {STOP_PATH}); "
+    log(f"memory floor {MEM_FLOOR_GIB:g} GiB, held {FLOOR_HOLD_S:g}s after a stop that cut a generation, then "
+        f"while memory stays under it, {FLOOR_EPISODE_S:g}s at most (POST {STOP_PATH}); "
         f"MemAvailable now " + (f"{avail:.1f} GiB" if avail is not None else "unreadable: no refusal under the floor"))
     if FLASH_PROMPT_CEILING_TOKENS > 0:
         log(f"one-prompt ceiling {FLASH_PROMPT_CEILING_TOKENS} tokens while the flash lane serves"
