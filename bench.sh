@@ -144,9 +144,12 @@ if os.environ.get("HOGS_FAILED", "0") != "0":
     print(f"busy before the run: cpu-hogs failed (exit {os.environ['HOGS_FAILED']}), the quiet outside the engine is NOT proven, do not publish these numbers as clean\n")
 elif HOGS:
     print(f"busy before the run, outside the engine (half a core or more over {os.environ['HOGS_WINDOW']} s):")
+    # its pid and name, never its command line: this report gets pasted in public, and a command line can
+    # hold a token (verification, 2026-10-26). cpu-hogs.py prints them, on this box, for its operator.
     for pid, share, name, cmd in HOGS:
-        print(f"  {pid} {name}: {float(share):.0%} of a core   {cmd[:90]}")
-    print("  the CPU and the GPU share one power budget: the numbers below can come out lower\n")
+        print(f"  {pid} {name}: {float(share):.0%} of a core")
+    print("  their command lines: python3 cpu-hogs.py, on this box. The CPU and the GPU share one power budget:")
+    print("  the numbers below can come out lower\n")
 else:
     print("busy before the run: nothing outside the engine held half a core\n")
 all_greedy = []

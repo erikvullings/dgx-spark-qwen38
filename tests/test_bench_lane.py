@@ -178,6 +178,20 @@ def main():
     if "nothing outside the engine held half a core" in out:
         fails.append("a failing cpu-hogs still let the quiet-box claim through")
 
+    # a busy process is named by its pid and name, never by its command line: this report gets pasted in
+    # public, and a command line can hold a token (verification, 2026-10-26)
+    spin = subprocess.Popen([sys.executable, "-c", "while True: pass", "--token", "hf_NOT_A_REAL_TOKEN_42"])
+    try:
+        time.sleep(0.3)
+        out = run_bench("qwen3.8-27b", window="1.0")
+    finally:
+        spin.kill()
+        spin.wait()
+    if "hf_NOT_A_REAL_TOKEN_42" in out:
+        fails.append("bench printed a busy process's command line, its token included")
+    if f"{spin.pid} " not in out:
+        fails.append(f"bench did not name the busy process {spin.pid}:\n{out[:400]}")
+
     for f in fails:
         print("FAIL", f)
     print(f"bench lane detection: {'FAILED' if fails else 'ok'} ({len(fails)} problem(s))")

@@ -85,6 +85,20 @@ class OnThisMachine(unittest.TestCase):
         self.assertGreaterEqual(float(mine[0][1]), 0.5)
         self.assertIn("while True", mine[0][3])
 
+    def test_a_tab_or_an_escape_in_a_command_line_never_splits_or_reaches_the_terminal(self):
+        # a busy process whose argv held a tab vanished from bench.sh's report, which keeps lines of four
+        # fields, and an escape sequence in an argv reached the terminal (verification, 2026-10-26)
+        spin = subprocess.Popen([sys.executable, "-c", "while True: pass", "a\tb", "\x1b]0;title\x07"])
+        self.addCleanup(stop, spin)
+        time.sleep(0.3)
+        r = subprocess.run([sys.executable, str(REPO / "cpu-hogs.py"), "--window", "1.5"],
+                           capture_output=True, text=True, timeout=60)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        mine = [line.split("\t") for line in r.stdout.splitlines() if line.startswith(f"{spin.pid}\t")]
+        self.assertEqual(len(mine), 1, r.stdout)
+        self.assertEqual(len(mine[0]), 4, mine)
+        self.assertNotIn("\x1b", r.stdout)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -94,13 +94,20 @@ def hogs(window=3.0, floor=0.5, proc="/proc"):
                                          lambda pid: pid in me or any(i in cgroup(pid, proc) for i in ids))]
 
 
+def printable(text):
+    """A field of the tab-separated output: no tab or newline to split the line (bench.sh keeps lines of four
+    fields, and a busy process with a tab in its argv vanished from its report), and no control character a
+    terminal would act on (an argv can carry an escape sequence) (verification, 2026-10-26)."""
+    return "".join(" " if ord(c) < 32 or 127 <= ord(c) < 160 else c for c in text)
+
+
 def main(argv):
     ap = argparse.ArgumentParser(add_help=False)
     ap.add_argument("--window", type=float, default=3.0)
     ap.add_argument("--floor", type=float, default=0.5)
     a = ap.parse_args(argv)
     for pid, share, name, cmd in hogs(a.window, a.floor):
-        print(f"{pid}\t{share:.2f}\t{name}\t{cmd[:160]}")
+        print(f"{pid}\t{share:.2f}\t{printable(name)}\t{printable(cmd)[:160]}")
     return 0
 
 
