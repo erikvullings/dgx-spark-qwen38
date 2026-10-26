@@ -52,6 +52,8 @@ class FakeEngine(http.server.BaseHTTPRequestHandler):
     live = {}                    # rid -> Event, set by an abort
     aborted = []                 # rids aborted by rid
     abort_all = []               # one entry per abort_all
+    abort_all_at = []            # when each abort_all came (time.monotonic())
+    rid_abort_delay = 0.0        # an engine the memory floor finds slow: seconds before an abort by rid answers
     closed = []                  # rids whose reader went away mid-generation
     finished = []                # rids written to their end
     seen = []                    # (path, rid, stream)
@@ -97,9 +99,12 @@ class FakeEngine(http.server.BaseHTTPRequestHandler):
             if self.owner == "vllm":
                 return self._json(404, {"detail": "Not Found"})
             j = json.loads(body or b"{}")
+            if not j.get("abort_all") and self.rid_abort_delay:
+                time.sleep(self.rid_abort_delay)
             with self.lock:
                 if j.get("abort_all"):
                     FakeEngine.abort_all.append(1)
+                    FakeEngine.abort_all_at.append(time.monotonic())
                     for ev in FakeEngine.live.values():
                         ev.set()
                 elif j.get("rid") in FakeEngine.live:
@@ -221,10 +226,11 @@ class FloorStop(unittest.TestCase):
 
     def setUp(self):
         with FakeEngine.lock:
-            for name in ("aborted", "abort_all", "closed", "finished", "seen"):
+            for name in ("aborted", "abort_all", "abort_all_at", "closed", "finished", "seen"):
                 getattr(FakeEngine, name).clear()
             FakeEngine.live.clear()
         FakeEngine.owner, FakeEngine.prefill, FakeEngine.self_abort_after = "sglang", 0.0, None
+        FakeEngine.rid_abort_delay = 0.0
         mod = self.mod
         mod._rid_override_honoured = True
         mod._SERVED.update(names=(), engine="", ts=0.0)
@@ -507,6 +513,46 @@ class FloorStop(unittest.TestCase):
         self.assertTrue(head.startswith(b"HTTP/1.1 529"), got[:80])
         ra = [l for l in head.split(b"\r\n") if l.lower().startswith(b"retry-after")][0]
         self.assertLessEqual(int(ra.split(b":")[1]), 3600)
+
+    def test_abort_all_goes_first_when_the_engine_is_slow_to_abort_by_rid(self):
+        # at the memory floor the engine is slow: each abort by rid can wait ABORT_TIMEOUT_S, and abort_all
+        # went only after all of them, up to the cockpit's 8 s fallback late (verification, 2026-10-26)
+        FakeEngine.prefill, FakeEngine.rid_abort_delay = 8.0, 1.5
+        socks = [self._post("/v1/messages", {"model": "m", "max_tokens": 10, "stream": True,
+                                             "messages": [{"role": "user", "content": f"hi {i}"}]})
+                 for i in range(2)]
+        self.assertTrue(self._wait(lambda: len(FakeEngine.live) == 2))
+        t0 = time.monotonic()
+        status, out, _ = self._stop({"why": "test floor", "hold_s": 0})
+        self.assertEqual((status, out["stopped"]), (200, 2), out)
+        self.assertTrue(out["abort_all"])
+        with FakeEngine.lock:
+            first = FakeEngine.abort_all_at[0]
+        self.assertLess(first - t0, 1.0, "abort_all waited for the aborts by rid")
+        for s in socks:
+            got = self._read(s, timeout=10)
+            s.close()
+            self.assertNotIn(b"message_stop", got)       # marked before the engine heard: cut, not ended
+
+    def test_a_number_too_big_for_a_float_reads_as_not_given(self):
+        # float() of a 310-digit integer raised OverflowError before the finite check, and the stop's
+        # handler died with no answer (verification, 2026-10-26)
+        status, out, _ = self._stop({"why": "test floor", "hold_s": 10 ** 400, "floor_gib": 10 ** 400})
+        self.assertEqual(status, 200, out)
+        self.assertEqual(self.mod._FLOOR["floor_gib"], 0.0)
+
+    def test_a_chunked_stop_is_refused_never_read_as_the_floors(self):
+        # a chunked body has no Content-Length: it was never read, and an operator's stop read as the
+        # floor's, which holds new generations back (verification, 2026-10-26)
+        s = socket.create_connection(("127.0.0.1", self.port), timeout=15)
+        raw = json.dumps({"kind": "operator", "why": "test"}).encode()
+        s.sendall((f"POST /proxy/stop HTTP/1.1\r\nHost: p\r\nContent-Type: application/json\r\n"
+                   f"Authorization: Bearer {KEY}\r\nTransfer-Encoding: chunked\r\n\r\n").encode()
+                  + f"{len(raw):x}\r\n".encode() + raw + b"\r\n0\r\n\r\n")
+        got = self._read(s)
+        s.close()
+        self.assertTrue(got.startswith(b"HTTP/1.1 411"), got[:120])
+        self.assertIsNone(self.mod._FLOOR["until"])
 
     # ---- whose route it is ------------------------------------------------------------------
     def test_the_stop_is_the_operators_alone(self):

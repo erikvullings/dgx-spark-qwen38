@@ -3447,27 +3447,34 @@ def stop_generations(why, floor_gib=None, hold_s=None, floor=True):
                 now = time.monotonic()
                 hold = FLOOR_HOLD_S if hold_s is None else hold_s
                 _FLOOR.update(at=now, until=now + hold if hold > 0 else None, why=why[:200])
+    # Each stopped generation is marked before the engine hears of it, so none relays the end its
+    # engine gives an aborted generation; then SGLang's abort_all goes at once, and only then the
+    # aborts by rid of the requests still waiting for their first byte. They came first before, one
+    # after the other, each up to ABORT_TIMEOUT_S on an engine the memory floor finds slow: abort_all
+    # could leave up to the cockpit's 8 s fallback later than v1.40.2 sent it (verification, 2026-10-26).
     for h in targets:
-        h._stop_generation(why, floor)
+        h._mark_stopped(why, floor)
     if not _SERVED["engine"]:
         try:
             served_models()
         except EngineUnreachable:
             pass
-    if _SERVED["engine"] == "vllm":
-        return len(targets), False      # each relay closed its connection, which is vLLM's abort
-    key = _door_key()
-    hdrs = {"Content-Type": "application/json"}
-    if key:
-        hdrs["Authorization"] = "Bearer " + key
-    try:
-        urllib.request.urlopen(urllib.request.Request(UPSTREAM + "/abort_request",
-                                                      json.dumps({"abort_all": True}).encode(), hdrs),
-                               timeout=ABORT_TIMEOUT_S).read()
-        return len(targets), True
-    except Exception as e:  # noqa: BLE001 (the relays' own aborts went; said, not raised)
-        log(f"memory floor: abort_all failed: {type(e).__name__}: {str(e)[:120]}")
-        return len(targets), False
+    all_sent = False
+    if _SERVED["engine"] != "vllm":
+        key = _door_key()
+        hdrs = {"Content-Type": "application/json"}
+        if key:
+            hdrs["Authorization"] = "Bearer " + key
+        try:
+            urllib.request.urlopen(urllib.request.Request(UPSTREAM + "/abort_request",
+                                                          json.dumps({"abort_all": True}).encode(), hdrs),
+                                   timeout=ABORT_TIMEOUT_S).read()
+            all_sent = True
+        except Exception as e:  # noqa: BLE001 (the requests' own aborts follow; said, not raised)
+            log(f"memory floor: abort_all failed: {type(e).__name__}: {str(e)[:120]}")
+    for h in targets:
+        h._stop_waiting()               # on vLLM each relay's closed connection is the abort
+    return len(targets), all_sent
 
 
 def _gen_discard(handler):
@@ -4145,11 +4152,10 @@ class H(BaseHTTPRequestHandler):
         except OSError:
             pass
 
-    def _stop_generation(self, why, floor=True):
+    def _mark_stopped(self, why, floor=True):
         """The cockpit stopped this request (v6.47), from the stop route's thread: its memory floor,
-        or its operator's Abort all. A relay that runs wakes on its queue and cuts its client; a
-        request still waiting for the engine's first byte has its generation stopped and its upstream
-        ended now, and _forward cuts its client."""
+        or its operator's Abort all. Marked first, before the engine is told: a relay that runs wakes
+        on its queue and cuts its client, and whatever the engine sends after reads as stopped."""
         self._stop_floor = floor
         self._stop_why = why
         q = getattr(self, "_relay_q", None)
@@ -4158,6 +4164,12 @@ class H(BaseHTTPRequestHandler):
                 q.put_nowait(("s", b""))
             except queue.Full:
                 pass                        # the loop reads _stop_why at its next event
+
+    def _stop_waiting(self):
+        """A stopped request still waiting for the engine's first byte has its generation stopped
+        by its rid and its upstream ended, and _forward cuts its client. A relay that runs does it
+        in its own thread."""
+        if getattr(self, "_relay_q", None) is not None:
             return
         self._abort_upstream("memory floor")
         self._shut_upstream()
@@ -4210,6 +4222,10 @@ class H(BaseHTTPRequestHandler):
             if not key or not engine_admits(self.headers.get("Authorization"), key):
                 refuse = (401, "needs the key the engine checks")
         n = parse_body_length(self.headers.get("Content-Length"))
+        if refuse is None and self.headers.get("Transfer-Encoding"):
+            # a chunked body has no Content-Length, so it was never read and an operator's stop
+            # read as the floor's, which holds new generations back (verification, 2026-10-26)
+            refuse = (411, "takes its body with a Content-Length, never chunked")
         if refuse is None and (n is None or n > 4096):
             refuse = (413, "takes a body of at most 4096 bytes")
         if refuse is not None:
@@ -4217,8 +4233,7 @@ class H(BaseHTTPRequestHandler):
             self._plain(refuse[0], {"Content-Type": "application/json"},
                         json.dumps({"error": {"type": "invalid_request",
                                               "message": f"keepalive-proxy: {STOP_PATH} {refuse[1]}"}}).encode())
-            self._done("405 stop refused" if refuse[0] == 405 else "403 stop refused" if refuse[0] == 403
-                       else "401 stop refused" if refuse[0] == 401 else "413 stop refused"); return
+            self._done(f"{refuse[0]} stop refused"); return
         args = {}
         if with_body and n:
             raw = self.rfile.read(n)
@@ -4237,7 +4252,10 @@ class H(BaseHTTPRequestHandler):
             v = args.get(k)
             if not isinstance(v, (int, float)) or isinstance(v, bool):
                 return None
-            v = float(v)
+            try:
+                v = float(v)
+            except OverflowError:
+                return None                      # a 310-digit integer, as Infinity: not given
             if not math.isfinite(v) or v < 0:
                 return None                      # Infinity and NaN read as "not given", the defaults hold
             return min(v, HOLD_CEIL_S if k == "hold_s" else FLOOR_CEIL_GIB)
@@ -4988,6 +5006,7 @@ class H(BaseHTTPRequestHandler):
                     count = tokenize_count(body, self.path)
                 except EngineUnreachable as e:
                     invalidate_pool()   # this engine is restarting; its pool is not ours
+                    _gen_discard(self)  # held, it is not in flight, as on the other returns that hold
                     return ("unreachable", str(e), None)
                 except TooLongToCount as e:
                     count, uncounted = None, e.args[0]
