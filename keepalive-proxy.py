@@ -3375,7 +3375,13 @@ FLOOR_HOLD_S = float(os.environ.get("PROXY_FLOOR_HOLD_S", "60") or 0)
 # OverflowError in every new generation's handler while _handle has no except to answer with a
 # 5xx. The cockpit never sends such numbers, which is exactly why the door says no to them.
 HOLD_CEIL_S, FLOOR_CEIL_GIB = 3600.0, 100.0
-_FLOOR = {"at": None, "until": None, "why": "", "floor_gib": MEM_FLOOR_GIB}
+# Memory alone refuses nothing (code review, 2026-10-26): an idle box short of memory for other
+# programs (a VS Code server and a browser beside the flash, 3.0 GiB on 2026-10-25) had every request
+# refused, where v1.40.2 served it and the cockpit's floor acts only while generations run. A refusal
+# for memory follows a floor stop that cut a generation, until MemAvailable is back over the floor,
+# FLOOR_EPISODE_S at most: a floor the box never gets back over ends there too.
+FLOOR_EPISODE_S = float(os.environ.get("PROXY_FLOOR_EPISODE_S", "300") or 0)
+_FLOOR = {"at": None, "until": None, "why": "", "floor_gib": MEM_FLOOR_GIB, "episode": False}
 _GENERATIONS = set()                # the handlers a stop reaches: from their request going out to their _done
 _GEN_LOCK = threading.Lock()
 
@@ -3394,18 +3400,23 @@ def mem_available_gib(path="/proc/meminfo"):
 
 def floor_refusal(now=None, avail=None):
     """(why, seconds to wait) while a new generation must wait for memory, else None: for
-    _FLOOR's hold after a stop, then while MemAvailable stays under the floor."""
+    _FLOOR's hold after a floor stop that cut a generation, then while MemAvailable stays under
+    the floor, FLOOR_EPISODE_S after that stop at most. Memory alone refuses nothing."""
     now = time.monotonic() if now is None else now
     at, until = _FLOOR["at"], _FLOOR["until"]
     if until is not None and now < until:
         left = until - now
         return (f"the memory floor stopped every generation {now - at:.0f}s ago "
                 f"({_FLOOR['why'] or 'memory low'}), and new ones wait {left:.0f}s more"), max(2, int(left + 0.999))
+    if not _FLOOR.get("episode") or at is None or now - at > FLOOR_EPISODE_S:
+        _FLOOR["episode"] = False
+        return None
     floor = _FLOOR["floor_gib"]
     if floor > 0:
         avail = mem_available_gib() if avail is None else avail
         if avail is not None and avail < floor:
             return f"MemAvailable is {avail:.1f} GiB, under the {floor:g} GiB memory floor", 5
+    _FLOOR["episode"] = False               # memory is back: the floor's episode ends
     return None
 
 
@@ -3436,17 +3447,17 @@ def stop_generations(why, floor_gib=None, hold_s=None, floor=True):
     """The cockpit's stop: every generation this proxy relays is cut and stopped, and after the
     memory floor's, new ones wait (floor_refusal). (how many it reached, whether SGLang's abort_all
     went). The wait belongs to a cut (revue 627, 2026-10-26): a floor stop that found nothing to
-    cut holds nothing back, the box was blackout for 60 s for no generation at all. The floor_gib
-    the cockpit carries is recorded either way, it is how the proxy learns the cockpit's value."""
+    cut holds nothing back, the box was blackout for 60 s for no generation at all. A stop that
+    cut one starts the floor's episode with the floor the cockpit carries (it fired at that value),
+    PROXY_MEM_FLOOR_GIB=0 keeping the refusal for memory off."""
     with _GEN_LOCK:
         targets = list(_GENERATIONS)
-        if floor:
-            if floor_gib is not None:
-                _FLOOR["floor_gib"] = floor_gib
-            if targets:
-                now = time.monotonic()
-                hold = FLOOR_HOLD_S if hold_s is None else hold_s
-                _FLOOR.update(at=now, until=now + hold if hold > 0 else None, why=why[:200])
+        if floor and targets:
+            now = time.monotonic()
+            hold = FLOOR_HOLD_S if hold_s is None else hold_s
+            gib = 0.0 if MEM_FLOOR_GIB <= 0 else (MEM_FLOOR_GIB if floor_gib is None else floor_gib)
+            _FLOOR.update(at=now, until=now + hold if hold > 0 else None, why=why[:200], floor_gib=gib,
+                          episode=True)
     # Each stopped generation is marked before the engine hears of it, so none relays the end its
     # engine gives an aborted generation; then SGLang's abort_all goes at once, and only then the
     # aborts by rid of the requests still waiting for their first byte. They came first before, one
@@ -3454,24 +3465,25 @@ def stop_generations(why, floor_gib=None, hold_s=None, floor=True):
     # could leave up to the cockpit's 8 s fallback later than v1.40.2 sent it (verification, 2026-10-26).
     for h in targets:
         h._mark_stopped(why, floor)
-    if not _SERVED["engine"]:
-        try:
-            served_models()
-        except EngineUnreachable:
-            pass
+    # SGLang's abort_all is always tried (code review, 2026-10-26): the lane this proxy last saw can be
+    # an older one (a switch from a vLLM lane keeps _SERVED saying vllm until a request goes through),
+    # and a generation sent to the engine straight (bench.sh, needle.sh, an eval) is no relay's to stop.
+    # vLLM answers it 404: closing each relayed connection is its abort.
     all_sent = False
-    if _SERVED["engine"] != "vllm":
-        key = _door_key()
-        hdrs = {"Content-Type": "application/json"}
-        if key:
-            hdrs["Authorization"] = "Bearer " + key
-        try:
-            urllib.request.urlopen(urllib.request.Request(UPSTREAM + "/abort_request",
-                                                          json.dumps({"abort_all": True}).encode(), hdrs),
-                                   timeout=ABORT_TIMEOUT_S).read()
-            all_sent = True
-        except Exception as e:  # noqa: BLE001 (the requests' own aborts follow; said, not raised)
-            log(f"memory floor: abort_all failed: {type(e).__name__}: {str(e)[:120]}")
+    key = _door_key()
+    hdrs = {"Content-Type": "application/json"}
+    if key:
+        hdrs["Authorization"] = "Bearer " + key
+    try:
+        urllib.request.urlopen(urllib.request.Request(UPSTREAM + "/abort_request",
+                                                      json.dumps({"abort_all": True}).encode(), hdrs),
+                               timeout=ABORT_TIMEOUT_S).read()
+        all_sent = True
+    except urllib.error.HTTPError as e:
+        if e.code != 404:
+            log(f"memory floor: abort_all failed: HTTP {e.code}")
+    except Exception as e:  # noqa: BLE001 (the requests' own aborts follow; said, not raised)
+        log(f"memory floor: abort_all failed: {type(e).__name__}: {str(e)[:120]}")
     for h in targets:
         h._stop_waiting()               # on vLLM each relay's closed connection is the abort
     return len(targets), all_sent

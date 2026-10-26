@@ -237,10 +237,10 @@ class FloorStop(unittest.TestCase):
         # The box's own memory never decides here: the floor is off unless a test sets it. Read with
         # getattr, so that on a proxy without the stop each test fails on what it checks, not here.
         if hasattr(mod, "_FLOOR"):
-            mod._FLOOR.update(at=None, until=None, why="", floor_gib=0.0)
+            mod._FLOOR.update(at=None, until=None, why="", floor_gib=0.0, episode=False)
             with mod._GEN_LOCK:
                 mod._GENERATIONS.clear()
-        for name in ("STOP_PEERS", "mem_available_gib"):
+        for name in ("STOP_PEERS", "mem_available_gib", "FLOOR_EPISODE_S", "MEM_FLOOR_GIB"):
             if hasattr(mod, name):
                 self.addCleanup(setattr, mod, name, getattr(mod, name))
 
@@ -431,22 +431,78 @@ class FloorStop(unittest.TestCase):
         s.close()
         self.assertIn(b"[DONE]", got)
 
-    def test_a_box_short_of_memory_refuses_new_generations(self):
-        mod = self.mod
-        getattr(mod, "_FLOOR", {})["floor_gib"] = 3.0
-        mod.mem_available_gib = lambda path="/proc/meminfo": 1.2
+    def _message(self):
         s = self._post("/v1/messages", {"model": "m", "max_tokens": 10, "stream": True,
                                         "messages": [{"role": "user", "content": "hi"}]})
         got = self._read(s)
         s.close()
+        return got
+
+    def test_memory_alone_refuses_nothing(self):
+        # an idle box short of memory for other programs (a VS Code server and a browser beside the
+        # flash, 3.0 GiB on 2026-10-25) had every request refused, where v1.40.2 served it and the
+        # cockpit's floor acts only while generations run (code review, 2026-10-26)
+        self.mod._FLOOR["floor_gib"] = 3.0
+        self.mod.mem_available_gib = lambda path="/proc/meminfo": 1.2
+        got = self._message()
+        self.assertIn(b"message_stop", got)
+        self.assertNotIn(b"memory floor", got)
+
+    def test_after_a_floor_stop_memory_under_the_floor_refuses_until_it_is_back(self):
+        mod = self.mod
+        _, status, out = self._stream_then_stop(
+            "/v1/messages", {"model": "m", "max_tokens": 100, "messages": [{"role": "user", "content": "hi"}]},
+            {"why": "test floor", "hold_s": 0, "floor_gib": 3.0})
+        self.assertEqual((status, out["stopped"]), (200, 1))
+        mod.mem_available_gib = lambda path="/proc/meminfo": 1.2
+        got = self._message()
         self.assertTrue(got.startswith(b"HTTP/1.1 529"), got[:60])
         self.assertIn(b"MemAvailable is 1.2 GiB, under the 3 GiB memory floor", got)
         mod.mem_available_gib = lambda path="/proc/meminfo": 9.0
-        s = self._post("/v1/messages", {"model": "m", "max_tokens": 10, "stream": True,
-                                        "messages": [{"role": "user", "content": "hi"}]})
-        got = self._read(s)
-        s.close()
-        self.assertIn(b"message_stop", got)
+        self.assertIn(b"message_stop", self._message())
+        # memory back: the floor's episode is over, a later dip refuses nothing until the next stop
+        mod.mem_available_gib = lambda path="/proc/meminfo": 1.2
+        self.assertIn(b"message_stop", self._message())
+
+    def test_a_floor_the_box_never_gets_back_over_ends_with_its_episode(self):
+        # a stop's floor_gib stayed until the proxy restarted: {"floor_gib": 99} that cut a generation
+        # answered 529 to every request on a box with 25 GiB free, a day later (code review, 2026-10-26)
+        mod = self.mod
+        mod.FLOOR_EPISODE_S = 1.0
+        mod.mem_available_gib = lambda path="/proc/meminfo": 25.0
+        _, status, out = self._stream_then_stop(
+            "/v1/messages", {"model": "m", "max_tokens": 100, "messages": [{"role": "user", "content": "hi"}]},
+            {"why": "test floor", "hold_s": 0, "floor_gib": 99})
+        self.assertEqual((status, out["stopped"]), (200, 1))
+        got = self._message()
+        self.assertTrue(got.startswith(b"HTTP/1.1 529"), got[:60])
+        self.assertIn(b"under the 99 GiB memory floor", got)
+        time.sleep(1.1)
+        self.assertIn(b"message_stop", self._message())
+
+    def test_a_proxy_floor_of_0_keeps_the_refusal_for_memory_off(self):
+        mod = self.mod
+        mod.MEM_FLOOR_GIB = 0.0
+        mod.mem_available_gib = lambda path="/proc/meminfo": 1.2
+        _, status, out = self._stream_then_stop(
+            "/v1/messages", {"model": "m", "max_tokens": 100, "messages": [{"role": "user", "content": "hi"}]},
+            {"why": "test floor", "hold_s": 0, "floor_gib": 3.0})
+        self.assertEqual((status, out["stopped"]), (200, 1))
+        self.assertIn(b"message_stop", self._message())
+
+    def test_abort_all_goes_whatever_lane_the_proxy_last_saw(self):
+        # a switch from a vLLM lane keeps _SERVED saying vllm until a request goes through: the floor's
+        # stop sent no abort_all, and a generation sent to SGLang straight (bench.sh, needle.sh, an
+        # eval) went on to the livelock (code review, 2026-10-26)
+        self.mod._SERVED.update(names=("m",), engine="vllm", ts=time.monotonic())
+        status, out, _ = self._stop({"why": "test floor", "hold_s": 0})
+        self.assertEqual((status, out["stopped"]), (200, 0))
+        self.assertTrue(out["abort_all"])
+        self.assertEqual(len(FakeEngine.abort_all), 1)
+        # vLLM has no such route: its 404 says so, and nothing else is claimed
+        FakeEngine.owner = "vllm"
+        status, out, _ = self._stop({"why": "test floor", "hold_s": 0})
+        self.assertEqual((status, out["abort_all"]), (200, False))
 
     def test_an_operators_stop_holds_nothing_back(self):
         got, status, out = self._stream_then_stop("/v1/messages", {"model": "m", "max_tokens": 100,
@@ -556,6 +612,10 @@ class FloorStop(unittest.TestCase):
 
     # ---- whose route it is ------------------------------------------------------------------
     def test_the_stop_is_the_operators_alone(self):
+        # a generation runs through every refused stop below, and ends whole
+        s = self._post("/v1/messages", {"model": "m", "max_tokens": 100, "stream": True,
+                                        "messages": [{"role": "user", "content": "hi"}]})
+        self.assertIn(b"w03", self._read(s, until=b"w03"))
         self.assertEqual(self._stop(key=None)[0], 401)
         self.assertEqual(self._stop(key="a client key")[0], 401)
         self.assertEqual(self._stop(method="GET")[0], 405)
@@ -568,6 +628,10 @@ class FloorStop(unittest.TestCase):
         self.mod.STOP_PEERS = ()          # as if it came from the network
         self.assertEqual(self._stop()[0], 403)
         # none of these stopped anything nor held anything back
+        got = self._read(s)
+        s.close()
+        self.assertIn(b"message_stop", got)
+        self.assertEqual((FakeEngine.abort_all, FakeEngine.aborted), ([], []))
         self.assertIsNone(getattr(self.mod, "_FLOOR", {}).get("at", "no stop in this proxy"))
 
 
