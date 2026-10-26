@@ -815,6 +815,15 @@ def nemotron_engine_state(unit: str, *, active: str, sub: str, prev_state: str |
     return st, boot, running
 
 
+def sglang_abort_all(timeout: float) -> None:
+    """SGLang's abort_all, straight to the engine: raises when it does not answer 2xx."""
+    req = urllib.request.Request(ENGINE_BASE + "/abort_request", method="POST",
+                                 data=json.dumps({"abort_all": True}).encode(),
+                                 headers={"Content-Type": "application/json",
+                                          "Authorization": f"Bearer {api_key()}"})
+    urllib.request.urlopen(req, timeout=timeout).read()
+
+
 def engine_abort_all(timeout: float = 8.0, why: str = "", floor: bool = True) -> dict:
     """Stop every generation in flight: through the keepalive proxy first (v1.40.3, proxy v6.47),
     which cuts each client's connection instead of letting it end, and stops each generation the
@@ -851,12 +860,8 @@ def engine_abort_all(timeout: float = 8.0, why: str = "", floor: bool = True) ->
             lane = "the Kolibri lane" if kolibri_serving() else b12x_lane_name()
             raise RuntimeError(f"no generation ran through the proxy, and {lane}'s vLLM has no route that "
                                "aborts one sent to it straight (stopping the lane stops them)")
-        req = urllib.request.Request(ENGINE_BASE + "/abort_request", method="POST",
-                                     data=json.dumps({"abort_all": True}).encode(),
-                                     headers={"Content-Type": "application/json",
-                                              "Authorization": f"Bearer {api_key()}"})
         try:
-            urllib.request.urlopen(req, timeout=max(2.0, timeout - (time.monotonic() - t0))).read()
+            sglang_abort_all(max(2.0, timeout - (time.monotonic() - t0)))
             return {**done, "abort_all": True, "abort_all_by": "cockpit"}
         except Exception as e:  # noqa: BLE001 (said, and raised when nothing at all was stopped)
             missed = f"SGLang's abort_all failed ({type(e).__name__}: {str(e)[:80]})"
@@ -869,11 +874,7 @@ def engine_abort_all(timeout: float = 8.0, why: str = "", floor: bool = True) ->
     if nemotron_serving():
         raise RuntimeError(f"{b12x_lane_name()}'s vLLM has no route that aborts its generations "
                            f"(stopping the lane stops them), and {missed}")
-    req = urllib.request.Request(ENGINE_BASE + "/abort_request", method="POST",
-                                 data=json.dumps({"abort_all": True}).encode(),
-                                 headers={"Content-Type": "application/json",
-                                          "Authorization": f"Bearer {api_key()}"})
-    urllib.request.urlopen(req, timeout=timeout).read()
+    sglang_abort_all(timeout)
     return {"via": "engine", "stopped": None, "missed": missed}
 
 
