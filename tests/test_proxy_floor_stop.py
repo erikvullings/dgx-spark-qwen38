@@ -56,6 +56,7 @@ class FakeEngine(http.server.BaseHTTPRequestHandler):
     abort_all_at = []            # when each abort_all came (time.monotonic())
     rid_abort_delay = 0.0        # an engine the memory floor finds slow: seconds before an abort by rid answers
     abort_404_delay = 0.0        # vLLM under the same pressure: seconds before its 404 to /abort_request
+    abort_all_fails = False      # an SGLang that answers abort_all with a 503
     closed = []                  # rids whose reader went away mid-generation
     closed_at = {}               # rid -> when its reader went away during the prefill (time.monotonic())
     finished = []                # rids written to their end
@@ -103,6 +104,8 @@ class FakeEngine(http.server.BaseHTTPRequestHandler):
                 time.sleep(self.abort_404_delay)
                 return self._json(404, {"detail": "Not Found"})
             j = json.loads(body or b"{}")
+            if j.get("abort_all") and self.abort_all_fails:
+                return self._json(503, {"detail": "busy"})
             if not j.get("abort_all") and self.rid_abort_delay:
                 time.sleep(self.rid_abort_delay)
             with self.lock:
@@ -254,6 +257,8 @@ class FloorStop(unittest.TestCase):
             FakeEngine.closed_at.clear()
         FakeEngine.owner, FakeEngine.prefill, FakeEngine.self_abort_after = "sglang", 0.0, None
         FakeEngine.rid_abort_delay = FakeEngine.abort_404_delay = 0.0
+        FakeEngine.abort_all_fails = False
+        self.addCleanup(self._join_stop_threads)
         mod = self.mod
         mod._rid_override_honoured = True
         mod._SERVED.update(names=(), engine="", ts=0.0)
@@ -266,6 +271,13 @@ class FloorStop(unittest.TestCase):
         for name in ("STOP_PEERS", "mem_available_gib", "FLOOR_EPISODE_S", "MEM_FLOOR_GIB", "FLOOR_HOLD_S"):
             if hasattr(mod, name):
                 self.addCleanup(setattr, mod, name, getattr(mod, name))
+
+    @staticmethod
+    def _join_stop_threads():
+        """A stop's aborts by rid run in threads of their own: none may reach the next test."""
+        for th in threading.enumerate():
+            if th.name == "stop-waiting":
+                th.join(timeout=15)
 
     # ---- the client side, raw, to see every byte and how the connection ends ---------------
     def _post(self, path, body, key=KEY):
@@ -644,8 +656,9 @@ class FloorStop(unittest.TestCase):
     def test_the_cockpit_has_its_answer_before_the_aborts_by_rid(self):
         # each abort by rid of a request still waiting can take ABORT_TIMEOUT_S on a slow engine, and the
         # answer waited for all of them: past the cockpit's 8 s, it took the stop for one the proxy had not
-        # made (code review, 2026-10-26)
-        FakeEngine.prefill, FakeEngine.rid_abort_delay = 8.0, 3.0
+        # made, and the last request kept its prefill as long (code reviews, 2026-10-26). They go when
+        # abort_all did not, each in its own thread.
+        FakeEngine.prefill, FakeEngine.rid_abort_delay, FakeEngine.abort_all_fails = 8.0, 3.0, True
         socks = [self._post("/v1/messages", {"model": "m", "max_tokens": 10, "stream": True,
                                              "messages": [{"role": "user", "content": f"hi {i}"}]})
                  for i in range(2)]
@@ -653,12 +666,60 @@ class FloorStop(unittest.TestCase):
         t0 = time.monotonic()
         status, out, _ = self._stop({"why": "test floor", "hold_s": 0})
         took = time.monotonic() - t0
-        self.assertEqual((status, out["stopped"], out["abort_all"]), (200, 2, True), out)
+        self.assertEqual((status, out["stopped"], out["abort_all"]), (200, 2, False), out)
         self.assertLess(took, 2.0, "the answer waited for the aborts by rid")
+        self.assertTrue(self._wait(lambda: len(FakeEngine.aborted) == 2, timeout=5.0))
+        self.assertLess(time.monotonic() - t0, 4.5, "the aborts by rid went one after the other")
         for s in socks:
             got = self._read(s, timeout=15)
             s.close()
             self.assertNotIn(b"message_stop", got)
+
+    def _slow_routing(self, seconds):
+        """The request's way to the engine takes SECONDS before its connection opens: a stop that lands
+        then finds no socket to close (code review, 2026-10-26)."""
+        H, orig = self.mod.H, self.mod.H._open
+
+        def slow_open(handler, body):
+            time.sleep(seconds)
+            return orig(handler, body)
+        H._open = slow_open
+        self.addCleanup(setattr, H, "_open", orig)
+
+    def test_a_vllm_request_stopped_while_routed_is_closed_once_it_opens(self):
+        # the close came before the connection and found nothing, and the request then generated whole,
+        # its client cut only at the end (code review, 2026-10-26)
+        FakeEngine.owner, FakeEngine.prefill = "vllm", 6.0
+        self._slow_routing(0.8)
+        s = self._post("/v1/messages", {"model": "m", "max_tokens": 10, "stream": False,
+                                        "messages": [{"role": "user", "content": "hi"}]})
+        self.assertTrue(self._wait(lambda: len(self.mod._GENERATIONS) == 1, timeout=5))
+        t0 = time.monotonic()
+        status, out, _ = self._stop({"why": "test floor", "hold_s": 0})
+        self.assertEqual((status, out["stopped"]), (200, 1), out)
+        self.assertTrue(self._wait(lambda: len(FakeEngine.closed_at) == 1, timeout=5))
+        self.assertLess(next(iter(FakeEngine.closed_at.values())) - t0, 2.5, "the engine generated for nobody")
+        got = self._read(s, timeout=10)
+        s.close()
+        self.assertNotIn(b"end_turn", got)
+
+    def test_an_sglang_request_stopped_while_routed_is_ended_once_it_opens(self):
+        # abort_all went before it reached the engine, and its abort by rid too, which stopped nothing and
+        # marked it aborted: its prefill ran whole, and its relay skipped the abort it sends at the end
+        # (code review, 2026-10-26)
+        FakeEngine.prefill = 6.0
+        self._slow_routing(0.8)
+        s = self._post("/v1/messages", {"model": "m", "max_tokens": 10, "stream": True,
+                                        "messages": [{"role": "user", "content": "hi"}]})
+        self.assertTrue(self._wait(lambda: len(self.mod._GENERATIONS) == 1, timeout=5))
+        t0 = time.monotonic()
+        status, out, _ = self._stop({"why": "test floor", "hold_s": 0})
+        self.assertEqual((status, out["stopped"], out["abort_all"]), (200, 1, True), out)
+        self.assertTrue(self._wait(lambda: len(FakeEngine.closed_at) == 1, timeout=5))
+        self.assertLess(next(iter(FakeEngine.closed_at.values())) - t0, 2.5, "the prefill ran whole")
+        got = self._read(s, timeout=10)
+        s.close()
+        self.assertNotIn(b"message_stop", got)
 
     def test_a_stop_meanwhile_keeps_its_episode(self):
         # floor_refusal read the floor, read MemAvailable, then ended the episode without the lock: a

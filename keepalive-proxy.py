@@ -3476,7 +3476,8 @@ def stop_generations(why, floor_gib=None, hold_s=None, floor=True):
     # A vLLM request still waiting for its first byte closes now: closing is its abort, with no round
     # trip, and it waited for abort_all's 404 before, up to ABORT_TIMEOUT_S of prefill more on an engine
     # under the very pressure the floor fights (code review, 2026-10-26).
-    vllm = [h for h in targets if (getattr(h, "_upstream_engine", "") or _SERVED["engine"]) == "vllm"]
+    vllm = [h for h in targets if (getattr(h, "_upstream_engine", "") or _SERVED["engine"]) == "vllm"
+            and h._upstream_sock() is not None]
     for h in vllm:
         h._stop_waiting()
     # SGLang's abort_all is always tried (code review, 2026-10-26): the lane this proxy last saw can be
@@ -3498,13 +3499,15 @@ def stop_generations(why, floor_gib=None, hold_s=None, floor=True):
             log(f"memory floor: abort_all failed: HTTP {e.code}")
     except Exception as e:  # noqa: BLE001 (the requests' own aborts follow; said, not raised)
         log(f"memory floor: abort_all failed: {type(e).__name__}: {str(e)[:120]}")
-    # The aborts by rid of SGLang's requests still waiting go on in their own thread: one by one, each
-    # up to ABORT_TIMEOUT_S, they held the cockpit's answer past its 8 s, and the cockpit then took the
-    # stop for one the proxy had not made and hid the cuts it had (code review, 2026-10-26).
-    rest = [h for h in targets if h not in vllm]
-    if rest:
-        threading.Thread(target=lambda: [h._stop_waiting() for h in rest], name="stop-waiting",
-                         daemon=True).start()
+    # When abort_all did not go, the aborts by rid of the requests still waiting go out, each in its own
+    # thread: one by one, each up to ABORT_TIMEOUT_S, they held the cockpit's answer past its 8 s (the
+    # cockpit then took the stop for one the proxy had not made) and the last request's prefill as long.
+    # When it went, the engine stopped them all, and an abort by rid would only be a second one (code
+    # reviews, 2026-10-26). A request not at the engine yet is its keeper's either way.
+    if not all_sent:
+        for h in targets:
+            if h not in vllm:
+                threading.Thread(target=h._stop_waiting, name="stop-waiting", daemon=True).start()
     return len(targets), all_sent
 
 
@@ -4174,14 +4177,21 @@ class H(BaseHTTPRequestHandler):
         whatever connection opens next, which a duplicate of it shut down instead (found in
         review, 2026-10-14). A closed socket object has no number left: shutdown() fails, and
         touches nothing."""
-        up = getattr(getattr(self, "_upstream_req", None), "upstream", None)
-        sock = getattr(up, "kept_sock", None)
+        sock = self._upstream_sock()
         if sock is None:
             return
         try:
             sock.shutdown(socket.SHUT_RDWR)
         except OSError:
             pass
+
+    def _upstream_sock(self):
+        """The socket this request's connection to the engine opened, or None before it did."""
+        return getattr(getattr(getattr(self, "_upstream_req", None), "upstream", None), "kept_sock", None)
+
+    def _stop_label(self):
+        """Whose stop this request took, for the log: the memory floor's or the operator's."""
+        return "memory floor" if getattr(self, "_stop_floor", True) else "Abort all"
 
     def _mark_stopped(self, why, floor=True):
         """The cockpit stopped this request (v6.47), from the stop route's thread: its memory floor,
@@ -4199,10 +4209,14 @@ class H(BaseHTTPRequestHandler):
     def _stop_waiting(self):
         """A stopped request still waiting for the engine's first byte has its generation stopped
         by its rid and its upstream ended, and _forward cuts its client. A relay that runs does it
-        in its own thread."""
-        if getattr(self, "_relay_q", None) is not None:
+        in its own thread. One whose connection to the engine is not open yet is its keeper's,
+        which ends it once it opens: an abort sent before the request reached the engine stopped
+        nothing and marked it aborted, so that its relay's own abort was skipped later, and a close
+        found no socket to close, a vLLM request then generating whole (code review, 2026-10-26)."""
+        if getattr(self, "_relay_q", None) is not None or self._upstream_sock() is None:
             return
-        self._abort_upstream("memory floor")
+        self._upstream_ended = True
+        self._abort_upstream(self._stop_label())
         self._shut_upstream()
 
     def _cut_stopped(self):
@@ -4414,6 +4428,8 @@ class H(BaseHTTPRequestHandler):
         if isinstance(sock, ssl.SSLSocket):
             return                       # a peek through TLS is not this simple
         while not done.is_set():
+            if self._stopped_while_routed(done):
+                return
             try:
                 readable, _, _ = select.select([sock], [], [], 0.5)
             except (OSError, ValueError):
@@ -4430,6 +4446,17 @@ class H(BaseHTTPRequestHandler):
             self._caller_left = True
             self._end_upstream(done, "client gone before its non-streamed answer")
             return
+
+    def _stopped_while_routed(self, done):
+        """True once the cockpit's stop was handled here: a stop that came before this request's
+        connection to the engine opened found nothing to close (_stop_waiting leaves it to this
+        keeper), and the request then ran its whole prefill, its whole answer on vLLM (code review,
+        2026-10-26). Its upstream is ended once it opens, and _forward cuts its client."""
+        if not getattr(self, "_stop_why", None) or getattr(self, "_upstream_ended", False):
+            return False
+        self._upstream_ended = True
+        self._end_upstream(done, f"stopped by the {self._stop_label()} before the engine answered")
+        return True
 
     def _end_upstream(self, done, why):
         """Close the connection to the engine while _open still waits on it. SGLang checks its
@@ -4485,6 +4512,8 @@ class H(BaseHTTPRequestHandler):
         anthropic = self.path.startswith("/v1/messages")
         next_ka = start + KEEPALIVE_S
         while not done.is_set():
+            if self._stopped_while_routed(done):
+                return
             now = time.time()
             if now - start >= MAX_SILENCE_S:
                 self._silent_before_head = now - start
@@ -4552,7 +4581,7 @@ class H(BaseHTTPRequestHandler):
             # v6.47: the engine answered after the memory floor stopped this request: the part it
             # generated is not relayed (a stream's generation is stopped first, before the close)
             if sse:
-                self._abort_upstream("memory floor")
+                self._abort_upstream(self._stop_label())
             try: resp.close()
             except Exception: pass
             self._cut_stopped(); return
@@ -4698,7 +4727,7 @@ class H(BaseHTTPRequestHandler):
         while True:
             if getattr(self, "_stop_why", None):
                 # v6.47: the memory floor stopped this generation: stopped upstream, its client cut
-                drop_upstream("memory floor")
+                drop_upstream(self._stop_label())
                 self._cut_stopped(); return
             try:
                 kind, val = q.get(timeout=KEEPALIVE_S)
