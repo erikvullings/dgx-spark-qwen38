@@ -5,6 +5,7 @@ exact-revision snapshot selection, custom repo argument, and a Claude Code
 tool_reference block rendered instead of raising. No network."""
 import importlib.util
 import os
+import re
 import subprocess
 import sys
 import tempfile
@@ -149,6 +150,22 @@ def main() -> None:
                            env={**env, "TEMPLATE_PATCHES": "system-reminder"})
         assert r.returncode == 0, r.stdout + r.stderr
         assert r.stdout.count("patch '") == 5 and "reasoning_effort" in open(ambient).read(), r.stdout
+        # Ornith's installer asks for the tool-reference fix too (2026-10-26): its render_content loop is the
+        # Qwen one, and a Claude Code ToolSearch result was a 400 "Unexpected item type in content." on the
+        # FP4-Local lane, as it was a 500 on SGLang. The installer's own TEMPLATE_FIXES line, on a template
+        # with both anchors, must patch the reference loop, not the system message alone.
+        fixes = re.search(r'^TEMPLATE_FIXES=\((--patches=[^)]*)\)$',
+                          open(os.path.join(REPO_DIR, "install-ornith-122b.sh")).read(), re.M)
+        assert fixes, "install-ornith-122b.sh sets no --patches TEMPLATE_FIXES"
+        both_repo, both_sha = "org/ornith-like", "c" * 40
+        make_fixture(base, both_repo, both_sha, "HEAD\n" + pt.SYSTEM_ANCHOR + "\n" + ref_body + "\nTAIL\n")
+        both_out = os.path.join(base, "ornith-like.jinja")
+        r = subprocess.run([sys.executable, SCRIPT, fixes.group(1), base, both_out, both_sha, both_repo],
+                           capture_output=True, text=True, env=env)
+        assert r.returncode == 0, r.stdout + r.stderr
+        both = open(both_out).read()
+        assert pt.SYSTEM_PATCHED in both, "Ornith's fixes lost the system-reminder"
+        assert pt.TOOL_REF_PATCHED in both, f"Ornith's fixes ({fixes.group(1)}) leave the tool_reference loop raising"
         print("test_patch_template: OK")
     finally:
         shutil.rmtree(base, ignore_errors=True)

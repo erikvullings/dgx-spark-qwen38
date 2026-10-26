@@ -129,14 +129,16 @@ render_unit(){
       "$HERE/$UNIT.template" > "$1"
 }
 
-# The checkpoint's chat template with the one fix it needs (vlane_template, TEMPLATE_FIXES): it
+# The checkpoint's chat template with the two fixes it needs (vlane_template, TEMPLATE_FIXES): it
 # refused a system message past the first one, which opencode 1.19.4 sends, and every opencode request
 # on this lane got a 400 (2026-10-24); that message becomes a <system-reminder>, as on the 27B and the
-# two flash lanes. The template has no reasoning effort of its own (the proxy gives it one through
-# enable_thinking), so that is its only fix. Written again at every install and every switch, and left
+# two flash lanes. And its render_content loop is the Qwen one, which raised on the tool_reference blocks
+# of a Claude Code ToolSearch result (a 400 "Unexpected item type in content." on the FP4-Local lane,
+# 2026-10-26): each block now names its tool, as on the Qwen lanes. The template has no reasoning effort
+# of its own (the proxy gives it one through enable_thinking), so those are its only fixes. Written again at every install and every switch, and left
 # as it is, mtime included, when nothing changed.
 TEMPLATE="$CONFIG_DIR/chat-template-ornith-122b.jinja"
-TEMPLATE_FIXES=(--patches=system-reminder)
+TEMPLATE_FIXES=(--patches=system-reminder,tool-reference)
 lane_template(){ vlane_template "$TEMPLATE" "${TEMPLATE_FIXES[@]}"; }
 
 # This lane's own folders: vLLM's compile cache, FlashInfer's and Triton's kernels and b12x's
