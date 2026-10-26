@@ -63,7 +63,7 @@ class Fake(http.server.BaseHTTPRequestHandler):
         self.wfile.flush()
 
 
-def run_bench(model):
+def run_bench(model, window="0.5"):
     Fake.model = model
     SERVED.clear()
     srv = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Fake)
@@ -79,7 +79,7 @@ def run_bench(model):
     try:
         r = subprocess.run(["bash", BENCH], capture_output=True, text=True, timeout=180,
                            cwd=REPO_DIR,
-                           env={**os.environ, "PORT": str(srv.server_port), "HOME": home, "HOGS_WINDOW": "0.5"})
+                           env={**os.environ, "PORT": str(srv.server_port), "HOME": home, "HOGS_WINDOW": window})
     finally:
         srv.shutdown()
         shutil.rmtree(home, ignore_errors=True)
@@ -168,6 +168,15 @@ def main():
             fails.append(f"an engine that {what} is not reported as unknown:\n{out[:400]}")
         if "greedy median" not in out:
             fails.append(f"the benchmark did not run when the engine {what}")
+
+    # a cpu-hogs that fails is said as a failure, never as a quiet box (revue 627, 26/10):
+    # an empty window used to read as "nothing outside the engine held half a core" even when
+    # cpu-hogs.py itself died (missing file, crash, a non-numeric window from the caller)
+    out = run_bench("qwen3.8-27b", window="not-a-number")
+    if "cpu-hogs failed" not in out:
+        fails.append(f"a failing cpu-hogs did not say so:\n{out[:400]}")
+    if "nothing outside the engine held half a core" in out:
+        fails.append("a failing cpu-hogs still let the quiet-box claim through")
 
     for f in fails:
         print("FAIL", f)
