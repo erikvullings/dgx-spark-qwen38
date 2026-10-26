@@ -170,12 +170,16 @@ def main() -> None:
         # macro, an inline loop, as a next checkpoint may have) stops the install, as an upstream change
         # does for every other fix: the guard looked at the macro's name and let it through, every turn
         # after a ToolSearch a 500 again (code review, 2026-10-26). One that raises on none needs no fix.
-        for body, ok in (("{%- for item in content %}{%- if item.type == 'text' %}{{ item.text }}{%- else %}"
-                          "{{ raise_exception('Unexpected item type in content.') }}{%- endif %}{%- endfor %}", False),
-                         ("{%- for item in content %}{{ item.text }}{%- endfor %}", True)):
-            other_repo, other_sha = "org/next-checkpoint", ("f" if ok else "a") * 40
+        # Its words are no guard either: a raise worded otherwise went through as well (code review, 2026-10-26).
+        for n, (body, ok) in enumerate((
+                ("{%- for item in content %}{%- if item.type == 'text' %}{{ item.text }}{%- else %}"
+                 "{{ raise_exception('Unexpected item type in content.') }}{%- endif %}{%- endfor %}", False),
+                ("{%- for item in content %}{%- if item.type == 'text' %}{{ item.text }}{%- else %}"
+                 "{{ raise_exception('Unexpected content item type: ' ~ item.type) }}{%- endif %}{%- endfor %}", False),
+                ("{%- for item in content %}{{ item.text }}{%- endfor %}", True))):
+            other_repo, other_sha = "org/next-checkpoint", "abf"[n] * 40
             make_fixture(base, other_repo, other_sha, body)
-            other_out = os.path.join(base, f"next-{ok}.jinja")
+            other_out = os.path.join(base, f"next-{n}.jinja")
             r = subprocess.run([sys.executable, SCRIPT, "--patches=tool-reference", base, other_out, other_sha,
                                 other_repo], capture_output=True, text=True, env=env)
             if ok:

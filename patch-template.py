@@ -129,10 +129,11 @@ TOOL_REF_PATCHED = (
     "                {{- raise_exception('Unexpected item type in content.') }}\n"
 )
 TOOL_REF_MARKER = "item.type == 'tool_reference'"
-# A template is left as it is only when it raises on no content item it does not know: a guard on the
-# name of the macro skipped the fix for a template that raises in a renamed macro or inline, and the
-# install went on with every turn after a ToolSearch a 500 again (code review, 2026-10-26).
-TOOL_REF_RAISE = "Unexpected item type in content."
+# A template is left as it is only when it raises nothing at all: a guard on the name of the macro
+# skipped the fix for a template that raises in a renamed macro or inline, and one on the error's words
+# for a template that words it otherwise, and the install went on with every turn after a ToolSearch a
+# 500 again (code reviews, 2026-10-26). One that raises anywhere the fix cannot reach stops the install.
+TOOL_REF_RAISE = "raise_exception("
 
 
 # The five fixes by name, in the order they are applied (--patches picks among them).
@@ -227,7 +228,7 @@ def main() -> None:
         elif marker in tpl:
             print(f"patch '{name}': already present upstream, nothing to do")
         elif name == "tool-reference" and TOOL_REF_RAISE not in tpl:
-            print("patch 'tool-reference': not needed (this template raises on no content item it does not know)")
+            print("patch 'tool-reference': not needed (this template raises nothing)")
         else:
             sys.exit(
                 f"patch '{name}': anchor not found and fix not present: the upstream "
