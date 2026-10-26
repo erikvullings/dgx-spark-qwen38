@@ -42,6 +42,8 @@ class Recorder(http.server.BaseHTTPRequestHandler):
     calls = []
     lock = threading.Lock()
     proxy_takes = True           # False: a proxy older than v6.47, which relays the path and gets a 404
+    proxy_answer = {"stopped": 2, "abort_all": True}
+    engine_takes = True          # False: an engine that fails the abort (a vLLM's 404, or slow)
 
     def log_message(self, *a):
         pass
@@ -52,8 +54,8 @@ class Recorder(http.server.BaseHTTPRequestHandler):
             Recorder.calls.append((self.server.name, self.path, self.headers.get("Authorization"),
                                    json.loads(body or b"{}")))
         if self.server.name == "proxy" and self.path == "/proxy/stop" and self.proxy_takes:
-            code, out = 200, {"stopped": 2, "abort_all": True}
-        elif self.server.name == "engine" and self.path == "/abort_request":
+            code, out = 200, self.proxy_answer
+        elif self.server.name == "engine" and self.path == "/abort_request" and self.engine_takes:
             code, out = 200, {}
         else:
             code, out = 404, {"detail": "Not Found"}
@@ -98,12 +100,32 @@ class Base(unittest.TestCase):
     def setUp(self):
         with Recorder.lock:
             Recorder.calls.clear()
-        Recorder.proxy_takes = True
+        Recorder.proxy_takes, Recorder.engine_takes = True, True
+        Recorder.proxy_answer = {"stopped": 2, "abort_all": True}
         self.serving(None)
 
     def serving(self, unit):
         with self.ck.LIFE_LOCK:
             self.ck.LIFE["states"] = {unit: "ready"} if unit else {}
+
+    def floor_fires(self):
+        """The floor's tick with 2.5 GiB free and 3 generations running: its events, what the page
+        is sent, its audit lines."""
+        ck, saved, events, audits = self.ck, {}, [], []
+        running = lambda timeout=3: [{"num_reqs": 3, "num_waiting_reqs": 0}]
+        fakes = {"DRY_RUN": False, "engine_load": running, "nemotron_load": running, "kolibri_load": running,
+                 "mem_available_gib": lambda: 2.5, "add_event": lambda kind, text: events.append((kind, text)),
+                 "audit": audits.append}
+        for name, value in fakes.items():
+            saved[name] = getattr(ck, name)
+            setattr(ck, name, value)
+        ck.MEM_FLOOR.update(last_abort=None, aborts=0, last_try=None, last_via=None)
+        try:
+            out = ck.collect_engine_fast()
+        finally:
+            for name, value in saved.items():
+                setattr(ck, name, value)
+        return [text for kind, text in events if kind == "mem_floor"], out, audits
 
 
 class TheStop(Base):
@@ -147,26 +169,59 @@ class TheStop(Base):
         self.assertEqual([c[0] for c in Recorder.calls], ["proxy"])     # never the engine
 
 
+class WhenTheProxysAbortAllDidNotGo(Base):
+    """The proxy took the stop, but SGLang's abort_all did not go: before v1.40.3 the cockpit sent it
+    itself, and a generation sent to the engine straight (bench.sh, needle.sh, an eval) is no relay's
+    to cut (code review, 2026-10-26)."""
+
+    def test_on_sglang_the_cockpit_sends_it(self):
+        Recorder.proxy_answer = {"stopped": 0, "abort_all": False}
+        done = self.ck.engine_abort_all(why="floor")
+        self.assertEqual(done, {"via": "proxy", "stopped": 0, "abort_all": True, "abort_all_by": "cockpit"})
+        self.assertEqual([(c[0], c[1], c[3]) for c in Recorder.calls][1:],
+                         [("engine", "/abort_request", {"abort_all": True})])
+
+    def test_a_stop_that_stopped_nothing_raises(self):
+        Recorder.proxy_answer, Recorder.engine_takes = {"stopped": 0, "abort_all": False}, False
+        with self.assertRaises(RuntimeError) as e:
+            self.ck.engine_abort_all(why="floor")
+        self.assertIn("no generation ran through the proxy, and SGLang's abort_all failed", str(e.exception))
+        Recorder.engine_takes = True
+        self.serving("qwen38-flash-local.service")
+        with self.assertRaises(RuntimeError) as e:
+            self.ck.engine_abort_all(why="floor")
+        self.assertIn("no generation ran through the proxy", str(e.exception))
+        self.assertIn("no route that aborts one sent to it straight", str(e.exception))
+        self.assertNotIn("engine", [c[0] for c in Recorder.calls][2:])   # never the vLLM engine
+
+    def test_on_vllm_the_cut_ones_are_all_it_claims(self):
+        Recorder.proxy_answer = {"stopped": 2, "abort_all": False}
+        self.serving("qwen38-ornith-122b.service")
+        floor, out, _ = self.floor_fires()
+        self.assertEqual(len(floor), 1, floor)
+        self.assertIn("2 generation(s) stopped through the proxy (cut, their clients retry), and new ones wait", floor[0])
+        self.assertNotIn("every generation", floor[0])
+        self.assertEqual(out["mem_floor"].get("said"), floor[0].split("; ", 1)[1])
+        self.assertEqual([c[0] for c in Recorder.calls], ["proxy"])
+
+    def test_on_vllm_a_floor_that_stopped_nothing_says_so_and_counts_nothing(self):
+        # the invariant of the 2026-10-14 review: the floor never claims an abort it could not make
+        Recorder.proxy_answer = {"stopped": 0, "abort_all": False}
+        self.serving("qwen38-flash-local.service")
+        floor, out, audits = self.floor_fires()
+        self.assertEqual(len(floor), 1, floor)
+        self.assertIn("abort failed: no generation ran through the proxy, and the Flash FP4-Local lane's vLLM "
+                      "has no route that aborts one sent to it straight", floor[0])
+        self.assertEqual(out["mem_floor"]["aborts"], 0)
+        self.assertFalse([a for a in audits if a.get("kind") == "mem_floor"][0]["ok"])
+        self.assertEqual([c[0] for c in Recorder.calls], ["proxy"])
+
+
 class TheFloor(Base):
     def test_the_floor_says_it_stopped_through_the_proxy(self):
-        ck, saved = self.ck, {}
-        for name in ("DRY_RUN", "engine_load", "mem_available_gib", "add_event", "audit"):
-            saved[name] = getattr(ck, name)
-        events, audits = [], []
-        ck.DRY_RUN = False
-        ck.engine_load = lambda timeout=3: [{"num_reqs": 1, "num_waiting_reqs": 0}]
-        ck.mem_available_gib = lambda: 2.5
-        ck.add_event = lambda kind, text: events.append((kind, text))
-        ck.audit = audits.append
-        ck.MEM_FLOOR.update(last_abort=None, aborts=0, last_try=None, last_via=None)
-        try:
-            out = ck.collect_engine_fast()
-        finally:
-            for name, value in saved.items():
-                setattr(ck, name, value)
-        floor = [e for e in events if e[0] == "mem_floor"]
-        self.assertEqual(len(floor), 1, events)
-        self.assertIn("every generation stopped through the proxy (2 cut, their clients retry)", floor[0][1])
+        floor, out, audits = self.floor_fires()
+        self.assertEqual(len(floor), 1, floor)
+        self.assertIn("every generation stopped through the proxy (2 cut, their clients retry", floor[0])
         self.assertEqual(out["mem_floor"]["via"], "proxy")
         self.assertEqual([a for a in audits if a.get("kind") == "mem_floor"][0]["via"], "proxy")
 

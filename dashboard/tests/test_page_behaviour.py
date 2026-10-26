@@ -192,19 +192,29 @@ class TheKolibriLaneIsSaidAsItIs(unittest.TestCase):
                                      "their connections), never fired")
         self.assertIn("not on the Kolibri lane", r["guard"])
 
-    def test_the_floor_banner_says_the_clients_were_cut_and_retry(self):
+    def test_the_floor_banner_says_what_the_stop_did_no_more(self):
+        # it said every generation stopped, clients cut and new requests held whatever the proxy did,
+        # where it had cut none (code review, 2026-10-26): the cockpit's floor_said is what it says
         r = run(self, r"""
         const now = Date.now() / 1000;
         feed({config: CONFIG, units: UNITS, lifecycle: life({'qwen38-flash.service': eng('ready', {target: 'flash'})})});
-        feed({engine_fast: {mem_floor: {gib: 3, aborts: 1, last_abort: now - 30, via: 'proxy'}}});
+        feed({engine_fast: {mem_floor: {gib: 3, aborts: 1, last_abort: now - 30, via: 'proxy',
+              said: "every generation stopped through the proxy (2 cut, their clients retry, the others ended by SGLang's abort_all), and new ones wait for memory"}}});
         const proxy = txt('banners');
+        feed({engine_fast: {mem_floor: {gib: 3, aborts: 1, last_abort: now - 30, via: 'proxy',
+              said: "no generation ran through the proxy, and SGLang's abort_all ended the others"}}});
+        const none = txt('banners');
         feed({engine_fast: {mem_floor: {gib: 3, aborts: 1, last_abort: now - 30, via: 'engine'}}});
-        report({proxy, engine: txt('banners'), floor: txt('mm-floor')});
+        report({proxy, none, engine: txt('banners'), floor: txt('mm-floor')});
         """)
-        self.assertIn("every generation was stopped", r["proxy"])
-        self.assertIn("Their clients were cut and retry on their own; new requests wait a minute", r["proxy"])
+        self.assertIn("To keep the box out of a livelock: every generation stopped through the proxy (2 cut, "
+                      "their clients retry", r["proxy"])
+        self.assertIn("new ones wait for memory.", r["proxy"])
+        self.assertIn("no generation ran through the proxy, and SGLang's abort_all ended the others.", r["none"])
+        self.assertNotIn("cut", r["none"])
+        self.assertNotIn("wait", r["none"])
         self.assertIn("every generation was aborted", r["engine"])
-        self.assertNotIn("were cut", r["engine"])
+        self.assertNotIn("cut", r["engine"])
         self.assertEqual(r["floor"], "stops generations under 3 GiB through the proxy, fired 1 time")
 
     def test_the_floor_belts_line_wraps_like_the_guards(self):

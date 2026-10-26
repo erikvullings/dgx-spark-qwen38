@@ -537,7 +537,7 @@ def collect_containers():
 
 
 MEM_FLOOR_GIB = float(os.environ.get("COCKPIT_MEM_FLOOR_GIB", "3.0"))
-MEM_FLOOR = {"last_abort": None, "aborts": 0, "last_reason": "", "last_try": None, "last_via": None}
+MEM_FLOOR = {"last_abort": None, "aborts": 0, "last_reason": "", "last_try": None, "last_via": None, "last_said": ""}
 # The floor's pause between two stops; the proxy refuses new generations for as long after one (v1.40.3).
 MEM_FLOOR_COOLDOWN_S = 60.0
 
@@ -824,7 +824,11 @@ def engine_abort_all(timeout: float = 8.0, why: str = "", floor: bool = True) ->
     reference box, 2026-10-25). After the memory floor's stop the proxy also refuses new generations
     for the floor's pause, and while memory stays under the floor; an operator's Abort all holds
     nothing back. A proxy that does not take the stop (older, down, not on this machine's loopback)
-    leaves the way of before: SGLang's abort_all, straight to the engine. Returns what was done."""
+    leaves the way of before: SGLang's abort_all, straight to the engine. A proxy that took it but
+    whose abort_all did not go on an SGLang lane (the engine slow to answer it) has the cockpit send
+    its own, as before v1.40.3: a generation sent to the engine straight (bench.sh, needle.sh, an eval)
+    is no relay's to cut (code review, 2026-10-26). A stop that stopped nothing raises, so the floor
+    never claims an abort it could not make (review, 2026-10-14). Returns what was done."""
     body = {"why": why or ("memory floor" if floor else "Abort all, from the cockpit"),
             "kind": "floor" if floor else "operator"}
     if floor:
@@ -832,11 +836,33 @@ def engine_abort_all(timeout: float = 8.0, why: str = "", floor: bool = True) ->
     req = urllib.request.Request(PROXY_BASE + "/proxy/stop", method="POST", data=json.dumps(body).encode(),
                                  headers={"Content-Type": "application/json",
                                           "Authorization": f"Bearer {api_key()}"})
+    t0 = time.monotonic()
     try:
         out = json.loads(urllib.request.urlopen(req, timeout=timeout).read() or b"{}")
-        return {"via": "proxy", "stopped": int(out.get("stopped") or 0), "abort_all": bool(out.get("abort_all"))}
+        done = {"via": "proxy", "stopped": int(out.get("stopped") or 0), "abort_all": bool(out.get("abort_all"))}
     except Exception as e:  # noqa: BLE001 (the way of before follows, and says why)
-        missed = f"the proxy did not take the stop ({type(e).__name__}: {str(e)[:80]})"
+        done, missed = None, f"the proxy did not take the stop ({type(e).__name__}: {str(e)[:80]})"
+    if done is not None:
+        if done["abort_all"]:
+            return done
+        if kolibri_serving() or nemotron_serving():
+            if done["stopped"]:
+                return done
+            lane = "the Kolibri lane" if kolibri_serving() else b12x_lane_name()
+            raise RuntimeError(f"no generation ran through the proxy, and {lane}'s vLLM has no route that "
+                               "aborts one sent to it straight (stopping the lane stops them)")
+        req = urllib.request.Request(ENGINE_BASE + "/abort_request", method="POST",
+                                     data=json.dumps({"abort_all": True}).encode(),
+                                     headers={"Content-Type": "application/json",
+                                              "Authorization": f"Bearer {api_key()}"})
+        try:
+            urllib.request.urlopen(req, timeout=max(2.0, timeout - (time.monotonic() - t0))).read()
+            return {**done, "abort_all": True, "abort_all_by": "cockpit"}
+        except Exception as e:  # noqa: BLE001 (said, and raised when nothing at all was stopped)
+            missed = f"SGLang's abort_all failed ({type(e).__name__}: {str(e)[:80]})"
+        if not done["stopped"]:
+            raise RuntimeError(f"no generation ran through the proxy, and {missed}")
+        return {**done, "missed": missed}
     if kolibri_serving():
         raise RuntimeError("the Kolibri lane's vLLM has no route that aborts its generations "
                            f"(stopping the lane stops them), and {missed}")
@@ -849,6 +875,21 @@ def engine_abort_all(timeout: float = 8.0, why: str = "", floor: bool = True) ->
                                           "Authorization": f"Bearer {api_key()}"})
     urllib.request.urlopen(req, timeout=timeout).read()
     return {"via": "engine", "stopped": None, "missed": missed}
+
+
+def floor_said(done: dict) -> str:
+    """What the memory floor's stop through the proxy did, as its event says it: no more than that.
+    The proxy holds new generations back only after a stop that cut one."""
+    n, by = done.get("stopped") or 0, " (sent by the cockpit, the proxy's did not go)" if done.get("abort_all_by") else ""
+    if n and done.get("abort_all"):
+        said = (f"every generation stopped through the proxy ({n} cut, their clients retry, the others "
+                f"ended by SGLang's abort_all{by}), and new ones wait for memory")
+    elif n:
+        said = (f"{n} generation(s) stopped through the proxy (cut, their clients retry), and new ones wait "
+                "for memory")
+    else:
+        said = f"no generation ran through the proxy, and SGLang's abort_all ended the others{by}"
+    return said + (f" ({done['missed']})" if done.get("missed") else "")
 
 
 HEALTH = {"ts": 0.0, "ok": False}
@@ -925,17 +966,19 @@ def collect_engine_fast():
             if DRY_RUN:
                 said = "dry run: no abort sent"
             elif done.get("via") == "proxy":
-                said = (f"every generation stopped through the proxy ({done['stopped']} cut, their clients "
-                        "retry), and new ones wait for memory")
+                said = floor_said(done)
             else:
                 said = f"every generation aborted at the engine ({done.get('missed')})"
+            MEM_FLOOR["last_said"] = said           # the banner says what was done, no more
             add_event("mem_floor", f"memory floor: {reason}; {said}")
         except Exception as e:  # noqa: BLE001
-            audit({"kind": "mem_floor", "avail_gib": avail, "num_reqs": num_reqs, "ok": False, "err": str(e)[:120]})
-            add_event("mem_floor", f"memory floor: {reason}; abort failed: {str(e)[:80]}")
+            # the whole cause: the proxy's or the lane's reason came past the 80 characters it was cut at
+            audit({"kind": "mem_floor", "avail_gib": avail, "num_reqs": num_reqs, "ok": False, "err": str(e)[:240]})
+            add_event("mem_floor", f"memory floor: {reason}; abort failed: {str(e)[:240]}")
     return {"node_id": "local", "load": load, "healthy": healthy,
             "mem_floor": {"gib": MEM_FLOOR_GIB, "avail_gib": avail, "aborts": MEM_FLOOR["aborts"],
-                          "last_abort": MEM_FLOOR["last_abort"], "via": MEM_FLOOR["last_via"]}}
+                          "last_abort": MEM_FLOOR["last_abort"], "via": MEM_FLOOR["last_via"],
+                          "said": MEM_FLOOR["last_said"]}}
 
 
 KERNEL_LAST = {"count": None}
@@ -4807,7 +4850,9 @@ def job_abort_all(job: Job):
     done = engine_abort_all(floor=False)
     if done.get("via") == "proxy":
         return True, [f"every in-flight generation stopped through the proxy: {done['stopped']} client(s) cut, "
-                      "who see their connection end and retry"], {"ok": True, **done}
+                      "who see their connection end and retry"
+                      + (", the others ended by SGLang's abort_all" if done.get("abort_all") else "")
+                      + (f" ({done['missed']})" if done.get("missed") else "")], {"ok": True, **done}
     return True, ["every in-flight generation aborted at the engine (clients see their stream end); "
                   + done.get("missed", "")], {"ok": True, **done}
 

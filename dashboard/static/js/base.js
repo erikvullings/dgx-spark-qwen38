@@ -536,7 +536,7 @@ const EXPLAIN = {
       : isNemotron(TARGET_UNIT(p.target)) ? `points its unit at this checkpoint and its memory share, and makes ${LANE_NAME[TARGET_UNIT(p.target)]} opencode's default model, with its compaction`
       : 'rewrites its unit, the proxy ceiling and the opencode default model'}. It never restarts anything.`,
   flush_cache: () => 'Empties the radix cache. Harmless; the engine refuses it while requests run.',
-  abort_all: () => 'Every running or queued generation ends now; the clients see their stream end.',
+  abort_all: () => 'Every running or queued generation stops now, and each client is cut: an agent retries its request (end its turn in the agent).',
   smoke: () => 'One real 200-token generation through the proxy, the way a client uses it.',
   diag_bundle: () => 'Collects logs, state and versions into a tarball in your home; the API key is masked everywhere.',
   fit_opencode: () => 'Reads the KV pool of the engine serving now and rewrites only opencode’s context and output limits, so a conversation can never outgrow it. A dated backup is written first. If the Agent server runs, it restarts to read them: a reply it is writing then is cut short.'};
@@ -1055,11 +1055,13 @@ function renderBanners(state, errors){
   if (upd0) add('warn', `${laneLabel(sv[0])} runs what it started with, not what the update installed.`,
     `${upd0}. It applies at its next start: Restart ${LANE_NAME[sv[0]]} to apply the update, on its card in Lanes (it answers again in ${readyIn(sv[0])}).`);
   // since v1.40.3 the stop goes through the proxy, which cuts each client instead of letting its
-  // stream end as if the answer were whole, and holds new generations back while memory is short
+  // stream end as if the answer were whole, and holds new generations back while memory is short.
+  // What it did is the cockpit's to say (mem_floor.said): it claimed every generation stopped and
+  // new requests held where the proxy had cut none (code review, 2026-10-26)
   if (F.memFloor && F.memFloor.aborts && F.memFloor.last_abort && Date.now() / 1000 - F.memFloor.last_abort < 600){
     const ago = fmtDur(Date.now() / 1000 - F.memFloor.last_abort);
-    add('warn', 'The memory floor fired.', F.memFloor.via === 'proxy'
-      ? `Memory fell under ${F.memFloor.gib} GiB with requests running: every generation was stopped ${ago} ago to keep the box out of a livelock. Their clients were cut and retry on their own; new requests wait a minute, and for as long as memory stays under the floor.`
+    add('warn', 'The memory floor fired.', F.memFloor.via === 'proxy' && F.memFloor.said
+      ? `Memory fell under ${F.memFloor.gib} GiB with requests running, ${ago} ago. To keep the box out of a livelock: ${F.memFloor.said}.`
       : `Memory fell under ${F.memFloor.gib} GiB with requests running: every generation was aborted ${ago} ago to keep the box out of a livelock.`);
   }
   const upd = F.update || {};
