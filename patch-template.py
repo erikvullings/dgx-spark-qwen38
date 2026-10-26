@@ -129,11 +129,12 @@ TOOL_REF_PATCHED = (
     "                {{- raise_exception('Unexpected item type in content.') }}\n"
 )
 TOOL_REF_MARKER = "item.type == 'tool_reference'"
-# A template is left as it is only when it raises nothing at all: a guard on the name of the macro
-# skipped the fix for a template that raises in a renamed macro or inline, and one on the error's words
-# for a template that words it otherwise, and the install went on with every turn after a ToolSearch a
-# 500 again (code reviews, 2026-10-26). One that raises anywhere the fix cannot reach stops the install.
-TOOL_REF_RAISE = "raise_exception("
+# A template is left as it is only when it never names raise_exception: a guard on the name of the macro
+# skipped the fix for a template that raises in a renamed macro or inline, one on the error's words for a
+# template that words it otherwise, and one on "raise_exception(" for a space before the parenthesis or an
+# alias of the function, and the install went on with every turn after a ToolSearch a 500 again (code
+# reviews, 2026-10-26). One that can raise anywhere the fix cannot reach stops the install.
+TOOL_REF_RAISE = "raise_exception"
 
 
 # The five fixes by name, in the order they are applied (--patches picks among them).

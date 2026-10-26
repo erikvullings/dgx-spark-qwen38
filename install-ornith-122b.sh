@@ -138,6 +138,7 @@ render_unit(){
 # of its own (the proxy gives it one through enable_thinking), so those are its only fixes. Written again at every install and every switch, and left
 # as it is, mtime included, when nothing changed.
 TEMPLATE="$CONFIG_DIR/chat-template-ornith-122b.jinja"
+# shellcheck disable=SC2054  # one argument: patch-template.py takes its fixes' names comma-separated
 TEMPLATE_FIXES=(--patches=system-reminder,tool-reference)
 lane_template(){ vlane_template "$TEMPLATE" "${TEMPLATE_FIXES[@]}"; }
 

@@ -34,7 +34,8 @@ class TheDefaultIsKept(unittest.TestCase):
         snap = self.base / "hub" / "models--org--model" / "snapshots" / SHA
         snap.mkdir(parents=True)
         (snap / "chat_template.jinja").write_text(
-            "HEAD\n" + pt.EFFORT_ANCHOR + "\n" + pt.MSG_ANCHOR + "\nMID\n" + pt.LEAN_ANCHOR + pt.SYSTEM_ANCHOR + "\nTAIL\n")
+            "HEAD\n" + pt.EFFORT_ANCHOR + "\n" + pt.MSG_ANCHOR + "\nMID\n" + pt.LEAN_ANCHOR + pt.SYSTEM_ANCHOR
+            + "\n" + pt.TOOL_REF_ANCHOR + "\nTAIL\n")        # the five anchors, as the 27B's template has them
         self.out = self.base / "out.jinja"
 
     def run_patch(self, lean_default=None):

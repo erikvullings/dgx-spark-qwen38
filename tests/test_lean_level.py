@@ -62,6 +62,17 @@ STOCK = (
     "{%- elif reasoning_instructions %}\n"
     "{{- '<|im_start|>system\\n' + reasoning_instructions + '<|im_end|>\\n' }}\n"
     "{%- endif %}\n"
+    # the content loop the tool-reference fix anchors on, as the 27B's template has it: a template
+    # that raises where that fix cannot reach stops the install (code reviews, 2026-10-26). Defined
+    # and not called, it renders nothing.
+    "{%- macro render_content(content) %}\n"
+    "        {%- for item in content %}\n"
+    "            {%- if 'image' in item %}\n"
+    "                {{- '<image>' }}\n"
+    + pt.TOOL_REF_ANCHOR
+    + "            {%- endif %}\n"
+    "        {%- endfor %}\n"
+    "{%- endmacro %}\n"
     # SYSTEM_ANCHOR opens an if inside the message loop; the fixture closes both
     # so the result is a template jinja2 can actually compile and render.
     "{%- for message in messages %}\n"

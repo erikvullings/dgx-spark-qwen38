@@ -176,8 +176,12 @@ def main() -> None:
                  "{{ raise_exception('Unexpected item type in content.') }}{%- endif %}{%- endfor %}", False),
                 ("{%- for item in content %}{%- if item.type == 'text' %}{{ item.text }}{%- else %}"
                  "{{ raise_exception('Unexpected content item type: ' ~ item.type) }}{%- endif %}{%- endfor %}", False),
+                ("{%- for item in content %}{%- if item.type == 'text' %}{{ item.text }}{%- else %}"
+                 "{{ raise_exception ('Unknown item') }}{%- endif %}{%- endfor %}", False),
+                ("{%- set fail = raise_exception %}{%- for item in content %}{%- if item.type == 'text' %}"
+                 "{{ item.text }}{%- else %}{{ fail('Unknown item') }}{%- endif %}{%- endfor %}", False),
                 ("{%- for item in content %}{{ item.text }}{%- endfor %}", True))):
-            other_repo, other_sha = "org/next-checkpoint", "abf"[n] * 40
+            other_repo, other_sha = "org/next-checkpoint", "abcdf"[n] * 40
             make_fixture(base, other_repo, other_sha, body)
             other_out = os.path.join(base, f"next-{n}.jinja")
             r = subprocess.run([sys.executable, SCRIPT, "--patches=tool-reference", base, other_out, other_sha,
