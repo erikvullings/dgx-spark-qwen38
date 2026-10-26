@@ -1,5 +1,132 @@
 # Changelog
 
+## v1.40.3 (2026-10-26): Claude Code's ToolSearch works on the Qwen lanes, every lane says what its prefix cache served (#49), and a stopped generation never reaches its client as a whole answer
+
+**Claude Code's ToolSearch works on the Qwen lanes.** Claude Code 2.1.304 answers a ToolSearch call with
+`tool_reference` content blocks. The Qwen chat template's `render_content` loop raised "Unexpected item
+type in content.": a 500 before generation on the SGLang lanes (seen live on 2026-10-25 at 01:31, on every
+turn of a `claude-local` session), and a 400 on Flash FP4-Local's, measured on 2026-10-26. The fifth
+`patch-template.py` patch renders each referenced tool as a text marker, so the model sees what the search
+loaded, and the schemas arrive with the next request's tools. The 27B, flash and Flash FP4-Local templates
+take it with their other fixes, and the Ornith lane, whose loop is the same, now asks for it beside its
+system-reminder fix. Kolibri's and the two Nemotron lanes' templates take such a block as they are. The same
+ToolSearch result, replayed through the proxy on each of the seven text lanes of the reference box, was
+answered on all seven (HTTP 200). A next checkpoint whose template raises where the fix cannot reach now
+stops the install instead of serving that error again. A session already carrying such a block needs a
+new session until its lane restarts with this release.
+
+**Every lane says what its prefix cache served (#49).** The flash launcher starts SGLang with
+`--enable-cache-report`, as the 27B's units do since v1.40.2, and the Kolibri, Nemotron Bolt, Super VL,
+Flash FP4-Local and Ornith units pass `--enable-prompt-tokens-details`: each answer carries
+`usage.prompt_tokens_details.cached_tokens`, and `cache_read_input_tokens` beside `input_tokens` on
+`/v1/messages`. The engines counted those tokens all along and said nothing. Measured on each lane through
+the proxy, with two requests sharing an 8,000-token prefix and ending differently, then the same two prompts
+again on `/v1/messages`, the count is what each engine's cache served, and its time says the same:
+
+- the 27B and the flash: 8,192 of the second request's 8,248 tokens (0.5 s, against 4.0 to 4.5 s for the
+  first), and 8,192 again on `/v1/messages`.
+- Ornith: 4,224, one whole block of this hybrid model (3.0 s against 4.5), and 8,128 of 8,150 on
+  `/v1/messages`.
+- Kolibri, Flash FP4-Local and Super VL: 32, 0 and 0 for the request that ends differently, which took as
+  long as the first: these engines reuse a prompt only from the points their cache keeps, and that request
+  passed none. The same prompt again came back from the cache whole but for a few tokens: 10,880 of 10,892,
+  8,192 of 8,192 and 7,168 of 7,256, in 0.5 to 1.0 s. An agent's conversation, which grows at every turn,
+  is what those points serve. On Flash FP4-Local such a conversation got 7,971 and then 8,001 of its 7,996
+  and 8,023 tokens from the cache on `/v1/chat/completions` (0.5 s a turn, against 4.0 s cold), and 7,980
+  of 8,023 and 8,047 on `/v1/messages`, the engine's own counters saying the same. On Super VL, all but
+  76 to 168 tokens from the third turn (docs/nemotron-super-lane.md).
+- Nemotron Bolt: 0 for all four. Its drafter keeps the cache's hits on 4,544-token blocks, one block back,
+  which a prompt of 7,256 tokens does not reach (an agent's 40,000-token conversation got 31,808 from it,
+  docs/nemotron-lane.md).
+
+Decode does not move where a reference exists. `bench.sh` three times on each lane gave 68.2, 67.4 and 68.1
+tok/s on the 27B (67.0 to 69.6 on 2026-10-23, the same engine), 56.8, 54.2 and 54.4 on Flash FP4-Local (55.1
+to 55.4) and 43.8, 43.8 and 43.7 on Ornith (42.2 to 42.4). The other lanes had no `bench.sh` reference, and
+these are theirs now: the flash 50.4, 51.5 and 50.1, Kolibri 48.9, 48.8 and 48.9, Nemotron Bolt 102.2, 100.7
+and 100.5, Super VL 57.8, 56.7 and 55.6.
+
+**A cut answer is never handed over as a whole one.** SGLang ends an aborted generation like a finished
+one: `stop_reason end_turn` on `/v1/messages` (its `STOP_REASON_MAP` has no `abort`) and a last chunk with
+`finish_reason "abort"` on the OpenAI routes, which LiteLLM reads as `stop`. The cockpit's memory floor
+aborted at the engine directly, so each client kept the part generated before the stop as its whole
+answer: on the reference box on 2026-10-25 at 07:42, Claude Code kept a compaction summary cut in the middle
+of a word. The floor and its Abort-all now ask the proxy (`POST /proxy/stop`, loopback only, engine key
+required, fail-closed): each relayed generation is stopped the way its engine has (by rid on SGLang, by
+closing the connection on vLLM) and its client's connection is cut, so Claude Code, opencode, pi and Hermes
+retry and get the whole answer with no duplicate. SGLang's `abort_all` still goes at every floor stop, for
+the generations sent to the engine straight (`bench.sh`, `needle.sh`, an eval), which no relay can cut, and
+the cockpit sends it itself when the proxy's did not go, as it did before. After a floor stop that cut a
+generation, new generations are refused with 529 (503 off `/v1/messages`) and a Retry-After for the floor's
+pause (60 s), then while `MemAvailable` stays under the floor, 5 minutes at most: agents retry within 1 to
+3 s instead of burning whole prefills. Memory alone refuses nothing, so an idle box short of memory for
+other programs is served as in v1.40.2. In the proxy's unit, `PROXY_MEM_FLOOR_GIB=0` keeps the refusal for
+memory off and `PROXY_FLOOR_HOLD_S=0` the pause. The reviews before this release shaped all of this
+(2026-10-26: a certainty review, two independent verifiers, then code reviews of the release and of its
+fixes, each finding fixed with a test that fails on the code before). A floor stop that found nothing to
+cut holds nothing back, a silly body (an infinite `hold_s`, a number of 310 digits, a chunked body) is
+refused or read as the default instead of blacking the box out, each stopped generation is marked before
+the engine hears of it, a vLLM request still in its prefill closes at once, `abort_all` goes before the
+aborts by rid and the cockpit has its answer without waiting for them, and the floor never claims an abort
+it could not make: on a vLLM lane where no generation ran through the proxy it says the abort failed, and
+its event and banner say how many were cut and whether new requests wait. One
+thing to know: "Abort all" cuts each client too, so an agent retries its request (end an agent's turn in
+the agent), and the cockpit still refuses it while a vLLM lane serves.
+
+**bench.sh names what holds a CPU core before it measures, and says when it could not look.** On a GB10 the
+CPU and the GPU share one power budget, so a stray spinning process lowers what the engine measures and
+shows only as a load average (three abandoned command-line calls each held a core for four to six days on
+another Spark in October 2026). `bench.sh` spends a 3 s window (`HOGS_WINDOW`) while the engine waits for
+its first request and names every process outside the engine at half a core or more. `cpu-hogs.py` does the
+reading from /proc. A `cpu-hogs.py` that dies (missing file, crash, a non-numeric window) no longer reads
+as a quiet box: the report says `cpu-hogs failed (exit N: its reason), the quiet outside the engine is NOT
+proven` instead of claiming nothing held a core. The report names a busy process by its pid and name, never
+by its command line, which can hold a token and gets pasted in public: `python3 cpu-hogs.py` prints the
+command lines, on the box. A process name the kernel cut inside a character no longer makes it fail, and
+its window is 0.5 to 60 s.
+
+**A greyed Qwen4 27B card says coming.** Qwen named a Qwen4 27B at Apsara (22/09) with no date and no
+weights. The cockpit shows a dimmed, dashed card after the 27B it will follow, saying no date and loading
+nothing until the release that serves it.
+
+**The README links the website.** https://hasso5703.github.io/ has every model measured, guides that answer
+what owners ask, and every GB10 machine.
+
+**CI survives the clocks going back.** The logs test waited for "CEST" where the box now says "CET": it
+would have failed every CI until spring. The stamps themselves were right all along. And the offline suite
+touches nothing outside itself again: the class in `tests/test_tools.py` that sets `QWEN38_API_KEY` now
+restores the environment like every other class of the file.
+
+**Proved before the push.** This release was installed on the reference box from its branch and proved
+there before it went to main: the 8 real clients on the 7 text lanes, each loaded as the cockpit's Load
+does (56 of 56 OK on 2026-10-26), the cache report and the ToolSearch result on each lane, and `bench.sh`
+three times on each. A code review and two independent verifiers read it first, one on an existing box's
+update lane by lane, one on a fresh install, a 64 GB box and security, then two more code reviews read the
+fixes. Each defect they found is fixed with a test that fails on the code before it, and what waits is
+below.
+
+**Known, for the next release.** "Abort all" on the vLLM lanes through the proxy, which can stop their
+generations by closing their connections. A stop when the proxy listens elsewhere than 127.0.0.1:30001, or
+behind its optional TLS: the cockpit falls back to the engine's `abort_all`, and an SGLang client then gets
+the cut answer as a whole one, as in v1.40.2. A stop that lands while a request is still being routed, before
+its connection to the engine opens, reaches it only at its first byte. `/v1/systemone` is neither refused
+under the floor nor reached by a stop, and `/v1/tokenize` is counted as a generation. The floor's line in
+the Machine view says it stops through the proxy even when the proxy cannot take the stop.
+
+**What an update does.** The proxy (v6.47) and the cockpit restart. The flash launcher and the five vLLM
+lane units take their new flag, and the 27B, flash, Flash FP4-Local and Ornith templates their
+`tool_reference` fix. A vLLM lane that serves keeps its old unit and template until its next Load, and the
+installer says so: Load it again from the cockpit, or restart its unit. A 27B or flash lane that serves
+restarts with its new files. Nothing else restarts.
+
+**Tests.** Each change has tests that fail on the code before it: `tests/test_patch_template.py` renders a
+real `tool_reference` block, reads Ornith's own `TEMPLATE_FIXES` line and refuses a template that raises
+where the fix cannot reach, `tests/test_engine_cache_report.py` reads the six lanes' flags,
+`tests/test_proxy_floor_stop.py` (24 tests) drives the stop and the floor against a fake engine that ends
+as SGLang does, `dashboard/tests/test_cockpit_floor_stop.py` (9) checks what the cockpit sends and says,
+`tests/test_cpu_hogs.py` reads a name cut inside a character, and `tests/test_bench_lane.py` breaks
+`cpu-hogs.py` and rejects the quiet claim. `tests/lane-templates-check.py` renders every lane's pinned
+template with its installer's fixes: 364 renders, 0 refusals.
+
 ## v1.40.2 (2026-10-24): opencode runs on the Ornith lane again, claude-local asks before each command and keeps a session on the box, and CI renders the real clients' message shapes through every lane's chat template, as each engine hands them
 
 **opencode on the Ornith lane.** opencode 1.19.4 sends two system messages before the user's
