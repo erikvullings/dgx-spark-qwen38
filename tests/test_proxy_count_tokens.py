@@ -15,7 +15,6 @@ import json
 import os
 import pathlib
 import shutil
-import socket
 import socketserver
 import subprocess
 import sys
@@ -23,6 +22,9 @@ import tempfile
 import threading
 import time
 import unittest
+
+sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
+import localports  # noqa: E402
 
 REPO = pathlib.Path(__file__).resolve().parents[1]
 WORDS = 150_000                     # past the 100,000-token pool, in 900 KB of text
@@ -71,12 +73,6 @@ class Engine(socketserver.ThreadingMixIn, http.server.HTTPServer):
     daemon_threads = True
 
 
-def free_port():
-    with socket.socket() as s:
-        s.bind(("127.0.0.1", 0))
-        return s.getsockname()[1]
-
-
 class TheCountIsAnswered(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
@@ -91,19 +87,13 @@ class TheCountIsAnswered(unittest.TestCase):
     @classmethod
     def start_proxy(cls):
         """A proxy of its own: the pool it measured stays cached for ten minutes."""
-        port = free_port()
         env = {"PATH": os.environ["PATH"], "HOME": str(cls.home), "PROXY_BIND": "127.0.0.1",
                "UPSTREAM": f"http://127.0.0.1:{cls.engine.server_address[1]}",
                "PROMPT_CEILING_TOKENS": "0", "FLASH_PROMPT_CEILING_TOKENS": "0"}
-        cls.proxies.append(subprocess.Popen([sys.executable, str(REPO / "keepalive-proxy.py"), str(port)], env=env,
-                                            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL))
-        end = time.time() + 20
-        while time.time() < end:
-            try:
-                socket.create_connection(("127.0.0.1", port), timeout=0.5).close()
-                break
-            except OSError:
-                time.sleep(0.1)
+        proc, port = localports.spawn(lambda port: subprocess.Popen(
+            [sys.executable, str(REPO / "keepalive-proxy.py"), str(port)], env=env,
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL))
+        cls.proxies.append(proc)
         return port
 
     @classmethod

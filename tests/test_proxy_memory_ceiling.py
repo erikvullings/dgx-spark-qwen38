@@ -28,14 +28,15 @@ import os
 import pathlib
 import re
 import shutil
-import socket
 import socketserver
 import subprocess
 import sys
 import tempfile
 import threading
-import time
 import unittest
+
+sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
+import localports  # noqa: E402
 
 REPO = pathlib.Path(__file__).resolve().parents[1]
 BODY_MIB = 24
@@ -73,12 +74,6 @@ class FakeEngine(http.server.BaseHTTPRequestHandler):
 
 class Engine(socketserver.ThreadingMixIn, http.server.HTTPServer):
     daemon_threads = True
-
-
-def free_port():
-    with socket.socket() as s:
-        s.bind(("127.0.0.1", 0))
-        return s.getsockname()[1]
 
 
 def peak_mib(pid):
@@ -134,19 +129,12 @@ class TheCeilingHoldsTheBudget(unittest.TestCase):
     def rate(self, shape):
         """The proxy's peak resident growth for one body of this shape, over the body's bytes, on a proxy
         of its own: its peak (VmHWM) only grows, so a second body would measure from the first's peak."""
-        port = free_port()
         env = {"PATH": os.environ["PATH"], "HOME": str(self.home), "PROXY_BIND": "127.0.0.1",
                "UPSTREAM": f"http://127.0.0.1:{self.engine.server_address[1]}", "PROXY_HOLD_UNITS": ""}
-        proxy = subprocess.Popen([sys.executable, str(REPO / "keepalive-proxy.py"), str(port)], env=env,
-                                 stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        proxy, port = localports.spawn(lambda port: subprocess.Popen(
+            [sys.executable, str(REPO / "keepalive-proxy.py"), str(port)], env=env,
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL))
         try:
-            end = time.time() + 20
-            while time.time() < end:
-                try:
-                    socket.create_connection(("127.0.0.1", port), timeout=0.5).close()
-                    break
-                except OSError:
-                    time.sleep(0.1)
             self.send(port, {"model": "qwen3.8-27b", "messages": [{"role": "user", "content": "2+2?"}]})
             idle = peak_mib(proxy.pid)
             body = json.dumps({"model": "qwen3.8-27b", "reasoning_effort": "lean",

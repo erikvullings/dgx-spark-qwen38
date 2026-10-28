@@ -15,6 +15,9 @@ import urllib.error
 import urllib.request
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import localports  # noqa: E402
+
 
 def _keep_env(cls):
     """Put os.environ back as this class found it, once it is done: the variables set for
@@ -406,11 +409,9 @@ class ProxyInFrontOfLoadingEngine(unittest.TestCase):
 
     @classmethod
     def setUpClass(cls):
-        import socket, subprocess, sys, time
+        import subprocess, sys
         cls.eng = http.server.HTTPServer(("127.0.0.1", 0), LoadingEngine)
         threading.Thread(target=cls.eng.serve_forever, daemon=True).start()
-        with socket.socket() as sk:
-            sk.bind(("127.0.0.1", 0)); cls.port = sk.getsockname()[1]
         # This class models a loading engine whose pool IS known (200000 via
         # /get_server_info) while /tokenize still 503s. pool_tokens() needs the
         # api-key file to ask, so the proxy runs in a HOME that has one; without
@@ -419,13 +420,9 @@ class ProxyInFrontOfLoadingEngine(unittest.TestCase):
         cls.home = key_home()
         env = dict(os.environ, UPSTREAM=f"http://127.0.0.1:{cls.eng.server_address[1]}",
                    HOME=str(cls.home))
-        cls.proc = subprocess.Popen([sys.executable, str(HERE.parents[1] / "keepalive-proxy.py"), str(cls.port)],
-                                    env=env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-        for _ in range(100):
-            try:
-                socket.create_connection(("127.0.0.1", cls.port), timeout=0.2).close(); break
-            except OSError:
-                time.sleep(0.05)
+        cls.proc, cls.port = localports.spawn(lambda port: subprocess.Popen(
+            [sys.executable, str(HERE.parents[1] / "keepalive-proxy.py"), str(port)],
+            env=env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL))
 
     @classmethod
     def tearDownClass(cls):
@@ -464,29 +461,22 @@ class ProxyOnABoxSwitchedToImages(unittest.TestCase):
     asked through PATH, so a fake systemctl stands in for it here, in both directions."""
 
     def spawn(self, image_active):
-        import socket, subprocess, sys, tempfile, time
+        import subprocess, sys, tempfile
         fake = Path(tempfile.mkdtemp(prefix="fake-systemctl-"))
         (fake / "systemctl").write_text(
             "#!/bin/sh\n"
             f'[ "$*" = "is-active --quiet qwen38-image.service" ] && exit {0 if image_active else 3}\n'
             "exit 3\n")
         (fake / "systemctl").chmod(0o755)
-        with socket.socket() as sk:                     # a port nothing listens on: the engine is gone
-            sk.bind(("127.0.0.1", 0)); dead = sk.getsockname()[1]
-        with socket.socket() as sk:
-            sk.bind(("127.0.0.1", 0)); port = sk.getsockname()[1]
+        _, dead = localports.held(self)                 # a port nothing listens on: the engine is gone
         home = no_key_home()
         self.addCleanup(shutil.rmtree, home, True)
         env = dict(os.environ, UPSTREAM=f"http://127.0.0.1:{dead}", PATH=f"{fake}:{os.environ.get('PATH', '')}",
                    HOME=str(home))
-        proc = subprocess.Popen([sys.executable, str(HERE.parents[1] / "keepalive-proxy.py"), str(port)],
-                                env=env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        proc, port = localports.spawn(lambda port: subprocess.Popen(
+            [sys.executable, str(HERE.parents[1] / "keepalive-proxy.py"), str(port)],
+            env=env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL))
         self.addCleanup(lambda: (proc.terminate(), proc.wait(timeout=5)))
-        for _ in range(100):
-            try:
-                socket.create_connection(("127.0.0.1", port), timeout=0.2).close(); break
-            except OSError:
-                time.sleep(0.05)
         return port
 
     def ask(self, port):
@@ -590,21 +580,15 @@ class RefusalIsRecognisableAsOverflow(unittest.TestCase):
 
     @classmethod
     def setUpClass(cls):
-        import socket, subprocess, sys, time
+        import subprocess, sys
         cls.eng = http.server.HTTPServer(("127.0.0.1", 0), SmallPoolEngine)
         threading.Thread(target=cls.eng.serve_forever, daemon=True).start()
-        with socket.socket() as sk:
-            sk.bind(("127.0.0.1", 0)); cls.port = sk.getsockname()[1]
         cls.home = key_home()
         env = dict(os.environ, UPSTREAM=f"http://127.0.0.1:{cls.eng.server_address[1]}",
                    HOME=str(cls.home))
-        cls.proc = subprocess.Popen([sys.executable, str(HERE.parents[1] / "keepalive-proxy.py"), str(cls.port)],
-                                    env=env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-        for _ in range(100):
-            try:
-                socket.create_connection(("127.0.0.1", cls.port), timeout=0.2).close(); break
-            except OSError:
-                time.sleep(0.05)
+        cls.proc, cls.port = localports.spawn(lambda port: subprocess.Popen(
+            [sys.executable, str(HERE.parents[1] / "keepalive-proxy.py"), str(port)],
+            env=env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL))
 
     @classmethod
     def tearDownClass(cls):
@@ -874,22 +858,16 @@ class CorruptionTripwireEndToEnd(unittest.TestCase):
 
     @classmethod
     def setUpClass(cls):
-        import socket, subprocess, time
+        import subprocess
         CorruptingEngine.aborted = []
         cls.eng = http.server.ThreadingHTTPServer(("127.0.0.1", 0), CorruptingEngine)
         threading.Thread(target=cls.eng.serve_forever, daemon=True).start()
-        with socket.socket() as sk:
-            sk.bind(("127.0.0.1", 0)); cls.port = sk.getsockname()[1]
         cls.home = no_key_home()
         env = dict(os.environ, UPSTREAM=f"http://127.0.0.1:{cls.eng.server_address[1]}",
                    CORRUPTION_RUN="48", PROMPT_CEILING_TOKENS="0", HOME=str(cls.home))
-        cls.proc = subprocess.Popen([sys.executable, str(HERE.parents[1] / "keepalive-proxy.py"), str(cls.port)],
-                                    env=env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-        for _ in range(100):
-            try:
-                socket.create_connection(("127.0.0.1", cls.port), timeout=0.2).close(); break
-            except OSError:
-                time.sleep(0.05)
+        cls.proc, cls.port = localports.spawn(lambda port: subprocess.Popen(
+            [sys.executable, str(HERE.parents[1] / "keepalive-proxy.py"), str(port)],
+            env=env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL))
 
     @classmethod
     def tearDownClass(cls):
@@ -960,22 +938,16 @@ class HardeningV615(unittest.TestCase):
 
     @classmethod
     def setUpClass(cls):
-        import socket, subprocess
+        import subprocess
         cls.eng = http.server.ThreadingHTTPServer(("127.0.0.1", 0), HardeningEngine)
         threading.Thread(target=cls.eng.serve_forever, daemon=True).start()
-        with socket.socket() as sk:
-            sk.bind(("127.0.0.1", 0)); cls.port = sk.getsockname()[1]
         cls.home = no_key_home()
         env = dict(os.environ, UPSTREAM=f"http://127.0.0.1:{cls.eng.server_address[1]}",
                    PROMPT_CEILING_TOKENS="200000", UPSTREAM_GET_TIMEOUT_S="1",
                    MAX_BODY_BYTES="1000000", HOME=str(cls.home))
-        cls.proc = subprocess.Popen([sys.executable, str(HERE.parents[1] / "keepalive-proxy.py"), str(cls.port)],
-                                    env=env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-        for _ in range(100):
-            try:
-                socket.create_connection(("127.0.0.1", cls.port), timeout=0.2).close(); break
-            except OSError:
-                time.sleep(0.05)
+        cls.proc, cls.port = localports.spawn(lambda port: subprocess.Popen(
+            [sys.executable, str(HERE.parents[1] / "keepalive-proxy.py"), str(port)],
+            env=env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL))
         cls.k = importlib.util.module_from_spec(SPEC)
         SPEC.loader.exec_module(cls.k)
 
@@ -1858,23 +1830,15 @@ class TheOversizeGuardReachesTheNonV1Routes(unittest.TestCase):
 
     @classmethod
     def setUpClass(cls):
-        import socket, subprocess
+        import subprocess
         cls.eng = http.server.HTTPServer(("127.0.0.1", 0), SmallPoolEngine)
         threading.Thread(target=cls.eng.serve_forever, daemon=True).start()
-        with socket.socket() as sk:
-            sk.bind(("127.0.0.1", 0)); cls.port = sk.getsockname()[1]
         cls.home = key_home()
         env = dict(os.environ, UPSTREAM=f"http://127.0.0.1:{cls.eng.server_address[1]}",
                    HOME=str(cls.home))
-        cls.proc = subprocess.Popen(
-            [sys.executable, str(HERE.parents[1] / "keepalive-proxy.py"), str(cls.port)],
-            env=env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-        for _ in range(100):
-            try:
-                import socket as _s
-                _s.create_connection(("127.0.0.1", cls.port), timeout=0.2).close(); break
-            except OSError:
-                time.sleep(0.05)
+        cls.proc, cls.port = localports.spawn(lambda port: subprocess.Popen(
+            [sys.executable, str(HERE.parents[1] / "keepalive-proxy.py"), str(port)],
+            env=env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL))
 
     @classmethod
     def tearDownClass(cls):
@@ -1916,22 +1880,15 @@ class TheGuardNominatesByItsBound(unittest.TestCase):
 
     @classmethod
     def setUpClass(cls):
-        import socket, subprocess
+        import subprocess
         cls.eng = http.server.HTTPServer(("127.0.0.1", 0), SmallPoolEngine)
         threading.Thread(target=cls.eng.serve_forever, daemon=True).start()
-        with socket.socket() as sk:
-            sk.bind(("127.0.0.1", 0)); cls.port = sk.getsockname()[1]
         cls.home = key_home()
         env = dict(os.environ, UPSTREAM=f"http://127.0.0.1:{cls.eng.server_address[1]}",
                    HOME=str(cls.home))
-        cls.proc = subprocess.Popen(
-            [sys.executable, str(HERE.parents[1] / "keepalive-proxy.py"), str(cls.port)],
-            env=env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-        for _ in range(100):
-            try:
-                socket.create_connection(("127.0.0.1", cls.port), timeout=0.2).close(); break
-            except OSError:
-                time.sleep(0.05)
+        cls.proc, cls.port = localports.spawn(lambda port: subprocess.Popen(
+            [sys.executable, str(HERE.parents[1] / "keepalive-proxy.py"), str(port)],
+            env=env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL))
 
     @classmethod
     def tearDownClass(cls):
@@ -2004,22 +1961,15 @@ class WhereNoWedgeIsPossibleTheAverageNominates(unittest.TestCase):
 
     @classmethod
     def setUpClass(cls):
-        import socket, subprocess
+        import subprocess
         cls.eng = http.server.HTTPServer(("127.0.0.1", 0), cls.ENGINE)
         threading.Thread(target=cls.eng.serve_forever, daemon=True).start()
-        with socket.socket() as sk:
-            sk.bind(("127.0.0.1", 0)); cls.port = sk.getsockname()[1]
         cls.home = key_home()
         env = dict(os.environ, UPSTREAM=f"http://127.0.0.1:{cls.eng.server_address[1]}",
                    HOME=str(cls.home))
-        cls.proc = subprocess.Popen(
-            [sys.executable, str(HERE.parents[1] / "keepalive-proxy.py"), str(cls.port)],
-            env=env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-        for _ in range(100):
-            try:
-                socket.create_connection(("127.0.0.1", cls.port), timeout=0.2).close(); break
-            except OSError:
-                time.sleep(0.05)
+        cls.proc, cls.port = localports.spawn(lambda port: subprocess.Popen(
+            [sys.executable, str(HERE.parents[1] / "keepalive-proxy.py"), str(port)],
+            env=env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL))
 
     @classmethod
     def tearDownClass(cls):

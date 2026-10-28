@@ -27,15 +27,12 @@ import time
 import unittest
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import localports  # noqa: E402
+
 HERE = Path(__file__).resolve()
 PROXY = HERE.parents[1] / "keepalive-proxy.py"
 UNITS = "qwen38-sglang.service qwen38-flash.service"
-
-
-def free_port():
-    with socket.socket() as sk:
-        sk.bind(("127.0.0.1", 0))
-        return sk.getsockname()[1]
 
 
 class Engine(http.server.BaseHTTPRequestHandler):
@@ -122,7 +119,8 @@ class Box:
             f'if [ "$1" = list-jobs ]; then cat "{self.jobs_file}" 2>/dev/null; exit 0; fi\n'
             "exit 3\n")
         (self.t / "bin/systemctl").chmod(0o755)
-        self.engine_port, self.port = free_port(), free_port()
+        # the engine's port is gone until start_engine, and the test's all along: no one else can take it
+        self.engine_sock, self.engine_port = localports.held(test)
         self.srv = None
         self.generations = []
         env = dict(os.environ, UPSTREAM=f"http://127.0.0.1:{self.engine_port}", HOME=str(self.t / "home"),
@@ -148,13 +146,13 @@ class Box:
             self.port = self.proxy.server_address[1]
             return
         self.log = open(self.t / "proxy.log", "w")
-        self.proc = subprocess.Popen([sys.executable, str(PROXY), str(self.port)], env=env,
-                                     stdout=subprocess.DEVNULL, stderr=self.log)
-        for _ in range(100):
-            try:
-                socket.create_connection(("127.0.0.1", self.port), timeout=0.2).close(); break
-            except OSError:
-                time.sleep(0.05)
+
+        def start(port):
+            self.log.seek(0)
+            self.log.truncate()         # what a try on a port someone else had wrote goes
+            return subprocess.Popen([sys.executable, str(PROXY), str(port)], env=env,
+                                    stdout=subprocess.DEVNULL, stderr=self.log)
+        self.proc, self.port = localports.spawn(start)
 
     def state(self, s):
         self.state_file.write_text(s + "\n")
@@ -165,7 +163,7 @@ class Box:
 
     def start_engine(self, mode="up", pool=200000, info_mode=None):
         if self.srv is None:
-            self.srv = http.server.ThreadingHTTPServer(("127.0.0.1", self.engine_port), Engine)
+            self.srv = localports.serve(self.engine_port, http.server.ThreadingHTTPServer, Engine)
             self.srv.generations = self.generations
             threading.Thread(target=self.srv.serve_forever, daemon=True).start()
         self.srv.mode, self.srv.pool, self.srv.info_mode = mode, pool, info_mode or mode

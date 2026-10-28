@@ -15,7 +15,9 @@ and takes every fact from that one run:
 - it contacts no serving port (the same hook records a connect() to one, with the test line).
 
 Files that take a port number out of a socket they close (getsockname()[1]) run one at a time once
-the others are over: a file running beside them could be handed the same port meanwhile. The
+the others are over: a file running beside them could be handed the same port meanwhile. No test file
+does since tests/localports.py, which keeps a port the test's beside the other jobs as well
+(test_localports.py fails on a file that does): the planted files of this script's own test still do. The
 witness HOME, the listeners and what is left running are the CI step's, around this script.
 
 Usage: run_suite.py [--jobs N] [--report FILE] [--repo DIR --first F1,F2]   (exit 1 on any failure;

@@ -21,6 +21,9 @@ import time
 import unittest
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import localports  # noqa: E402
+
 HERE = Path(__file__).resolve()
 KEY = "door-test-key-0123456789"
 
@@ -121,26 +124,17 @@ class Engine(http.server.BaseHTTPRequestHandler):
                     "usage": {"prompt_tokens": 1, "completion_tokens": 1, "total_tokens": 2}})
 
 
-def _free_port():
-    with socket.socket() as sk:
-        sk.bind(("127.0.0.1", 0))
-        return sk.getsockname()[1]
-
-
 def _start_proxy(home, upstream_port, extra_env=None):
-    port = _free_port()
     err = tempfile.NamedTemporaryFile(prefix="door-proxy-stderr-", delete=False)
     env = {"PATH": os.environ["PATH"], "HOME": str(home), "PROXY_BIND": "127.0.0.1",
            "UPSTREAM": f"http://127.0.0.1:{upstream_port}", **(extra_env or {})}
-    proc = subprocess.Popen([sys.executable, str(HERE.parents[1] / "keepalive-proxy.py"), str(port)],
-                            env=env, stdout=err, stderr=err)
-    end = time.time() + 20
-    while time.time() < end:
-        try:
-            socket.create_connection(("127.0.0.1", port), timeout=0.2).close()
-            break
-        except OSError:
-            time.sleep(0.05)
+
+    def start(port):
+        err.seek(0)
+        err.truncate()          # what a try on a port someone else had wrote goes
+        return subprocess.Popen([sys.executable, str(HERE.parents[1] / "keepalive-proxy.py"), str(port)],
+                                env=env, stdout=err, stderr=err)
+    proc, port = localports.spawn(start)
     return proc, port, err.name
 
 

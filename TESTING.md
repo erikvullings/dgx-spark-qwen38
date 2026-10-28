@@ -26,9 +26,11 @@ checkout as it is with `CI_LOCAL_SERIAL=1`. A fragment runs in the checkout as i
 after the other. A full run took 12 minutes on the reference box on 2026-10-28 (741 and 744 s,
 the length of `single`), against 63 one step after the other the same day (v1.40.4), and 72 on
 GitHub when the steps ran as one job (v1.40.3). On one machine the jobs share its ports, as they
-do not on GitHub, where each job has a runner of its own: the files that take a port number out of
-a socket they close run alone within the suite, not apart from the other jobs. While working, run
-the gate you care about by name fragment, and the whole thing before pushing.
+do not on GitHub, where each job has a runner of its own: a test takes the port of a server it starts
+from `tests/localports.py`, which keeps that port the test's beside the other jobs and any program of
+the machine, and `test_localports.py` fails on a test file that takes a port number out of a socket
+it closes. While working, run the gate you care about by name fragment, and the whole thing before
+pushing.
 
 The runtime is **stdlib only** and stays that way. Three measuring gates need pip
 packages (`coverage`, `hypothesis`); they ask `tests/testpy.sh` for an
@@ -488,9 +490,12 @@ the hole, a conditional is both branches.
   persists an HMAC secret (so a service restart does not log every browser out)
   and that suite had not redirected `COCKPIT_CONFIG_DIR`.
   `test_cockpit_collectors.py` adds the other half by recording every argv its
-  stub was asked for. The step runs the files up to four at a time, except the
-  ones that call `getsockname()[1]`: they take a port number out of a socket
-  they close, to start a server on it later or to have a port where nothing
-  listens, and a file running beside them could be handed that port meanwhile,
-  so they run alone once the others are over. A test that frees a port it
-  still relies on takes the number that way to be found.
+  stub was asked for. The step runs the files up to four at a time. A file that
+  calls `getsockname()[1]` takes a port number out of a socket it closes, to
+  start a server on it later or to have a port where nothing listens, and a file
+  running beside it could be handed that port meanwhile, so such a file runs
+  alone once the others are over. None does since `tests/localports.py`
+  (2026-10-28): `held()` keeps a port where nothing listens, `serve()` starts a
+  server of the test's process on it, and `spawn()` keeps a server's own process
+  once the socket listening on its port is its own. `test_localports.py` fails
+  on a test file that takes a port the old way.
