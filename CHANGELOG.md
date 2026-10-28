@@ -8,28 +8,31 @@ from four vendors, Alibaba's included. Read in opencode 1.19.4's binary: its per
 `"*": "allow"`, so every shell command runs unasked in `opencode`, in `oc` (`--yolo`, an alias of `--auto`
 there) and in the Agent tab. On the box, an `echo` naming an aliyuncs.com host ran in all three.
 
-**The config opencode, oc and the Agent tab read denies those hosts.** `install.sh` adds
-`"*aliyuncs.com*"`, `"*169.254.169.254*"` and `"*100.100.100.200*"` as `deny` rules to `permission.bash` of
-the box's opencode config (`oc-merge-limits.py --deny-bash`), after every rule it already has, since
-opencode's last matching rule wins: put first, a `"*"` after them would allow what they deny, and the new
-tests catch that order. A `"bash"` given as one action keeps it for every other command, a pattern you set
-yourself stays as you set it, and a config of your own, without this repo's providers, is never rewritten:
-the installer prints the rules to add. Measured on the box with opencode 1.19.4 and Flash FP4-Local: the same
-`echo` is refused under `oc`'s `--yolo` and in the Agent tab.
+**The box's opencode configs deny those hosts.** The rules `"*aliyuncs.com*"`, `"*169.254.169.254*"` and
+`"*100.100.100.200*"` are `deny`, under a key of their own, `"bash*"` (a wildcard that matches the shell
+tool), as the last member of `"permission"`, since opencode's last matching rule wins: a `"*"` after them
+would allow what they deny. They are in the config `install.sh` generates, which `oc` and the Agent tab load
+over your own, so they come after your rules there whatever your config says. They are also put last in
+your global config, the one plain `opencode` reads, when it is this repo's copy or lists this repo's
+providers (`oc-merge-limits.py --deny-bash`): a key you add after them later is overridden at the next
+install, your own `"bash"` stays as you wrote it, and a pattern you set inside the block stays yours. A
+config of your own, without this repo's providers, is never rewritten. Measured on the box with opencode
+1.19.4 and Flash FP4-Local: the same `echo` is refused under `oc`'s `--yolo` and in the Agent tab.
 
 **AGENT_AUTO=1 no longer overrides them.** opencode merges `OPENCODE_PERMISSION` after every rule of its
 config files, so the unit's bare `{"*":"allow"}` beat any `deny`: the `echo` ran under it, and SECURITY.md
-said your own deny rules held there, which they did not. The unit now repeats the rules after its `"*"`
-(`{"*":"allow","bash*":{...}}`), and the `echo` is refused. Your own rules still do not hold under
-`AGENT_AUTO=1`, which SECURITY.md now says. The cockpit still reads that mode as auto.
+said your own deny rules held there, which they did not. The unit now repeats the rules after its `"*"`,
+under `"*bash"`, and the `echo` is refused. Your own rules still do not hold under `AGENT_AUTO=1`, which
+SECURITY.md now says. The cockpit still reads that mode as auto.
 
 **The proxy says when a model asks a tool to reach one of them (v6.48, its role 8).** The proxy sees every
 tool call before the client runs it, whatever the client. The arguments of each call, put back together from
 a stream (OpenAI's `tool_calls`, Anthropic's `input_json_delta`, the Responses API) or read from a whole
-answer, are matched when the request ends against aliyuncs.com, Routify and the two metadata addresses. A
-match is one journal line, the host family and the tool's name, never the arguments, and the answer is
-relayed as it came. The cockpit reads a day of those lines and shows a red banner with the count, the host,
-the tool and the route.
+answer on the generation routes, are matched when the request ends against aliyuncs.com and the two metadata
+addresses. A match is one journal line, the host and the tool's name, never the arguments, and the answer is
+relayed as it came. A tool that writes or edits a file is not read: a page that quotes these hosts is no
+request to them. The cockpit reads a day of those lines every 5 minutes and shows a red banner with the
+count, the host, the tool and the route. It says what the proxy saw, not what the client did with it.
 
 **What it does not cover.** A model that writes the address another way (a variable, an encoding, a script
 it writes first), and opencode's `webfetch`, which 1.x cannot filter by URL.
@@ -42,11 +45,20 @@ NVIDIA forum ([t/387182](https://forums.developer.nvidia.com/t/387182)). The old
 allocations". A host-memory runaway is what the Docker cap stops, not any runaway, and 21.30 is GiB
 everywhere.
 
-**Tests.** `test_oc_merge_limits.py` (the order, the forms, a user's own pattern, a later `"*"`),
-`test_install_opencode_pin.py`, `test_agent_auto_deny.py`, `test_proxy_tool_targets.py` (a real proxy, the
-host split between two pieces of the stream, three dialects, a whole answer, one connection for several
-requests, nothing of the arguments in the journal), `test_lifecycle.py`, `test_cockpit_collectors.py` and two
-checks of `update-banner-check.mjs` in a browser. Each fails on v1.40.3.
+**Found in review before the release.** A named client's lines (`key=<label>`) were never read by the
+cockpit. `--deny-bash` called rules "already there" that a later key overrode. A whole answer of an
+unexpected shape raised where the request ends, before its end line. SGLang writes `"tool_calls":null` in
+every chunk, so the filter meant to skip events without a tool call parsed every token. The bare word
+"routify" matched the Svelte framework of that name, and an agent editing a page that quotes these hosts
+raised the banner. Each has its test.
+
+**Tests.** `test_oc_merge_limits.py` (the order, the forms, a key added after the block, a user's own
+pattern), `test_install_opencode_pin.py`, `test_install_oc_artifact.py`, `test_agent_auto_deny.py` (a
+user's config ending with its own `"*"`), `test_proxy_tool_targets.py` (a real proxy, the host split between
+two pieces of the stream, three dialects, a whole answer, one connection for several requests, an answer of
+no known shape, the false alarms, nothing of the arguments in the journal), `test_lifecycle.py`,
+`test_cockpit_collectors.py` and three checks of `update-banner-check.mjs` in a browser. Each fails on
+v1.40.3 or on the branch before its fix.
 
 ## v1.40.3 (2026-10-26): Claude Code's ToolSearch works on the Qwen lanes, every lane says what its prefix cache served (#49), and a stopped generation never reaches its client as a whole answer
 
