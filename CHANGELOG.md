@@ -64,13 +64,24 @@ journal vacuumed after a line keeping the banner up a day: `journalctl -g` ends 
 read that failed does, so the day is read whole. The journal line now says how the request ended. Each has
 its test.
 
+**A probe for a pair of boxes (#45).** `pair-probe.py`, run on each box, prints what a lane over two boxes
+needs to know about each one: the DGX OS update it runs, the kernel, the GPU driver, this repo's release and
+lanes, the ConnectX-7 ports, their RDMA side and the mlx5 modules, Docker, the time sync and the free disk,
+and with `--peer` the port the route to the other box takes, its loss and its round trip. It needs no sudo
+and changes nothing. It never prints a MAC or IP address (only its kind), the home directory, the host's
+name or the serial number, and it opens no file that holds a key. On the reference GX10, lspci shows no
+ConnectX-7 although the mlx5 modules are loaded, and the probe says both. A review of the probe found ten
+things before the release, from a peer that does not answer read as not measured to an IPv6 address the
+mask let through. Each is fixed with its test.
+
 **Tests.** `test_oc_merge_limits.py` (the order, the forms, a key added after the block, a user's own
 pattern), `test_install_opencode_pin.py`, `test_install_oc_artifact.py`, `test_agent_auto_deny.py` (a
 user's config ending with its own `"*"`), `test_proxy_tool_targets.py` (a real proxy, the host split between
 two pieces of the stream, three dialects, a whole answer, one connection for several requests, an answer of
 no known shape, the false alarms, nothing of the arguments in the journal), `test_lifecycle.py`,
-`test_cockpit_collectors.py` and three checks of `update-banner-check.mjs` in a browser. Each fails on
-v1.40.3 or on the branch before its fix.
+`test_cockpit_collectors.py`, three checks of `update-banner-check.mjs` in a browser, and
+`test_pair_probe.py` (what it never prints, a peer that does not answer, a unit systemd has unloaded, a
+record of another shape). Each fails on v1.40.3 or on the branch before its fix.
 
 ## v1.40.3 (2026-10-26): Claude Code's ToolSearch works on the Qwen lanes, every lane says what its prefix cache served (#49), and a stopped generation never reaches its client as a whole answer
 
