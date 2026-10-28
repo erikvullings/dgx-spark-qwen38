@@ -960,7 +960,6 @@ GUARD_CEILING_RE = re.compile(r"\[proxy\] drain ceiling reached after ([\d.]+)s"
 # pattern counted (found in review).
 TOOL_TARGET_RE = re.compile(r"^(\d+(?:\.\d+)?) \S+ [^\s:]+: \[proxy\] \S+" + _KEY
                             + r" TOOL TARGET (.+?) in an? (\S+) call on (\S+),")
-TOOL_TARGET_GREP = "TOOL TARGET "
 
 
 def parse_tool_targets(raw: str, since: float = 0.0) -> dict:

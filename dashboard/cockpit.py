@@ -1462,18 +1462,16 @@ def tool_targets_seen() -> dict:
     now = time.time()
     if now - TOOL_TARGETS["at"] < TOOL_TARGETS_EVERY:
         return TOOL_TARGETS["seen"]
+    # the whole day, not -g: journalctl -g ends 1 when nothing matches, as a read that failed does,
+    # and without it 0 says the day was read, lines or none (a journal vacuumed after a line kept a
+    # banner up a day, found in review). A read that failed (a timeout) counts the last good one
+    # again, over the day as it stands now.
     raw = run(["journalctl", "-u", "qwen38-keepalive.service", "--since", "-24h", "--no-pager",
-               "-o", "short-unix", "-g", lc.TOOL_TARGET_GREP], timeout=6)
-    seen = lc.parse_tool_targets(raw, since=now - 86400)
-    # run() answers "" for a read that failed as for a day without any. A line of the last good
-    # read still inside the day is still in the journal, so nothing read while one is means the
-    # read failed: the last good read is counted again, over the day as it stands now (it kept
-    # its whole count, lines past the day included, found in review)
-    if not seen["count"]:
-        before = lc.parse_tool_targets(TOOL_TARGETS["raw"], since=now - 86400)
-        if before["count"]:
-            seen, raw = before, TOOL_TARGETS["raw"]
-    TOOL_TARGETS.update(at=now, raw=raw, seen=seen)
+               "-o", "short-unix"], timeout=6)
+    if answered(raw):
+        TOOL_TARGETS["raw"] = "\n".join(ln for ln in raw.splitlines() if " TOOL TARGET " in ln)
+    seen = lc.parse_tool_targets(TOOL_TARGETS["raw"], since=now - 86400)
+    TOOL_TARGETS.update(at=now, seen=seen)
     return seen
 
 
