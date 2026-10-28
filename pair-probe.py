@@ -16,6 +16,7 @@ address (only its kind: private, link-local, shared, public), the host's name, y
 or user name. --json prints the same facts for a program.
 """
 import argparse
+import getpass
 import ipaddress
 import json
 import os
@@ -34,9 +35,11 @@ UNITS = Path("/etc/systemd/system")
 
 def run(argv, timeout=8.0, any_exit=False):
     """A command's output, or "" when it is missing, fails or takes too long. Never a shell. any_exit
-    keeps what a command that ends non-zero printed: ping ends 1 when nothing answered, and says so."""
+    keeps what a command that ends non-zero printed: ping ends 1 when nothing answered, and says so.
+    The C locale, since what is read out of it is English: a ping that speaks French says nothing of
+    its "packet loss"."""
     try:
-        r = subprocess.run(argv, capture_output=True, text=True, timeout=timeout)
+        r = subprocess.run(argv, capture_output=True, text=True, timeout=timeout, env={**os.environ, "LC_ALL": "C"})
         return r.stdout if r.returncode == 0 or any_exit else ""
     except (OSError, subprocess.TimeoutExpired):
         return ""
@@ -65,15 +68,26 @@ def ip_kind(addr):
     return "private" if ip.is_private else "public"
 
 
-def masked(text, host=None):
+def user_name():
+    try:
+        return getpass.getuser()
+    except (KeyError, OSError):
+        return Path(HOME).name
+
+
+def masked(text, host=None, user=None, names=True):
     """Whatever a command said, without what could name the box or its owner: MAC addresses, valid IP
-    addresses of either version (their kind only), the home directory, and the host's name as a whole
-    word (a name like "spark" must not eat "dgx-spark-qwen38")."""
+    addresses of either version (their kind only, a zero-padded one too), the home directory, and with
+    names the host's name and the user's as whole words in any case (a name like "spark" must not eat
+    "dgx-spark-qwen38")."""
     host = socket.gethostname() if host is None else host
+    user = user_name() if user is None else user
     text = re.sub(r"\b(?:[0-9a-f]{2}:){5}[0-9a-f]{2}\b", "<mac>", text, flags=re.I)
     def ip(m):
-        kind = ip_kind(m.group(0))
-        return m.group(0) if kind == "unknown" else f"<{kind}>"      # a version like 580.178.04.1 stays
+        octets = m.group(0).split("/")[0].split(".")
+        if any(int(o) > 255 for o in octets):
+            return m.group(0)                                          # a version like 580.178.04.1 stays
+        return f"<{ip_kind('.'.join(str(int(o)) for o in octets))}>"   # 192.168.001.002 is an address too
     text = re.sub(r"\b(?:\d{1,3}\.){3}\d{1,3}(?:/\d+)?\b", ip, text)
     def ip6(m):
         addr = m.group(1).split("%")[0]
@@ -82,24 +96,36 @@ def masked(text, host=None):
         except ValueError:
             return m.group(0)                                          # a time like 12:34:56 stays
         return f"<{ip_kind(addr)}>"
-    text = re.sub(r"(?<![\w:.])((?:[0-9a-f]{0,4}:){2,7}[0-9a-f]{0,4}(?:%[\w.-]+)?)(?:/\d{1,3})?(?![\w:])",
+    # after a word or a dot it is no address, after a colon it can be one: "addr:fe80::1"
+    text = re.sub(r"(?<![\w.])((?:[0-9a-f]{0,4}:){2,7}[0-9a-f]{0,4}(?:%[\w.-]+)?)(?:/\d{1,3})?(?![\w:])",
                   ip6, text, flags=re.I)
     text = text.replace(HOME, "~")
-    if host:
-        text = re.sub(r"(?<![\w.-])" + re.escape(host) + r"(?![\w-])", "<host>", text)
+    for name, mark in ((host, "<host>"), (user, "<user>")):
+        if names and name:
+            # a name with a digit or a dash (gx10-eff9) is the box's own, wherever it shows (a kernel
+            # 6.17.0-gx10-eff9), a name of letters alone may be a word of a longer one (dgx-spark-qwen38)
+            edge = (r"(?<!\w)", r"(?!\w)") if re.search(r"[\d-]", name) else (r"(?<![\w.-])", r"(?![\w-])")
+            text = re.sub(edge[0] + re.escape(name) + edge[1], mark, text, flags=re.I)
     return text
 
 
-def masked_facts(facts, host=None):
+# The facts that come as free text, where a name of the host or the user can show (a kernel built as
+# 6.17.0-spark-b, a branch hasan/pairs). The others are words of the kernel, of systemd or of this probe
+# (lo, up, yes, active/running): a host named "lo" or "yes" must leave them as they are.
+FREE_TEXT = {"machine", "os", "kernel", "gpu", "branch", "docker", "nvidia_ctk", "cards", "error"}
+
+
+def masked_facts(facts, host=None, user=None, key=None):
     """The facts with each value masked, never their names: a host named "gpu" or "home" renamed the
     keys of --json and the labels of the report when the printed text was masked whole (review,
-    2026-10-28)."""
+    2026-10-28). The host's and the user's names are masked in FREE_TEXT, addresses everywhere."""
     host = socket.gethostname() if host is None else host
+    user = user_name() if user is None else user
     if isinstance(facts, dict):
-        return {k: masked_facts(v, host) for k, v in facts.items()}
+        return {k: masked_facts(v, host, user, k) for k, v in facts.items()}
     if isinstance(facts, list):
-        return [masked_facts(v, host) for v in facts]
-    return masked(facts, host) if isinstance(facts, str) else facts
+        return [masked_facts(v, host, user, key) for v in facts]
+    return masked(facts, host, user, names=key in FREE_TEXT) if isinstance(facts, str) else facts
 
 
 def box(release="/etc/dgx-release"):
@@ -195,10 +221,17 @@ def software(units=UNITS):
 
 
 def hf_cache(units=UNITS):
-    """Where the lanes keep their weights: the cache the 27B unit mounts, which is install.sh's HF_CACHE=
-    and is kept across updates, else the default one."""
-    m = re.search(r"-v ([^ :]+):/root/\.cache/huggingface\b", read(Path(units) / "qwen38-sglang.service"))
-    return re.sub("/+", "/", m.group(1)) if m else str(Path(HOME) / ".cache" / "huggingface")
+    """Where the lanes keep their weights: the cache their units mount, which is install.sh's HF_CACHE=
+    and is kept across updates, the 27B's first, else the default one. Flash FP4-Local mounts copies of
+    its own, one per checkpoint, never the cache."""
+    names = ["qwen38-sglang.service"] + sorted(
+        p.name for p in Path(units).glob("qwen38-*.service")
+        if p.name not in ("qwen38-sglang.service", "qwen38-flash-local.service"))
+    for name in names:
+        m = re.search(r"-v ([^ :]+):/root/\.cache/huggingface\b", read(Path(units) / name))
+        if m:
+            return re.sub("/+", "/", m.group(1))
+    return str(Path(HOME) / ".cache" / "huggingface")
 
 
 def _free(path):
@@ -217,15 +250,26 @@ def peer(name):
     if name.startswith("-"):
         return {**out, "error": "not an address"}
     try:
-        addr = socket.getaddrinfo(name, None, proto=socket.IPPROTO_TCP)[0][4][0]
+        where = socket.getaddrinfo(name, None, proto=socket.IPPROTO_TCP)[0][4]
     except (OSError, UnicodeError, IndexError):
         return {**out, "error": "the name does not resolve"}
-    route = re.search(r"\bdev (\S+)", run(["ip", "route", "get", addr]))
+    addr, target = where[0], where[0]
+    if len(where) == 4 and where[3]:
+        # a link-local IPv6 address names its port itself (fe80::1%enp1s0f0np0), which ip route get
+        # refuses and ping needs: getaddrinfo hands the port apart
+        try:
+            via = socket.if_indextoname(where[3])
+        except OSError:
+            via = ""
+        target = f"{addr}%{via}" if via else addr
+    else:
+        route = re.search(r"\bdev (\S+)", run(["ip", "route", "get", addr]))
+        via = route.group(1) if route else ""
     # ping ends 1 when nothing answered: the link that is down is the one this check is for
-    ping = run(["ping", "-c", "4", "-W", "1", addr], timeout=12, any_exit=True)
+    ping = run(["ping", "-c", "4", "-W", "1", target], timeout=12, any_exit=True)
     loss = re.search(r"(\d+(?:\.\d+)?)% packet loss", ping)
     rtt = re.search(r"= [\d.]+/([\d.]+)/", ping)
-    return {"kind": ip_kind(addr), "via": route.group(1) if route else "",
+    return {"kind": ip_kind(addr), "via": via,
             "loss_pct": float(loss.group(1)) if loss else None, "rtt_ms": float(rtt.group(1)) if rtt else None}
 
 

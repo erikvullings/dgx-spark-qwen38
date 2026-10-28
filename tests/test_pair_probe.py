@@ -37,6 +37,17 @@ MAC = re.compile(r"\b(?:[0-9a-f]{2}:){5}[0-9a-f]{2}\b", re.I)
 IPV4 = re.compile(r"\b(?:25[0-5]|2[0-4]\d|1?\d?\d)(?:\.(?:25[0-5]|2[0-4]\d|1?\d?\d)){3}\b")
 
 
+def ipv6_in(text):
+    """The valid IPv6 addresses written in text."""
+    found = []
+    for m in re.finditer(r"(?<![\w.])(?:[0-9a-f]{0,4}:){2,7}[0-9a-f]{0,4}(?![\w:])", text, re.I):
+        try:
+            found.append(str(__import__("ipaddress").IPv6Address(m.group(0))))
+        except ValueError:
+            pass
+    return found
+
+
 def tmpdir(case):
     """A directory that goes with the test."""
     d = tempfile.TemporaryDirectory()
@@ -76,8 +87,27 @@ class Masking(unittest.TestCase):
         self.assertIn("580.178.04.1", out, "a version is not an address")
 
     def test_a_host_named_like_a_word_of_the_project_eats_nothing(self):
-        out = P.masked("dgx-spark-qwen38 on spark, DGX Spark", host="spark")
-        self.assertEqual(out, "dgx-spark-qwen38 on <host>, DGX Spark")
+        # in any case since the second review, "DGX Spark" included: a name is masked wherever it shows
+        out = P.masked("dgx-spark-qwen38 on spark, DGX Spark", host="spark", user="nobody-here")
+        self.assertEqual(out, "dgx-spark-qwen38 on <host>, DGX <host>")
+
+    def test_a_name_in_another_case_and_the_users_go(self):
+        facts = {"box": {"kernel": "6.17.0-GX10-EFF9", "machine": "ASUSTeK GX10"}, "repo": {"branch": "Hasan/pairs"}}
+        out = P.masked_facts(facts, host="gx10-eff9", user="hasan")
+        self.assertEqual((out["box"]["kernel"], out["repo"]["branch"]), ("6.17.0-<host>", "<user>/pairs"))
+        self.assertEqual(out["box"]["machine"], "ASUSTeK GX10", "a word of the name is not the name")
+
+    def test_a_short_host_name_leaves_the_facts_it_names(self):
+        facts = {"peer": {"via": "lo", "kind": "loopback"}, "software": {"time_synced": "yes"},
+                 "connectx7": {"ports": [{"name": "enp1s0f0np0", "state": "up"}]}, "box": {"os": "lo up yes"}}
+        out = P.masked_facts(facts, host="lo", user="yes")
+        self.assertEqual((out["peer"]["via"], out["software"]["time_synced"], out["connectx7"]["ports"][0]["state"]),
+                         ("lo", "yes", "up"), "words of the kernel and of systemd")
+        self.assertEqual(out["box"]["os"], "<host> up <user>", "free text is masked")
+
+    def test_an_address_after_a_colon_or_with_zeros_is_masked(self):
+        out = P.masked("inet6 addr:fe80::a088:c2ff:fe12:3456/64 Scope:Link, inet 192.168.001.002", host="", user="")
+        self.assertEqual(out, "inet6 addr:<link-local> Scope:Link, inet <private>")
 
     def test_an_ipv6_address_is_only_its_kind(self):
         out = P.masked("global 2a01:e0a:1f:2::5/64 link fe80::1%enp1s0f0np0 lo ::1, at 12:34:56", host="")
@@ -155,6 +185,26 @@ class ThePeer(unittest.TestCase):
             got = P.peer("192.0.2.1")
         self.assertEqual((got["via"], got["loss_pct"], got["rtt_ms"]), ("enp1s0f0np0", 100.0, None))
 
+    def test_a_scoped_ipv6_peer_keeps_its_port(self):
+        # a point-to-point ConnectX-7 link with no IPv4 has link-local addresses only, scoped by their port
+        fake, ran = commands({"ping": (0, "--- fe80::1%lo ping statistics ---\n4 packets transmitted, 4 received, "
+                                          "0% packet loss, time 3ms\nrtt min/avg/max/mdev = 0.010/0.020/0.030/0.010 ms\n")})
+        with mock.patch.object(P.subprocess, "run", fake):
+            got = P.peer("fe80::1%lo")
+        self.assertEqual((got["kind"], got["via"], got["loss_pct"], got["rtt_ms"]), ("link-local", "lo", 0.0, 0.02))
+        self.assertIn(["ping", "-c", "4", "-W", "1", "fe80::1%lo"], ran)
+        self.assertFalse([a for a in ran if a[:3] == ["ip", "route", "get"]], "ip route get refuses a scoped address")
+
+    def test_commands_run_in_the_c_locale(self):
+        seen = []
+
+        def fake(argv, **kw):
+            seen.append((kw.get("env") or {}).get("LC_ALL"))
+            return subprocess.CompletedProcess(argv, 0, stdout="", stderr="")
+        with mock.patch.object(P.subprocess, "run", fake):
+            P.run(["true"])
+        self.assertEqual(seen, ["C"], "what is read out of a command is English")
+
     def test_a_name_is_resolved_and_a_dash_is_no_address(self):
         got = P.peer("localhost")
         self.assertEqual((got["kind"], got["via"]), ("loopback", "lo"), "ip route get takes an address only")
@@ -209,6 +259,14 @@ class TheSoftware(unittest.TestCase):
             P.software(units)
         self.assertEqual(asked, [P.HOME, "/mnt/nvme/hf"], "install.sh's HF_CACHE=, one slash at a time")
 
+    def test_the_model_cache_of_a_box_without_the_27b(self):
+        units = tmpdir(self)
+        (units / "qwen38-flash-local.service").write_text(
+            "ExecStart=/usr/bin/docker run -v /home/x/flash-local-ple/abc:/root/.cache/huggingface img\n")
+        (units / "qwen38-kolibri.service").write_text(
+            "ExecStart=/usr/bin/docker run -v /mnt/models:/root/.cache/huggingface img\n")
+        self.assertEqual(P.hf_cache(units), "/mnt/models", "Flash FP4-Local mounts copies, never the cache")
+
 
 class WhatItNeverOpens(unittest.TestCase):
     def test_no_file_that_holds_a_key(self):
@@ -230,6 +288,9 @@ class WhatItNeverOpens(unittest.TestCase):
         self.assertFalse([f for f in opened if re.search(r"key|secret|token|\.env\b|password", f, re.I)], opened)
 
 
+SERIAL = dict(re.findall(r'^(\w+)="?([^"\n]*)"?$', P.read("/etc/dgx-release"), re.M)).get("DGX_SERIAL_NUMBER", "")
+
+
 class OnThisBox(unittest.TestCase):
     def test_what_it_prints_names_nothing(self):
         for args in ([], ["--json"], ["--peer", "127.0.0.1"]):
@@ -238,6 +299,12 @@ class OnThisBox(unittest.TestCase):
             self.assertNotRegex(r.stdout, MAC)
             self.assertNotRegex(r.stdout, IPV4)
             self.assertNotIn(P.HOME, r.stdout)
+            self.assertEqual(ipv6_in(r.stdout), [])
+            # said without the value, which a failure would print
+            for what, value in (("the host's name", P.socket.gethostname()), ("the user's name", P.user_name()),
+                                ("the serial number", SERIAL)):
+                self.assertFalse(value and re.search(r"(?<!\w)" + re.escape(value) + r"(?!\w)", r.stdout, re.I),
+                                 f"{what} is in what it prints with {args}")
         facts = json.loads(subprocess.run([sys.executable, str(SCRIPT), "--json"], capture_output=True,
                                           text=True, timeout=120).stdout)
         self.assertEqual(sorted(facts), ["box", "connectx7", "repo", "software"])
