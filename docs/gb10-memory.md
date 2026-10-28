@@ -21,7 +21,7 @@ graph capture against 19.38. **0.80 was measured crashing** under 3 concurrent r
 free, Triton `CUDA operation not permitted`), and the 25-40 GB invisible-allocation bursts above
 all belong to native runs and the autotuner. Treat anything past 0.80 as livelock territory. What
 bounds the fraction is the unified pool, not the container: `--memory 100g` caps host RSS and the
-cgroup is not charged for the engine's GPU memory (plain `cudaMalloc`; managed and pinned memory are, as
+cgroup is not charged for the engine's GPU memory (plain `cudaMalloc`, while managed and pinned memory are, as
 [another owner measured](https://forums.developer.nvidia.com/t/387182)), measured at 0.76 under a 5,623-token generation
 with the container holding 7.15 GiB of its 100 GiB throughout. The number to watch is the GPU-side
 headroom after graph capture (21.30 GiB at 0.76, against 19.38 at the old pin).

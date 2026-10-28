@@ -347,7 +347,7 @@ What it does about it, with the measurement behind every number, is in
   27B, treat anything past it as livelock territory, and note that the 27B cookbook's 0.80 for DGX
   Spark is a single-stream boot-and-serve bound rather than a multi-client operating point
 - the Docker cap (`--memory 100g`) bounds host RSS only: on GB10 the cgroup is not charged for
-  the engine's GPU memory (plain `cudaMalloc`; managed and pinned memory are, [measured by another
+  the engine's GPU memory (plain `cudaMalloc`, while managed and pinned memory are, [measured by another
   owner](https://forums.developer.nvidia.com/t/387182)), so the fraction is the real guard
 - the number to watch is GPU-side headroom after graph capture: 21.30 GiB at 0.76 against 19.38
   at the 0.70 pin that preceded it

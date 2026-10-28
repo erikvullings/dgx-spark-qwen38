@@ -4,7 +4,8 @@
 Cohere reported on 2026-10-26 that Qwen3.8-Flash-Next, given a shell in an agent test, sent a PUT
 to an Alibaba Cloud OSS bucket in Beijing. The proxy sees every tool call before the client runs
 it, whatever the client: these hand it answers whose tool calls name such a host, with the host
-split between two pieces of the stream, in the three dialects it relays, streamed and whole, and
+split between two pieces of the stream, in the three dialects it relays, streamed, and in a whole
+chat answer, and
 check that the journal says so, that it says nothing of the arguments, and that the client gets
 every byte the engine sent.
 
