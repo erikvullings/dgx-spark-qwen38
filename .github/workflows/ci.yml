@@ -9,7 +9,11 @@ permissions:
   contents: read
 
 jobs:
-  checks:
+  # The jobs run side by side, each on a runner of its own: the hour this took as one job was the
+  # sum of its steps (4,312 s for v1.40.3, 1,869 of them the single-process pass), and it is now
+  # the longest job. `checks`, last, keeps the one name a reader or a script looks for.
+  static:
+    # Every check that reads the tree: syntax, lint, templates, fixtures, pins, the small scripts.
     # Named, not ubuntu-latest: that label moves to Ubuntu 26 from 2026-10-19 (GitHub's notice on
     # the run of 2026-10-02), and a new image, its python and its browser, is a change this suite
     # is asked to pass on purpose, in a commit of its own.
@@ -70,45 +74,6 @@ jobs:
       - name: opencode plugin syntax (node)
         run: node --check extras/opencode/auto-continue.js
 
-      - name: The cockpit page survives losing its server (headless browser, a cockpit of its own)
-        run: |
-          # The browser checks in dashboard/tests/*.mjs ran nowhere (found in review,
-          # 2026-09-24). This one and the three below own what they drive: a dry-run
-          # cockpit on loopback with a key of its own, a PATH whose box commands answer
-          # nothing and no network, and a browser that resolves no name. The other two
-          # drive the live cockpit of a box and stay manual; they are parsed here. Parsing
-          # is not running: the update banner check called functions the redesign of
-          # 2026-09-30 renamed and failed 7 of 9 since, parsed green, and the monkey check
-          # found a page that read '…' for good with no text engine (both 2026-10-02):
-          # they own their cockpit now and run below.
-          for f in dashboard/tests/*.mjs; do node --check "$f"; done
-          node dashboard/tests/resilience-check.mjs
-
-      - name: The cockpit says when a newer version exists (headless browser, a cockpit of its own)
-        run: node dashboard/tests/update-banner-check.mjs
-
-      - name: The cockpit survives a click storm on every view (headless browser, a cockpit of its own)
-        run: node dashboard/tests/monkey-check.mjs
-
-      - name: The cockpit page works under a finger (headless browser, real taps, a cockpit of its own)
-        run: |
-          # Every browser check switched views with element.click() from script, which
-          # ignores what covers the element: on a phone the drawer's veil covered every rail
-          # item and all of them stayed green (2026-09-30). This one taps where a finger
-          # lands, on five touch screens and a laptop, and reads what the page did.
-          node dashboard/tests/touch-check.mjs
-
-      - name: The Agent tab against a real opencode (headless browser, a cockpit and an opencode of its own)
-        timeout-minutes: 15
-        run: |
-          # The Agent checks drove the live cockpit of a box, by hand: opencode 1.19 sent its page
-          # chunked, and the relay dropped the phone layer, and it checks the Origin of every terminal
-          # connection; both were found on a box after an update (2026-10-11 and 2026-10-22). This one
-          # fetches the opencode release install.sh pins, checked against its sha256, and drives it
-          # through a dry-run cockpit whose relay answers on 127.0.0.2: the relay's gate, the Agent tab,
-          # the phone layer in the page opencode sends, and a terminal with a command run in it.
-          node dashboard/tests/agent-bench.mjs
-
       - name: Python correctness (ruff F,E9 + compile)
         run: |
           pip install 'ruff==0.5.0'
@@ -119,256 +84,6 @@ jobs:
           [ "$(echo "$py" | wc -l)" -ge 100 ] || { echo "found only: $py"; exit 1; }
           ruff check --select F,E9 $py
           python3 -m py_compile patch-template.py patch-yarn.py keepalive-proxy.py engine-inputs.py oc-merge-limits.py oc-point-default.py oc-fit-limits.py bench-agent.py conc-check.py build-token-map.py tools-check.py systemone-check.py bench-systemone.py evals/mmlu.py evals/humaneval.py flash-sglang/qwen4_exp.py flash-sglang/qwen_sparse_attn_backend.py flash-sglang/sm121_varlen.py dashboard/cockpit.py dashboard/lifecycle.py dashboard/recipes.py dashboard/registry.py dashboard/agent_relay.py
-
-      - name: Cockpit unit tests (every tests/test_*.py, discovered)
-        run: |
-          cd dashboard
-          # Count what unittest actually runs against what the files declare.
-          # test_lifecycle.py had 58 tests and no __main__ block, so running it
-          # as a script executed nothing and exited 0: the largest suite in the
-          # repo was green because it never ran. Silence is not a pass.
-          # Discovered, not listed: a fourth test file that nobody runs is worse
-          # than no fourth file, and the list was hardcoded until 2026-09-08.
-          files=$(cd tests && ls test_*.py | sort | tr '\n' ' ')
-          mods=$(for f in $files; do printf 'tests.%s ' "${f%.py}"; done)
-          echo "suites: $mods"
-          declared=$(cd tests && cat $files | grep -c 'def test_')
-          out=$(python3 -m unittest -v $mods 2>&1)
-          echo "$out" | tail -5
-          ran=$(echo "$out" | grep -oE '^Ran [0-9]+' | grep -oE '[0-9]+' || echo 0)
-          echo "declared $declared, ran $ran"
-          [ "$ran" = "$declared" ] || { echo "unittest ran $ran of $declared declared tests"; exit 1; }
-          # "Ran" counts a skipped test as run, so a skip on a whole class stayed green
-          # (found in review, 2026-09-24). No cockpit test has a reason to skip here.
-          skips=$(echo "$out" | grep -E "\.\.\. skipped '" || true)
-          [ -z "$skips" ] || { echo "cockpit tests skipped:"; echo "$skips"; exit 1; }
-          # Each file is also run on its own, the way a human runs it, by the offline
-          # step below, under its witness HOME, with the count it reports checked: a
-          # file without a __main__ block exits 0 having run nothing, and a file that
-          # fails on its own but passes after the modules before it in the run above
-          # fails there. It ran here as well until 2026-10-18, so each file ran three
-          # times in all.
-
-      - name: Proxy fuzz and relay simulation (hypothesis, generated bytes and clients)
-        run: |
-          pip install 'hypothesis==6.168.0'
-          out=$(python3 tests/proxy_fuzz.py 2>&1) || { echo "$out" | tail -40; exit 1; }
-          echo "$out" | tail -3
-          echo "$out" | grep -qE '^proxy fuzz: [0-9]+ passed of [0-9]+, [0-9]+ generated examples each$' \
-            || { echo "the fuzz suite did not report a run"; echo "$out" | tail -20; exit 1; }
-          n=$(echo "$out" | grep -oE '^proxy fuzz: [0-9]+' | grep -oE '[0-9]+')
-          # every one of the 16: a floor of 15 let one of them disappear
-          [ "$n" -ge 16 ] || { echo "only $n fuzz checks ran"; exit 1; }
-
-      - name: Coverage floors, the root modules
-        run: |
-          scratch="${TMPDIR:-/tmp}"   # ci-local.sh gives each step its own; a runner has none
-          pip install 'coverage==7.16.0' 2>/dev/null || true
-          PY="$(./tests/testpy.sh coverage)"
-          rm -f .coverage*
-          for f in tests/test_proxy_guard.py tests/test_proxy_abort.py \
-                   tests/test_proxy_keepalive.py tests/test_proxy_client_keys.py \
-                   tests/test_proxy_systemone.py tests/test_proxy_hold.py \
-                   tests/test_proxy_short_body.py tests/test_proxy_engine_withholds_headers.py \
-                   tests/test_proxy_door.py tests/test_proxy_follows_engine_restarts.py \
-                   tests/test_proxy_vllm_lane.py \
-                   tests/test_proxy_body_budget.py tests/test_proxy_connection_ceiling.py \
-                   tests/test_proxy_content_encoding.py tests/test_proxy_count_routes_cap.py \
-                   tests/test_proxy_rejudge_after_hold.py tests/test_proxy_score_guard.py \
-                   tests/test_proxy_uncountable_shapes.py tests/test_proxy_unknown_vocab.py \
-                   tests/test_proxy_video_guard.py tests/test_proxy_override_headers.py \
-                   tests/test_proxy_floor_stop.py tests/test_proxy_tool_targets.py \
-                   tests/test_tools.py tests/test_oc_fit_limits.py tests/test_oc_merge_limits.py; do
-            "$PY" -m coverage run --branch --parallel-mode --source=. \
-              --omit="dashboard/*,tests/*,.venv-test/*" "$f" >/dev/null 2>&1 || true
-          done
-          "$PY" -m coverage combine -q
-          "$PY" -m coverage report --sort=cover | tee "$scratch/rootcov.txt"
-          rm -f .coverage*
-          "$PY" - "$scratch/rootcov.txt" <<'PYEOF'
-          import re, sys
-          # Measured 2026-09-10. keepalive-proxy.py is the production serving path
-          # and had no floor at all until this step; it went 68 to 75% when the
-          # keepalive injection, the silence ceiling and the non-streamed relay
-          # finally got tests. patch-yarn went 0 to 94% the same day.
-          # 2026-09-19: the System One endpoint and its suite took the module from 75 to
-          # 83% branch coverage, so the floor moves up with it. A floor that trails the
-          # measured number by ten points stops being a floor.
-          # 2026-09-21: 84% once the refusals for the unbounded sampling fields landed
-          # with their own tests, so the floor follows again.
-          # 2026-10-01: 87% with the hold of v6.28 and its suite run in-process as well
-          # (run only as a process, it took the module down to 81%): the floor follows.
-          # 2026-10-17: 87% again with the nine suites of v6.41's guards in the list above;
-          # without them its new code read as untested, 81%.
-          FLOORS = {"keepalive-proxy.py": 85, "patch-yarn.py": 90,
-                    "oc-fit-limits.py": 37, "build-token-map.py": 35}
-          got, bad = {}, []
-          for line in open(sys.argv[1]):
-              m = re.match(r"^(\S+\.py)\s+\d+\s+\d+\s+\d+\s+\d+\s+(\d+)%", line)
-              if m:
-                  got[m.group(1)] = int(m.group(2))
-          for name, floor in FLOORS.items():
-              have = got.get(name)
-              if have is None:
-                  bad.append(f"{name}: not measured at all")
-              elif have < floor:
-                  bad.append(f"{name}: {have}% is under its {floor}% floor")
-              else:
-                  print(f"  ok {name}: {have}% (floor {floor}%)")
-          if bad:
-              print("\n".join("  FAIL " + b for b in bad))
-              sys.exit(1)
-          PYEOF
-
-      - name: Mutation score (do the tests catch a wrong operator?)
-        run: |
-          # The only question that matters for a suite written alongside its code:
-          # if the code were wrong, would the tests notice? This edits one operator
-          # at a time and runs the suite after each edit. Measured 2026-09-10:
-          # lifecycle.py 74.8% before the two MutantsThatSurvived classes were
-          # written from a first run's survivors, 90.8% after. The remainder are
-          # largely equivalent mutants (an `or` clause that already covers the
-          # threshold next to it), which is the known ceiling of the method.
-          python3 tests/mutation.py --all
-
-      - name: The offline suite touches nothing outside itself
-        run: |
-          # This repo's tests are run on the box that serves production, so
-          # "offline" has to be a checked property and not an intention. The
-          # suite gets a witness tree, runs, and the tree must be identical
-          # afterwards. It also must not have written into HOME, which is how
-          # three diagnostics bundles were once found in a developer's home
-          # directory, and must not have contacted the serving ports.
-          witness="$(mktemp -d)"
-          export HOME="$witness/home"
-          mkdir -p "$HOME/.config/qwen38"
-          echo "not-the-real-key" > "$HOME/.config/qwen38/api-key"
-          # The listening sockets compared below cannot see a connection to a port that
-          # was already listening, the engine's on the box that runs ci-local.sh (found in
-          # review, 2026-09-24). Every python the suite starts carries an audit hook that
-          # records a connect() to a serving port, with the test line that made it; a
-          # shell test's curl is not seen. Kept outside the witness, which is hashed.
-          probe="$(mktemp -d)"
-          # tests/run_suite.py loads the same hook into every python it starts (its sitecustomize.py),
-          # beside the one that compares each file's environment at its start and at its exit.
-          export QWEN38_CONTACT_LOG="$probe/contacts" QWEN38_SERVING_PORTS=30000,30001,30020,30090,30091,4096
-          before="$(find "$witness" -type f -exec sha256sum {} + | sort)"
-          ports_before="$(ss -Htln 2>/dev/null | awk '{print $4}' | sort || true)"
-          # The suite runs under tests/suite_reaper.py, a child subreaper: every process it
-          # starts stays its descendant, so what still runs once the suite is over is the
-          # suite's own, named with the sockets it listens on, then stopped. Comparing every
-          # listener of the machine instead failed twice on the reference box on 2026-10-03,
-          # for ports VS Code opened while the suite ran.
-          # Every test file runs once, on its own, as a human runs it, up to four at a time, the
-          # longest first, the files that take a port number out of a socket they close one at a
-          # time at the end (tests/run_suite.py): it fails, runs fewer tests than it declares, or
-          # leaves an environment variable changed, and it is named with what it did. The suite ran
-          # about four times per CI run until 2026-10-24: here, then each module again in
-          # tests/test_suite_isolation.py, which this step and the single-process pass both ran.
-          python3 tests/suite_reaper.py python3 tests/run_suite.py
-          after="$(find "$witness" -type f -exec sha256sum {} + | sort)"
-          if [ "$before" != "$after" ]; then
-            echo "the offline suite wrote into HOME:"
-            diff <(echo "$before") <(echo "$after") || true
-            exit 1
-          fi
-          ports_after="$(ss -Htln 2>/dev/null | awk '{print $4}' | sort || true)"
-          if [ "$ports_before" != "$ports_after" ]; then
-            # Not the suite's: the reaper above names and stops those. Another program
-            # opened or closed a port meanwhile; shown, and fatal on a runner only, where
-            # nothing else runs.
-            echo "listeners other programs opened (>) or closed (<) while the suite ran:"
-            diff <(echo "$ports_before") <(echo "$ports_after") | grep '^[<>]' || true
-            for addr in $(comm -13 <(echo "$ports_before") <(echo "$ports_after")); do
-              ss -Htlnp "sport = :${addr##*:}" 2>/dev/null | awk '{print "  held by:", $4, $6}'
-            done
-            [ "${GITHUB_ACTIONS:-}" != "true" ] || { echo "(nothing else runs on a runner)"; exit 1; }
-          fi
-          if [ -s "$probe/contacts" ]; then
-            echo "the offline suite contacted a serving port:"
-            sort "$probe/contacts" | uniq -c | sort -rn | head -20
-            exit 1
-          fi
-          rm -rf "$witness" "$probe"
-          echo "  ok: HOME untouched, nothing left running or listening, no serving port contacted"
-
-      - name: Coverage floors (measured, per module)
-        run: |
-          scratch="${TMPDIR:-/tmp}"   # ci-local.sh gives each step its own; a runner has none
-          pip install 'coverage==7.16.0' 2>/dev/null || true
-          PY="$(./tests/testpy.sh coverage)"
-          cd dashboard
-          rm -f .coverage*
-          "$PY" -m coverage run --branch --parallel-mode --source=. -m unittest \
-            $(cd tests && ls test_*.py | sed 's/\.py$//' | sed 's/^/tests./' | tr '\n' ' ')
-          # the property checks are a suite too: leaving them out of the
-          # measurement reported three validate() branches as uncovered while
-          # they were being exercised 300 times each
-          "$PY" -m coverage run --branch --parallel-mode --source=. \
-            tests/property_checks.py >/dev/null
-          "$PY" -m coverage combine -q
-          "$PY" -m coverage report --sort=cover | tee "$scratch/cov.txt"
-          rm -f .coverage*
-          # A floor per module, raised in a commit and never lowered quietly.
-          # These are what was measured on 2026-09-10, minus a point of slack.
-          "$PY" - "$scratch/cov.txt" <<'PYEOF'
-          import re, sys
-          # Raised in a commit, never lowered quietly. cockpit.py went
-          # 14 -> 30 -> 53 -> 59 -> 71 over one day of writing tests.
-          #
-          # lifecycle.py and recipes.py are at 100% BRANCH coverage and are held
-          # there: they are pure logic, so there is no excuse, and the two
-          # branches that cannot be taken by any input carry a "pragma: no
-          # branch" whose reason is itself guarded by a test
-          # (test_every_marker_is_handled_by_the_chain). A module that reaches
-          # 100% and is then allowed to slip is worse than one that never got
-          # there, because the number stops meaning anything.
-          # A floor belongs to the MOST CONSTRAINED environment that has to pass
-          # it, which is the runner and not a developer's box: cockpit.py reads
-          # 71% here and 69% on a GitHub runner, because the runner has no
-          # docker, no systemctl and no nvidia-smi, so several collector branches
-          # never run there. The gate caught exactly that on the first push. Note
-          # that lifecycle.py and recipes.py read 100% in both, which is what
-          # being pure logic buys.
-          FLOORS = {"cockpit.py": 68, "agent_relay.py": 88, "registry.py": 88,
-                    "lifecycle.py": 100, "recipes.py": 100}
-          TOTAL_FLOOR = 89
-          got, bad = {}, []
-          for line in open(sys.argv[1]):
-              m = re.match(r"^(\S+\.py|TOTAL)\s+\d+\s+\d+\s+\d+\s+\d+\s+(\d+)%", line)
-              if m:
-                  got[m.group(1)] = int(m.group(2))
-          for name, floor in FLOORS.items():
-              have = got.get(name)
-              if have is None:
-                  bad.append(f"{name}: not measured at all")
-              elif have < floor:
-                  bad.append(f"{name}: {have}% is under its {floor}% floor")
-              else:
-                  print(f"  ok {name}: {have}% (floor {floor}%)")
-          total = got.get("TOTAL")
-          if total is None:
-              bad.append("no TOTAL line in the coverage report")
-          elif total < TOTAL_FLOOR:
-              bad.append(f"total {total}% is under the {TOTAL_FLOOR}% floor")
-          else:
-              print(f"  ok TOTAL: {total}% (floor {TOTAL_FLOOR}%)")
-          if bad:
-              print("\n".join("  FAIL " + b for b in bad))
-              sys.exit(1)
-          PYEOF
-
-      - name: Property-based checks (hypothesis, generated inputs)
-        run: |
-          pip install 'hypothesis==6.168.0'
-          out=$(python3 dashboard/tests/property_checks.py 2>&1) || { echo "$out"; exit 1; }
-          echo "$out" | tail -3
-          # A suite that could not run must not pass: the runner prints this line
-          # only after it has actually generated and checked its examples.
-          echo "$out" | grep -qE '^property checks: [0-9]+ passed of [0-9]+, [0-9]+ generated examples each$' \
-            || { echo "the property suite did not report a run"; echo "$out" | tail -20; exit 1; }
-          n=$(echo "$out" | grep -oE '^property checks: [0-9]+' | grep -oE '[0-9]+')
-          [ "$n" -ge 40 ] || { echo "only $n property checks ran"; exit 1; }
 
       - name: Pin contracts (every consumer's own block runs against install.sh)
         run: |
@@ -507,6 +222,7 @@ jobs:
               echo "unsubstituted placeholder in $t:"; grep '__[A-Z][A-Z0-9_]*__' "$scratch/unit.rendered"; exit 1
             fi
           done
+
       - name: No document ships a placeholder nobody filled in
         run: |
           # The same failure as an unsubstituted unit template, one directory up. The
@@ -1120,78 +836,12 @@ jobs:
           # known to carry before the step that installs it for the others (code review, 2026-10-26)
           pip install 'jinja2==3.1.6'
           python3 tests/test_patch_template.py
+
       - name: opencode limits fit the served pool (offline)
         run: python3 tests/test_oc_fit_limits.py
 
       - name: get.sh guards (git fixture, stubbed installer)
         run: python3 tests/test_get_sh.py
-
-      - name: No test file in tests/ is left unrun
-        run: |
-          # Gate 8 counts declared against ran for dashboard/tests. tests/ had
-          # no equivalent, only the hand-kept list of named steps above, and on
-          # 2026-09-14 four tracked files sat in that directory with no step
-          # naming them: test_install_preflight.py, test_install_sudo.py,
-          # test_proxy_tls.py and test_uninstall_inventory.py. A test nobody
-          # runs is worse than no test, because it reads as coverage.
-          #
-          # tests/ holds two shapes. Most files are unittest modules, and those
-          # are discovered below, so they cannot be forgotten. The rest are
-          # plain scripts with a main() that exits non-zero (fake engines for
-          # bench.sh, needle.sh and the tools), which unittest cannot discover,
-          # so each of those has to be named by a step of its own.
-          pip install 'jinja2==3.1.6'     # tests/test_lean_level.py renders with it
-          # tests/test_proxy_systemone.py's round trip through TypeSafe's own SDK. A failed
-          # install is refused below on the runner, where the SDK is not optional.
-          pip install 'typesafe-sdk==0.7.0' 2>/dev/null || echo "typesafe-sdk unavailable: the SDK round trip will skip"
-          python3 - <<'PY'
-          import pathlib, sys
-          ci = pathlib.Path(".github/workflows/ci.yml").read_text()
-          orphans = []
-          for f in sorted(pathlib.Path("tests").glob("test_*.py")):
-              if "def test_" in f.read_text():
-                  continue          # unittest module: the discovery below runs it
-              if f.name not in ci:
-                  orphans.append(f.name)
-          if orphans:
-              print("script-style test files that no CI step names:")
-              for o in orphans:
-                  print("  tests/" + o + "  ->  add:  run: python3 tests/" + o)
-              sys.exit(1)
-          print("every script-style test file is named by a step")
-          PY
-          files=$(cd tests && grep -l 'def test_' test_*.py | sort | tr '\n' ' ')
-          mods=$(for f in $files; do printf 'tests.%s ' "${f%.py}"; done)
-          echo "unittest suites: $mods"
-          declared=$(cd tests && cat $files | grep -c 'def test_')
-          # Under bash -e a failing run used to end the step right here, having
-          # printed nothing but the list above (2026-09-23): say what failed.
-          out=$(python3 -m unittest -v $mods 2>&1) || {
-            echo "$out" | grep -vF ResourceWarning | tail -80
-            echo "the unittest suites failed:"; echo "$out" | grep -E '^(FAIL|ERROR):' || true
-            exit 1; }
-          echo "$out" | grep -vF ResourceWarning | tail -5
-          ran=$(echo "$out" | grep -oE '^Ran [0-9]+' | grep -oE '[0-9]+' || echo 0)
-          echo "declared $declared, ran $ran"
-          [ "$ran" = "$declared" ] || { echo "unittest ran $ran of $declared declared tests"; exit 1; }
-          # "Ran" counts a skipped test as run: a skip decorator on a whole class stayed
-          # green, and so did the SDK round trip when its install above failed (found in
-          # review, 2026-09-24). A skip passes only for a reason this list names: what a
-          # runner cannot have (the reference box, its cache, its units, opencode). The
-          # SDK is installed on the runner, so its absence is a reason only off it.
-          allowed='needs the reference class of machine|needs the pinned bytes cached|no 27B unit installed here|is not the enabled lane here|no Qwen3.8 tokenizer.json|needs a real opencode'
-          [ -n "${GITHUB_ACTIONS:-}" ] || allowed="$allowed|typesafe-sdk is not installed"
-          skips=$(echo "$out" | grep -E "\.\.\. skipped '" || true)
-          bad=$(echo "$skips" | grep -vE "$allowed" | grep . || true)
-          echo "skipped for a listed reason: $(echo "$skips" | grep -c . || true)"
-          [ -z "$bad" ] || { echo "tests skipped for a reason nobody listed:"; echo "$bad"; exit 1; }
-          # Each one must also run its own tests when invoked directly: a file
-          # without a __main__ block exits 0 having run nothing, and a SkipTest out
-          # of setUpClass counts as one skip with testsRun 0, which is how
-          # test_install_sudo.py declared two tests and ran none on every runner
-          # until this gate existed (skip with a class decorator). The offline step
-          # runs every file on its own and checks that count; it was run again
-          # here until 2026-10-18.
 
       - name: bench.sh names the lane it measures (fake engine)
         run: python3 tests/test_bench_lane.py
@@ -1597,3 +1247,397 @@ jobs:
           if git ls-files -z | LC_ALL=C.UTF-8 xargs -0 grep -InP '[\x{2014}\x{2013}\x{2212}]' 2>/dev/null; then
             echo "em/en dash found (house style forbids them)"; exit 1
           fi
+
+  suite:
+    # Each test file once, in its own process, under the offline guard (tests/run_suite.py).
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: The offline suite touches nothing outside itself
+        run: |
+          # This repo's tests are run on the box that serves production, so
+          # "offline" has to be a checked property and not an intention. The
+          # suite gets a witness tree, runs, and the tree must be identical
+          # afterwards. It also must not have written into HOME, which is how
+          # three diagnostics bundles were once found in a developer's home
+          # directory, and must not have contacted the serving ports.
+          witness="$(mktemp -d)"
+          export HOME="$witness/home"
+          mkdir -p "$HOME/.config/qwen38"
+          echo "not-the-real-key" > "$HOME/.config/qwen38/api-key"
+          # The listening sockets compared below cannot see a connection to a port that
+          # was already listening, the engine's on the box that runs ci-local.sh (found in
+          # review, 2026-09-24). Every python the suite starts carries an audit hook that
+          # records a connect() to a serving port, with the test line that made it; a
+          # shell test's curl is not seen. Kept outside the witness, which is hashed.
+          probe="$(mktemp -d)"
+          # tests/run_suite.py loads the same hook into every python it starts (its sitecustomize.py),
+          # beside the one that compares each file's environment at its start and at its exit.
+          export QWEN38_CONTACT_LOG="$probe/contacts" QWEN38_SERVING_PORTS=30000,30001,30020,30090,30091,4096
+          before="$(find "$witness" -type f -exec sha256sum {} + | sort)"
+          ports_before="$(ss -Htln 2>/dev/null | awk '{print $4}' | sort || true)"
+          # The suite runs under tests/suite_reaper.py, a child subreaper: every process it
+          # starts stays its descendant, so what still runs once the suite is over is the
+          # suite's own, named with the sockets it listens on, then stopped. Comparing every
+          # listener of the machine instead failed twice on the reference box on 2026-10-03,
+          # for ports VS Code opened while the suite ran.
+          # Every test file runs once, on its own, as a human runs it, up to four at a time, the
+          # longest first, the files that take a port number out of a socket they close one at a
+          # time at the end (tests/run_suite.py): it fails, runs fewer tests than it declares, or
+          # leaves an environment variable changed, and it is named with what it did. The suite ran
+          # about four times per CI run until 2026-10-24: here, then each module again in
+          # tests/test_suite_isolation.py, which this step and the single-process pass both ran.
+          python3 tests/suite_reaper.py python3 tests/run_suite.py
+          after="$(find "$witness" -type f -exec sha256sum {} + | sort)"
+          if [ "$before" != "$after" ]; then
+            echo "the offline suite wrote into HOME:"
+            diff <(echo "$before") <(echo "$after") || true
+            exit 1
+          fi
+          ports_after="$(ss -Htln 2>/dev/null | awk '{print $4}' | sort || true)"
+          if [ "$ports_before" != "$ports_after" ]; then
+            # Not the suite's: the reaper above names and stops those. Another program
+            # opened or closed a port meanwhile; shown, and fatal on a runner only, where
+            # nothing else runs.
+            echo "listeners other programs opened (>) or closed (<) while the suite ran:"
+            diff <(echo "$ports_before") <(echo "$ports_after") | grep '^[<>]' || true
+            for addr in $(comm -13 <(echo "$ports_before") <(echo "$ports_after")); do
+              ss -Htlnp "sport = :${addr##*:}" 2>/dev/null | awk '{print "  held by:", $4, $6}'
+            done
+            [ "${GITHUB_ACTIONS:-}" != "true" ] || { echo "(nothing else runs on a runner)"; exit 1; }
+          fi
+          if [ -s "$probe/contacts" ]; then
+            echo "the offline suite contacted a serving port:"
+            sort "$probe/contacts" | uniq -c | sort -rn | head -20
+            exit 1
+          fi
+          rm -rf "$witness" "$probe"
+          echo "  ok: HOME untouched, nothing left running or listening, no serving port contacted"
+
+  single:
+    # Every unittest module of tests/ in ONE process: what a module does to another one shows here.
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: No test file in tests/ is left unrun
+        run: |
+          # Gate 8 counts declared against ran for dashboard/tests. tests/ had
+          # no equivalent, only the hand-kept list of named steps above, and on
+          # 2026-09-14 four tracked files sat in that directory with no step
+          # naming them: test_install_preflight.py, test_install_sudo.py,
+          # test_proxy_tls.py and test_uninstall_inventory.py. A test nobody
+          # runs is worse than no test, because it reads as coverage.
+          #
+          # tests/ holds two shapes. Most files are unittest modules, and those
+          # are discovered below, so they cannot be forgotten. The rest are
+          # plain scripts with a main() that exits non-zero (fake engines for
+          # bench.sh, needle.sh and the tools), which unittest cannot discover,
+          # so each of those has to be named by a step of its own.
+          pip install 'jinja2==3.1.6'     # tests/test_lean_level.py renders with it
+          # tests/test_proxy_systemone.py's round trip through TypeSafe's own SDK. A failed
+          # install is refused below on the runner, where the SDK is not optional.
+          pip install 'typesafe-sdk==0.7.0' 2>/dev/null || echo "typesafe-sdk unavailable: the SDK round trip will skip"
+          python3 - <<'PY'
+          import pathlib, sys
+          ci = pathlib.Path(".github/workflows/ci.yml").read_text()
+          orphans = []
+          for f in sorted(pathlib.Path("tests").glob("test_*.py")):
+              if "def test_" in f.read_text():
+                  continue          # unittest module: the discovery below runs it
+              if f.name not in ci:
+                  orphans.append(f.name)
+          if orphans:
+              print("script-style test files that no CI step names:")
+              for o in orphans:
+                  print("  tests/" + o + "  ->  add:  run: python3 tests/" + o)
+              sys.exit(1)
+          print("every script-style test file is named by a step")
+          PY
+          files=$(cd tests && grep -l 'def test_' test_*.py | sort | tr '\n' ' ')
+          mods=$(for f in $files; do printf 'tests.%s ' "${f%.py}"; done)
+          echo "unittest suites: $mods"
+          declared=$(cd tests && cat $files | grep -c 'def test_')
+          # Under bash -e a failing run used to end the step right here, having
+          # printed nothing but the list above (2026-09-23): say what failed.
+          out=$(python3 -m unittest -v $mods 2>&1) || {
+            echo "$out" | grep -vF ResourceWarning | tail -80
+            echo "the unittest suites failed:"; echo "$out" | grep -E '^(FAIL|ERROR):' || true
+            exit 1; }
+          echo "$out" | grep -vF ResourceWarning | tail -5
+          ran=$(echo "$out" | grep -oE '^Ran [0-9]+' | grep -oE '[0-9]+' || echo 0)
+          echo "declared $declared, ran $ran"
+          [ "$ran" = "$declared" ] || { echo "unittest ran $ran of $declared declared tests"; exit 1; }
+          # "Ran" counts a skipped test as run: a skip decorator on a whole class stayed
+          # green, and so did the SDK round trip when its install above failed (found in
+          # review, 2026-09-24). A skip passes only for a reason this list names: what a
+          # runner cannot have (the reference box, its cache, its units, opencode). The
+          # SDK is installed on the runner, so its absence is a reason only off it.
+          allowed='needs the reference class of machine|needs the pinned bytes cached|no 27B unit installed here|is not the enabled lane here|no Qwen3.8 tokenizer.json|needs a real opencode'
+          [ -n "${GITHUB_ACTIONS:-}" ] || allowed="$allowed|typesafe-sdk is not installed"
+          skips=$(echo "$out" | grep -E "\.\.\. skipped '" || true)
+          bad=$(echo "$skips" | grep -vE "$allowed" | grep . || true)
+          echo "skipped for a listed reason: $(echo "$skips" | grep -c . || true)"
+          [ -z "$bad" ] || { echo "tests skipped for a reason nobody listed:"; echo "$bad"; exit 1; }
+          # Each one must also run its own tests when invoked directly: a file
+          # without a __main__ block exits 0 having run nothing, and a SkipTest out
+          # of setUpClass counts as one skip with testsRun 0, which is how
+          # test_install_sudo.py declared two tests and ran none on every runner
+          # until this gate existed (skip with a class decorator). The offline step
+          # runs every file on its own and checks that count; it was run again
+          # here until 2026-10-18.
+
+  coverage:
+    # The coverage floors, root modules and per module.
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Coverage floors, the root modules
+        run: |
+          scratch="${TMPDIR:-/tmp}"   # ci-local.sh gives each step its own; a runner has none
+          pip install 'coverage==7.16.0' 2>/dev/null || true
+          PY="$(./tests/testpy.sh coverage)"
+          rm -f .coverage*
+          for f in tests/test_proxy_guard.py tests/test_proxy_abort.py \
+                   tests/test_proxy_keepalive.py tests/test_proxy_client_keys.py \
+                   tests/test_proxy_systemone.py tests/test_proxy_hold.py \
+                   tests/test_proxy_short_body.py tests/test_proxy_engine_withholds_headers.py \
+                   tests/test_proxy_door.py tests/test_proxy_follows_engine_restarts.py \
+                   tests/test_proxy_vllm_lane.py \
+                   tests/test_proxy_body_budget.py tests/test_proxy_connection_ceiling.py \
+                   tests/test_proxy_content_encoding.py tests/test_proxy_count_routes_cap.py \
+                   tests/test_proxy_rejudge_after_hold.py tests/test_proxy_score_guard.py \
+                   tests/test_proxy_uncountable_shapes.py tests/test_proxy_unknown_vocab.py \
+                   tests/test_proxy_video_guard.py tests/test_proxy_override_headers.py \
+                   tests/test_proxy_floor_stop.py tests/test_proxy_tool_targets.py \
+                   tests/test_tools.py tests/test_oc_fit_limits.py tests/test_oc_merge_limits.py; do
+            "$PY" -m coverage run --branch --parallel-mode --source=. \
+              --omit="dashboard/*,tests/*,.venv-test/*" "$f" >/dev/null 2>&1 || true
+          done
+          "$PY" -m coverage combine -q
+          "$PY" -m coverage report --sort=cover | tee "$scratch/rootcov.txt"
+          rm -f .coverage*
+          "$PY" - "$scratch/rootcov.txt" <<'PYEOF'
+          import re, sys
+          # Measured 2026-09-10. keepalive-proxy.py is the production serving path
+          # and had no floor at all until this step; it went 68 to 75% when the
+          # keepalive injection, the silence ceiling and the non-streamed relay
+          # finally got tests. patch-yarn went 0 to 94% the same day.
+          # 2026-09-19: the System One endpoint and its suite took the module from 75 to
+          # 83% branch coverage, so the floor moves up with it. A floor that trails the
+          # measured number by ten points stops being a floor.
+          # 2026-09-21: 84% once the refusals for the unbounded sampling fields landed
+          # with their own tests, so the floor follows again.
+          # 2026-10-01: 87% with the hold of v6.28 and its suite run in-process as well
+          # (run only as a process, it took the module down to 81%): the floor follows.
+          # 2026-10-17: 87% again with the nine suites of v6.41's guards in the list above;
+          # without them its new code read as untested, 81%.
+          FLOORS = {"keepalive-proxy.py": 85, "patch-yarn.py": 90,
+                    "oc-fit-limits.py": 37, "build-token-map.py": 35}
+          got, bad = {}, []
+          for line in open(sys.argv[1]):
+              m = re.match(r"^(\S+\.py)\s+\d+\s+\d+\s+\d+\s+\d+\s+(\d+)%", line)
+              if m:
+                  got[m.group(1)] = int(m.group(2))
+          for name, floor in FLOORS.items():
+              have = got.get(name)
+              if have is None:
+                  bad.append(f"{name}: not measured at all")
+              elif have < floor:
+                  bad.append(f"{name}: {have}% is under its {floor}% floor")
+              else:
+                  print(f"  ok {name}: {have}% (floor {floor}%)")
+          if bad:
+              print("\n".join("  FAIL " + b for b in bad))
+              sys.exit(1)
+          PYEOF
+
+      - name: Coverage floors (measured, per module)
+        run: |
+          scratch="${TMPDIR:-/tmp}"   # ci-local.sh gives each step its own; a runner has none
+          pip install 'coverage==7.16.0' 2>/dev/null || true
+          PY="$(./tests/testpy.sh coverage)"
+          cd dashboard
+          rm -f .coverage*
+          "$PY" -m coverage run --branch --parallel-mode --source=. -m unittest \
+            $(cd tests && ls test_*.py | sed 's/\.py$//' | sed 's/^/tests./' | tr '\n' ' ')
+          # the property checks are a suite too: leaving them out of the
+          # measurement reported three validate() branches as uncovered while
+          # they were being exercised 300 times each
+          "$PY" -m coverage run --branch --parallel-mode --source=. \
+            tests/property_checks.py >/dev/null
+          "$PY" -m coverage combine -q
+          "$PY" -m coverage report --sort=cover | tee "$scratch/cov.txt"
+          rm -f .coverage*
+          # A floor per module, raised in a commit and never lowered quietly.
+          # These are what was measured on 2026-09-10, minus a point of slack.
+          "$PY" - "$scratch/cov.txt" <<'PYEOF'
+          import re, sys
+          # Raised in a commit, never lowered quietly. cockpit.py went
+          # 14 -> 30 -> 53 -> 59 -> 71 over one day of writing tests.
+          #
+          # lifecycle.py and recipes.py are at 100% BRANCH coverage and are held
+          # there: they are pure logic, so there is no excuse, and the two
+          # branches that cannot be taken by any input carry a "pragma: no
+          # branch" whose reason is itself guarded by a test
+          # (test_every_marker_is_handled_by_the_chain). A module that reaches
+          # 100% and is then allowed to slip is worse than one that never got
+          # there, because the number stops meaning anything.
+          # A floor belongs to the MOST CONSTRAINED environment that has to pass
+          # it, which is the runner and not a developer's box: cockpit.py reads
+          # 71% here and 69% on a GitHub runner, because the runner has no
+          # docker, no systemctl and no nvidia-smi, so several collector branches
+          # never run there. The gate caught exactly that on the first push. Note
+          # that lifecycle.py and recipes.py read 100% in both, which is what
+          # being pure logic buys.
+          FLOORS = {"cockpit.py": 68, "agent_relay.py": 88, "registry.py": 88,
+                    "lifecycle.py": 100, "recipes.py": 100}
+          TOTAL_FLOOR = 89
+          got, bad = {}, []
+          for line in open(sys.argv[1]):
+              m = re.match(r"^(\S+\.py|TOTAL)\s+\d+\s+\d+\s+\d+\s+\d+\s+(\d+)%", line)
+              if m:
+                  got[m.group(1)] = int(m.group(2))
+          for name, floor in FLOORS.items():
+              have = got.get(name)
+              if have is None:
+                  bad.append(f"{name}: not measured at all")
+              elif have < floor:
+                  bad.append(f"{name}: {have}% is under its {floor}% floor")
+              else:
+                  print(f"  ok {name}: {have}% (floor {floor}%)")
+          total = got.get("TOTAL")
+          if total is None:
+              bad.append("no TOTAL line in the coverage report")
+          elif total < TOTAL_FLOOR:
+              bad.append(f"total {total}% is under the {TOTAL_FLOOR}% floor")
+          else:
+              print(f"  ok TOTAL: {total}% (floor {TOTAL_FLOOR}%)")
+          if bad:
+              print("\n".join("  FAIL " + b for b in bad))
+              sys.exit(1)
+          PYEOF
+
+  cockpit:
+    # The cockpit's unit tests, then the cockpit in a headless browser.
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: The cockpit page survives losing its server (headless browser, a cockpit of its own)
+        run: |
+          # The browser checks in dashboard/tests/*.mjs ran nowhere (found in review,
+          # 2026-09-24). This one and the three below own what they drive: a dry-run
+          # cockpit on loopback with a key of its own, a PATH whose box commands answer
+          # nothing and no network, and a browser that resolves no name. The other two
+          # drive the live cockpit of a box and stay manual; they are parsed here. Parsing
+          # is not running: the update banner check called functions the redesign of
+          # 2026-09-30 renamed and failed 7 of 9 since, parsed green, and the monkey check
+          # found a page that read '…' for good with no text engine (both 2026-10-02):
+          # they own their cockpit now and run below.
+          for f in dashboard/tests/*.mjs; do node --check "$f"; done
+          node dashboard/tests/resilience-check.mjs
+
+      - name: The cockpit says when a newer version exists (headless browser, a cockpit of its own)
+        run: node dashboard/tests/update-banner-check.mjs
+
+      - name: The cockpit survives a click storm on every view (headless browser, a cockpit of its own)
+        run: node dashboard/tests/monkey-check.mjs
+
+      - name: The cockpit page works under a finger (headless browser, real taps, a cockpit of its own)
+        run: |
+          # Every browser check switched views with element.click() from script, which
+          # ignores what covers the element: on a phone the drawer's veil covered every rail
+          # item and all of them stayed green (2026-09-30). This one taps where a finger
+          # lands, on five touch screens and a laptop, and reads what the page did.
+          node dashboard/tests/touch-check.mjs
+
+      - name: The Agent tab against a real opencode (headless browser, a cockpit and an opencode of its own)
+        timeout-minutes: 15
+        run: |
+          # The Agent checks drove the live cockpit of a box, by hand: opencode 1.19 sent its page
+          # chunked, and the relay dropped the phone layer, and it checks the Origin of every terminal
+          # connection; both were found on a box after an update (2026-10-11 and 2026-10-22). This one
+          # fetches the opencode release install.sh pins, checked against its sha256, and drives it
+          # through a dry-run cockpit whose relay answers on 127.0.0.2: the relay's gate, the Agent tab,
+          # the phone layer in the page opencode sends, and a terminal with a command run in it.
+          node dashboard/tests/agent-bench.mjs
+
+      - name: Cockpit unit tests (every tests/test_*.py, discovered)
+        run: |
+          cd dashboard
+          # Count what unittest actually runs against what the files declare.
+          # test_lifecycle.py had 58 tests and no __main__ block, so running it
+          # as a script executed nothing and exited 0: the largest suite in the
+          # repo was green because it never ran. Silence is not a pass.
+          # Discovered, not listed: a fourth test file that nobody runs is worse
+          # than no fourth file, and the list was hardcoded until 2026-09-08.
+          files=$(cd tests && ls test_*.py | sort | tr '\n' ' ')
+          mods=$(for f in $files; do printf 'tests.%s ' "${f%.py}"; done)
+          echo "suites: $mods"
+          declared=$(cd tests && cat $files | grep -c 'def test_')
+          out=$(python3 -m unittest -v $mods 2>&1)
+          echo "$out" | tail -5
+          ran=$(echo "$out" | grep -oE '^Ran [0-9]+' | grep -oE '[0-9]+' || echo 0)
+          echo "declared $declared, ran $ran"
+          [ "$ran" = "$declared" ] || { echo "unittest ran $ran of $declared declared tests"; exit 1; }
+          # "Ran" counts a skipped test as run, so a skip on a whole class stayed green
+          # (found in review, 2026-09-24). No cockpit test has a reason to skip here.
+          skips=$(echo "$out" | grep -E "\.\.\. skipped '" || true)
+          [ -z "$skips" ] || { echo "cockpit tests skipped:"; echo "$skips"; exit 1; }
+          # Each file is also run on its own, the way a human runs it, by the offline
+          # step below, under its witness HOME, with the count it reports checked: a
+          # file without a __main__ block exits 0 having run nothing, and a file that
+          # fails on its own but passes after the modules before it in the run above
+          # fails there. It ran here as well until 2026-10-18, so each file ran three
+          # times in all.
+
+  fuzz:
+    # Generated inputs: the proxy fuzz, the mutation score, the property checks.
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Proxy fuzz and relay simulation (hypothesis, generated bytes and clients)
+        run: |
+          pip install 'hypothesis==6.168.0'
+          out=$(python3 tests/proxy_fuzz.py 2>&1) || { echo "$out" | tail -40; exit 1; }
+          echo "$out" | tail -3
+          echo "$out" | grep -qE '^proxy fuzz: [0-9]+ passed of [0-9]+, [0-9]+ generated examples each$' \
+            || { echo "the fuzz suite did not report a run"; echo "$out" | tail -20; exit 1; }
+          n=$(echo "$out" | grep -oE '^proxy fuzz: [0-9]+' | grep -oE '[0-9]+')
+          # every one of the 16: a floor of 15 let one of them disappear
+          [ "$n" -ge 16 ] || { echo "only $n fuzz checks ran"; exit 1; }
+
+      - name: Mutation score (do the tests catch a wrong operator?)
+        run: |
+          # The only question that matters for a suite written alongside its code:
+          # if the code were wrong, would the tests notice? This edits one operator
+          # at a time and runs the suite after each edit. Measured 2026-09-10:
+          # lifecycle.py 74.8% before the two MutantsThatSurvived classes were
+          # written from a first run's survivors, 90.8% after. The remainder are
+          # largely equivalent mutants (an `or` clause that already covers the
+          # threshold next to it), which is the known ceiling of the method.
+          python3 tests/mutation.py --all
+
+      - name: Property-based checks (hypothesis, generated inputs)
+        run: |
+          pip install 'hypothesis==6.168.0'
+          out=$(python3 dashboard/tests/property_checks.py 2>&1) || { echo "$out"; exit 1; }
+          echo "$out" | tail -3
+          # A suite that could not run must not pass: the runner prints this line
+          # only after it has actually generated and checked its examples.
+          echo "$out" | grep -qE '^property checks: [0-9]+ passed of [0-9]+, [0-9]+ generated examples each$' \
+            || { echo "the property suite did not report a run"; echo "$out" | tail -20; exit 1; }
+          n=$(echo "$out" | grep -oE '^property checks: [0-9]+' | grep -oE '[0-9]+')
+          [ "$n" -ge 40 ] || { echo "only $n property checks ran"; exit 1; }
+
+  checks:
+    # Every job above passed: the status of the run, under the name it always had.
+    needs: [static, suite, single, coverage, cockpit, fuzz]
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Every job passed
+        run: echo "static, suite, single, coverage, cockpit and fuzz all passed"
