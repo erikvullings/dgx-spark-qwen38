@@ -5,6 +5,8 @@ Usage: oc-merge-limits.py <target opencode.json> <provider> <model id> <context>
        oc-merge-limits.py <target opencode.json> --compaction <preserve_recent_tokens>
        oc-merge-limits.py <target opencode.json> <provider> <model id> --add-variant <level>
        oc-merge-limits.py <target opencode.json> --autoupdate false|notify
+       oc-merge-limits.py <target opencode.json> --deny-bash
+       oc-merge-limits.py --agent-auto-permission
        oc-merge-limits.py <target opencode.json> --add-providers <generated opencode.json>
        oc-merge-limits.py <target opencode.json> --remove-providers <API key file>
        oc-merge-limits.py <target opencode.json> --remove-provider <provider id>
@@ -45,6 +47,14 @@ is one, and 1.19, which installs nothing itself, offers OpenCode 2 on its TUI's 
 screen once it is on the newest 1.x, whatever the value but false (cli/upgrade.ts,
 1.19.3). OpenCode 2's server is another one than the 1.x `opencode serve` the cockpit's
 Agent tab relays. "notify" keeps a user's own false.
+
+--deny-bash adds DENY_BASH to "permission"."bash" as "deny" rules, LAST, because opencode
+reads its permission rules in order and the last one that matches wins: put first, a "*"
+after them would allow what they deny. A "bash" given as one action ("ask") becomes
+{"*": that action} plus the rules, so the user's choice for every other command stands; a
+pattern the user set themselves is left as they set it. --agent-auto-permission prints the
+OPENCODE_PERMISSION the Agent tab's unit takes with AGENT_AUTO=1: {"*": "allow"} lands after
+every rule of the config, so the same rules come again under a key the config does not have.
 
 The file is read the way opencode reads it: jsonc-parser with allowTrailingComma (read in
 the 1.18.32 binary), so // and /* */ comments anywhere outside a string and a comma before
@@ -481,6 +491,132 @@ def merge_autoupdate(path: str, value) -> int:
     return 0
 
 
+# The hosts of Cohere's report (26/10/2026): in an agent test with a shell and no network,
+# Qwen3.8-Flash-Next sent a PUT to an Alibaba Cloud OSS bucket in Beijing, fewer than once in
+# 100,000 calls, from the original weights. opencode 1.19.4 runs every shell command unasked
+# unless told otherwise (its defaults start from "*": "allow", read in its binary), and a deny
+# holds under --yolo, an alias of --auto there that only approves what would ask (shown on the
+# box, 2026-10-28). These deny a command whose text names the OSS domain or a cloud metadata
+# address: the case observed, not every way a model could write an address.
+DENY_BASH = ("*aliyuncs.com*", "*169.254.169.254*", "*100.100.100.200*")
+
+
+def _wild(text: str, pattern: str) -> bool:
+    """opencode's permission wildcard: * any run of characters, ? one, the rest literal."""
+    rx = "".join(".*" if c == "*" else "." if c == "?" else re.escape(c) for c in pattern)
+    return re.fullmatch(rx, text, re.S) is not None
+
+
+def _bash_action(permission, command: str):
+    """The action the config's own rules give a shell command, the last rule that matches
+    winning as in opencode; None when none of them matches."""
+    if isinstance(permission, str):
+        return permission
+    action = None
+    for name, rules in (permission or {}).items():
+        if not _wild("bash", name):
+            continue
+        for pattern, act in (rules.items() if isinstance(rules, dict) else (("*", rules),)):
+            if _wild(command, pattern):
+                action = act
+    return action
+
+
+def append_member(text: str, path, key: str, value: str) -> str:
+    """text with a new member `key` put LAST in the object at `path`: right after the value of
+    its last member, before any trailing comma or comment, on a line of its own when that
+    member has one. set_member puts a new member first, which is the wrong end for a rule
+    that has to win."""
+    clean = blank(text)
+    obj = _locate(clean, path)
+    if obj is None or clean[obj[1]] != "{":
+        raise ValueError(f"no object at {'/'.join(path) or 'the root'}")
+    members = _members(clean, obj[1])
+    if any(m[0] == key for m in members):
+        raise ValueError(f"{key!r} is already in {'/'.join(path) or 'the root'}")
+    if not members:
+        return set_member(text, path, key, value)
+    nl = "\r\n" if "\r\n" in text else "\n"
+    _, key_at, _, vend = members[-1]
+    lead = clean[clean.rfind("\n", 0, key_at) + 1:key_at]
+    sep, indent = (", ", "") if lead.strip() else ("," + nl + lead, lead)
+    member = (json.dumps(key) + ": " + value).replace("\n", nl + indent)
+    return text[:vend] + sep + member + text[vend:]
+
+
+def merge_deny_bash(path: str) -> int:
+    """Put the DENY_BASH rules after every shell rule the file has, keeping its other rules and
+    the user's own setting of any of these patterns."""
+    opened = _open(path)
+    if opened is None:
+        return 1
+    text, doc = opened
+    rules = {p: "deny" for p in DENY_BASH}
+    perm = doc.get("permission")
+    want = copy.deepcopy(doc)
+    ours = list(DENY_BASH)
+    try:
+        if perm is None or isinstance(perm, str):
+            # one action for every tool stays the action of every other command
+            want["permission"] = ({} if perm is None else {"*": perm}) | {"bash": rules}
+            new = set_member(text, [], "permission", json.dumps(want["permission"], indent=2))
+        elif not isinstance(perm, dict):
+            print(f"{path}: refused, its permission is neither an action nor an object; unchanged")
+            return 1
+        else:
+            names = list(perm)
+            later = [n for n in names[names.index("bash") + 1:] if _wild("bash", n)] if "bash" in perm else []
+            if later:
+                print(f"{path}: unchanged, {', '.join(map(json.dumps, later))} comes after \"bash\" in "
+                      f"its permission and would override a rule put there: add the rules of "
+                      f"docs/agents-and-network.md after it by hand")
+                return 4
+            bash = perm.get("bash")
+            if bash is None:
+                want["permission"]["bash"] = rules
+                new = append_member(text, ["permission"], "bash", json.dumps(rules, indent=2))
+            elif isinstance(bash, str):
+                want["permission"]["bash"] = {"*": bash} | rules
+                new = set_member(text, ["permission"], "bash", json.dumps(want["permission"]["bash"], indent=2))
+            elif isinstance(bash, dict):
+                ours = [p for p in DENY_BASH if p not in bash]
+                if not ours:
+                    print("the deny rules for the hosts of Cohere's report are already there: unchanged")
+                    return 0
+                new = text
+                for p in ours:
+                    want["permission"]["bash"][p] = "deny"
+                    new = append_member(new, ["permission", "bash"], p, '"deny"')
+            else:
+                print(f"{path}: refused, its permission for bash is neither an action nor an object; unchanged")
+                return 1
+    except ValueError as e:
+        print(f"{path}: refused, {e}; unchanged")
+        return 1
+    saved, bad = commit(path, new, want)
+    if bad:
+        print(f"{path}: refused, {bad}; unchanged.")
+        return 1
+    try:
+        got = _reread(path).get("permission")
+        wrong = [p for p in ours if _bash_action(got, p.replace("*", "x")) != "deny"]
+    except ValueError as e:
+        wrong = [str(e)]
+    if not _landed(path, saved, f"not denied in the end: {', '.join(wrong)}" if wrong else "",
+                   "the deny rules"):
+        return 1
+    print(f"bash deny rules added for {', '.join(ours)} (backup {saved})")
+    return 0
+
+
+def agent_auto_permission() -> str:
+    """OPENCODE_PERMISSION for AGENT_AUTO=1. opencode merges it into the config after every rule
+    of the files, so its "*" would win over the rules --deny-bash put there (an echo naming an
+    aliyuncs.com host ran under {"*": "allow"} on 2026-10-28): the same rules come again after
+    it, under "bash*", a key the config does not have, which matches bash all the same."""
+    return json.dumps({"*": "allow", "bash*": {p: "deny" for p in DENY_BASH}}, separators=(",", ":"))
+
+
 def _verify_variant(path, provider, model, level) -> str:
     try:
         doc = _reread(path)
@@ -730,6 +866,11 @@ def main(argv: list[str]) -> int:
             print(f"--autoupdate takes false or notify, not {argv[3]!r}: {argv[1]} unchanged")
             return 2
         return merge_autoupdate(argv[1], AUTOUPDATE[argv[3]])
+    if len(argv) == 3 and argv[2] == "--deny-bash":
+        return merge_deny_bash(argv[1])
+    if argv[1:] == ["--agent-auto-permission"]:
+        print(agent_auto_permission())
+        return 0
     if len(argv) == 4 and argv[2] == "--add-providers":
         return add_providers(argv[1], argv[3])
     if len(argv) == 4 and argv[2] == "--remove-providers":
