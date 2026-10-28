@@ -40,6 +40,9 @@ FILES = {
                                   "        sys.argv = ['keepalive-proxy.py']\n        os.chdir('/')\n" + MAIN,
     "dashboard/tests/test_cockpit_side.py": "import unittest\n\nclass T(unittest.TestCase):\n    def TEST_a(self):\n"
                                             "        pass\n" + MAIN,
+    # says where it is on stderr, as unittest does, then hangs
+    "tests/test_hangs.py": "import sys, time, unittest\n\nclass T(unittest.TestCase):\n    def TEST_a(self):\n"
+                           "        sys.stderr.write('hung in TEST_a\\n'); sys.stderr.flush(); time.sleep(60)\n" + MAIN,
 }
 
 
@@ -93,6 +96,14 @@ class OnPlantedDefects(unittest.TestCase):
     def test_a_file_that_replaces_its_argv_and_directory_still_reports(self):
         # the proxy's tests set sys.argv to keepalive-proxy.py: their processes went unreported (2026-10-24)
         self.assertEqual(self.verdict("tests/test_argv_and_cwd.py")["problems"], [])
+
+    def test_a_file_that_hangs_is_named_with_what_it_said(self):
+        # the verdict kept the bytes of its stdout and none of its stderr, where unittest writes
+        v = rs.run_one("tests/test_hangs.py", self.probe, repo=self.repo, timeout=2)
+        self.assertIsNone(v["rc"])
+        self.assertIn("timed out after 2 s", v["problems"][0])
+        self.assertIn("hung in TEST_a", v["problems"][0])
+        self.assertNotIn("b'", v["problems"][0])
 
     def test_a_cockpit_file_runs_from_the_dashboard(self):
         self.assertEqual(self.verdict("dashboard/tests/test_cockpit_side.py")["problems"], [])

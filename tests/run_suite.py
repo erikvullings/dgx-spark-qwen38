@@ -105,7 +105,10 @@ def run_one(f, probe, repo=REPO, timeout=1800):
                            stdin=subprocess.DEVNULL, timeout=timeout)
         rc, out = r.returncode, r.stdout + r.stderr
     except subprocess.TimeoutExpired as e:
-        rc, out = None, f"timed out after {timeout} s\n{(e.stdout or b'')[-4000:]!r}"
+        # what it printed so far is bytes whatever text= says, and unittest names the test it is
+        # in on stderr, which this dropped (code review, 2026-10-28)
+        part = b"".join(x for x in (e.stdout, e.stderr) if x).decode(errors="replace")
+        rc, out = None, f"timed out after {timeout} s\n{part[-4000:]}"
     verdict = {"file": f, "seconds": round(time.monotonic() - t0, 1), "rc": rc, "problems": []}
     if rc != 0:
         verdict["problems"].append("failed, the end of its output:\n" + "\n".join(out.splitlines()[-60:]))
