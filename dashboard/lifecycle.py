@@ -955,17 +955,21 @@ GUARD_CEILING_RE = re.compile(r"\[proxy\] drain ceiling reached after ([\d.]+)s"
 # journalctl -o short-unix, so each line starts with its time; a peer comes before the words.
 # A named client's peer carries its key label too, as on every line of its request (_KEY above):
 # without it, the lines of the clients the identity wall names never matched (found in review).
-TOOL_TARGET_RE = re.compile(r"^(\d+(?:\.\d+)?) .*?\[proxy\] \S+" + _KEY + r" TOOL TARGET (.+?) in an? (\S+) call on (\S+),")
+# Anchored on the journal's own header (time, host, process): a client's text the proxy logs
+# (a dropped schema pattern) could hold a second "[proxy] x TOOL TARGET ..." that a looser
+# pattern counted (found in review).
+TOOL_TARGET_RE = re.compile(r"^(\d+(?:\.\d+)?) \S+ [^\s:]+: \[proxy\] \S+" + _KEY
+                            + r" TOOL TARGET (.+?) in an? (\S+) call on (\S+),")
 TOOL_TARGET_GREP = "TOOL TARGET "
 
 
-def parse_tool_targets(raw: str) -> dict:
-    """journalctl -o short-unix lines -> how many tool calls named a host of Cohere's report in the
-    window read, and the newest one: its time, hosts, tool and route."""
+def parse_tool_targets(raw: str, since: float = 0.0) -> dict:
+    """journalctl -o short-unix lines -> how many tool calls named a host of Cohere's report from
+    `since` on, and the newest one: its time, hosts, tool and route."""
     out = {"count": 0, "last": None}
     for ln in raw.splitlines():
         m = TOOL_TARGET_RE.search(ln)
-        if not m:
+        if not m or float(m.group(1)) < since:
             continue
         out["count"] += 1
         at = float(m.group(1))

@@ -1455,7 +1455,7 @@ def collect_guard():
 # seconds rather than at each tick of the guard: a week of the reference box's proxy journal,
 # 22,656 lines, took 0.47 s to scan (2026-10-28).
 TOOL_TARGETS_EVERY = 300.0
-TOOL_TARGETS = {"at": 0.0, "seen": {"count": 0, "last": None}}
+TOOL_TARGETS = {"at": 0.0, "raw": "", "seen": {"count": 0, "last": None}}
 
 
 def tool_targets_seen() -> dict:
@@ -1464,12 +1464,16 @@ def tool_targets_seen() -> dict:
         return TOOL_TARGETS["seen"]
     raw = run(["journalctl", "-u", "qwen38-keepalive.service", "--since", "-24h", "--no-pager",
                "-o", "short-unix", "-g", lc.TOOL_TARGET_GREP], timeout=6)
-    seen, was = lc.parse_tool_targets(raw), TOOL_TARGETS["seen"]
-    # run() answers "" for a read that failed as for a day without any: a line seen inside the
-    # last day is still in the journal, so nothing read while one is means the read failed
-    if not seen["count"] and was["count"] and was["last"] and was["last"]["at"] > now - 86400:
-        seen = was
-    TOOL_TARGETS.update(at=now, seen=seen)
+    seen = lc.parse_tool_targets(raw, since=now - 86400)
+    # run() answers "" for a read that failed as for a day without any. A line of the last good
+    # read still inside the day is still in the journal, so nothing read while one is means the
+    # read failed: the last good read is counted again, over the day as it stands now (it kept
+    # its whole count, lines past the day included, found in review)
+    if not seen["count"]:
+        before = lc.parse_tool_targets(TOOL_TARGETS["raw"], since=now - 86400)
+        if before["count"]:
+            seen, raw = before, TOOL_TARGETS["raw"]
+    TOOL_TARGETS.update(at=now, raw=raw, seen=seen)
     return seen
 
 

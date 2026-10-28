@@ -316,7 +316,7 @@ class Parse(Base):
                     return answer[0]
                 return ""
         self.cp.run = Journal()
-        self.cp.TOOL_TARGETS.update(at=0.0, seen={"count": 0, "last": None})
+        self.cp.TOOL_TARGETS.update(at=0.0, raw="", seen={"count": 0, "last": None})
         out = self.cp.collect_guard()
         self.assertEqual(out["tool_targets"]["count"], 1)
         self.assertEqual(out["tool_targets"]["last"]["tool"], "bash")
@@ -328,6 +328,12 @@ class Parse(Base):
         self.cp.TOOL_TARGETS["at"] = 0.0
         self.assertEqual(self.cp.collect_guard()["tool_targets"]["count"], 1)
         self.assertEqual(len(seen), 2)
+        # a failed read counts the last good one again over the day as it stands: a line that has
+        # left the day is not counted any more (the whole count was kept, found in review)
+        now = time.time()
+        two = line.format(at=now - 90000) + line.format(at=now - 3600)
+        self.cp.TOOL_TARGETS.update(at=0.0, raw=two, seen={"count": 2, "last": {"at": now - 3600}})
+        self.assertEqual(self.cp.collect_guard()["tool_targets"]["count"], 1)
 
     def test_the_zombie_guard_reports_the_proxy_that_runs(self):
         """journalctl -g is given a pattern, and -n 1 answers the newest line matching it:

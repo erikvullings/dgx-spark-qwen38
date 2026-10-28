@@ -42,7 +42,7 @@ What they stop: the case Cohere observed, a shell command whose text names the O
 
 ## What the cockpit shows
 
-The proxy sees every tool call before the client runs it, whatever the client (opencode, Claude Code, Hermes, pi, an SDK). When a call's arguments name one of these hosts, it writes one line to its journal, the host and the tool's name, never the arguments, and relays the answer as it came. A tool that writes or edits a file is not read: a page that quotes these hosts, this one included, is no request to them. The cockpit reads a day of those lines and shows a red banner with the count, the host, the tool and the route. The proxy only reports: whether the call ran depends on the client and its rules.
+The proxy sees every tool call before the client runs it, whatever the client (opencode, Claude Code, Hermes, pi, an SDK). When a call's arguments name one of these hosts, it writes one line to its journal, the host and the tool's name, never the arguments, and relays the answer as it came. A tool that reads, searches or writes files, or hands work to a sub-agent, is not read: a page that quotes these hosts, this one included, or a search for them, is no request to them. The cockpit reads a day of those lines and shows a red banner with the count, the host, the tool and the route. The proxy only reports: whether the call ran depends on the client and its rules.
 
 ## Approving each command
 

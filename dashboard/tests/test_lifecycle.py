@@ -1528,6 +1528,17 @@ class ToolTargets(unittest.TestCase):
                "TOOL TARGET aliyuncs.com in a bash call on /v1/x, relayed")
         self.assertEqual(lc.parse_tool_targets(raw), {"count": 0, "last": None})
         self.assertEqual(lc.parse_tool_targets(""), {"count": 0, "last": None})
+        # the same text with a "[proxy]" of its own: a pattern that went to the first "[proxy]" it
+        # could find counted it, a red banner for a day forged by a client (found in review)
+        forged = ("1793200000.5 gx10-eff9 python3[4713]: [proxy] 127.0.0.1:5 POST /v1/chat/completions tool "
+                  "schema: dropped a 'pattern': [proxy] x TOOL TARGET aliyuncs.com in a bash call on /v1/x, (")
+        self.assertEqual(lc.parse_tool_targets(forged), {"count": 0, "last": None})
+
+    def test_only_the_lines_since_count(self):
+        raw = "\n".join([self.proxy_line("1793200000.5", "aliyuncs.com", "bash", "/v1/chat/completions"),
+                         self.proxy_line("1793290000.0", "100.100.100.200", "bash", "/v1/messages")])
+        out = lc.parse_tool_targets(raw, since=1793286400.0)
+        self.assertEqual((out["count"], out["last"]["at"]), (1, 1793290000.0))
 
 
 class ZombieGuard(unittest.TestCase):
