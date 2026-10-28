@@ -812,8 +812,8 @@ def remove_providers(path: str, key_file: str) -> int:
     every provider included, while a {file:} reference points at a file that is gone
     ("bad file reference", opencode 1.18.32). So the providers that read it go first,
     with model and small_model when they name one of them. A file left with nothing
-    but what install.sh writes ($schema, autoupdate, compaction, no provider) was this
-    repo's, and is moved to a backup instead of being kept empty.
+    but what install.sh writes ($schema, autoupdate, compaction, no provider, and since v1.40.4 the
+    rules of deny_permission) was this repo's, and is moved to a backup instead of being kept empty.
     """
     opened = _open(path)
     if opened is None:
@@ -834,7 +834,10 @@ def remove_providers(path: str, key_file: str) -> int:
         if isinstance(cur.get(k), str) and cur[k].split("/", 1)[0] in gone:
             del cur[k]
             steps.append(([k], copy.deepcopy(cur)))
-    if set(cur) <= {"$schema", "autoupdate", "compaction", "provider"} and not cur.get("provider"):
+    # since v1.40.4 the copy also holds the rules --deny-bash put in it: a "permission" of any other
+    # content is the user's, and keeps the file (the copy stayed, emptied of its provider, found in review)
+    if (set(cur) <= {"$schema", "autoupdate", "compaction", "provider", "permission"} and not cur.get("provider")
+            and cur.get("permission", deny_permission()) == deny_permission()):
         saved = backup(path)
         os.unlink(path)
         print(f"{path} held only this box's providers ({', '.join(gone)}): moved to {saved}")

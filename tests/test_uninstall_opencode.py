@@ -25,6 +25,10 @@ def purge_block() -> str:
     return text[start:end]
 
 
+# what --deny-bash puts in the copy: the rules under their own key (oc-merge-limits.py deny_permission)
+RULES = {"bash*": {"*aliyuncs.com*": "deny", "*169.254.169.254*": "deny", "*100.100.100.200*": "deny"}}
+
+
 def box(key):
     return {"npm": "@ai-sdk/openai-compatible",
             "options": {"baseURL": "http://127.0.0.1:30001/v1", "apiKey": "{file:" + key + "}"},
@@ -58,6 +62,21 @@ class UninstallLeavesOpencodeStartable(unittest.TestCase):
         self.assertFalse(oc.exists())
         self.assertIn("held only this box's providers (qwen38): moved to", out)
         self.assertEqual(len(list(oc.parent.glob("opencode.json.bak-*"))), 1, "no backup was kept")
+
+    def test_the_copy_with_the_rules_goes_with_the_key_too(self):
+        # v1.40.4 puts the bash rules in the copy: it stayed, its provider gone and autoupdate off for good
+        # (found in review, 2026-10-29). Rules of the user's own keep the file.
+        for rules, gone in ((RULES, True), ({"bash*": {**RULES["bash*"], "rm -rf *": "deny"}}, False)):
+            with self.subTest(gone=gone):
+                mine = lambda k: json.dumps({"$schema": "https://opencode.ai/config.json", "autoupdate": False,
+                                             "provider": {"qwen38": box(k)}, "model": "qwen38/qwen3.8-27b",
+                                             "permission": rules}, indent=2)
+                out, home, cfg, oc = self.run_it(mine, purge=1)
+                self.assertEqual(oc.exists(), not gone, out)
+                if gone:
+                    self.assertIn("held only this box's providers (qwen38): moved to", out)
+                else:
+                    self.assertEqual(json.loads(oc.read_text())["permission"], rules)
 
     def test_a_users_own_config_keeps_everything_but_the_box(self):
         theirs = lambda k: json.dumps({"model": "qwen38/qwen3.8-27b", "plugin": ["x.js"],
