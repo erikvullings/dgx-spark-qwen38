@@ -2504,6 +2504,7 @@ OC_ORNITH_122B="$OC_ORNITH_122B" OC_ORNITH_122B_CTX="$OC_ORNITH_122B_CTX" OC_ORN
 OC_ORNITH_122B_NAME="$OC_ORNITH_122B_NAME" OC_ORNITH_122B_BOOT="$ORNITH_122B_BOOT" \
 OC_KEEP="$OC_KEEP" OC_PIN="$OPENCODE_PIN" \
 OC_CONFIG_DIR="$CONFIG_DIR" python3 - <<'PYEOF' || die "could not write the opencode provider config"
+import importlib.util
 import json
 import os
 
@@ -2640,6 +2641,13 @@ if os.environ.get("OC_ORNITH_122B_BOOT") == "1" and "ornith-122b" in providers:
 doc = {"$schema": "https://opencode.ai/config.json", "provider": providers,
        "compaction": {"preserve_recent_tokens": int(os.environ["OC_KEEP"]), "prune": False},
        "model": default, "small_model": default}
+# Cohere's report (2026-10-26): the shell rules for its hosts, under a key of their own. opencode
+# merges this file over the user's own config for oc and the Agent tab, so they come after the
+# user's rules there whatever those say (oc-merge-limits.py, docs/agents-and-network.md).
+_spec = importlib.util.spec_from_file_location("ocm", os.path.join(os.environ["OC_REPO_DIR"], "oc-merge-limits.py"))
+_ocm = importlib.util.module_from_spec(_spec)
+_spec.loader.exec_module(_ocm)
+doc["permission"] = _ocm.deny_permission()
 # With the version pinned, opencode looks for no update at all: false, the JSON boolean
 # (its schema takes a boolean or "notify", not the string "false"). With any other value
 # 1.19's TUI checks every 10 minutes and, once it is on the newest 1.x, shows "/update to
@@ -2681,8 +2689,9 @@ if [ ! -e "$OC_USER_CFG" ]; then
 elif ! grep -qsE '"(qwen38|flashnext|kolibri|nemotron|nemotron-super|flash-local|ornith-122b)"' "$OC_USER_CFG"; then
   # the user's own config, with none of this repo's providers in it: theirs to merge
   echo "  your $OC_USER_CFG has no provider for this box: merge the \"qwen38\" (or \"flashnext\")"
-  echo "  block from $CONFIG_DIR/opencode.json into it (docs/opencode.md), and the shell"
-  echo "  rules of docs/agents-and-network.md"
+  echo "  block from $CONFIG_DIR/opencode.json into it (docs/opencode.md). oc and the Agent tab"
+  echo "  read the box's shell rules from that file; plain opencode needs them in yours"
+  echo "  (docs/agents-and-network.md)"
 else
   # A config set up for this box, by the copy above or by hand, lists the lanes the
   # box had then. A lane installed since (the 27B first, the flash lane later) brings

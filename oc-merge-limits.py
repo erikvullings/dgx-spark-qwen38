@@ -48,13 +48,16 @@ screen once it is on the newest 1.x, whatever the value but false (cli/upgrade.t
 1.19.3). OpenCode 2's server is another one than the 1.x `opencode serve` the cockpit's
 Agent tab relays. "notify" keeps a user's own false.
 
---deny-bash adds DENY_BASH to "permission"."bash" as "deny" rules, LAST, because opencode
-reads its permission rules in order and the last one that matches wins: put first, a "*"
-after them would allow what they deny. A "bash" given as one action ("ask") becomes
-{"*": that action} plus the rules, so the user's choice for every other command stands; a
-pattern the user set themselves is left as they set it. --agent-auto-permission prints the
-OPENCODE_PERMISSION the Agent tab's unit takes with AGENT_AUTO=1: {"*": "allow"} lands after
-every rule of the config, so the same rules come again under a key the config does not have.
+--deny-bash puts the DENY_BASH rules in "permission" under a key of their own, "bash*" (a
+wildcard that matches the bash tool), as its LAST member: opencode reads its permission rules in
+order and the last one that matches wins, so a "*" after them would allow what they deny, and
+the user's own "bash" stays as they wrote it. A run that finds them overridden by a key added
+after them puts them last again; a pattern the user set inside them stays as they set it.
+deny_permission() is the same block for the config install.sh generates, which opencode merges
+over the user's own, so they come after the user's rules there whatever those say.
+--agent-auto-permission prints the OPENCODE_PERMISSION the Agent tab's unit takes with
+AGENT_AUTO=1: opencode merges it after every rule of the files, so the same rules come again
+after its {"*": "allow"}, under "*bash", a key the files do not have.
 
 The file is read the way opencode reads it: jsonc-parser with allowTrailingComma (read in
 the 1.18.32 binary), so // and /* */ comments anywhere outside a string and a comma before
@@ -544,52 +547,51 @@ def append_member(text: str, path, key: str, value: str) -> str:
     return text[:vend] + sep + member + text[vend:]
 
 
+# The key the rules live under in a config file, and the one AGENT_AUTO's value repeats them under:
+# two wildcards that match the bash tool, and two keys, because opencode merges the value into the
+# config and a key already there keeps its place, before the value's "*".
+DENY_KEY, AUTO_KEY = "bash*", "*bash"
+
+
+def deny_permission() -> dict:
+    """The "permission" of the config install.sh generates: the rules, under their own key."""
+    return {DENY_KEY: {p: "deny" for p in DENY_BASH}}
+
+
 def merge_deny_bash(path: str) -> int:
-    """Put the DENY_BASH rules after every shell rule the file has, keeping its other rules and
-    the user's own setting of any of these patterns."""
+    """Make the DENY_BASH rules hold in this file: under DENY_KEY, after every other key of its
+    "permission", keeping the user's own rules and their own setting of any of these patterns."""
     opened = _open(path)
     if opened is None:
         return 1
     text, doc = opened
-    rules = {p: "deny" for p in DENY_BASH}
     perm = doc.get("permission")
     want = copy.deepcopy(doc)
-    ours = list(DENY_BASH)
+    probe = lambda p: p.replace("*", "x")
     try:
         if perm is None or isinstance(perm, str):
             # one action for every tool stays the action of every other command
-            want["permission"] = ({} if perm is None else {"*": perm}) | {"bash": rules}
+            want["permission"] = ({} if perm is None else {"*": perm}) | deny_permission()
             new = set_member(text, [], "permission", json.dumps(want["permission"], indent=2))
+            mine = list(DENY_BASH)
         elif not isinstance(perm, dict):
             print(f"{path}: refused, its permission is neither an action nor an object; unchanged")
             return 1
         else:
-            names = list(perm)
-            later = [n for n in names[names.index("bash") + 1:] if _wild("bash", n)] if "bash" in perm else []
-            if later:
-                print(f"{path}: unchanged, {', '.join(map(json.dumps, later))} comes after \"bash\" in "
-                      f"its permission and would override a rule put there: add the rules of "
-                      f"docs/agents-and-network.md after it by hand")
-                return 4
-            bash = perm.get("bash")
-            if bash is None:
-                want["permission"]["bash"] = rules
-                new = append_member(text, ["permission"], "bash", json.dumps(rules, indent=2))
-            elif isinstance(bash, str):
-                want["permission"]["bash"] = {"*": bash} | rules
-                new = set_member(text, ["permission"], "bash", json.dumps(want["permission"]["bash"], indent=2))
-            elif isinstance(bash, dict):
-                ours = [p for p in DENY_BASH if p not in bash]
-                if not ours:
-                    print("the deny rules for the hosts of Cohere's report are already there: unchanged")
-                    return 0
-                new = text
-                for p in ours:
-                    want["permission"]["bash"][p] = "deny"
-                    new = append_member(new, ["permission", "bash"], p, '"deny"')
-            else:
-                print(f"{path}: refused, its permission for bash is neither an action nor an object; unchanged")
+            have = perm.get(DENY_KEY, {})
+            if not isinstance(have, dict):
+                print(f"{path}: refused, its {DENY_KEY!r} permission is not an object; unchanged")
                 return 1
+            mine = [p for p in DENY_BASH if have.get(p, "deny") == "deny"]
+            if all(p in have for p in DENY_BASH) and all(_bash_action(perm, probe(p)) == "deny" for p in mine):
+                print("the deny rules for the hosts of Cohere's report hold already: unchanged")
+                return 0
+            # missing, or a key added after them overrides them: the block goes (back) to the end
+            value = dict(have) | {p: "deny" for p in DENY_BASH if p not in have}
+            new = remove_member(text, ["permission", DENY_KEY]) if DENY_KEY in perm else text
+            new = append_member(new, ["permission"], DENY_KEY, json.dumps(value, indent=2))
+            want["permission"].pop(DENY_KEY, None)
+            want["permission"][DENY_KEY] = value
     except ValueError as e:
         print(f"{path}: refused, {e}; unchanged")
         return 1
@@ -599,22 +601,23 @@ def merge_deny_bash(path: str) -> int:
         return 1
     try:
         got = _reread(path).get("permission")
-        wrong = [p for p in ours if _bash_action(got, p.replace("*", "x")) != "deny"]
-    except ValueError as e:
+        wrong = [p for p in mine if _bash_action(got, probe(p)) != "deny"]
+        if list(got)[-1] != DENY_KEY:
+            wrong.append(f"{DENY_KEY} is not the last key")
+    except (ValueError, TypeError) as e:
         wrong = [str(e)]
     if not _landed(path, saved, f"not denied in the end: {', '.join(wrong)}" if wrong else "",
                    "the deny rules"):
         return 1
-    print(f"bash deny rules added for {', '.join(ours)} (backup {saved})")
+    print(f"bash deny rules for {', '.join(DENY_BASH)} put last in its permission (backup {saved})")
     return 0
 
 
 def agent_auto_permission() -> str:
-    """OPENCODE_PERMISSION for AGENT_AUTO=1. opencode merges it into the config after every rule
-    of the files, so its "*" would win over the rules --deny-bash put there (an echo naming an
-    aliyuncs.com host ran under {"*": "allow"} on 2026-10-28): the same rules come again after
-    it, under "bash*", a key the config does not have, which matches bash all the same."""
-    return json.dumps({"*": "allow", "bash*": {p: "deny" for p in DENY_BASH}}, separators=(",", ":"))
+    """OPENCODE_PERMISSION for AGENT_AUTO=1. opencode merges it into the config after every rule of
+    the files, so its "*" would win over DENY_KEY's rules (an echo naming an aliyuncs.com host ran
+    under a bare {"*": "allow"} on 2026-10-28): the same rules come again after it, under AUTO_KEY."""
+    return json.dumps({"*": "allow", AUTO_KEY: {p: "deny" for p in DENY_BASH}}, separators=(",", ":"))
 
 
 def _verify_variant(path, provider, model, level) -> str:

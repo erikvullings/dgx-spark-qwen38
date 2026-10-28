@@ -17,11 +17,11 @@ On 2026-10-26 Cohere reported that Qwen3.8-Flash-Next, given a shell in an agent
 
 ## What this repo denies
 
-`install.sh` adds these rules to the opencode config the box owns (`~/.config/opencode/opencode.json`, when it is this repo's copy or lists this repo's providers):
+The box's opencode configs carry these rules, under a key of their own, `"bash*"` (a wildcard that matches the shell tool), as the last member of `"permission"`:
 
 ```json
 "permission": {
-  "bash": {
+  "bash*": {
     "*aliyuncs.com*": "deny",
     "*169.254.169.254*": "deny",
     "*100.100.100.200*": "deny"
@@ -29,22 +29,31 @@ On 2026-10-26 Cohere reported that Qwen3.8-Flash-Next, given a shell in an agent
 }
 ```
 
-opencode reads its permission rules in order and the last one that matches wins, so they go after every shell rule the file already has. A `"bash"` you gave as one action (`"ask"`) becomes `{"*": "ask"}` followed by these rules, so your choice for every other command stands. A pattern you set yourself stays as you set it. The Agent tab's unit repeats the rules after the `"*"` of `AGENT_AUTO=1`.
+opencode reads its permission rules in order and the last one that matches wins, so they come after every other rule, and your own `"bash"` stays as you wrote it.
+
+- The config `install.sh` generates (`~/.config/qwen38/opencode.json`), which `oc` and the Agent tab load over your own: there the rules come after yours, whatever your config says.
+- Your global config (`~/.config/opencode/opencode.json`), which plain `opencode` reads, when it is this repo's copy or lists this repo's providers. A key you add after the block later overrides it, and the next install puts it last again. A pattern you set inside it stays as you set it.
+- A config of your own, without this repo's providers, is never rewritten: `oc` and the Agent tab still get the rules, and for plain `opencode` the block above is the one to add, as the last member of your `"permission"`.
+- With `AGENT_AUTO=1`, the Agent tab's unit repeats the rules after its `"*": "allow"`, under `"*bash"`.
 
 Checked on the box on 2026-10-28 with opencode 1.19.4 and the FP4-Local lane: a shell command naming an aliyuncs.com host was refused under `--yolo` and under the new `AGENT_AUTO` value, and ran under the old one (`{"*":"allow"}` alone).
 
-What they stop: the case Cohere observed, a shell command whose text names the OSS domain or a cloud metadata address. What they do not stop: a model that writes the address another way (a variable, an encoding, a script it writes first), and opencode's `webfetch`, which 1.x cannot filter by URL.
+What they stop: the case Cohere observed, a shell command whose text names the OSS domain or a cloud metadata address. What they do not stop: a model that writes the address another way (a variable, an encoding, a script it writes first), and opencode's `webfetch`, which 1.x cannot filter by URL. The rules stay in place after `uninstall.sh`, as `autoupdate` does.
 
-A config of your own, without this repo's providers, is never rewritten. `install.sh` says so, and the block above is the one to add, after your own shell rules. The rules stay in place after `uninstall.sh`, as `autoupdate` does.
+## What the cockpit shows
+
+The proxy sees every tool call before the client runs it, whatever the client (opencode, Claude Code, Hermes, pi, an SDK). When a call's arguments name one of these hosts, it writes one line to its journal, the host and the tool's name, never the arguments, and relays the answer as it came. A tool that writes or edits a file is not read: a page that quotes these hosts, this one included, is no request to them. The cockpit reads a day of those lines and shows a red banner with the count, the host, the tool and the route. The proxy only reports: whether the call ran depends on the client and its rules.
 
 ## Approving each command
 
-To approve every shell command yourself, put `"*": "ask"` first in the `"bash"` object of your config, keep the rules above after it, and start opencode without `--yolo` (plain `opencode`, not `oc`):
+To approve every shell command yourself, put `"*": "ask"` in the `"bash"` object of your config and start opencode without `--yolo` (plain `opencode`, not `oc`). The rules above still come after it:
 
 ```json
 "permission": {
   "bash": {
-    "*": "ask",
+    "*": "ask"
+  },
+  "bash*": {
     "*aliyuncs.com*": "deny",
     "*169.254.169.254*": "deny",
     "*100.100.100.200*": "deny"

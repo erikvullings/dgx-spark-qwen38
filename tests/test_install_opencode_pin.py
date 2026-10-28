@@ -514,10 +514,10 @@ class AFreshBoxGetsAConfigOpencodeCanUse(unittest.TestCase):
         for existing in (None, '{\n  // mine\n  "provider": {"qwen38": {"x": 1}}\n}\n'):
             rc, out, user = self.run_it(existing=existing)
             self.assertEqual(rc, 0, out)
-            bash = json.loads(user.read_text().replace("// mine", ""))["permission"]["bash"]
-            self.assertEqual(bash, {"*aliyuncs.com*": "deny", "*169.254.169.254*": "deny",
-                                    "*100.100.100.200*": "deny"}, existing)
-            self.assertIn("deny rules added", out)
+            perm = json.loads(user.read_text().replace("// mine", ""))["permission"]
+            self.assertEqual(perm, {"bash*": {"*aliyuncs.com*": "deny", "*169.254.169.254*": "deny",
+                                              "*100.100.100.200*": "deny"}}, existing)
+            self.assertIn("put last in its permission", out)
 
     def test_a_users_own_config_is_told_the_shell_rules_and_not_rewritten(self):
         mine = '{"provider": {"anthropic": {}}, "permission": {"bash": "ask"}}\n'

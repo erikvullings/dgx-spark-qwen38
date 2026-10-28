@@ -348,5 +348,17 @@ class ABoxBootingOrnith(unittest.TestCase):
         self.assertNotIn("ornith-122b", d["provider"])
 
 
+
+class TheGeneratedConfigCarriesTheShellRules(unittest.TestCase):
+    """Cohere's report (2026-10-26): oc and the Agent tab read this file over the user's own config,
+    so the shell rules for the report's hosts, under a key of their own, come after the user's rules
+    there whatever those say (docs/agents-and-network.md)."""
+
+    def test_the_rules_are_in_it_under_their_own_key(self):
+        d = generate("27b", "1m", unit_ctx=1010000, pair=("551000", "160000"), doc=True)
+        self.assertEqual(d["permission"], {"bash*": {"*aliyuncs.com*": "deny", "*169.254.169.254*": "deny",
+                                                     "*100.100.100.200*": "deny"}})
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)
