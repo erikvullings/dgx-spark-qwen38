@@ -57,7 +57,12 @@ put after the block, was not seen. `write_stdin`, which types into a shell, was 
 files, by a pattern on part of its name, and a search for the hosts raised the banner. A client's text the
 proxy logs could forge a line the cockpit counted. A large file written in a stream filled the budget and hid
 a shell call after it, calls a parser streams without an index merged, a read of the journal that failed
-kept lines older than a day, and every whole answer was parsed. Each has its test.
+kept lines older than a day, and every whole answer was parsed. A third review found the file and search
+tools of Hermes and pi taken for tools that act, a host over short reads of a whole answer unseen, a parser
+that repeats a tool's name on every piece splitting one call, spaces around `"tool_calls"` hiding it, and a
+journal vacuumed after a line keeping the banner up a day: `journalctl -g` ends 1 when nothing matches, as a
+read that failed does, so the day is read whole. The journal line now says how the request ended. Each has
+its test.
 
 **Tests.** `test_oc_merge_limits.py` (the order, the forms, a key added after the block, a user's own
 pattern), `test_install_opencode_pin.py`, `test_install_oc_artifact.py`, `test_agent_auto_deny.py` (a
