@@ -502,8 +502,29 @@ class AFreshBoxGetsAConfigOpencodeCanUse(unittest.TestCase):
         mine = '{\n  // mine\n  "provider": {"qwen38": {"x": 1}, "other": {}}\n}\n'
         rc, out, user = self.run_it(existing=mine)
         self.assertEqual(rc, 0, out)
-        self.assertEqual(user.read_text(), mine)
+        text = user.read_text()
+        self.assertIn("// mine", text)
+        self.assertEqual(json.loads(text.replace("// mine", ""))["provider"], {"qwen38": {"x": 1}, "other": {}})
         self.assertIn("already lists this box's providers: unchanged", out)
+
+    def test_the_config_opencode_oc_and_the_agent_tab_read_gets_the_shell_rules(self):
+        # Cohere's report (2026-10-26): Qwen3.8-Flash-Next PUT a file to an Alibaba Cloud bucket
+        # from a shell it was given. opencode runs every shell command unasked by default, so
+        # this box's config denies the hosts of the report, a fresh copy and an existing one alike.
+        for existing in (None, '{\n  // mine\n  "provider": {"qwen38": {"x": 1}}\n}\n'):
+            rc, out, user = self.run_it(existing=existing)
+            self.assertEqual(rc, 0, out)
+            bash = json.loads(user.read_text().replace("// mine", ""))["permission"]["bash"]
+            self.assertEqual(bash, {"*aliyuncs.com*": "deny", "*169.254.169.254*": "deny",
+                                    "*100.100.100.200*": "deny"}, existing)
+            self.assertIn("deny rules added", out)
+
+    def test_a_users_own_config_is_told_the_shell_rules_and_not_rewritten(self):
+        mine = '{"provider": {"anthropic": {}}, "permission": {"bash": "ask"}}\n'
+        rc, out, user = self.run_it(existing=mine)
+        self.assertEqual(rc, 0, out)
+        self.assertEqual(user.read_text(), mine)
+        self.assertIn("docs/agents-and-network.md", out)
 
     def test_a_lane_installed_later_brings_its_provider_into_that_config(self):
         # The 27B first: the copy lists qwen38 only. Then MODEL_CHOICE=flash ./install.sh,

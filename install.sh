@@ -2675,16 +2675,21 @@ if [ ! -e "$OC_USER_CFG" ]; then
   mkdir -p "$HOME/.config/opencode"
   install -m 644 "$CONFIG_DIR/opencode.json" "$OC_USER_CFG"
   echo "  no opencode config yet: installed this repo's at $OC_USER_CFG"
+  # opencode, oc and the Agent tab all read this file: the shell rules for the hosts of
+  # Cohere's report go here, after any rule it has (docs/agents-and-network.md)
+  python3 "$REPO_DIR/oc-merge-limits.py" "$OC_USER_CFG" --deny-bash || true
 elif ! grep -qsE '"(qwen38|flashnext|kolibri|nemotron|nemotron-super|flash-local|ornith-122b)"' "$OC_USER_CFG"; then
   # the user's own config, with none of this repo's providers in it: theirs to merge
   echo "  your $OC_USER_CFG has no provider for this box: merge the \"qwen38\" (or \"flashnext\")"
-  echo "  block from $CONFIG_DIR/opencode.json into it (docs/opencode.md)"
+  echo "  block from $CONFIG_DIR/opencode.json into it (docs/opencode.md), and the shell"
+  echo "  rules of docs/agents-and-network.md"
 else
   # A config set up for this box, by the copy above or by hand, lists the lanes the
   # box had then. A lane installed since (the 27B first, the flash lane later) brings
   # its provider in: without it the merges below find nothing to merge, and opencode
   # sends the other lane's limits and label to the one that serves.
   python3 "$REPO_DIR/oc-merge-limits.py" "$OC_USER_CFG" --add-providers "$CONFIG_DIR/opencode.json" || true
+  python3 "$REPO_DIR/oc-merge-limits.py" "$OC_USER_CFG" --deny-bash || true
 fi
 # An existing opencode.json keeps the user's other providers, but its limits for
 # THIS lane must follow the served engine (v1.5.2: a flash conversation allowed
