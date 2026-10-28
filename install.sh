@@ -2683,9 +2683,7 @@ if [ ! -e "$OC_USER_CFG" ]; then
   mkdir -p "$HOME/.config/opencode"
   install -m 644 "$CONFIG_DIR/opencode.json" "$OC_USER_CFG"
   echo "  no opencode config yet: installed this repo's at $OC_USER_CFG"
-  # opencode, oc and the Agent tab all read this file: the shell rules for the hosts of
-  # Cohere's report go here, after any rule it has (docs/agents-and-network.md)
-  python3 "$REPO_DIR/oc-merge-limits.py" "$OC_USER_CFG" --deny-bash || true
+  # the copy carries the shell rules for the hosts of Cohere's report already (deny_permission)
 elif ! grep -qsE '"(qwen38|flashnext|kolibri|nemotron|nemotron-super|flash-local|ornith-122b)"' "$OC_USER_CFG"; then
   # the user's own config, with none of this repo's providers in it: theirs to merge
   echo "  your $OC_USER_CFG has no provider for this box: merge the \"qwen38\" (or \"flashnext\")"
@@ -2698,6 +2696,8 @@ else
   # its provider in: without it the merges below find nothing to merge, and opencode
   # sends the other lane's limits and label to the one that serves.
   python3 "$REPO_DIR/oc-merge-limits.py" "$OC_USER_CFG" --add-providers "$CONFIG_DIR/opencode.json" || true
+  # plain opencode reads this file alone: the shell rules for the hosts of Cohere's report go
+  # last in it (docs/agents-and-network.md)
   python3 "$REPO_DIR/oc-merge-limits.py" "$OC_USER_CFG" --deny-bash || true
 fi
 # An existing opencode.json keeps the user's other providers, but its limits for

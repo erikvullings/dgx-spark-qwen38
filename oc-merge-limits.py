@@ -583,7 +583,10 @@ def merge_deny_bash(path: str) -> int:
                 print(f"{path}: refused, its {DENY_KEY!r} permission is not an object; unchanged")
                 return 1
             mine = [p for p in DENY_BASH if have.get(p, "deny") == "deny"]
-            if all(p in have for p in DENY_BASH) and all(_bash_action(perm, probe(p)) == "deny" for p in mine):
+            # last, as the check after a write requires: a key after the block that matches only some
+            # commands ("bash": {"curl *": "allow"}) wins for those, whatever a probe says (found in review)
+            if (all(p in have for p in DENY_BASH) and list(perm)[-1] == DENY_KEY
+                    and all(_bash_action(perm, probe(p)) == "deny" for p in mine)):
                 print("the deny rules for the hosts of Cohere's report hold already: unchanged")
                 return 0
             # missing, or a key added after them overrides them: the block goes (back) to the end

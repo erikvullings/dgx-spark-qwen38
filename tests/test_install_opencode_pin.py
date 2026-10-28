@@ -510,14 +510,19 @@ class AFreshBoxGetsAConfigOpencodeCanUse(unittest.TestCase):
     def test_the_config_opencode_oc_and_the_agent_tab_read_gets_the_shell_rules(self):
         # Cohere's report (2026-10-26): Qwen3.8-Flash-Next PUT a file to an Alibaba Cloud bucket
         # from a shell it was given. opencode runs every shell command unasked by default, so
-        # this box's config denies the hosts of the report, a fresh copy and an existing one alike.
-        for existing in (None, '{\n  // mine\n  "provider": {"qwen38": {"x": 1}}\n}\n'):
-            rc, out, user = self.run_it(existing=existing)
-            self.assertEqual(rc, 0, out)
-            perm = json.loads(user.read_text().replace("// mine", ""))["permission"]
-            self.assertEqual(perm, {"bash*": {"*aliyuncs.com*": "deny", "*169.254.169.254*": "deny",
-                                              "*100.100.100.200*": "deny"}}, existing)
-            self.assertIn("put last in its permission", out)
+        # this box's config denies the hosts of the report: the copy carries the rules of the
+        # generated config, and an existing config of this box gets them last.
+        rules = {"bash*": {"*aliyuncs.com*": "deny", "*169.254.169.254*": "deny", "*100.100.100.200*": "deny"}}
+        generated = json.dumps({"provider": {"qwen38": {}}, "model": "qwen38/qwen3.8-27b", "permission": rules})
+        rc, out, user = self.run_it(generated=generated)
+        self.assertEqual(rc, 0, out)
+        self.assertEqual(json.loads(user.read_text())["permission"], rules)
+        self.assertNotIn("hold already", out, "the copy needs no second pass")
+        rc, out, user = self.run_it(existing='{\n  // mine\n  "provider": {"qwen38": {"x": 1}}\n}\n',
+                                    generated=generated)
+        self.assertEqual(rc, 0, out)
+        self.assertEqual(json.loads(user.read_text().replace("// mine", ""))["permission"], rules)
+        self.assertIn("put last in its permission", out)
 
     def test_a_users_own_config_is_told_the_shell_rules_and_not_rewritten(self):
         mine = '{"provider": {"anthropic": {}}, "permission": {"bash": "ask"}}\n'

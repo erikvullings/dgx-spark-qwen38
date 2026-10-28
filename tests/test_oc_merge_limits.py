@@ -338,6 +338,13 @@ def main() -> None:
     rc, out = deny(p)
     assert rc == 0 and acts(p, oss, meta, other) == ["deny", "deny", "allow"], out
     assert list(jsonc(p)["permission"])[-1] == "bash*", jsonc(p)
+    # a key after the block that allows only some commands: a probe of the patterns did not see it,
+    # and "hold already" left a curl to an aliyuncs.com host allowed (found in the second review)
+    p = write(tmp, json.dumps({"permission": {"bash*": rules, "bash": {"curl *": "allow"}}}) + "\n")
+    assert acts(p, oss) == ["allow"], acts(p, oss)
+    rc, out = deny(p)
+    assert rc == 0 and "put last" in out and acts(p, oss) == ["deny"], out
+    assert list(jsonc(p)["permission"]) == ["bash", "bash*"], jsonc(p)
     # a pattern the user set themselves inside the block stays as they set it
     p = write(tmp, '{"permission": {"bash*": {"*aliyuncs.com*": "allow"}}}\n')
     rc, out = deny(p)
