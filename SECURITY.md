@@ -188,9 +188,11 @@ discussion, not a disclosure.
 - **`AGENT_AUTO=1` is deliberate escalation.** It sets opencode to allow
   every tool call in the Agent view, behind the cockpit login, on this
   machine, by the operator's own choice. opencode merges it after every
-  rule of its config files, so the rules of your own `opencode.json`,
-  `deny` included, do not hold under it: the unit repeats only this repo's
-  shell rules for the hosts of Cohere's report after it. Without it,
+  rule of its config files, so its `"*": "allow"` comes after the rules of
+  your own `opencode.json`, `deny` included, and overrides them, unless your
+  config has a `"*"` of its own: the unit's then takes that key's place, and
+  the rules after it still hold. The unit repeats only this repo's shell
+  rules for Alibaba Cloud's hosts and the cloud metadata addresses after it. Without it,
   opencode's own defaults already run shell commands unasked
   ([docs/agents-and-network.md](docs/agents-and-network.md)).
 - **The abliterated targets are a policy choice.** `uncensored`,

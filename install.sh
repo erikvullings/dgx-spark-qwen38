@@ -406,9 +406,10 @@ DRAFT2_TOKENS="${DRAFT2_TOKENS:-16}"
 # memory unused against 19.38. It was never short of memory, it just did not
 # claim it. 0.76 hands the pool back (902,398 measured, inside the boot-to-boot
 # spread this box shows on one image: 906,524 then 910,203) and still leaves a
-# wider margin than the old pin did, 21.30 GB against 19.38.
+# wider margin than the old pin did, 21.30 GiB against 19.38.
 # What bounds this number is the unified pool, NOT the container: --memory 100g
-# is a host-RSS cap and the cgroup does not see CUDA unified allocations.
+# is a host-RSS cap and the cgroup does not see the engine's own GPU memory (plain
+# cudaMalloc on GB10), while managed and pinned memory are charged to it.
 # Measured 2026-09-18 at 0.76 under a 5,623-token generation, the container held
 # 7.15 GiB of its 100 GiB the whole way. Read the GPU-side headroom instead
 # (available_gpu_mem after graph capture), which is what every number here is.

@@ -381,10 +381,13 @@ calls and ask before a tool touches a path outside the session's project and
 when the same call repeats three times; the interface shows those prompts. For
 the autonomy of the `oc` launcher's `--yolo` (a flag `opencode serve` rejects),
 install with `AGENT_AUTO=1`: the unit then carries `OPENCODE_PERMISSION` set to
-allow everything, which opencode honours (verified: the served config reads
-`{"*": "allow"}`), explicit `deny` rules of your config still apply, and your
-`opencode.json` is not touched. The view says which mode the running server
-applies. Re-runs remember the choice; `AGENT_AUTO=0` turns it back off.
+allow everything, which opencode honours, followed by this repo's shell rules for
+Alibaba Cloud's hosts and the cloud metadata addresses (v1.40.4). opencode merges it after the rules of your
+config, `deny` included, so its `"*"` overrides them, unless your config has a
+`"*"` of its own (SECURITY.md). Your `opencode.json` gets those shell rules when it
+is this repo's copy or lists its providers ([agents-and-network.md](agents-and-network.md)).
+The view says which mode the running server applies. Re-runs remember the choice;
+`AGENT_AUTO=0` turns it back off.
 
 ```bash
 AGENT_AUTO=1 dashboard/install-agent.sh

@@ -1069,7 +1069,7 @@ function renderBanners(state, errors){
   const tt = F.toolTargets;
   if (tt && tt.count && tt.last)
     add('err', `A model asked a tool to reach ${tt.last.hosts}.`,
-      `${tt.count === 1 ? 'One tool call' : `${tt.count} tool calls`} in the last 24 h named a host of Cohere's report on Qwen3.8-Flash-Next (an Alibaba Cloud OSS domain or a cloud metadata address), the last ${fmtDur(Math.max(0, Date.now() / 1000 - tt.last.at))} ago in a ${tt.last.tool} call on ${tt.last.path}. The proxy only reports it: whether the call ran depends on the client and its rules (docs/agents-and-network.md).`);
+      `${tt.count === 1 ? 'One tool call' : `${tt.count} tool calls`} in the last 24 h named an Alibaba Cloud host or a cloud metadata address (Cohere's report on Qwen3.8-Flash-Next), the last ${fmtDur(Math.max(0, Date.now() / 1000 - tt.last.at))} ago in a ${tt.last.tool} call on ${tt.last.path}. The proxy only reports it: whether the call ran depends on the client and its rules (docs/agents-and-network.md).`);
   const upd = F.update || {};
   // An update that runs now (install.sh keeps a file while it lasts, the cockpit checks its process):
   // the banners that ask for one wait, since one runs (an ASUS Ascent GX10, 2026-10-21: an update of

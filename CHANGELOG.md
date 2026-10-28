@@ -1,87 +1,99 @@
 # Changelog
 
-## v1.40.4 (2026-10-28): opencode on this box refuses a shell command that names the hosts of Cohere's report, AGENT_AUTO included, and the cockpit says when a model asks for one
+## v1.40.4 (2026-10-28): opencode on this box refuses a shell command that names an Alibaba Cloud host or a cloud metadata address, AGENT_AUTO included, the cockpit says when a model asks for one, and pair-probe.py reads what a pair of boxes needs (#45)
 
 **Why.** On 2026-10-26 Cohere reported that Qwen3.8-Flash-Next, given a shell in an agent test without a
-network, sent a PUT to an Alibaba Cloud OSS bucket in Beijing, in fewer than 1 in 100,000 calls, on versions
-from four vendors, Alibaba's included. Read in opencode 1.19.4's binary: its permissions start from
-`"*": "allow"`, so every shell command runs unasked in `opencode`, in `oc` (`--yolo`, an alias of `--auto`
-there) and in the Agent tab. On the box, an `echo` naming an aliyuncs.com host ran in all three.
+network, sent a PUT to an Alibaba Cloud OSS bucket in Beijing, in fewer than 1 in 100,000 calls. The behavior
+behind it, an Alibaba Cloud host the model writes on its own, has turned up in builds from four publishers,
+Alibaba's included. Read in opencode 1.19.4's binary: its permissions start from `"*": "allow"`, so every
+shell command runs unasked in `opencode`, in `oc` (`--yolo`, an alias of `--auto` there) and in the Agent tab.
+On the box, `opencode run` under the Agent tab's permission ran an `echo` naming an aliyuncs.com host.
 
 **The box's opencode configs deny those hosts.** The rules `"*aliyuncs.com*"`, `"*169.254.169.254*"` and
-`"*100.100.100.200*"` are `deny`, under a key of their own, `"bash*"` (a wildcard that matches the shell
-tool), as the last member of `"permission"`, since opencode's last matching rule wins: a `"*"` after them
-would allow what they deny. They are in the config `install.sh` generates, which `oc` and the Agent tab load
-over your own, so they come after your rules there whatever your config says. They are also put last in
-your global config, the one plain `opencode` reads, when it is this repo's copy or lists this repo's
+`"*100.100.100.200*"` (Alibaba Cloud's whole domain, the metadata address of Cohere's report and Alibaba
+Cloud's own) are `deny`, under a key of their own, `"bash*"` (a wildcard that matches the shell tool), as the
+last member of `"permission"`, since opencode's last matching rule wins: a `"*"` after them would allow what
+they deny. They are in the config `install.sh` generates, which `oc` and the Agent tab load over your own, so
+they come after your global config's rules there, but for a key added after the block in a global config that
+holds it too (this repo's copy does), until the next install puts the block last again. They are also put last
+in your global config, the one plain `opencode` reads, when it is this repo's copy or lists this repo's
 providers (`oc-merge-limits.py --deny-bash`): a key you add after them later is overridden at the next
-install, your own `"bash"` stays as you wrote it, and a pattern you set inside the block stays yours. A
-config of your own, without this repo's providers, is never rewritten. Measured on the box with opencode
-1.19.4 and Flash FP4-Local: the same `echo` is refused under `oc`'s `--yolo` and in the Agent tab.
+install, your own `"bash"` stays as you wrote it, and a pattern you set inside the block stays yours. A config
+of your own, in which none of this repo's provider names shows, never gets the rules. Measured on the box with
+opencode 1.19.4 and Flash FP4-Local: the same `echo` is refused under `oc`'s `--yolo` and under the Agent
+tab's permission (`opencode run` with its `OPENCODE_PERMISSION`).
 
 **AGENT_AUTO=1 no longer overrides them.** opencode merges `OPENCODE_PERMISSION` after every rule of its
-config files, so the unit's bare `{"*":"allow"}` beat any `deny`: the `echo` ran under it, and SECURITY.md
-said your own deny rules held there, which they did not. The unit now repeats the rules after its `"*"`,
-under `"*bash"`, and the `echo` is refused. Your own rules still do not hold under `AGENT_AUTO=1`, which
-SECURITY.md now says. The cockpit still reads that mode as auto.
+config files, so the unit's bare `{"*":"allow"}` beat any `deny` of a config without a `"*"` of its own: the
+`echo` ran under it, and SECURITY.md said your own deny rules held there, which they did not. The unit now
+repeats the rules after its `"*"`, under `"*bash"`, and the `echo` is refused. Under `AGENT_AUTO=1` your own
+rules still give way to its `"*"`, unless your config has a `"*"` of its own before them, which SECURITY.md
+now says. The cockpit still reads that mode as auto.
 
 **The proxy says when a model asks a tool to reach one of them (v6.48, its role 8).** The proxy sees every
-tool call before the client runs it, whatever the client. The arguments of each call, put back together from
-a stream (OpenAI's `tool_calls`, Anthropic's `input_json_delta`, the Responses API) or read from a whole
-answer on the generation routes that names one of them, are matched when the request ends against
-aliyuncs.com and the two metadata addresses. A match is one journal line, the host and the tool's name,
-never the arguments, and the answer is relayed as it came. A tool that reads, searches or writes files, or
-hands work to a sub-agent, is not read, by its exact name: a page that quotes these hosts, or a search for
-them, is no request to them. The cockpit reads a day of those lines every 5 minutes and shows a red banner with the
-count, the host, the tool and the route. It says what the proxy saw, not what the client did with it.
+tool call before the client runs it, whatever the client. The arguments of each call, put back together from a
+stream (OpenAI's `tool_calls`, Anthropic's `input_json_delta`, the Responses API) or read from a whole answer
+on the generation routes that names one of them, are matched when the request ends against aliyuncs.com and
+the two metadata addresses. A match is one journal line, the host and the tool's name, never the arguments,
+and the answer is relayed as it came. A tool that reads, searches or writes files, or hands work to a
+sub-agent, is not read, by its exact name: a page that quotes these hosts, or a search for them, is no request
+to them. The cockpit reads a day of those lines every 5 minutes and shows a red banner with the count, the
+host, the tool and the route. It says what the proxy saw, not what the client did with it.
 
-**What it does not cover.** A model that writes the address another way (a variable, an encoding, a script
-it writes first), opencode's `webfetch`, which 1.x cannot filter by URL, and a whole answer over 8 MiB, which
-the proxy does not read.
+**What it does not cover.** opencode's patterns tell case apart: a host written in capitals is not refused,
+and the proxy, which does not, still says it. Neither stops a model that writes the address another way (a
+variable, an encoding, a script it writes first), and the rules leave opencode's `webfetch` alone. What
+opencode reads after the rules can allow what they deny: a project's own `opencode.json` or `.opencode`
+directory, an agent's own `permission` block, and an "Always" given to a command. The proxy does not read the
+tool arguments of a streamed request past its first MiB, nor a whole answer over 8 MiB.
 [docs/agents-and-network.md](docs/agents-and-network.md) says what runs unasked and how to approve each
-command. The rules stay in place after `uninstall.sh`, as `autoupdate` does.
+command. In a config of yours the rules stay in place after `uninstall.sh`, as `autoupdate` does, and this
+repo's own copy is moved aside whole, as before.
 
-**The memory pages say which memory the cgroup misses.** It is the engine's own GPU memory, plain
-`cudaMalloc` on GB10, while managed and pinned memory are charged to it, as another owner measured on the
-NVIDIA forum ([t/387182](https://forums.developer.nvidia.com/t/387182)). The old text said "unified
-allocations". A host-memory runaway is what the Docker cap stops, not any runaway, and 21.30 is GiB
-everywhere.
+**The memory pages say which memory the cgroup misses.** It is the engine's own GPU memory, plain `cudaMalloc`
+on GB10, while managed and pinned memory are charged to it, as another owner measured on the NVIDIA forum
+([t/387182](https://forums.developer.nvidia.com/t/387182)). The old text said "unified allocations". A
+host-memory runaway is what the Docker cap stops, not any runaway, and 21.30 is GiB everywhere.
 
-**Found in review before the release.** A named client's lines (`key=<label>`) were never read by the
-cockpit. `--deny-bash` called rules "already there" that a later key overrode. A whole answer of an
-unexpected shape raised where the request ends, before its end line. SGLang writes `"tool_calls":null` in
-every chunk, so the filter meant to skip events without a tool call parsed every token. The bare word
-"routify" matched the Svelte framework of that name, and an agent editing a page that quotes these hosts
-raised the banner. A second review found more, fixed the same way: a key that allows only some commands,
-put after the block, was not seen. `write_stdin`, which types into a shell, was taken for a tool that writes
-files, by a pattern on part of its name, and a search for the hosts raised the banner. A client's text the
-proxy logs could forge a line the cockpit counted. A large file written in a stream filled the budget and hid
-a shell call after it, calls a parser streams without an index merged, a read of the journal that failed
-kept lines older than a day, and every whole answer was parsed. A third review found the file and search
-tools of Hermes and pi taken for tools that act, a host over short reads of a whole answer unseen, a parser
-that repeats a tool's name on every piece splitting one call, spaces around `"tool_calls"` hiding it, and a
-journal vacuumed after a line keeping the banner up a day: `journalctl -g` ends 1 when nothing matches, as a
-read that failed does, so the day is read whole. The journal line now says how the request ended. Each has
-its test.
+**Found in review before the release.** A named client's lines (`key=<label>`) were never read by the cockpit.
+`--deny-bash` called rules "already there" that a later key overrode. A whole answer of an unexpected shape
+raised where the request ends, before its end line. SGLang writes `"tool_calls":null` in every chunk, so the
+filter meant to skip events without a tool call parsed every token. The bare word "routify" matched the Svelte
+framework of that name, and an agent editing a page that quotes these hosts raised the banner. A second review
+found more, fixed the same way: a key that allows only some commands, put after the block, was not seen.
+`write_stdin`, which types into a shell, was taken for a tool that writes files, by a pattern on part of its
+name, and a search for the hosts raised the banner. A client's text the proxy logs could forge a line the
+cockpit counted. A large file written in a stream filled the budget and hid a shell call after it, calls a
+parser streams without an index merged, a read of the journal that failed kept lines older than a day, and
+every whole answer was parsed. A third review found the file and search tools of Hermes and pi taken for tools
+that act, a host over short reads of a whole answer unseen, a parser that repeats a tool's name on every piece
+splitting one call, spaces around `"tool_calls"` hiding it, and a journal vacuumed after a line keeping the
+banner up a day: `journalctl -g` ends 1 when nothing matches, as a read that failed does, so the day is read
+whole. The journal line now says how the request ended. Each has its test. Three verifications before the
+push, read in opencode's own code and replayed against it, found what these notes claimed beyond it: patterns
+that tell case apart, a project's own config, an agent's own permission and an "Always" answer that come after
+the rules, and an `uninstall.sh` that kept this repo's copy of the config, now moved aside again. The notes
+above say each, and the uninstall has its test.
 
 **A probe for a pair of boxes (#45).** `pair-probe.py`, run on each box, prints what a lane over two boxes
 needs to know about each one: the DGX OS update it runs, the kernel, the GPU driver, this repo's release and
 lanes, the ConnectX-7 ports, their RDMA side and the mlx5 modules, Docker, the time sync and the free disk,
-and with `--peer` the port the route to the other box takes, its loss and its round trip. It needs no sudo
-and changes nothing. It never prints a MAC or IP address (only its kind), the home directory, the host's
-name or the serial number, and it opens no file that holds a key. On the reference GX10, lspci shows no
-ConnectX-7 although the mlx5 modules are loaded, and the probe says both. Two reviews of the probe found
-what it missed before the release, from a peer that does not answer read as not measured to a host's name
-written in another case. Each is fixed with its test.
+and with `--peer` the port the route to the other box takes, its loss and its round trip. It needs no sudo and
+changes nothing. It never prints a MAC or IP address (only its kind), the home directory, the host's name or
+the serial number, and it opens no file that holds a key. On the reference GX10, lspci shows no ConnectX-7
+although the mlx5 modules are loaded, and the probe says both. Two reviews of the probe found what it missed
+before the release, from a peer that does not answer read as not measured to a host's name written in another
+case. Each is fixed with its test.
 
 **Tests.** `test_oc_merge_limits.py` (the order, the forms, a key added after the block, a user's own
-pattern), `test_install_opencode_pin.py`, `test_install_oc_artifact.py`, `test_agent_auto_deny.py` (a
-user's config ending with its own `"*"`), `test_proxy_tool_targets.py` (a real proxy, the host split between
-two pieces of the stream, three dialects, a whole answer, one connection for several requests, an answer of
-no known shape, the false alarms, nothing of the arguments in the journal), `test_lifecycle.py`,
-`test_cockpit_collectors.py`, three checks of `update-banner-check.mjs` in a browser, and
-`test_pair_probe.py` (what it never prints, a peer that does not answer, a unit systemd has unloaded, a
-record of another shape). Each fails on v1.40.3 or on the branch before its fix.
+pattern), `test_install_opencode_pin.py`, `test_install_oc_artifact.py`, `test_agent_auto_deny.py` (three
+configs, one ending with a `"*"` of its own), `test_uninstall_opencode.py` (this repo's copy with the rules
+goes aside, rules of the user's keep the file), `test_proxy_tool_targets.py` (a real proxy, the host split
+between two pieces of the stream, three dialects, a whole answer, one connection for several requests, an
+answer of no known shape, the false alarms, nothing of the arguments in the journal), `test_lifecycle.py`,
+`test_cockpit_collectors.py`, three checks of `update-banner-check.mjs` in a browser, and `test_pair_probe.py`
+(what it never prints, a peer that does not answer, a unit systemd has unloaded, a record of another shape).
+Each fails on v1.40.3 or on the branch before its fix.
 
 ## v1.40.3 (2026-10-26): Claude Code's ToolSearch works on the Qwen lanes, every lane says what its prefix cache served (#49), and a stopped generation never reaches its client as a whole answer
 

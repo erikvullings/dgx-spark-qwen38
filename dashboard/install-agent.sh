@@ -156,7 +156,7 @@ case "${AGENT_AUTO:-0}" in
   1) PERM="$(python3 "$HERE/../oc-merge-limits.py" --agent-auto-permission)" \
        || die "could not build AGENT_AUTO's permission (oc-merge-limits.py --agent-auto-permission)"
      AUTO_LINE="Environment='OPENCODE_PERMISSION=$PERM'"
-     note "AGENT_AUTO=1: the web server approves every tool call except a shell command naming the hosts of Cohere's report; your own deny rules do not hold under it (docs/agents-and-network.md)." ;;
+     note "AGENT_AUTO=1: the web server approves every tool call but a shell command naming an Alibaba Cloud host or a cloud metadata address. Its \"*\" overrides your own deny rules unless your config has a \"*\" of its own (docs/agents-and-network.md)." ;;
   0|"") AUTO_LINE="# (opencode's own permission defaults; re-run with AGENT_AUTO=1 to approve every tool call)" ;;
   *) die "AGENT_AUTO must be 1 or 0" ;;
 esac
