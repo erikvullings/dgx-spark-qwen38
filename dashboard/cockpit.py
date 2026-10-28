@@ -1445,9 +1445,13 @@ def collect_guard():
     g["version"] = lc.parse_guard(banner)["version"] or g["version"]
     g["predates_abort"] = lc.version_before(g["version"], "6.14")   # the page's warning
     state, verdict = lc.guard_verdict(zombies, g, override)
+    # the proxy's role 8 (v6.48): tool calls that named a host of Cohere's report, over a day, for
+    # the banner that says so (docs/agents-and-network.md)
+    targets = run(["journalctl", "-u", "qwen38-keepalive.service", "--since", "-24h", "--no-pager",
+                   "-o", "short-unix", "-g", lc.TOOL_TARGET_GREP], timeout=6)
     return {"node_id": "local", "lane": active, "window": ZOMBIE_WINDOW,
             "zombies": zombies, "guard": g, "override": override,
-            "state": state, "verdict": verdict}
+            "state": state, "verdict": verdict, "tool_targets": lc.parse_tool_targets(targets)}
 
 
 def fit_verdict(ctx: int, outp: int, usable: int, prompt_cap: int, window: int = 0) -> dict:

@@ -950,6 +950,26 @@ GUARD_ABORT_RE = re.compile(r"\[proxy\] aborted upstream rid=(\S+) \((.+?)\)")
 GUARD_ABORT_FAIL_RE = re.compile(r"\[proxy\] abort_request failed for rid=(\S+)")
 GUARD_DRAIN_RE = re.compile(r"\[proxy\] drained an abandoned (\S+) for ([\d.]+)s")
 GUARD_CEILING_RE = re.compile(r"\[proxy\] drain ceiling reached after ([\d.]+)s")
+# Role 8 of the proxy (v6.48): a tool call whose arguments name a host of Cohere's report, said
+# with its host family and its tool, never its arguments (docs/agents-and-network.md). Read with
+# journalctl -o short-unix, so each line starts with its time; a peer comes before the words.
+TOOL_TARGET_RE = re.compile(r"^(\d+(?:\.\d+)?) .*?\[proxy\] \S+ TOOL TARGET (.+?) in an? (\S+) call on (\S+),")
+TOOL_TARGET_GREP = "TOOL TARGET "
+
+
+def parse_tool_targets(raw: str) -> dict:
+    """journalctl -o short-unix lines -> how many tool calls named a host of Cohere's report in the
+    window read, and the newest one: its time, hosts, tool and route."""
+    out = {"count": 0, "last": None}
+    for ln in raw.splitlines():
+        m = TOOL_TARGET_RE.search(ln)
+        if not m:
+            continue
+        out["count"] += 1
+        at = float(m.group(1))
+        if out["last"] is None or at >= out["last"]["at"]:
+            out["last"] = {"at": at, "hosts": m.group(2), "tool": m.group(3), "path": m.group(4)}
+    return out
 
 
 def parse_zombies(raw: str) -> dict:

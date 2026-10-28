@@ -142,6 +142,7 @@ on('feed', d => {
 });
 on('reqguard', d => {
   const g = d.guard || {}, z = d.zombies || {};
+  F.toolTargets = d.tool_targets || null;     // the banner of renderBanners (proxy v6.48)
   cap('zg-cap', d.state === 'err' ? 'leaking' : d.state === 'warn' ? 'check' : 'holding', d.state === 'err' ? 'err' : d.state === 'warn' ? 'warn' : 'ok');
   setText('zg-verdict', `${cap1(d.verdict || '')} (last ${d.window || '10m'}${d.lane ? ', ' + d.lane : ''}).`);
   setText('zg-ver', g.version ? 'v' + g.version : 'no banner in the journal');

@@ -230,6 +230,18 @@ try {
   await waitFor("document.readyState === 'complete'");
   const held = await evalJs("navigator.clipboard.readText()");
   ok('and the clipboard holds the exact command', held === at.cmd && /^cd \S+ && curl -fsSL /.test(held), held);
+  // the proxy's role 8 (v6.48): a tool call that named a host of Cohere's report in the last 24 h
+  // is a red banner with its count, host, tool and route; none of them, no banner
+  const tool = tt => evalJs(`(() => { F.toolTargets = ${JSON.stringify(tt)}; renderBanners(lastState || {}, lastErrors || {});
+    const b = [...document.querySelectorAll('#banners .banner')].find(e => /asked a tool to reach/.test(e.textContent));
+    return b ? b.className + ' :: ' + b.textContent : ''; })()`);
+  await waitFor("document.getElementById('conn-lbl').textContent === 'live'");
+  ok('no tool call naming the hosts: no banner for it', (await tool({ count: 0, last: null })) === '');
+  s = await tool({ count: 2, last: { at: Date.now() / 1000 - 125, hosts: 'aliyuncs.com', tool: 'bash', path: '/v1/chat/completions' } });
+  ok('two of them: a red banner with the host, the count, the tool and the route',
+     /\berr\b/.test(s) && /reach aliyuncs\.com\./.test(s) && /2 tool calls in the last 24 h/.test(s)
+     && /in a bash call on \/v1\/chat\/completions/.test(s) && /agents-and-network/.test(s), s);
+  await tool(null);
   ok('no exception', jsErrors().length === 0, jsErrors().join(' | '));
 } finally {
   const gone = child => (!child || child.exitCode !== null || child.signalCode !== null) ? null

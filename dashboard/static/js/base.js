@@ -210,7 +210,7 @@ const boxName = (box = (F.machine || {}).box || {}) => box.cls ? `${box.name || 
 
 // ── the facts every view shares (each guarded against missing data) ──────────
 const F = {life: null, units: {}, config: {}, job: null, load: {}, pool: null, window: 262144, ceiling: 0, usable: 0.92,
-           maxRun: null, target: null, containers: {}, proxy: null, agent: null, update: null, memFloor: null, machine: null,
+           maxRun: null, target: null, containers: {}, proxy: null, agent: null, update: null, memFloor: null, toolTargets: null, machine: null,
            gpu: null, ocfit: null};
 const engines = () => (F.life && F.life.engines) || {};
 function servingEngine(){ return Object.entries(engines()).find(([, e]) => !UNIT_DOWN.has(e.state) || e.restarting) || null; }
@@ -1064,6 +1064,12 @@ function renderBanners(state, errors){
       ? `Memory fell under ${F.memFloor.gib} GiB with requests running, ${ago} ago. To keep the box out of a livelock: ${F.memFloor.said}.`
       : `Memory fell under ${F.memFloor.gib} GiB with requests running: every generation was aborted ${ago} ago to keep the box out of a livelock.`);
   }
+  // Cohere's report (2026-10-26): the proxy writes down a tool call whose arguments name an Alibaba
+  // Cloud host or a cloud metadata address, whatever the client, and relays it as it came (v6.48)
+  const tt = F.toolTargets;
+  if (tt && tt.count && tt.last)
+    add('err', `A model asked a tool to reach ${tt.last.hosts}.`,
+      `${tt.count === 1 ? 'One tool call' : `${tt.count} tool calls`} in the last 24 h named an Alibaba Cloud host or a cloud metadata address, the last ${fmtDur(Math.max(0, Date.now() / 1000 - tt.last.at))} ago in a ${tt.last.tool} call on ${tt.last.path}. The proxy only reports it: opencode on this box refuses such a shell command, claude-local asks before each one, any other client decides alone. docs/agents-and-network.md says what that covers.`);
   const upd = F.update || {};
   // An update that runs now (install.sh keeps a file while it lasts, the cockpit checks its process):
   // the banners that ask for one wait, since one runs (an ASUS Ascent GX10, 2026-10-21: an update of

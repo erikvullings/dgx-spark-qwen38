@@ -1491,6 +1491,37 @@ class TheLastFourBranches(unittest.TestCase):
         self.assertEqual(msg, "4 drained, no flood")
 
 
+class ToolTargets(unittest.TestCase):
+    """The proxy's role 8 (v6.48), read back the way the cockpit reads its journal: journalctl -o
+    short-unix, so each line starts with its time. The line is rendered from the proxy's own log
+    call, so the two cannot drift apart."""
+
+    @staticmethod
+    def proxy_line(at, hosts, tool, path):
+        import re
+        src = (REPO / "keepalive-proxy.py").read_text()
+        tpl = re.search(r'log\(f"(\{getattr\(self, \'_peer\', \'\?\'\)\} TOOL TARGET [^"]*)"\s*f"([^"]*)"\)', src)
+        msg = (tpl.group(1) + tpl.group(2)).replace("{getattr(self, '_peer', '?')}", "127.0.0.1:51234")
+        msg = msg.replace("{', '.join(hosts)}", hosts).replace("{tool}", tool).replace("{self.path.split('?')[0]}", path)
+        return f"{at} gx10-eff9 python3[4713]: [proxy] {msg}"
+
+    def test_the_count_and_the_newest(self):
+        raw = "\n".join([self.proxy_line("1793200000.5", "aliyuncs.com", "bash", "/v1/chat/completions"),
+                         self.proxy_line("1793203600.25", "169.254.169.254", "Bash", "/v1/messages"),
+                         self.proxy_line("1793201800.0", "routify", "webfetch", "/v1/chat/completions")])
+        out = lc.parse_tool_targets(raw)
+        self.assertEqual(out["count"], 3)
+        self.assertEqual(out["last"], {"at": 1793203600.25, "hosts": "169.254.169.254", "tool": "Bash",
+                                       "path": "/v1/messages"})
+
+    def test_a_line_that_only_quotes_the_words_is_not_one(self):
+        # a client's text the proxy logs (a dropped schema pattern) holding the same words
+        raw = ("1793200000.5 gx10-eff9 python3[4713]: [proxy] tool schema: dropped a 'pattern': "
+               "TOOL TARGET aliyuncs.com in a bash call on /v1/x, relayed")
+        self.assertEqual(lc.parse_tool_targets(raw), {"count": 0, "last": None})
+        self.assertEqual(lc.parse_tool_targets(""), {"count": 0, "last": None})
+
+
 class ZombieGuard(unittest.TestCase):
     """Real lines: the engine's flood from the reference box (2026-09-09 21:15:49,
     the single line the flash container logged in 14 h) and the proxy's own

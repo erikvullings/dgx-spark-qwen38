@@ -299,6 +299,28 @@ class Parse(Base):
         self.assertEqual(out["guard"]["aborted"], 1)
         self.assertIn(out["state"], ("ok", "warn", "err", ""))
 
+    def test_the_guard_reads_a_day_of_tool_calls_naming_the_hosts(self):
+        """The proxy's role 8 (v6.48): its TOOL TARGET lines of the last 24 h, read with their time,
+        for the page's banner. The window is a day, not the guard's ten minutes."""
+        line = ("1793203600.25 gx10-eff9 python3[4713]: [proxy] 127.0.0.1:5 TOOL TARGET aliyuncs.com in a "
+                "bash call on /v1/chat/completions, relayed as it came (docs/agents-and-network.md)\n")
+        seen = []
+
+        class Journal(FakeBox):
+            def __call__(self, argv, timeout=5.0, merge_err=False):
+                self.calls.append(list(argv))
+                if argv[0] == "journalctl" and "TOOL TARGET " in argv:
+                    seen.append(list(argv))
+                    return line
+                return ""
+        self.cp.run = Journal()
+        out = self.cp.collect_guard()
+        self.assertEqual(out["tool_targets"]["count"], 1)
+        self.assertEqual(out["tool_targets"]["last"]["tool"], "bash")
+        self.assertEqual(len(seen), 1)
+        self.assertEqual(seen[0][seen[0].index("--since") + 1], "-24h")
+        self.assertEqual(seen[0][seen[0].index("-o") + 1], "short-unix")
+
     def test_the_zombie_guard_reports_the_proxy_that_runs(self):
         """journalctl -g is given a pattern, and -n 1 answers the newest line matching it:
         the fake applies the collector's own pattern to a journal holding a banner of the

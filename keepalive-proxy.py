@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
-"""Keepalive proxy in front of SGLang or vLLM (v6.47). No content logging, and the only
+"""Keepalive proxy in front of SGLang or vLLM (v6.48). No content logging, and the only
 rewriting is the tool-schema guard (role 4); two routes, POST /v1/systemone (role 5) and the
 operator's POST /proxy/stop (role 7), are answered here instead of relayed.
 
-Seven roles, nothing else:
+Eight roles, nothing else:
 1. fill the silences of the SSE stream (SGLang's tool-call parser buffers the
    arguments: 127 s of measured silence for a 400-line file write) by injecting
    the OFFICIAL Anthropic "ping" event every KEEPALIVE_S seconds on the
@@ -42,8 +42,19 @@ Seven roles, nothing else:
 7. stop every generation when the cockpit's memory floor asks (POST /proxy/stop, from this machine
    with the engine's key): each client's connection is cut, not ended, so that it never takes a cut
    answer for a whole one, and after a stop that cut one, new generations wait while the box is short
-   of memory (see "The memory floor's stop" below).
+   of memory (see "The memory floor's stop" below);
+8. say in the journal when a tool call's arguments name a host of Cohere's report (TOOL_TARGETS:
+   Alibaba Cloud's OSS domain, its Routify relay, a cloud metadata address), whatever the client:
+   the host family and the tool's name, never the arguments, and the answer relayed as it came.
+   The cockpit turns the line into a banner (docs/agents-and-network.md).
 
+v6.48: a tool call that names a host of Cohere's report is said in the journal (role 8). Cohere
+reported on 2026-10-26 that Qwen3.8-Flash-Next, given a shell in an agent test, sent a PUT to an
+Alibaba Cloud OSS bucket in Beijing. The proxy sees each tool call before the client runs it: the
+arguments of every call, put back together from a stream (the OpenAI tool_calls deltas, Anthropic's
+input_json_delta, the Responses API's function_call_arguments) or read from a whole answer, are
+matched against TOOL_TARGETS when the request ends, and a match is written as "TOOL TARGET <hosts>
+in a <tool> call", with nothing of the arguments. Nothing relayed changes.
 v6.47: the memory floor's stop (role 7). SGLang ends an aborted generation as a finished one, end_turn
 on /v1/messages and finish_reason "abort" on the OpenAI routes, so a client of the cockpit's memory
 floor got the part generated before the stop as its whole answer: Claude Code kept a compaction summary
@@ -690,6 +701,11 @@ MEDIA_HEADER_BYTES = 48 * 1024
 # its state rather than the model writing prose. 0 disables the guard.
 CORRUPTION_RUN = int(os.environ.get("CORRUPTION_RUN", "128") or 0)
 CORRUPTION_MARK = "!"
+# Role 8, Cohere's report (2026-10-26): the OSS domain Qwen3.8-Flash-Next sent a file to, the Routify
+# file relay of the report's host list, and the cloud metadata addresses. Matched in lower case.
+TOOL_TARGETS = ("aliyuncs.com", "routify", "169.254.169.254", "100.100.100.200")
+# Bytes of tool arguments, or of a whole non-streamed answer, kept per request for that check.
+TOOL_WATCH_MAX = 1 << 20
 
 # Optional TLS: name the operator's own certificate (tailnet CA, LAN-trusted) and
 # the socket speaks it. The proxy invents no trust, it speaks the one you point at.
@@ -3574,6 +3590,73 @@ def log(msg):
                           else "\\u%04x" % ord(m.group()), str(msg))
     sys.stderr.write(f"[proxy] {msg}\n"); sys.stderr.flush()
 
+def tool_pieces(j, anthropic):
+    """(call, name, piece, whole) for each piece of a tool call in one stream event (role 8): call
+    names the call across events, piece is a fragment of its arguments (or all of them when whole)."""
+    if anthropic:
+        if j.get("type") == "content_block_start":
+            b = j.get("content_block") or {}
+            if isinstance(b, dict) and b.get("type") in ("tool_use", "server_tool_use"):
+                yield ("a", j.get("index")), b.get("name") or "", json.dumps(b["input"]) if b.get("input") else "", False
+        elif j.get("type") == "content_block_delta":
+            d = j.get("delta") or {}
+            if isinstance(d, dict) and d.get("type") == "input_json_delta":
+                yield ("a", j.get("index")), "", d.get("partial_json") or "", False
+        return
+    t = j.get("type")
+    if t == "response.output_item.added":
+        it = j.get("item") or {}
+        if isinstance(it, dict) and it.get("type") == "function_call":
+            yield ("r", j.get("output_index")), it.get("name") or "", it.get("arguments") or "", False
+    elif t == "response.function_call_arguments.delta":
+        yield ("r", j.get("output_index")), "", j.get("delta") or "", False
+    elif t == "response.function_call_arguments.done":
+        yield ("r", j.get("output_index")), "", j.get("arguments") or "", True
+    for ch in j.get("choices") or []:
+        if not isinstance(ch, dict):
+            continue
+        for k, tc in enumerate((ch.get("delta") or {}).get("tool_calls") or []):
+            if isinstance(tc, dict):
+                f = tc.get("function") or {}
+                yield ("o", ch.get("index", 0), tc.get("index", k)), f.get("name") or "", f.get("arguments") or "", False
+
+
+def answer_tool_calls(body):
+    """(name, arguments) of each tool call of a whole answer, in the three dialects (role 8)."""
+    try:
+        j = json.loads(body)
+    except Exception:
+        return []
+    if not isinstance(j, dict):
+        return []
+    out = []
+    for ch in j.get("choices") or []:
+        for tc in ((ch or {}).get("message") or {}).get("tool_calls") or []:
+            f = (tc or {}).get("function") or {}
+            out.append((f.get("name") or "", f.get("arguments") or ""))
+    for b in j.get("content") or []:
+        if isinstance(b, dict) and b.get("type") in ("tool_use", "server_tool_use"):
+            out.append((b.get("name") or "", json.dumps(b.get("input") or {})))
+    for it in j.get("output") or []:
+        if isinstance(it, dict) and it.get("type") == "function_call":
+            out.append((it.get("name") or "", it.get("arguments") or ""))
+    return out
+
+
+def tool_targets(calls):
+    """(tool, hosts) of each call whose arguments name a host of TOOL_TARGETS. The tool's name is
+    the model's, so only its plain characters are kept for the journal."""
+    hits = []
+    for name, args in calls:
+        if not isinstance(args, str):
+            args = json.dumps(args)
+        low = args.lower()
+        hosts = [t for t in TOOL_TARGETS if t in low]
+        if hosts:
+            hits.append((re.sub(r"[^A-Za-z0-9_.:-]", "", str(name))[:40] or "unnamed", hosts))
+    return hits
+
+
 def delta_text(j):
     """The visible text of one SSE event, in either dialect. Never the arguments of a
     tool call: a JSON blob of exclamation marks is not what this guard is about."""
@@ -4049,6 +4132,7 @@ class H(BaseHTTPRequestHandler):
     # ---- relay -------------------------------------------------------------
     def _done(self, outcome):
         self._ended = True
+        self._say_tool_targets()
         _gen_discard(self)
         st = ""
         if getattr(self, "_bytes", 0) or getattr(self, "_first", None) is not None:
@@ -4108,6 +4192,57 @@ class H(BaseHTTPRequestHandler):
         if observed and self.path.split("?")[0] in RID_PROOF_ROUTES:
             return observed         # engine ignored the override: its own id is the rid
         return None                 # Anthropic dialect: msg_<uuid> is not a rid
+
+    def _watch_tools(self, rec: bytes, anthropic: bool) -> None:
+        """Role 8: put each tool call's arguments back together, piece by piece, as the stream goes.
+        A host can be split between two pieces, so they are matched once the request ends."""
+        try:
+            calls = self.__dict__.setdefault("_tool_calls", {})
+            for line in rec.split(b"\n"):
+                if not line.startswith(b"data:") or getattr(self, "_tool_bytes", 0) > TOOL_WATCH_MAX:
+                    continue
+                payload = line[5:].strip()
+                # an event without a tool call is most of a stream: it is not even parsed
+                if not any(k in payload for k in (b"tool_", b"input_json", b"function_call")):
+                    continue
+                try:
+                    j = json.loads(payload)
+                except Exception:
+                    continue
+                if not isinstance(j, dict):
+                    continue
+                for call, name, piece, whole in tool_pieces(j, anthropic):
+                    c = calls.setdefault(call, ["", ""])
+                    if name:
+                        c[0] = name
+                    c[1] = piece if whole else c[1] + piece
+                    self._tool_bytes = getattr(self, "_tool_bytes", 0) + len(piece)
+        except Exception:
+            pass
+
+    def _keep_answer(self, c: bytes) -> None:
+        """Role 8 on a whole answer: its bytes, up to TOOL_WATCH_MAX, read once it is relayed."""
+        kept = getattr(self, "_answer_body", None)
+        if kept is not None and len(kept) + len(c) <= TOOL_WATCH_MAX:
+            kept += c
+        else:
+            self._answer_body = None        # too large to be read whole: not guessed at
+
+    def _say_tool_targets(self) -> None:
+        """Role 8, once per request: each tool call naming a host of TOOL_TARGETS is written to the
+        journal, its host family and its tool's name, never its arguments."""
+        calls = [tuple(c) for c in (getattr(self, "_tool_calls", None) or {}).values()]
+        body = getattr(self, "_answer_body", None)
+        if body:
+            calls += answer_tool_calls(bytes(body))
+        self._tool_calls, self._answer_body = {}, None
+        try:
+            hits = tool_targets(calls)
+        except Exception:
+            hits = []
+        for tool, hosts in hits:
+            log(f"{getattr(self, '_peer', '?')} TOOL TARGET {', '.join(hosts)} in a {tool} call on "
+                f"{self.path.split('?')[0]}, relayed as it came (docs/agents-and-network.md)")
 
     def _scan_corruption(self, rec: bytes) -> bool:
         """True once the stream has produced CORRUPTION_RUN marker characters in a row."""
@@ -4607,6 +4742,7 @@ class H(BaseHTTPRequestHandler):
                 while True:
                     c = resp.read(65536)
                     if not c: break
+                    self._keep_answer(c)
                     if CORRUPTION_RUN:
                         run = 0
                         for ch in c.decode("utf-8", "ignore"):
@@ -4794,6 +4930,7 @@ class H(BaseHTTPRequestHandler):
                     self._chunk(sse_error(why) if anthropic else sse_error_openai(why) + b"data: [DONE]\n\n")
                 except Exception: pass
                 self._finish(); self._done("REFUSED corrupted output"); return
+            self._watch_tools(val, anthropic)
             try: self._chunk(val)
             except Exception:
                 drop_upstream(); self._done("CLIENT GONE on write"); return
@@ -4807,6 +4944,7 @@ class H(BaseHTTPRequestHandler):
         self._t0 = time.time()
         self._peer = f"{self.client_address[0]}:{self.client_address[1]}"
         self._bytes = 0; self._first = None; self._last = None
+        self._tool_calls = {}; self._tool_bytes = 0; self._answer_body = bytearray()   # role 8
         n0 = self.headers.get("Content-Length") or "0"
         self.path, suspect = canonical_path(self.path)
         if suspect:
@@ -5437,6 +5575,7 @@ class H(BaseHTTPRequestHandler):
         self._t0 = time.time()
         self._peer = f"{self.client_address[0]}:{self.client_address[1]}"
         self._bytes = 0; self._first = None; self._last = None
+        self._tool_calls = {}; self._tool_bytes = 0; self._answer_body = bytearray()   # role 8
         self.path, suspect = canonical_path(self.path)
         if suspect:
             log(f"{self._peer} REFUSED a path it cannot relay as it is (an escape that changes its meaning, or a byte outside printable ASCII)")
@@ -5561,7 +5700,7 @@ if __name__ == "__main__":
     holds = (f"holds requests up to {HOLD_MAX_S:.0f}s while {' or '.join(HOLD_UNITS)} comes back"
              if HOLD_UNITS and HOLD_MAX_S > 0 else "holds nothing")
     # one f-string: the cockpit's tests render this line from the source
-    log(f"v6.47 on {BIND}:{port} -> {UPSTREAM} (keepalive {KEEPALIVE_S:.0f}s, max silence {MAX_SILENCE_S:.0f}s, {holds})")
+    log(f"v6.48 on {BIND}:{port} -> {UPSTREAM} (keepalive {KEEPALIVE_S:.0f}s, max silence {MAX_SILENCE_S:.0f}s, {holds})")
     # v6.47: what the memory floor's refusal reads, read once here, so the journal shows it works where
     # the unit runs this proxy (its sandbox leaves /proc/meminfo readable)
     avail = mem_available_gib()
