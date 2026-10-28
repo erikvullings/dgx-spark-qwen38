@@ -18,13 +18,17 @@ CI_LOCAL_SERIAL=1 ./ci-local.sh     # one step after the other, in this checkout
 The workflow's jobs run side by side, on GitHub and in `ci-local.sh`, each in a checkout of its
 own: `static` (the tree, lint, templates, fixtures, pins), `suite` (each test file once, under the
 offline guard), `single` (every unittest module in one process), `coverage`, `cockpit` (its unit
-tests and the headless browser) and `fuzz` (fuzz, mutation, properties). `checks` runs once the
-six others have passed, and only then. Here each checkout is a detached worktree of HEAD, so
-`ci-local.sh` refuses a tree with changes nobody committed: commit first, or test the checkout as
-it is with `CI_LOCAL_SERIAL=1`. A full run took 12 minutes on the reference box on 2026-10-28
-(741 s, the length of `single`), against 63 one step after the other the same day (v1.40.4), and
-72 on GitHub when the steps ran as one job (v1.40.3). While working, run the gate you care about
-by name fragment, and the whole thing before pushing.
+tests and the headless browser) and `fuzz` (fuzz, mutation, properties). `checks` ends the run:
+it passes when the six others have passed, and fails on GitHub when one of them failed
+(`ci-local.sh` does not run it then). Here each checkout of a full run is a detached worktree
+of HEAD, so `ci-local.sh` refuses a tree with changes nobody committed: commit first, or test the
+checkout as it is with `CI_LOCAL_SERIAL=1`. A fragment runs in the checkout as it is, one step
+after the other. A full run took 12 minutes on the reference box on 2026-10-28 (741 and 744 s,
+the length of `single`), against 63 one step after the other the same day (v1.40.4), and 72 on
+GitHub when the steps ran as one job (v1.40.3). On one machine the jobs share its ports, as they
+do not on GitHub, where each job has a runner of its own: the files that take a port number out of
+a socket they close run alone within the suite, not apart from the other jobs. While working, run
+the gate you care about by name fragment, and the whole thing before pushing.
 
 The runtime is **stdlib only** and stays that way. Three measuring gates need pip
 packages (`coverage`, `hypothesis`); they ask `tests/testpy.sh` for an

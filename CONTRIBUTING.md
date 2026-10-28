@@ -45,12 +45,13 @@ Run the gates the way GitHub runs them:
 ./ci-local.sh Coverage       # one gate by name fragment
 ```
 
-The jobs of the workflow run side by side, each in a worktree of HEAD, so commit
-first: a tree with changes nobody committed is refused, and
+A full run takes the jobs of the workflow side by side, each in a worktree of
+HEAD, so commit first: a tree with changes nobody committed is refused, and
 `CI_LOCAL_SERIAL=1 ./ci-local.sh` tests the checkout as it is, one step after the
-other (about an hour). The longest job runs every unittest module of `tests/` in
-one process, and sets the length of the run. Run the fragment you touched while
-working, and the whole thing before pushing.
+other (about an hour). A fragment runs in the checkout as it is. The longest job
+runs every unittest module of `tests/` in one process, and sets the length of the
+run. Run the fragment you touched while working, and the whole thing before
+pushing.
 
 ## What CI holds, so you know where you will be caught
 

@@ -1473,6 +1473,8 @@ jobs:
         run: |
           scratch="${TMPDIR:-/tmp}"   # ci-local.sh gives each step its own; a runner has none
           pip install 'coverage==7.16.0' 2>/dev/null || true
+          # the property checks below need it: in one job, the proxy fuzz had installed it before
+          pip install 'hypothesis==6.168.0'
           PY="$(./tests/testpy.sh coverage)"
           cd dashboard
           rm -f .coverage*
@@ -1480,9 +1482,11 @@ jobs:
             $(cd tests && ls test_*.py | sed 's/\.py$//' | sed 's/^/tests./' | tr '\n' ' ')
           # the property checks are a suite too: leaving them out of the
           # measurement reported three validate() branches as uncovered while
-          # they were being exercised 300 times each
-          "$PY" -m coverage run --branch --parallel-mode --source=. \
-            tests/property_checks.py >/dev/null
+          # they were being exercised 300 times each. Without hypothesis they say
+          # SKIPPED and exit 0, having measured nothing (code review, 2026-10-28).
+          out=$("$PY" -m coverage run --branch --parallel-mode --source=. tests/property_checks.py) \
+            || { echo "$out" | tail -20; exit 1; }
+          case "$out" in *SKIPPED*) echo "$out"; exit 1 ;; esac
           "$PY" -m coverage combine -q
           "$PY" -m coverage report --sort=cover | tee "$scratch/cov.txt"
           rm -f .coverage*
@@ -1672,9 +1676,17 @@ jobs:
           [ "$n" -ge 40 ] || { echo "only $n property checks ran"; exit 1; }
 
   checks:
-    # Every job above passed: the status of the run, under the name it always had.
+    # Every job above passed: the status of the run, under the name it always had. It runs when one
+    # of them failed too, and fails then: a job skipped because a job it needs failed reads as
+    # passed to a rule that requires it (code review, 2026-10-28).
     needs: [static, suite, single, coverage, cockpit, fuzz]
+    if: always()
     runs-on: ubuntu-24.04-arm
     steps:
       - name: Every job passed
-        run: echo "static, suite, single, coverage, cockpit and fuzz all passed"
+        env:
+          RESULTS: ${{ join(needs.*.result, ' ') }}
+        run: |
+          # ci-local.sh runs this job once the six have passed, and only then, with no RESULTS
+          echo "static, suite, single, coverage, cockpit and fuzz: ${RESULTS:-passed}"
+          for r in $RESULTS; do [ "$r" = success ] || exit 1; done
