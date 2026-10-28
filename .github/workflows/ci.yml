@@ -22,6 +22,11 @@ jobs:
     steps:
       # v5 runs on Node 24; v4 targets Node 20, which the runners deprecate (same run)
       - uses: actions/checkout@v5
+      # Node 24, the reference box's. The arm64 image's own is 20, and the x86 image this suite ran on
+      # before had 22 (their inventories, 2026-10-28). Every job that runs node has this step.
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '24'
 
       - name: Shell syntax
         run: |
@@ -1254,6 +1259,9 @@ jobs:
     runs-on: ubuntu-24.04-arm
     steps:
       - uses: actions/checkout@v5
+      - uses: actions/setup-node@v7   # Node 24, the reference box's (static says why)
+        with:
+          node-version: '24'
 
       - name: The offline suite touches nothing outside itself
         run: |
@@ -1321,6 +1329,9 @@ jobs:
     runs-on: ubuntu-24.04-arm
     steps:
       - uses: actions/checkout@v5
+      - uses: actions/setup-node@v7   # Node 24, the reference box's (static says why)
+        with:
+          node-version: '24'
 
       - name: No test file in tests/ is left unrun
         run: |
@@ -1394,6 +1405,9 @@ jobs:
     runs-on: ubuntu-24.04-arm
     steps:
       - uses: actions/checkout@v5
+      - uses: actions/setup-node@v7   # Node 24, the reference box's (static says why)
+        with:
+          node-version: '24'
 
       - name: Coverage floors, the root modules
         run: |
@@ -1526,6 +1540,9 @@ jobs:
     runs-on: ubuntu-24.04-arm
     steps:
       - uses: actions/checkout@v5
+      - uses: actions/setup-node@v7   # Node 24, the reference box's (static says why)
+        with:
+          node-version: '24'
 
       - name: Google Chrome for arm64 (the arm64 runner has none)
         run: |
