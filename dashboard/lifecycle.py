@@ -953,7 +953,9 @@ GUARD_CEILING_RE = re.compile(r"\[proxy\] drain ceiling reached after ([\d.]+)s"
 # Role 8 of the proxy (v6.48): a tool call whose arguments name a host of Cohere's report, said
 # with its host family and its tool, never its arguments (docs/agents-and-network.md). Read with
 # journalctl -o short-unix, so each line starts with its time; a peer comes before the words.
-TOOL_TARGET_RE = re.compile(r"^(\d+(?:\.\d+)?) .*?\[proxy\] \S+ TOOL TARGET (.+?) in an? (\S+) call on (\S+),")
+# A named client's peer carries its key label too, as on every line of its request (_KEY above):
+# without it, the lines of the clients the identity wall names never matched (found in review).
+TOOL_TARGET_RE = re.compile(r"^(\d+(?:\.\d+)?) .*?\[proxy\] \S+" + _KEY + r" TOOL TARGET (.+?) in an? (\S+) call on (\S+),")
 TOOL_TARGET_GREP = "TOOL TARGET "
 
 

@@ -1514,6 +1514,14 @@ class ToolTargets(unittest.TestCase):
         self.assertEqual(out["last"], {"at": 1793203600.25, "hosts": "169.254.169.254", "tool": "Bash",
                                        "path": "/v1/messages"})
 
+    def test_a_named_clients_line_is_read_too(self):
+        # with the identity wall on, the peer is "ip:port key=<label>" on every line of its request:
+        # the clients the wall names were the ones whose lines were never read (found in review)
+        line = self.proxy_line("1793200000.5", "aliyuncs.com", "bash", "/v1/chat/completions")
+        keyed = line.replace("127.0.0.1:51234 TOOL", "127.0.0.1:51234 key=alice TOOL")
+        self.assertNotEqual(line, keyed)
+        self.assertEqual(lc.parse_tool_targets(keyed)["count"], 1)
+
     def test_a_line_that_only_quotes_the_words_is_not_one(self):
         # a client's text the proxy logs (a dropped schema pattern) holding the same words
         raw = ("1793200000.5 gx10-eff9 python3[4713]: [proxy] tool schema: dropped a 'pattern': "

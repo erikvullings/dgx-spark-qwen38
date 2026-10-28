@@ -1445,13 +1445,32 @@ def collect_guard():
     g["version"] = lc.parse_guard(banner)["version"] or g["version"]
     g["predates_abort"] = lc.version_before(g["version"], "6.14")   # the page's warning
     state, verdict = lc.guard_verdict(zombies, g, override)
-    # the proxy's role 8 (v6.48): tool calls that named a host of Cohere's report, over a day, for
-    # the banner that says so (docs/agents-and-network.md)
-    targets = run(["journalctl", "-u", "qwen38-keepalive.service", "--since", "-24h", "--no-pager",
-                   "-o", "short-unix", "-g", lc.TOOL_TARGET_GREP], timeout=6)
     return {"node_id": "local", "lane": active, "window": ZOMBIE_WINDOW,
             "zombies": zombies, "guard": g, "override": override,
-            "state": state, "verdict": verdict, "tool_targets": lc.parse_tool_targets(targets)}
+            "state": state, "verdict": verdict, "tool_targets": tool_targets_seen()}
+
+
+# The proxy's role 8 (v6.48): the tool calls that named a host of Cohere's report over the last
+# day, for the banner that says so (docs/agents-and-network.md). Read every TOOL_TARGETS_EVERY
+# seconds rather than at each tick of the guard: a week of the reference box's proxy journal,
+# 22,656 lines, took 0.47 s to scan (2026-10-28).
+TOOL_TARGETS_EVERY = 300.0
+TOOL_TARGETS = {"at": 0.0, "seen": {"count": 0, "last": None}}
+
+
+def tool_targets_seen() -> dict:
+    now = time.time()
+    if now - TOOL_TARGETS["at"] < TOOL_TARGETS_EVERY:
+        return TOOL_TARGETS["seen"]
+    raw = run(["journalctl", "-u", "qwen38-keepalive.service", "--since", "-24h", "--no-pager",
+               "-o", "short-unix", "-g", lc.TOOL_TARGET_GREP], timeout=6)
+    seen, was = lc.parse_tool_targets(raw), TOOL_TARGETS["seen"]
+    # run() answers "" for a read that failed as for a day without any: a line seen inside the
+    # last day is still in the journal, so nothing read while one is means the read failed
+    if not seen["count"] and was["count"] and was["last"] and was["last"]["at"] > now - 86400:
+        seen = was
+    TOOL_TARGETS.update(at=now, seen=seen)
+    return seen
 
 
 def fit_verdict(ctx: int, outp: int, usable: int, prompt_cap: int, window: int = 0) -> dict:

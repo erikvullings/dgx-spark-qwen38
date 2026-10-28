@@ -241,6 +241,9 @@ try {
   ok('two of them: a red banner with the host, the count, the tool and the route',
      /\berr\b/.test(s) && /reach aliyuncs\.com\./.test(s) && /2 tool calls in the last 24 h/.test(s)
      && /in a bash call on \/v1\/chat\/completions/.test(s) && /agents-and-network/.test(s), s);
+  // it says what the proxy saw, not what a client did with it: it claimed opencode refused the call,
+  // untrue for a config of the user's own (found in review)
+  ok('and claims nothing a client did', /only reports it/.test(s) && !/refuses/.test(s), s);
   await tool(null);
   ok('no exception', jsErrors().length === 0, jsErrors().join(' | '));
 } finally {
