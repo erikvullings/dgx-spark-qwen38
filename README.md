@@ -135,6 +135,7 @@ The README is the entry point. Everything longer lives next to it, one subject p
 | How this repo is tested, and what the tests found in code already in production | [TESTING.md](TESTING.md) |
 | Where this is going | [ROADMAP.md](ROADMAP.md) |
 | Trust model and private reporting | [SECURITY.md](SECURITY.md) |
+| What an agent runs without asking, and what this box denies it (Cohere's report on Qwen3.8-Flash-Next) | [docs/agents-and-network.md](docs/agents-and-network.md) |
 | To contribute | [CONTRIBUTING.md](CONTRIBUTING.md) |
 | Mirroring the pinned image and checkpoints for an air-gapped install | [MIRROR.md](MIRROR.md) |
 | Every capability mapped to a panel or an action, audited at v1.5 | [dashboard/CAPABILITIES.md](dashboard/CAPABILITIES.md) |
@@ -345,8 +346,9 @@ What it does about it, with the measurement behind every number, is in
   the value of the cookbook's Flash-Next cells, [docs/flash-lane.md](docs/flash-lane.md)). On the
   27B, treat anything past it as livelock territory, and note that the 27B cookbook's 0.80 for DGX
   Spark is a single-stream boot-and-serve bound rather than a multi-client operating point
-- the Docker cap (`--memory 100g`) bounds host RSS only: the cgroup does not see CUDA unified
-  allocations, so the fraction is the real guard
+- the Docker cap (`--memory 100g`) bounds host RSS only: on GB10 the cgroup is not charged for
+  the engine's GPU memory (plain `cudaMalloc`; managed and pinned memory are, [measured by another
+  owner](https://forums.developer.nvidia.com/t/387182)), so the fraction is the real guard
 - the number to watch is GPU-side headroom after graph capture: 21.30 GiB at 0.76 against 19.38
   at the 0.70 pin that preceded it
 

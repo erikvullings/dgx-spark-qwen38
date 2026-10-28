@@ -187,8 +187,12 @@ discussion, not a disclosure.
   per-client quotas or ceilings, and the engine behind it still has one key.
 - **`AGENT_AUTO=1` is deliberate escalation.** It sets opencode to allow
   every tool call in the Agent view, behind the cockpit login, on this
-  machine, by the operator's own choice. The explicit deny rules of your
-  own `opencode.json` still apply.
+  machine, by the operator's own choice. opencode merges it after every
+  rule of its config files, so the rules of your own `opencode.json`,
+  `deny` included, do not hold under it: the unit repeats only this repo's
+  shell rules for the hosts of Cohere's report after it. Without it,
+  opencode's own defaults already run shell commands unasked
+  ([docs/agents-and-network.md](docs/agents-and-network.md)).
 - **The abliterated targets are a policy choice.** `uncensored`,
   `uncensored-fp8` and `flash-uncensored` exist as pinned checkpoints
   because the operator asked for them; nothing in the serving stack filters

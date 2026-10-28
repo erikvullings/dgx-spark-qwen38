@@ -8,7 +8,7 @@ SGLang's memory accounting **does not see 25-40 GB** of transient allocations on
 
 This repo's service is safe by construction:
 
-- Docker hard caps: `--memory 100g --memory-swap 100g` (a runaway kills the container, never the host; note the cgroup does *not* see CUDA unified allocations, so the real guard is the fraction)
+- Docker hard caps: `--memory 100g --memory-swap 100g` (a host-memory runaway kills the container, not the host; the cgroup is *not* charged for the engine's GPU memory, plain `cudaMalloc` on GB10, so the real guard is the fraction)
 - `--mem-fraction-static 0.50` in native mode (plenty for 262K context at batch ≤ 4); the default 1m mode runs 0.76, below
 - `Restart=always` + a clean `ExecStartPre docker rm -f` so even a power cut leaves nothing stale (`always` and not `on-failure`: a Triton compile crash measured on 2026-08-22 ended in `SystemExit: 0`, which `on-failure` never relaunches)
 
@@ -16,12 +16,13 @@ The 1m mode deliberately runs **0.76** inside the same docker caps, with the aut
 disabled. It ran 0.70 until v1.14, and the number moved with the image, not with the appetite:
 the official release claims a smaller static budget for the same fraction, so 0.70 there cost
 15% of the pool (770,118 tokens against 906,524) while leaving 10 GB of GPU memory unclaimed.
-0.76 hands that back and still leaves a wider margin than the old pin did, 21.30 GB free after
+0.76 hands that back and still leaves a wider margin than the old pin did, 21.30 GiB free after
 graph capture against 19.38. **0.80 was measured crashing** under 3 concurrent requests (2 GiB
 free, Triton `CUDA operation not permitted`), and the 25-40 GB invisible-allocation bursts above
 all belong to native runs and the autotuner. Treat anything past 0.80 as livelock territory. What
 bounds the fraction is the unified pool, not the container: `--memory 100g` caps host RSS and the
-cgroup does not see CUDA unified allocations, measured at 0.76 under a 5,623-token generation
+cgroup is not charged for the engine's GPU memory (plain `cudaMalloc`; managed and pinned memory are, as
+[another owner measured](https://forums.developer.nvidia.com/t/387182)), measured at 0.76 under a 5,623-token generation
 with the container holding 7.15 GiB of its 100 GiB throughout. The number to watch is the GPU-side
 headroom after graph capture (21.30 GiB at 0.76, against 19.38 at the old pin).
 
