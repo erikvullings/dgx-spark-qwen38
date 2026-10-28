@@ -12,12 +12,19 @@ Run everything the way CI does:
 ```bash
 ./ci-local.sh                       # every gate, exactly as GitHub runs it
 ./ci-local.sh Coverage              # one gate by name fragment
+CI_LOCAL_SERIAL=1 ./ci-local.sh     # one step after the other, in this checkout as it is
 ```
 
-A full run took 45 minutes on the reference box on 2026-10-18 (v1.36.3, its offline step running
-four test files at a time), against 61 for v1.36.2 and 78 to 81 before, when each test file ran
-three times (on GitHub, 81 minutes for v1.36.0 and 60 for v1.36.2). While working, run the gate
-you care about by name fragment; run the whole thing before pushing.
+The workflow's jobs run side by side, on GitHub and in `ci-local.sh`, each in a checkout of its
+own: `static` (the tree, lint, templates, fixtures, pins), `suite` (each test file once, under the
+offline guard), `single` (every unittest module in one process), `coverage`, `cockpit` (its unit
+tests and the headless browser) and `fuzz` (fuzz, mutation, properties). `checks` runs once the
+six others have passed, and only then. Here each checkout is a detached worktree of HEAD, so
+`ci-local.sh` refuses a tree with changes nobody committed: commit first, or test the checkout as
+it is with `CI_LOCAL_SERIAL=1`. A full run took 12 minutes on the reference box on 2026-10-28
+(741 s, the length of `single`), against 63 one step after the other the same day (v1.40.4), and
+72 on GitHub when the steps ran as one job (v1.40.3). While working, run the gate you care about
+by name fragment, and the whole thing before pushing.
 
 The runtime is **stdlib only** and stays that way. Three measuring gates need pip
 packages (`coverage`, `hypothesis`); they ask `tests/testpy.sh` for an
