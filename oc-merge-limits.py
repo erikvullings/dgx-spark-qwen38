@@ -7,6 +7,7 @@ Usage: oc-merge-limits.py <target opencode.json> <provider> <model id> <context>
        oc-merge-limits.py <target opencode.json> --autoupdate false|notify
        oc-merge-limits.py <target opencode.json> --deny-bash
        oc-merge-limits.py --agent-auto-permission
+       oc-merge-limits.py --deny-permission
        oc-merge-limits.py <target opencode.json> --add-providers <generated opencode.json>
        oc-merge-limits.py <target opencode.json> --remove-providers <API key file>
        oc-merge-limits.py <target opencode.json> --remove-provider <provider id>
@@ -876,6 +877,9 @@ def main(argv: list[str]) -> int:
         return merge_deny_bash(argv[1])
     if argv[1:] == ["--agent-auto-permission"]:
         print(agent_auto_permission())
+        return 0
+    if argv[1:] == ["--deny-permission"]:
+        print(json.dumps(deny_permission()))        # install.sh hands it to the config it generates
         return 0
     if len(argv) == 4 and argv[2] == "--add-providers":
         return add_providers(argv[1], argv[3])

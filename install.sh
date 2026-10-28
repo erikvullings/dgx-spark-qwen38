@@ -2502,9 +2502,8 @@ OC_FLASH_LOCAL="$OC_FLASH_LOCAL" OC_FLASH_LOCAL_CTX="$OC_FLASH_LOCAL_CTX" OC_FLA
 OC_FLASH_LOCAL_NAME="$OC_FLASH_LOCAL_NAME" OC_FLASH_LOCAL_BOOT="$FLASH_LOCAL_BOOT" \
 OC_ORNITH_122B="$OC_ORNITH_122B" OC_ORNITH_122B_CTX="$OC_ORNITH_122B_CTX" OC_ORNITH_122B_OUT="$OC_ORNITH_122B_OUT" \
 OC_ORNITH_122B_NAME="$OC_ORNITH_122B_NAME" OC_ORNITH_122B_BOOT="$ORNITH_122B_BOOT" \
-OC_KEEP="$OC_KEEP" OC_PIN="$OPENCODE_PIN" \
+OC_KEEP="$OC_KEEP" OC_PIN="$OPENCODE_PIN" OC_DENY="$(python3 "$REPO_DIR/oc-merge-limits.py" --deny-permission)" \
 OC_CONFIG_DIR="$CONFIG_DIR" python3 - <<'PYEOF' || die "could not write the opencode provider config"
-import importlib.util
 import json
 import os
 
@@ -2641,13 +2640,12 @@ if os.environ.get("OC_ORNITH_122B_BOOT") == "1" and "ornith-122b" in providers:
 doc = {"$schema": "https://opencode.ai/config.json", "provider": providers,
        "compaction": {"preserve_recent_tokens": int(os.environ["OC_KEEP"]), "prune": False},
        "model": default, "small_model": default}
-# Cohere's report (2026-10-26): the shell rules for its hosts, under a key of their own. opencode
-# merges this file over the user's own config for oc and the Agent tab, so they come after the
-# user's rules there whatever those say (oc-merge-limits.py, docs/agents-and-network.md).
-_spec = importlib.util.spec_from_file_location("ocm", os.path.join(os.environ["OC_REPO_DIR"], "oc-merge-limits.py"))
-_ocm = importlib.util.module_from_spec(_spec)
-_spec.loader.exec_module(_ocm)
-doc["permission"] = _ocm.deny_permission()
+# Cohere's report (2026-10-26): the shell rules for its hosts, under a key of their own, as
+# oc-merge-limits.py --deny-permission gives them (OC_DENY). opencode merges this file over the
+# user's own config for oc and the Agent tab, so they come after the user's rules there whatever
+# those say (docs/agents-and-network.md). An OC_DENY that is set but empty stops here.
+if os.environ.get("OC_DENY") is not None:
+    doc["permission"] = json.loads(os.environ["OC_DENY"])
 # With the version pinned, opencode looks for no update at all: false, the JSON boolean
 # (its schema takes a boolean or "notify", not the string "false"). With any other value
 # 1.19's TUI checks every 10 minutes and, once it is on the newest 1.x, shows "/update to
