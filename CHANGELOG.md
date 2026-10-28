@@ -70,9 +70,9 @@ lanes, the ConnectX-7 ports, their RDMA side and the mlx5 modules, Docker, the t
 and with `--peer` the port the route to the other box takes, its loss and its round trip. It needs no sudo
 and changes nothing. It never prints a MAC or IP address (only its kind), the home directory, the host's
 name or the serial number, and it opens no file that holds a key. On the reference GX10, lspci shows no
-ConnectX-7 although the mlx5 modules are loaded, and the probe says both. A review of the probe found ten
-things before the release, from a peer that does not answer read as not measured to an IPv6 address the
-mask let through. Each is fixed with its test.
+ConnectX-7 although the mlx5 modules are loaded, and the probe says both. Two reviews of the probe found
+what it missed before the release, from a peer that does not answer read as not measured to a host's name
+written in another case. Each is fixed with its test.
 
 **Tests.** `test_oc_merge_limits.py` (the order, the forms, a key added after the block, a user's own
 pattern), `test_install_opencode_pin.py`, `test_install_oc_artifact.py`, `test_agent_auto_deny.py` (a
