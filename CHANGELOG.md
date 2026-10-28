@@ -28,14 +28,16 @@ SECURITY.md now says. The cockpit still reads that mode as auto.
 **The proxy says when a model asks a tool to reach one of them (v6.48, its role 8).** The proxy sees every
 tool call before the client runs it, whatever the client. The arguments of each call, put back together from
 a stream (OpenAI's `tool_calls`, Anthropic's `input_json_delta`, the Responses API) or read from a whole
-answer on the generation routes, are matched when the request ends against aliyuncs.com and the two metadata
-addresses. A match is one journal line, the host and the tool's name, never the arguments, and the answer is
-relayed as it came. A tool that writes or edits a file is not read: a page that quotes these hosts is no
-request to them. The cockpit reads a day of those lines every 5 minutes and shows a red banner with the
+answer on the generation routes that names one of them, are matched when the request ends against
+aliyuncs.com and the two metadata addresses. A match is one journal line, the host and the tool's name,
+never the arguments, and the answer is relayed as it came. A tool that reads, searches or writes files, or
+hands work to a sub-agent, is not read, by its exact name: a page that quotes these hosts, or a search for
+them, is no request to them. The cockpit reads a day of those lines every 5 minutes and shows a red banner with the
 count, the host, the tool and the route. It says what the proxy saw, not what the client did with it.
 
 **What it does not cover.** A model that writes the address another way (a variable, an encoding, a script
-it writes first), and opencode's `webfetch`, which 1.x cannot filter by URL.
+it writes first), opencode's `webfetch`, which 1.x cannot filter by URL, and a whole answer over 8 MiB, which
+the proxy does not read.
 [docs/agents-and-network.md](docs/agents-and-network.md) says what runs unasked and how to approve each
 command. The rules stay in place after `uninstall.sh`, as `autoupdate` does.
 
@@ -50,7 +52,12 @@ cockpit. `--deny-bash` called rules "already there" that a later key overrode. A
 unexpected shape raised where the request ends, before its end line. SGLang writes `"tool_calls":null` in
 every chunk, so the filter meant to skip events without a tool call parsed every token. The bare word
 "routify" matched the Svelte framework of that name, and an agent editing a page that quotes these hosts
-raised the banner. Each has its test.
+raised the banner. A second review found more, fixed the same way: a key that allows only some commands,
+put after the block, was not seen. `write_stdin`, which types into a shell, was taken for a tool that writes
+files, by a pattern on part of its name, and a search for the hosts raised the banner. A client's text the
+proxy logs could forge a line the cockpit counted. A large file written in a stream filled the budget and hid
+a shell call after it, calls a parser streams without an index merged, a read of the journal that failed
+kept lines older than a day, and every whole answer was parsed. Each has its test.
 
 **Tests.** `test_oc_merge_limits.py` (the order, the forms, a key added after the block, a user's own
 pattern), `test_install_opencode_pin.py`, `test_install_oc_artifact.py`, `test_agent_auto_deny.py` (a
