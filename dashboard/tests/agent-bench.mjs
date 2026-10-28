@@ -18,7 +18,7 @@
 // PATH whose docker, systemctl, journalctl, nvidia-smi, sudo, git, curl, tailscale and opencode answer
 // nothing for the cockpit, and a browser that resolves no name. It takes the browser from CHROME and an
 // already downloaded release from AGENT_BENCH_TARBALL (checked against the same sha256).
-import { spawn, spawnSync } from 'node:child_process';
+import { execFileSync, spawn, spawnSync } from 'node:child_process';
 import { createHash, randomBytes } from 'node:crypto';
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, openSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import net from 'node:net';
@@ -144,7 +144,10 @@ const OC_PORT = await freePort();
 // the unit install-agent.sh would write for this server, AGENT_AUTO=1's permission line in it: the cockpit
 // reads the binary it runs and the permission mode from it (COCKPIT_AGENT_UNIT_PATH, never the box's own)
 const unitPath = join(root, 'opencode-web.service');
-const AUTO_LINE = `Environment='OPENCODE_PERMISSION={"*":"allow"}'`;
+// as install-agent.sh builds it since v1.40.4: the shell rules after its "*" (oc-merge-limits.py)
+const AUTO_PERMISSION = execFileSync('python3', [join(HERE, '..', '..', 'oc-merge-limits.py'), '--agent-auto-permission'],
+  { encoding: 'utf8' }).trim();
+const AUTO_LINE = `Environment='OPENCODE_PERMISSION=${AUTO_PERMISSION}'`;
 const unitText = readFileSync(join(HERE, '..', 'opencode-web.service.template'), 'utf8')
   .replaceAll('__OPENCODE_BIN__', OC).replaceAll('__AUTO_LINE__', AUTO_LINE).replaceAll('__HOME__', home)
   .replaceAll('__PATH__', process.env.PATH).replaceAll('__OUTPUT_TOKEN_MAX__', '32000').replaceAll('__USER__', 'bench')
@@ -162,7 +165,7 @@ ocServer = spawn(exe, ocArgs, {
   // the unit's environment (dashboard/opencode-web.service.template), every path under the bench's root,
   // and AGENT_AUTO=1's permission line, which our boxes run with
   env: { PATH: process.env.PATH, HOME: home, TMPDIR: scratch, ...xdg, OPENCODE_SERVER_USERNAME: 'opencode', OPENCODE_SERVER_PASSWORD: password,
-         OPENCODE_CONFIG: ocConfig, OPENCODE_PERMISSION: '{"*":"allow"}', OPENCODE_EXPERIMENTAL_OUTPUT_TOKEN_MAX: '32000',
+         OPENCODE_CONFIG: ocConfig, OPENCODE_PERMISSION: AUTO_PERMISSION, OPENCODE_EXPERIMENTAL_OUTPUT_TOKEN_MAX: '32000',
          OPENCODE_DISABLE_AUTOUPDATE: '1', OPENCODE_DISABLE_MODELS_FETCH: '1', OPENCODE_DISABLE_PROJECT_CONFIG: '1',
          OPENCODE_DISABLE_CLAUDE_CODE: '1', OPENCODE_DISABLE_LSP_DOWNLOAD: '1' },
 });
