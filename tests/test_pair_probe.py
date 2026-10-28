@@ -4,10 +4,12 @@
 What it prints is pasted into a public discussion, so the invariant is what it never prints: a MAC
 address, an IP address (only its kind), the home directory, the host's name, the box's serial
 number, or anything of a file that holds a key, which it never opens. The cases after the first
-seven come from the review of 2026-10-28: a peer that does not answer read as not measured, the
-checkout was always ~/dgx-spark-qwen38, a lane systemd had unloaded was left out, the modules told
+seven come from the reviews of 2026-10-28 and 29: a peer that does not answer read as not measured,
+the checkout was always ~/dgx-spark-qwen38, a lane systemd had unloaded was left out, the modules told
 nothing, the model cache was the default one, a peer's name was not resolved, an IPv6 address went
-through, a host named like a key renamed it, and a record of another shape raised."""
+through, a host named like a key renamed it, a record of another shape raised, a scoped IPv6 peer lost
+its port, a name in another case, the user's name, a name next to a dash and a port named after its MAC
+went through, a short host name ate the facts it names, and a ping in another language read nothing."""
 import builtins
 import importlib.util
 import io
@@ -96,6 +98,19 @@ class Masking(unittest.TestCase):
         out = P.masked_facts(facts, host="gx10-eff9", user="hasan")
         self.assertEqual((out["box"]["kernel"], out["repo"]["branch"]), ("6.17.0-<host>", "<user>/pairs"))
         self.assertEqual(out["box"]["machine"], "ASUSTeK GX10", "a word of the name is not the name")
+
+    def test_a_name_of_letters_next_to_a_dash_goes(self):
+        # the example the code's own comment gives, and a branch named after its author (review, 2026-10-29)
+        facts = {"box": {"kernel": "6.17.0-spark-b"}, "repo": {"branch": "fix-hasan"},
+                 "software": {"docker": "dgx-spark-qwen38 on DGX-Spark-Qwen38"}}
+        out = P.masked_facts(facts, host="spark", user="hasan")
+        self.assertEqual((out["box"]["kernel"], out["repo"]["branch"]), ("6.17.0-<host>-b", "fix-<user>"))
+        self.assertEqual(P.masked("dgx-spark-qwen38 on DGX-Spark-Qwen38", host="spark", user=""),
+                         "dgx-spark-qwen38 on DGX-Spark-Qwen38", "this repo's own name, in any case")
+
+    def test_a_port_named_after_its_mac_goes(self):
+        self.assertEqual(P.masked("via enx00e04c680a1b and enx-not-a-mac", host="", user=""),
+                         "via enx<mac> and enx-not-a-mac")
 
     def test_a_short_host_name_leaves_the_facts_it_names(self):
         facts = {"peer": {"via": "lo", "kind": "loopback"}, "software": {"time_synced": "yes"},

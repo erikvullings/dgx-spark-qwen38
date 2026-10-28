@@ -53,8 +53,8 @@ def read(path, default=""):
 
 
 def ip_kind(addr):
-    """private, link-local, shared (100.64/10: Tailscale, carrier NAT), loopback or public: never the
-    address itself."""
+    """private, link-local, shared (100.64/10: Tailscale, carrier NAT), loopback, public, or unknown for
+    what is no address: never the address itself."""
     try:
         ip = ipaddress.ip_address(addr.split("/")[0])
     except ValueError:
@@ -78,10 +78,11 @@ def user_name():
 def masked(text, host=None, user=None, names=True):
     """Whatever a command said, without what could name the box or its owner: MAC addresses, valid IP
     addresses of either version (their kind only, a zero-padded one too), the home directory, and with
-    names the host's name and the user's as whole words in any case (a name like "spark" must not eat
-    "dgx-spark-qwen38")."""
+    names the host's name and the user's wherever they show as a word, in any case, this repo's own name
+    aside (a host named "spark" must not eat "dgx-spark-qwen38")."""
     host = socket.gethostname() if host is None else host
     user = user_name() if user is None else user
+    text = re.sub(r"\benx[0-9a-f]{12}\b", "enx<mac>", text, flags=re.I)  # a port named after its MAC (udev)
     text = re.sub(r"\b(?:[0-9a-f]{2}:){5}[0-9a-f]{2}\b", "<mac>", text, flags=re.I)
     def ip(m):
         octets = m.group(0).split("/")[0].split(".")
@@ -100,17 +101,22 @@ def masked(text, host=None, user=None, names=True):
     text = re.sub(r"(?<![\w.])((?:[0-9a-f]{0,4}:){2,7}[0-9a-f]{0,4}(?:%[\w.-]+)?)(?:/\d{1,3})?(?![\w:])",
                   ip6, text, flags=re.I)
     text = text.replace(HOME, "~")
-    for name, mark in ((host, "<host>"), (user, "<user>")):
-        if names and name:
-            # a name with a digit or a dash (gx10-eff9) is the box's own, wherever it shows (a kernel
-            # 6.17.0-gx10-eff9), a name of letters alone may be a word of a longer one (dgx-spark-qwen38)
-            edge = (r"(?<!\w)", r"(?!\w)") if re.search(r"[\d-]", name) else (r"(?<![\w.-])", r"(?![\w-])")
-            text = re.sub(edge[0] + re.escape(name) + edge[1], mark, text, flags=re.I)
+    if names:
+        # a name is a word between anything but letters, digits and "_": a kernel 6.17.0-spark-b, a branch
+        # fix-hasan, an FQDN gx10-eff9.local. This repo's name is set aside first, the one place a word of
+        # a host's name is expected (review, 2026-10-29: the first rule kept "spark" next to a dash)
+        kept = re.findall(r"dgx-spark-qwen38", text, flags=re.I)
+        text = re.sub(r"dgx-spark-qwen38", "\0", text, flags=re.I)
+        for name, mark in ((host, "<host>"), (user, "<user>")):
+            if name:
+                text = re.sub(r"(?<!\w)" + re.escape(name) + r"(?!\w)", mark, text, flags=re.I)
+        for k in kept:
+            text = text.replace("\0", k, 1)
     return text
 
 
 # The facts that come as free text, where a name of the host or the user can show (a kernel built as
-# 6.17.0-spark-b, a branch hasan/pairs). The others are words of the kernel, of systemd or of this probe
+# 6.17.0-spark-b, a branch hasan/pairs or fix-hasan). The others are words of the kernel, of systemd or of this probe
 # (lo, up, yes, active/running): a host named "lo" or "yes" must leave them as they are.
 FREE_TEXT = {"machine", "os", "kernel", "gpu", "branch", "docker", "nvidia_ctk", "cards", "error"}
 
