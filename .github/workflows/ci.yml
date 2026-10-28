@@ -12,12 +12,13 @@ jobs:
   # The jobs run side by side, each on a runner of its own: the hour this took as one job was the
   # sum of its steps (4,312 s for v1.40.3, 1,869 of them the single-process pass), and it is now
   # the longest job. `checks`, last, keeps the one name a reader or a script looks for.
+  # Every job runs on ubuntu-24.04-arm, the architecture of the boxes this repo serves (aarch64).
   static:
     # Every check that reads the tree: syntax, lint, templates, fixtures, pins, the small scripts.
     # Named, not ubuntu-latest: that label moves to Ubuntu 26 from 2026-10-19 (GitHub's notice on
     # the run of 2026-10-02), and a new image, its python and its browser, is a change this suite
     # is asked to pass on purpose, in a commit of its own.
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-24.04-arm
     steps:
       # v5 runs on Node 24; v4 targets Node 20, which the runners deprecate (same run)
       - uses: actions/checkout@v5
@@ -1250,7 +1251,7 @@ jobs:
 
   suite:
     # Each test file once, in its own process, under the offline guard (tests/run_suite.py).
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-24.04-arm
     steps:
       - uses: actions/checkout@v5
 
@@ -1317,7 +1318,7 @@ jobs:
 
   single:
     # Every unittest module of tests/ in ONE process: what a module does to another one shows here.
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-24.04-arm
     steps:
       - uses: actions/checkout@v5
 
@@ -1390,7 +1391,7 @@ jobs:
 
   coverage:
     # The coverage floors, root modules and per module.
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-24.04-arm
     steps:
       - uses: actions/checkout@v5
 
@@ -1522,9 +1523,28 @@ jobs:
 
   cockpit:
     # The cockpit's unit tests, then the cockpit in a headless browser.
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-24.04-arm
     steps:
       - uses: actions/checkout@v5
+
+      - name: Google Chrome for arm64 (the arm64 runner has none)
+        run: |
+          # The headless browser steps read CHROME or /usr/bin/google-chrome. GitHub's arm64 image ships
+          # no Chrome: it comes from Google's own arm64 repository, the one the reference box installs it
+          # from, once the key that signs it is the one the box trusts (its primary key, checked against
+          # the box's keyring on 2026-10-28). A machine that has a Chrome keeps it.
+          if ! command -v google-chrome >/dev/null; then
+            key="${RUNNER_TEMP:-${TMPDIR:-.}}/google-linux-signing-key.pub"
+            curl -fsSL https://dl.google.com/linux/linux_signing_key.pub -o "$key"
+            fpr=$(gpg --show-keys --with-colons "$key" | awk -F: '$1 == "fpr" { print $10; exit }')
+            [ "$fpr" = EB4C1BFD4F042F6DDDCCEC917721F63BD38B4796 ] || { echo "Google's signing key is $fpr, not the one the box trusts"; exit 1; }
+            sudo gpg --dearmor -o /usr/share/keyrings/google-chrome.gpg < "$key"
+            echo "deb [arch=arm64 signed-by=/usr/share/keyrings/google-chrome.gpg] https://dl.google.com/linux/chrome-repo/deb/ stable main" \
+              | sudo tee /etc/apt/sources.list.d/google-chrome.list > /dev/null
+            sudo apt-get update -qq
+            sudo apt-get install -y -qq google-chrome-stable
+          fi
+          google-chrome --version
 
       - name: The cockpit page survives losing its server (headless browser, a cockpit of its own)
         run: |
@@ -1596,7 +1616,7 @@ jobs:
 
   fuzz:
     # Generated inputs: the proxy fuzz, the mutation score, the property checks.
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-24.04-arm
     steps:
       - uses: actions/checkout@v5
 
@@ -1637,7 +1657,7 @@ jobs:
   checks:
     # Every job above passed: the status of the run, under the name it always had.
     needs: [static, suite, single, coverage, cockpit, fuzz]
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-24.04-arm
     steps:
       - name: Every job passed
         run: echo "static, suite, single, coverage, cockpit and fuzz all passed"
