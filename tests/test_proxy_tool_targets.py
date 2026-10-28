@@ -68,7 +68,19 @@ ANSWERS = {
         {"type": "response.function_call_arguments.delta", "output_index": 0, "delta": '100.200/latest"}'})),
     "chat-whole": ("application/json", json.dumps({"id": "c2", "choices": [{"index": 0, "message": {
         "role": "assistant", "tool_calls": [{"id": "t2", "type": "function", "function": {
-            "name": "webfetch", "arguments": '{"url": "https://routify-file-x.example/fetch"}'}}]}}]}).encode()),
+            "name": "webfetch", "arguments": '{"url": "https://routify-file-x.oss-cn-beijing.aliyuncs.com/f"}'}}]}}]}).encode()),
+    # what the review found would have raised a false alarm: the Svelte framework named Routify,
+    # and an agent editing a page that quotes the hosts (this repo's own docs do)
+    "chat-svelte": ("text/event-stream", chat_call('{"command": "npx degit roxi/routify-starter app"}')),
+    "chat-edit": ("text/event-stream", chat_call('{"filePath": "docs/agents-and-network.md", '
+                                                 '"newString": "curl http://169.254.169.254/ is denied"}', name="edit")),
+    # SGLang writes "tool_calls":null in every chunk of a stream (its DeltaMessage)
+    "chat-sglang": ("text/event-stream", sse({"id": "c3", "object": "chat.completion.chunk", "choices": [
+        {"index": 0, "delta": {"role": None, "content": "aliyuncs.com is a domain", "reasoning_content": None,
+                               "tool_calls": None}, "finish_reason": None}]})),
+    # a whole answer of a shape no dialect has: it must not stop the request's end line
+    "whole-odd": ("application/json", json.dumps({"choices": {"0": {"message": "x"}}, "content": "y",
+                                                  "output": {"type": "function_call"}}).encode()),
 }
 
 
@@ -164,11 +176,11 @@ class ToolCallsNamingTheHostsAreSaid(unittest.TestCase):
 
     def test_a_whole_answer(self):
         got, said = self.ask("/v1/chat/completions", "chat-whole")
-        self.assertSaid(said, "routify", "webfetch", "/v1/chat/completions")
+        self.assertSaid(said, "aliyuncs.com", "webfetch", "/v1/chat/completions")
         self.assertEqual(got, ANSWERS["chat-whole"][1])
 
     def test_a_tool_call_naming_none_of_them_and_text_that_does_are_not(self):
-        for case in ("chat-benign", "chat-text"):
+        for case in ("chat-benign", "chat-text", "chat-svelte", "chat-edit", "chat-sglang"):
             got, said = self.ask("/v1/chat/completions", case)
             self.assertEqual(said, [], case)
             self.assertEqual(got, ANSWERS[case][1])
@@ -183,18 +195,56 @@ class ToolCallsNamingTheHostsAreSaid(unittest.TestCase):
             c.getresponse().read()
         c.close()
         threading.Event().wait(0.2)
-        self.assertEqual(sum("TOOL TARGET routify" in ln for ln in self.lines), 2, self.lines)
+        self.assertEqual(sum("TOOL TARGET aliyuncs.com" in ln for ln in self.lines), 2, self.lines)
+
+    def test_an_answer_of_no_known_shape_still_ends(self):
+        # it raised where the request ends, before its end line and before the generation was let go
+        got, said = self.ask("/v1/chat/completions", "whole-odd")
+        self.assertEqual(said, [])
+        self.assertEqual(got, ANSWERS["whole-odd"][1])
+        self.assertTrue(any("ok non-sse" in ln for ln in self.lines), self.lines)
 
 
 class ThePieces(unittest.TestCase):
-    def test_the_name_kept_for_the_journal_is_plain(self):
+    @classmethod
+    def setUpClass(cls):
         spec = importlib.util.spec_from_file_location("kproxy_tool_names", REPO / "keepalive-proxy.py")
-        mod = importlib.util.module_from_spec(spec)
+        cls.mod = importlib.util.module_from_spec(spec)
         err, sys.stderr = sys.stderr, io.StringIO()
         try:
-            spec.loader.exec_module(mod)
+            spec.loader.exec_module(cls.mod)
         finally:
             sys.stderr = err
+
+    def test_a_whole_done_counts_what_it_adds(self):
+        # the Responses API repeats a call's arguments whole at its end: counted once, not twice
+        class Handler:
+            pass
+        h = Handler()
+        rec = sse({"type": "response.function_call_arguments.delta", "output_index": 0, "delta": "abc"},
+                  {"type": "response.function_call_arguments.delta", "output_index": 0, "delta": "def"},
+                  {"type": "response.function_call_arguments.done", "output_index": 0, "arguments": "abcdef"})
+        self.mod.H._watch_tools(h, rec, False)
+        self.assertEqual(h._tool_bytes, 6)
+        self.assertEqual(h._tool_calls[("r", 0)][1], "abcdef")
+
+    def test_an_sglang_chunk_without_a_tool_call_is_not_parsed(self):
+        # SGLang writes "tool_calls":null in every chunk: a filter on b"tool_" parsed every token
+        class Handler:
+            pass
+        seen = []
+        real = self.mod.tool_pieces
+        self.mod.tool_pieces = lambda j, a: seen.append(j) or iter(())
+        try:
+            rec = (b'data: {"id":"c","object":"chat.completion.chunk","choices":[{"index":0,"delta":'
+                   b'{"role":null,"content":"hi","reasoning_content":null,"tool_calls":null},"finish_reason":null}]}\n\n')
+            self.mod.H._watch_tools(Handler(), rec, False)
+        finally:
+            self.mod.tool_pieces = real
+        self.assertEqual(seen, [])
+
+    def test_the_name_kept_for_the_journal_is_plain(self):
+        mod = self.mod
         hits = mod.tool_targets([("bash\n[proxy] 1.2.3.4:5 POST /v1/x ok", "x.aliyuncs.com")])
         self.assertEqual(hits, [("bashproxy1.2.3.4:5POSTv1xok", ["aliyuncs.com"])])   # no break, no bracket
 

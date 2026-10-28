@@ -44,8 +44,9 @@ Eight roles, nothing else:
    answer for a whole one, and after a stop that cut one, new generations wait while the box is short
    of memory (see "The memory floor's stop" below);
 8. say in the journal when a tool call's arguments name a host of Cohere's report (TOOL_TARGETS:
-   Alibaba Cloud's OSS domain, its Routify relay, a cloud metadata address), whatever the client:
-   the host family and the tool's name, never the arguments, and the answer relayed as it came.
+   Alibaba Cloud's OSS domain, under which its Routify relay sits, and the cloud metadata
+   addresses), whatever the client, but in a tool that carries a file's content: the host family
+   and the tool's name, never the arguments, and the answer relayed as it came.
    The cockpit turns the line into a banner (docs/agents-and-network.md).
 
 v6.48: a tool call that names a host of Cohere's report is said in the journal (role 8). Cohere
@@ -54,7 +55,8 @@ Alibaba Cloud OSS bucket in Beijing. The proxy sees each tool call before the cl
 arguments of every call, put back together from a stream (the OpenAI tool_calls deltas, Anthropic's
 input_json_delta, the Responses API's function_call_arguments) or read from a whole answer, are
 matched against TOOL_TARGETS when the request ends, and a match is written as "TOOL TARGET <hosts>
-in a <tool> call", with nothing of the arguments. Nothing relayed changes.
+in a <tool> call", with nothing of the arguments. A tool that writes or edits a file is not read:
+a page quoting these hosts is no request to them. Nothing relayed changes.
 v6.47: the memory floor's stop (role 7). SGLang ends an aborted generation as a finished one, end_turn
 on /v1/messages and finish_reason "abort" on the OpenAI routes, so a client of the cockpit's memory
 floor got the part generated before the stop as its whole answer: Claude Code kept a compaction summary
@@ -701,11 +703,19 @@ MEDIA_HEADER_BYTES = 48 * 1024
 # its state rather than the model writing prose. 0 disables the guard.
 CORRUPTION_RUN = int(os.environ.get("CORRUPTION_RUN", "128") or 0)
 CORRUPTION_MARK = "!"
-# Role 8, Cohere's report (2026-10-26): the OSS domain Qwen3.8-Flash-Next sent a file to, the Routify
-# file relay of the report's host list, and the cloud metadata addresses. Matched in lower case.
-TOOL_TARGETS = ("aliyuncs.com", "routify", "169.254.169.254", "100.100.100.200")
+# Role 8, Cohere's report (2026-10-26): the OSS domain Qwen3.8-Flash-Next sent a file to (the Routify
+# file relay of the report's host list sits under it too) and the cloud metadata addresses. Matched
+# in lower case. A bare "routify" matched the Svelte framework of that name (found in review).
+TOOL_TARGETS = ("aliyuncs.com", "169.254.169.254", "100.100.100.200")
+# The routes whose answers carry tool calls, the only ones role 8 keeps a whole answer of.
+TOOL_ROUTES = ("/v1/chat/completions", "/v1/messages", "/v1/responses")
+# Tools that carry a file's content rather than act: an agent editing a page that quotes these
+# hosts (this repo's own docs/agents-and-network.md) is no request to them (found in review).
+CONTENT_TOOL = re.compile(r"write|edit|patch|replace|create|notebook|todo", re.I)
 # Bytes of tool arguments, or of a whole non-streamed answer, kept per request for that check.
 TOOL_WATCH_MAX = 1 << 20
+# What an event carrying a piece of a tool call holds, in one of the three dialects.
+TOOL_EVENT_MARKS = (b'"tool_calls":[{', b'"tool_calls": [{', b'tool_use', b'input_json', b'function_call')
 
 # Optional TLS: name the operator's own certificate (tailnet CA, LAN-trusted) and
 # the socket speaks it. The proxy invents no trust, it speaks the one you point at.
@@ -3622,38 +3632,46 @@ def tool_pieces(j, anthropic):
 
 
 def answer_tool_calls(body):
-    """(name, arguments) of each tool call of a whole answer, in the three dialects (role 8)."""
+    """(name, arguments) of each tool call of a whole answer, in the three dialects (role 8). Any
+    shape: an engine's error body or a lane's variant must not raise where the request ends."""
     try:
         j = json.loads(body)
     except Exception:
         return []
     if not isinstance(j, dict):
         return []
+    items = lambda v: v if isinstance(v, list) else []
     out = []
-    for ch in j.get("choices") or []:
-        for tc in ((ch or {}).get("message") or {}).get("tool_calls") or []:
-            f = (tc or {}).get("function") or {}
-            out.append((f.get("name") or "", f.get("arguments") or ""))
-    for b in j.get("content") or []:
+    for ch in items(j.get("choices")):
+        msg = ch.get("message") if isinstance(ch, dict) else None
+        for tc in items(msg.get("tool_calls") if isinstance(msg, dict) else None):
+            f = tc.get("function") if isinstance(tc, dict) else None
+            if isinstance(f, dict):
+                out.append((f.get("name") or "", f.get("arguments") or ""))
+    for b in items(j.get("content")):
         if isinstance(b, dict) and b.get("type") in ("tool_use", "server_tool_use"):
-            out.append((b.get("name") or "", json.dumps(b.get("input") or {})))
-    for it in j.get("output") or []:
+            out.append((b.get("name") or "", b.get("input") or {}))
+    for it in items(j.get("output")):
         if isinstance(it, dict) and it.get("type") == "function_call":
             out.append((it.get("name") or "", it.get("arguments") or ""))
     return out
 
 
 def tool_targets(calls):
-    """(tool, hosts) of each call whose arguments name a host of TOOL_TARGETS. The tool's name is
-    the model's, so only its plain characters are kept for the journal."""
+    """(tool, hosts) of each call whose arguments name a host of TOOL_TARGETS, but those of a tool
+    that carries a file's content (CONTENT_TOOL). The tool's name is the model's, so only its
+    plain characters are kept for the journal."""
     hits = []
     for name, args in calls:
+        name = str(name or "")
+        if CONTENT_TOOL.search(name):
+            continue
         if not isinstance(args, str):
             args = json.dumps(args)
         low = args.lower()
         hosts = [t for t in TOOL_TARGETS if t in low]
         if hosts:
-            hits.append((re.sub(r"[^A-Za-z0-9_.:-]", "", str(name))[:40] or "unnamed", hosts))
+            hits.append((re.sub(r"[^A-Za-z0-9_.:-]", "", name)[:40] or "unnamed", hosts))
     return hits
 
 
@@ -4132,8 +4150,8 @@ class H(BaseHTTPRequestHandler):
     # ---- relay -------------------------------------------------------------
     def _done(self, outcome):
         self._ended = True
-        self._say_tool_targets()
         _gen_discard(self)
+        self._say_tool_targets()
         st = ""
         if getattr(self, "_bytes", 0) or getattr(self, "_first", None) is not None:
             f = f"{self._first:.1f}s" if self._first is not None else "never"
@@ -4202,8 +4220,9 @@ class H(BaseHTTPRequestHandler):
                 if not line.startswith(b"data:") or getattr(self, "_tool_bytes", 0) > TOOL_WATCH_MAX:
                     continue
                 payload = line[5:].strip()
-                # an event without a tool call is most of a stream: it is not even parsed
-                if not any(k in payload for k in (b"tool_", b"input_json", b"function_call")):
+                # an event without a tool call is most of a stream: it is not even parsed. Not
+                # b"tool_": SGLang writes "tool_calls":null in every chunk (found in review)
+                if not any(k in payload for k in TOOL_EVENT_MARKS):
                     continue
                 try:
                     j = json.loads(payload)
@@ -4215,15 +4234,18 @@ class H(BaseHTTPRequestHandler):
                     c = calls.setdefault(call, ["", ""])
                     if name:
                         c[0] = name
+                    grown = len(piece) - len(c[1]) if whole else len(piece)
                     c[1] = piece if whole else c[1] + piece
-                    self._tool_bytes = getattr(self, "_tool_bytes", 0) + len(piece)
+                    self._tool_bytes = getattr(self, "_tool_bytes", 0) + max(grown, 0)
         except Exception:
             pass
 
     def _keep_answer(self, c: bytes) -> None:
         """Role 8 on a whole answer: its bytes, up to TOOL_WATCH_MAX, read once it is relayed."""
         kept = getattr(self, "_answer_body", None)
-        if kept is not None and len(kept) + len(c) <= TOOL_WATCH_MAX:
+        if kept is None or self.command != "POST" or self.path.split("?")[0] not in TOOL_ROUTES:
+            return
+        if len(kept) + len(c) <= TOOL_WATCH_MAX:
             kept += c
         else:
             self._answer_body = None        # too large to be read whole: not guessed at
@@ -4231,15 +4253,15 @@ class H(BaseHTTPRequestHandler):
     def _say_tool_targets(self) -> None:
         """Role 8, once per request: each tool call naming a host of TOOL_TARGETS is written to the
         journal, its host family and its tool's name, never its arguments."""
-        calls = [tuple(c) for c in (getattr(self, "_tool_calls", None) or {}).values()]
-        body = getattr(self, "_answer_body", None)
-        if body:
-            calls += answer_tool_calls(bytes(body))
-        self._tool_calls, self._answer_body = {}, None
         try:
+            calls = [tuple(c) for c in (getattr(self, "_tool_calls", None) or {}).values()]
+            body = getattr(self, "_answer_body", None)
+            if body:
+                calls += answer_tool_calls(bytes(body))
             hits = tool_targets(calls)
         except Exception:
-            hits = []
+            hits = []                       # whatever the answer held, the request still ends
+        self._tool_calls, self._answer_body = {}, None
         for tool, hosts in hits:
             log(f"{getattr(self, '_peer', '?')} TOOL TARGET {', '.join(hosts)} in a {tool} call on "
                 f"{self.path.split('?')[0]}, relayed as it came (docs/agents-and-network.md)")
