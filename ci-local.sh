@@ -5,8 +5,9 @@
 # Usage: ./ci-local.sh [step-name-substring]
 # The workflow's jobs run side by side, as on GitHub, each in a checkout of its own: a
 # detached worktree of HEAD, so the tree has to be clean (what runs is HEAD^{tree}).
-# Within a job the steps run in order. CI_LOCAL_SERIAL=1 runs every step in this checkout,
-# one after the other, as before (a dirty tree included).
+# Within a job the steps run in order. A job that needs others (checks) runs once they
+# have ended, and only when every one of them passed, as on GitHub. CI_LOCAL_SERIAL=1 runs
+# every step in this checkout, one after the other, as before (a dirty tree included).
 # Exit status: 1 when a step failed, 3 when nothing ran (a filter that matched no step,
 # or only skipped ones), 0 otherwise.
 set -u
@@ -50,6 +51,10 @@ def have(pkg, env):
                           capture_output=True).returncode == 0
 
 
+def step_name(st):
+    return st.get("name") or st["run"].splitlines()[0][:60]
+
+
 def run_job(job, steps, cwd):
     """The job's steps in order, in cwd; each line said as it ends. (ok, fail, skip)"""
     ok = fail = skip = 0
@@ -58,7 +63,7 @@ def run_job(job, steps, cwd):
         run = st.get("run")
         if not run:
             continue
-        name = st.get("name") or run.splitlines()[0][:60]
+        name = step_name(st)
         if flt and flt not in name:
             continue
         # Run every step under a throwaway HOME. A GitHub runner has no
@@ -111,12 +116,42 @@ def run_job(job, steps, cwd):
     return ok, fail, skip
 
 
-jobs = [(n, j.get("steps", [])) for n, j in d["jobs"].items()]
-trees, per_job = [], {}
+# (name, steps, needs), in the workflow's order. A job that needs others runs once they have
+# ended, and only when every one of them passed, as on GitHub: checks, which needs them all,
+# ran beside them and said "Every job passed" before any of them had ended (found 2026-10-28).
+jobs = []
+for n, j in d["jobs"].items():
+    needs = j.get("needs") or []
+    jobs.append((n, j.get("steps", []), [needs] if isinstance(needs, str) else list(needs)))
+first = [jb for jb in jobs if not jb[2]]
+after = [jb for jb in jobs if jb[2]]
+results, trees, per_job, base, held = {}, [], {}, None, []
+
+
+def passed(n):
+    """Whether job n ran a step and passed them all: a skipped step is no pass."""
+    o, f_, s_ = results.get(n, (0, 0, 0))
+    return o > 0 and not f_ and not s_
+
+
+def ready(n, steps, needs):
+    """Whether every job n needs passed. If not, each of n's steps the filter keeps is said
+    not run, and why."""
+    bad = [x for x in needs if not passed(x)]
+    tag = f"[{n}] " if not serial else ""
+    for st in steps if bad else []:
+        if st.get("run") and not (flt and flt not in step_name(st)):
+            with say:
+                print(f"  {tag}--   {step_name(st)} (not run: {', '.join(bad)} did not pass)")
+            held.append(st)
+    return not bad
+
+
 try:
     if serial:
-        for n, steps in jobs:
-            o, f_, s_ = run_job(n, steps, os.getcwd()); ok += o; fail += f_; skip += s_
+        for n, steps, needs in first + after:
+            if not needs or ready(n, steps, needs):
+                results[n] = run_job(n, steps, os.getcwd())
     else:
         dirty = subprocess.run(["git", "status", "--porcelain"], capture_output=True, text=True).stdout
         if dirty.strip():
@@ -125,26 +160,33 @@ try:
             sys.exit(2)
         base = tempfile.mkdtemp(prefix="ci-local-jobs-")
         head = subprocess.run(["git", "rev-parse", "--short", "HEAD^{tree}"], capture_output=True, text=True).stdout.strip()
-        print(f"tree {head}: {len(jobs)} jobs side by side, each in a worktree of HEAD")
+        print(f"tree {head}: {len(first)} jobs side by side, each in a worktree of HEAD"
+              + (f", then {', '.join(n for n, _, _ in after)}" if after else ""))
 
-        def one(n_steps):
-            n, steps = n_steps
+        def one(jb):
+            n, steps, _ = jb
             wt = os.path.join(base, n)
             subprocess.run(["git", "worktree", "add", "-q", "--detach", wt, "HEAD"], check=True)
             trees.append(wt)
             t0 = time.monotonic()
-            res = run_job(n, steps, wt)
+            results[n] = run_job(n, steps, wt)
             per_job[n] = time.monotonic() - t0
-            return res
-        with ThreadPoolExecutor(max_workers=len(jobs)) as pool:
-            for o, f_, s_ in pool.map(one, jobs):
-                ok += o; fail += f_; skip += s_
+        with ThreadPoolExecutor(max_workers=max(1, len(first))) as pool:
+            list(pool.map(one, first))
+        for jb in after:
+            if ready(*jb):
+                one(jb)
 finally:
     shutil.rmtree(stubs, ignore_errors=True)
     for wt in trees:
         subprocess.run(["git", "worktree", "remove", "--force", wt], capture_output=True)
+    if base:
+        # the directory the worktrees were in: it stayed in TMPDIR after every run (2026-10-28)
+        shutil.rmtree(base, ignore_errors=True)
     if trees:
         subprocess.run(["git", "worktree", "prune"], capture_output=True)
+for o, f_, s_ in results.values():
+    ok += o; fail += f_; skip += s_
 if per_job:
     print(f"\njobs, of {time.monotonic() - t_run:.0f} s in all (the longest sets the run):")
     for n, dt in sorted(per_job.items(), key=lambda x: -x[1]):
@@ -157,6 +199,8 @@ print(f"\nCI local: {ok} ok, {fail} echecs, {skip} sautes")
 if fail:
     sys.exit(1)
 if not ok:
-    print("nothing ran" + (f": no step matches '{flt}'" if not skip else ": every step it matched was skipped"))
+    print("nothing ran: " + ("every step it matched was skipped" if skip else
+                             "every step it matched waits on a job that did not pass" if held else
+                             f"no step matches '{flt}'"))
     sys.exit(3)
 PY
