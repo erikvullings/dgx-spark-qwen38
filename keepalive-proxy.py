@@ -716,15 +716,21 @@ TOOL_ROUTES = ("/v1/chat/completions", "/v1/messages", "/v1/responses")
 # in lower case: a pattern on part of a name skipped write_stdin, which types into a shell, and an
 # http_patch (found in review).
 QUIET_TOOLS = frozenset((
+    # opencode, Claude Code and pi
     "read", "read_file", "write", "write_file", "edit", "edit_file", "multiedit", "patch", "apply_patch",
     "create_file", "str_replace_editor", "str_replace_based_edit_tool", "notebookread", "notebookedit",
-    "grep", "glob", "list", "ls", "codesearch", "websearch", "lsp", "todoread", "todowrite", "task", "skill"))
+    "grep", "glob", "find", "list", "ls", "codesearch", "websearch", "web_search", "lsp", "todoread",
+    "todowrite", "task", "skill",
+    # Hermes Agent, read in its tools on the box (2026-10-28): its terminal, execute_code, browser_*
+    # and web_extract act, and are read
+    "search_files", "session_search", "todo_list", "memory", "delegate_task", "x_search", "read_terminal"))
 # Bytes of a whole answer kept to read its tool calls, once one of TOOL_TARGETS shows in it.
 TOOL_ANSWER_MAX = 8 << 20
-# Bytes of tool arguments, or of a whole non-streamed answer, kept per request for that check.
+# Bytes of tool arguments kept per streamed request for that check (a whole answer: TOOL_ANSWER_MAX).
 TOOL_WATCH_MAX = 1 << 20
-# What an event carrying a piece of a tool call holds, in one of the three dialects.
-TOOL_EVENT_MARKS = (b'"tool_calls":[{', b'"tool_calls": [{', b'tool_use', b'input_json', b'function_call')
+# What an event carrying a piece of a tool call holds, in one of the three dialects, whatever the
+# spaces an engine writes around "tool_calls" (only two spellings were known, found in review).
+TOOL_EVENT_RE = re.compile(rb'"tool_calls"\s*:\s*\[\s*\{|tool_use|input_json|function_call')
 
 # Optional TLS: name the operator's own certificate (tailnet CA, LAN-trusted) and
 # the socket speaks it. The proxy invents no trust, it speaks the one you point at.
@@ -4162,7 +4168,7 @@ class H(BaseHTTPRequestHandler):
     def _done(self, outcome):
         self._ended = True
         _gen_discard(self)
-        self._say_tool_targets()
+        self._say_tool_targets(outcome)
         st = ""
         if getattr(self, "_bytes", 0) or getattr(self, "_first", None) is not None:
             f = f"{self._first:.1f}s" if self._first is not None else "never"
@@ -4233,7 +4239,7 @@ class H(BaseHTTPRequestHandler):
                 payload = line[5:].strip()
                 # an event without a tool call is most of a stream: it is not even parsed. Not
                 # b"tool_": SGLang writes "tool_calls":null in every chunk (found in review)
-                if not any(k in payload for k in TOOL_EVENT_MARKS):
+                if not TOOL_EVENT_RE.search(payload):
                     continue
                 try:
                     j = json.loads(payload)
@@ -4267,18 +4273,19 @@ class H(BaseHTTPRequestHandler):
             return call[:3]
         last = self.__dict__.setdefault("_tool_last", {})
         ci, tid = call[1], call[3]
+        prev, prev_name = last.get(ci, (None, ""))
         if tid:
             key = ("o", ci, "id", tid)
-        elif name or ci not in last:
+        elif prev is None or (name and name != prev_name):
             self._tool_seq = getattr(self, "_tool_seq", 0) + 1
             key = ("o", ci, "seq", self._tool_seq)
         else:
-            key = last[ci]
-        last[ci] = key
+            key = prev        # no name, or the same one again: a parser that repeats it on every piece
+        last[ci] = (key, name or prev_name)
         return key
 
     def _keep_answer(self, c: bytes) -> None:
-        """Role 8 on a whole answer: its bytes, up to TOOL_WATCH_MAX, read once it is relayed."""
+        """Role 8 on a whole answer: its bytes, up to TOOL_ANSWER_MAX, read once it is relayed."""
         if self.command != "POST" or self.path.split("?")[0] not in TOOL_ROUTES:
             return
         # most answers name none of the hosts: they are looked for in the bytes, across the chunks,
@@ -4287,14 +4294,15 @@ class H(BaseHTTPRequestHandler):
         if not getattr(self, "_answer_hit", False):
             seen = getattr(self, "_answer_tail", b"") + low
             self._answer_hit = any(t.encode() in seen for t in TOOL_TARGETS)
-            self._answer_tail = low[-(max(len(t) for t in TOOL_TARGETS) - 1):]
+            # what was seen, not this chunk alone: a host over three short reads went unseen (found in review)
+            self._answer_tail = seen[-(max(len(t) for t in TOOL_TARGETS) - 1):]
         kept = getattr(self, "_answer_body", None)
         if kept is not None and len(kept) + len(c) <= TOOL_ANSWER_MAX:
             kept += c
         else:
             self._answer_body = None        # too large to be read whole: not guessed at
 
-    def _say_tool_targets(self) -> None:
+    def _say_tool_targets(self, outcome: str = "") -> None:
         """Role 8, once per request: each tool call naming a host of TOOL_TARGETS is written to the
         journal, its host family and its tool's name, never its arguments."""
         try:
@@ -4307,8 +4315,11 @@ class H(BaseHTTPRequestHandler):
             hits = []                       # whatever the answer held, the request still ends
         self._tool_calls, self._answer_body, self._answer_hit = {}, None, False
         for tool, hosts in hits:
+            # how the request ended, for whoever reads the journal: a call in an answer cut before
+            # its end could not have reached a client whole (found in review)
+            how = "relayed as it came" if outcome.startswith("ok") else f"in an answer that ended {outcome}"
             log(f"{getattr(self, '_peer', '?')} TOOL TARGET {', '.join(hosts)} in a {tool} call on "
-                f"{self.path.split('?')[0]}, relayed as it came (docs/agents-and-network.md)")
+                f"{self.path.split('?')[0]}, {how} (docs/agents-and-network.md)")
 
     def _scan_corruption(self, rec: bytes) -> bool:
         """True once the stream has produced CORRUPTION_RUN marker characters in a row."""

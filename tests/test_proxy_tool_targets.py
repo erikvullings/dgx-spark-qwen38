@@ -264,7 +264,10 @@ class ThePieces(unittest.TestCase):
         self.assertEqual(self.mod.tool_targets([("write_stdin", cmd), ("http_patch", '{"url": "http://169.254.169.254/"}')]),
                          [("write_stdin", ["aliyuncs.com"]), ("http_patch", ["169.254.169.254"])])
         quiet = [(n, '{"pattern": "aliyuncs.com", "prompt": "curl http://169.254.169.254/"}')
-                 for n in ("Grep", "Read", "Glob", "task", "WebSearch", "Write", "Edit", "apply_patch")]
+                 for n in ("Grep", "Read", "Glob", "task", "WebSearch", "Write", "Edit", "apply_patch",
+                           # Hermes and pi (found in the third review)
+                           "search_files", "session_search", "todo_list", "memory", "delegate_task",
+                           "web_search", "x_search", "read_terminal", "find")]
         self.assertEqual(self.mod.tool_targets(quiet), [])
 
     def test_a_file_written_whole_does_not_hide_the_call_after_it(self):
@@ -293,6 +296,47 @@ class ThePieces(unittest.TestCase):
         calls = [tuple(c) for c in h._tool_calls.values()]
         self.assertEqual(len(calls), 2, calls)
         self.assertEqual(self.mod.tool_targets(calls), [("bash", ["aliyuncs.com"])])
+
+    def test_a_host_over_short_reads_of_a_whole_answer_is_seen(self):
+        # the tail kept was the last chunk's alone: a host over three short reads went unseen
+        h = self.mod.H.__new__(self.mod.H)
+        h.command, h.path = "POST", "/v1/chat/completions"
+        h._answer_body, h._answer_hit, h._answer_tail = bytearray(), False, b""
+        body = b'{"choices": [{"message": {"tool_calls": [{"function": {"name": "bash", "arguments": "curl http://169.254.169.254/"}}]}}]}'
+        for i in range(0, len(body), 4):
+            h._keep_answer(body[i:i + 4])
+        self.assertTrue(h._answer_hit)
+
+    def test_a_name_repeated_on_every_piece_is_one_call(self):
+        # a parser with no index and no id that repeats the name split one call into one per piece,
+        # and a host split between two pieces was in none of them (found in the third review)
+        h = self.mod.H.__new__(self.mod.H)
+        ev = lambda a: {"id": "c", "object": "chat.completion.chunk", "choices": [{"index": 0, "delta": {
+            "tool_calls": [{"function": {"name": "bash", "arguments": a}}]}}]}
+        self.mod.H._watch_tools(h, sse(ev('{"command": "curl https://b.oss-cn-beijing.aliyun'), ev('cs.com/x"}')), False)
+        calls = [tuple(c) for c in h._tool_calls.values()]
+        self.assertEqual(self.mod.tool_targets(calls), [("bash", ["aliyuncs.com"])])
+
+    def test_spaces_around_tool_calls_do_not_hide_it(self):
+        h = self.mod.H.__new__(self.mod.H)
+        rec = (b'data: {"choices": [{"index": 0, "delta": {"tool_calls": [ {"index": 0, "function": '
+               b'{"name": "bash", "arguments": "curl http://169.254.169.254/"}}]}}]}\n\n')
+        self.mod.H._watch_tools(h, rec, False)
+        self.assertEqual(self.mod.tool_targets([tuple(c) for c in h._tool_calls.values()]), [("bash", ["169.254.169.254"])])
+
+    def test_the_line_says_how_the_request_ended(self):
+        h = self.mod.H.__new__(self.mod.H)
+        h._peer, h.path = "127.0.0.1:5", "/v1/messages"
+        lines, real = [], self.mod.log
+        self.mod.log = lines.append
+        try:
+            for outcome in ("ok", "UPSTREAM CUT"):
+                h._tool_calls, h._answer_body = {("a", 0): ["bash", '{"command": "curl x.aliyuncs.com"}']}, None
+                h._say_tool_targets(outcome)
+        finally:
+            self.mod.log = real
+        self.assertIn("call on /v1/messages, relayed as it came", lines[0])
+        self.assertIn("call on /v1/messages, in an answer that ended UPSTREAM CUT", lines[1])
 
     def test_the_name_kept_for_the_journal_is_plain(self):
         mod = self.mod
