@@ -128,13 +128,8 @@ def _start_proxy(home, upstream_port, extra_env=None):
     err = tempfile.NamedTemporaryFile(prefix="door-proxy-stderr-", delete=False)
     env = {"PATH": os.environ["PATH"], "HOME": str(home), "PROXY_BIND": "127.0.0.1",
            "UPSTREAM": f"http://127.0.0.1:{upstream_port}", **(extra_env or {})}
-
-    def start(port):
-        err.seek(0)
-        err.truncate()          # what a try on a port someone else had wrote goes
-        return subprocess.Popen([sys.executable, str(HERE.parents[1] / "keepalive-proxy.py"), str(port)],
-                                env=env, stdout=err, stderr=err)
-    proc, port = localports.spawn(start)
+    proc, port = localports.spawn(lambda port: subprocess.Popen(
+        [sys.executable, str(HERE.parents[1] / "keepalive-proxy.py"), str(port)], env=env, stdout=err, stderr=err))
     return proc, port, err.name
 
 

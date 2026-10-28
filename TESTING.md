@@ -496,6 +496,6 @@ the hole, a conditional is both branches.
   running beside it could be handed that port meanwhile, so such a file runs
   alone once the others are over. None does since `tests/localports.py`
   (2026-10-28): `held()` keeps a port where nothing listens, `serve()` starts a
-  server of the test's process on it, and `spawn()` keeps a server's own process
-  once the socket listening on its port is its own. `test_localports.py` fails
-  on a test file that takes a port the old way.
+  server of the test's process on it, and `spawn()` starts a server in a process
+  of its own on port 0 and reads back from /proc the port it listens on.
+  `test_localports.py` fails on a test file that takes a port the old way.

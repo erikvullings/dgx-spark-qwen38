@@ -5,7 +5,9 @@ ci-local.sh runs the workflow's jobs side by side on one machine, three of them 
 and eleven of those files took a port number out of a socket they then closed: anyone could be handed
 the port before the server it was for bound it, a stranger could answer in its place, and a port meant
 to be dead could come alive (code review, 2026-10-28). Each answer of localports.py is proven here on the
-machine itself, and the last case keeps any test file from taking a port that way again."""
+machine itself, and the last case keeps any test file from taking a port that way again. It reads the
+idiom, not every way to write it: a closed server's port taken for a dead one, as test_proxy_hold did
+(found in the review of the fix), is a held port now too."""
 import http.server
 import os
 import pathlib
@@ -13,6 +15,7 @@ import socket
 import subprocess
 import sys
 import threading
+import time
 import unittest
 import urllib.request
 
@@ -77,6 +80,17 @@ class AHeldPort(unittest.TestCase):
         with self.assertRaises(OSError):
             http.server.HTTPServer(("127.0.0.1", port), Ok)
 
+    def test_the_kernel_never_hands_it_out(self):
+        # what the other jobs do: bind port 0, with SO_REUSEPORT or not
+        ports = {localports.held(self)[1] for _ in range(20)}
+        for reuseport in (False, True):
+            for _ in range(1000):
+                with socket.socket() as s:
+                    if reuseport:
+                        s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEPORT, 1)
+                    s.bind(("127.0.0.1", 0))
+                    self.assertNotIn(s.getsockname()[1], ports, f"SO_REUSEPORT {reuseport}")
+
     def test_the_old_way_left_it_to_anyone(self):
         # the witness: a port read out of a socket that is then closed is anyone's at once
         with socket.socket() as s:
@@ -96,6 +110,14 @@ class AHeldPort(unittest.TestCase):
             self.assertEqual(get(port), "URLError", "down again, as an engine that stopped")
             self.assertFalse(a_stranger_binds(port, reuse=True), "and still the test's")
 
+    def test_a_second_server_on_a_port_that_listens_is_refused(self):
+        # SO_REUSEPORT would have the kernel share the connections between the two
+        _, port = localports.held(self)
+        srv = localports.serve(port, http.server.ThreadingHTTPServer, Ok)
+        self.addCleanup(srv.server_close)
+        with self.assertRaises(OSError):
+            localports.serve(port, http.server.ThreadingHTTPServer, Ok)
+
 
 class ASpawnedServer(unittest.TestCase):
     def start(self, port):
@@ -103,57 +125,41 @@ class ASpawnedServer(unittest.TestCase):
         self.addCleanup(localports._end, proc)
         return proc
 
-    def stranger(self):
-        srv = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Ok)
-        threading.Thread(target=srv.serve_forever, daemon=True).start()
-        self.addCleanup(lambda: (srv.shutdown(), srv.server_close()))
-        return srv.server_address[1]
-
-    def test_is_kept_once_the_port_is_its_own(self):
-        proc, port = localports.spawn(self.start)
+    def test_listens_on_a_port_the_kernel_gave_it(self):
+        given = []
+        proc, port = localports.spawn(lambda p: given.append(p) or self.start(p))
+        self.assertEqual(given, [0], "no number is chosen before the bind")
         self.assertIsNone(proc.poll())
         self.assertEqual(get(port), "mine")
-
-    def test_moves_on_when_someone_else_listens_on_the_port(self):
-        taken = self.stranger()
-        # the old way: start the server there, then take a connection that succeeds for it ready
-        old = self.start(taken)
-        socket.create_connection(("127.0.0.1", taken), timeout=5).close()
-        self.assertEqual(get(taken), "ok", "the old way would have tested the stranger")
-        old.wait(timeout=10)
-        tries = iter([taken])
-        proc, port = localports.spawn(self.start, pick=lambda: next(tries, None))
-        self.assertNotEqual(port, taken)
-        self.assertEqual((get(port), get(taken)), ("mine", "ok"))
 
     def test_a_server_behind_a_wrapper_is_its_own(self):
         def wrapped(port):
             # "; :" keeps bash from replacing itself with the server: the listener is a child of the process
             proc = subprocess.Popen(["bash", "-c", f'"{sys.executable}" -c "$0" {port}; :', SERVER],
-                                    stderr=subprocess.DEVNULL, start_new_session=True)
-            self.addCleanup(self.end_group, proc)
+                                    stderr=subprocess.DEVNULL)
+            self.addCleanup(localports._end, proc)
             return proc
-        _, port = localports.spawn(wrapped)
+        proc, port = localports.spawn(wrapped)
         self.assertEqual(get(port), "mine")
+        localports._end(proc)
+        self.assertEqual(get(port), "URLError", "the server under the wrapper ends with it")
 
-    def end_group(self, proc):
-        try:
-            os.killpg(proc.pid, 15)
-        except ProcessLookupError:
-            pass
-        proc.wait(timeout=10)
+    def test_says_why_when_it_ends_or_never_listens(self):
+        ends = lambda port: subprocess.Popen([sys.executable, "-c", "raise SystemExit(3)"])
+        t0 = time.monotonic()
+        with self.assertRaises(RuntimeError) as cm:
+            localports.spawn(ends)
+        self.assertIn("ended with 3 before it listened", str(cm.exception))
+        self.assertLess(time.monotonic() - t0, 10, "said at once, not tried again")
+        sleeps = []
 
-    def test_says_why_when_no_try_is_kept(self):
-        def ends(port):
-            return subprocess.Popen([sys.executable, "-c", "raise SystemExit(3)"])
+        def silent(port):
+            sleeps.append(subprocess.Popen([sys.executable, "-c", "import time; time.sleep(60)"]))
+            return sleeps[-1]
         with self.assertRaises(RuntimeError) as cm:
-            localports.spawn(ends, tries=2, within=5)
-        self.assertIn("after 2 tries", str(cm.exception))
-        self.assertIn("it ended with 3", str(cm.exception))
-        taken = self.stranger()
-        with self.assertRaises(RuntimeError) as cm:
-            localports.spawn(self.start, tries=1, pick=lambda: taken)
-        self.assertIn(f"{taken}: someone else listens there", str(cm.exception))
+            localports.spawn(silent, within=1)
+        self.assertIn("did not listen within 1 s", str(cm.exception))
+        self.assertIsNotNone(sleeps[0].poll(), "and it is ended")
 
 
 class NoTestFile(unittest.TestCase):

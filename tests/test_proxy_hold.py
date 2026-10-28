@@ -120,7 +120,8 @@ class Box:
             "exit 3\n")
         (self.t / "bin/systemctl").chmod(0o755)
         # the engine's port is gone until start_engine, and the test's all along: no one else can take it
-        self.engine_sock, self.engine_port = localports.held(test)
+        _, self.engine_port = localports.held(test)
+        self.proc = None
         self.srv = None
         self.generations = []
         env = dict(os.environ, UPSTREAM=f"http://127.0.0.1:{self.engine_port}", HOME=str(self.t / "home"),
@@ -146,13 +147,8 @@ class Box:
             self.port = self.proxy.server_address[1]
             return
         self.log = open(self.t / "proxy.log", "w")
-
-        def start(port):
-            self.log.seek(0)
-            self.log.truncate()         # what a try on a port someone else had wrote goes
-            return subprocess.Popen([sys.executable, str(PROXY), str(port)], env=env,
-                                    stdout=subprocess.DEVNULL, stderr=self.log)
-        self.proc, self.port = localports.spawn(start)
+        self.proc, self.port = localports.spawn(lambda port: subprocess.Popen(
+            [sys.executable, str(PROXY), str(port)], env=env, stdout=subprocess.DEVNULL, stderr=self.log))
 
     def state(self, s):
         self.state_file.write_text(s + "\n")
@@ -176,9 +172,10 @@ class Box:
         if self.inproc:
             self.proxy.shutdown(); self.proxy.server_close()
         else:
-            self.proc.terminate()
-            try: self.proc.wait(timeout=5)
-            except subprocess.TimeoutExpired: self.proc.kill()
+            if self.proc is not None:       # None when the proxy never listened: spawn said why
+                self.proc.terminate()
+                try: self.proc.wait(timeout=5)
+                except subprocess.TimeoutExpired: self.proc.kill()
             self.log.close()
         if self.srv is not None:
             self.srv.shutdown(); self.srv.server_close()
@@ -548,10 +545,12 @@ class TheTwoQuestionsItAsks(unittest.TestCase):
             def log_message(self, *a): pass
             def do_GET(self):
                 self.send_response(self.server.code); self.send_header("Content-Length", "0"); self.end_headers()
-        srv = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Refusing)
+        # held: once this engine is closed, nobody else can be listening on its port
+        _, port = localports.held(self)
+        srv = localports.serve(port, http.server.ThreadingHTTPServer, Refusing)
         threading.Thread(target=srv.serve_forever, daemon=True).start()
         self.addCleanup(lambda: (srv.shutdown(), srv.server_close()))
-        mod = self.load(HOME=str(home), UPSTREAM=f"http://127.0.0.1:{srv.server_address[1]}")
+        mod = self.load(HOME=str(home), UPSTREAM=f"http://127.0.0.1:{port}")
         for code, answers in ((401, True), (404, True), (500, False), (503, False)):
             srv.code = code
             self.assertEqual(mod.engine_answers(), answers, code)
