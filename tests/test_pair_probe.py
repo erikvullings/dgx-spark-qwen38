@@ -89,9 +89,25 @@ class Masking(unittest.TestCase):
         self.assertIn("580.178.04.1", out, "a version is not an address")
 
     def test_a_host_named_like_a_word_of_the_project_eats_nothing(self):
-        # in any case since the second review, "DGX Spark" included: a name is masked wherever it shows
-        out = P.masked("dgx-spark-qwen38 on spark, DGX Spark", host="spark", user="nobody-here")
-        self.assertEqual(out, "dgx-spark-qwen38 on <host>, DGX <host>")
+        # in any case since the second review: a name is masked wherever it shows, this repo's name aside
+        out = P.masked("dgx-spark-qwen38 on qwen38, a Qwen38 box", host="qwen38", user="nobody-here")
+        self.assertEqual(out, "dgx-spark-qwen38 on <host>, a <host> box")
+
+    def test_a_name_every_such_box_prints_stays(self):
+        # a host "spark" of a user "nvidia" read "<user> DGX <host>" and "6.17.0-1032-<user>": no clue to
+        # whose box it is, and the facts the probe compares were gone (review, 2026-10-29)
+        box = {"machine": "NVIDIA DGX Spark", "kernel": "6.17.0-1032-nvidia", "os": "Ubuntu 24.04.3 LTS",
+               "gpu": "NVIDIA GB10, 580.95.05"}
+        self.assertEqual(P.masked_facts({"box": box}, host="spark", user="nvidia")["box"], box)
+        box = {"machine": "ASUSTeK COMPUTER INC. GX10", "os": "Ubuntu 24.04.3 LTS"}
+        self.assertEqual(P.masked_facts({"box": box}, host="GX10", user="ubuntu")["box"], box)
+        self.assertEqual(P.masked("6.17.0-1032-nvidia on hasan-box", host="hasan-box", user="hasan"),
+                         "6.17.0-1032-nvidia on <host>", "the owner's own name still goes")
+
+    def test_a_version_of_five_parts_is_no_address(self):
+        # the four first parts of a longer dotted number read as an address (review, 2026-10-29)
+        self.assertEqual(P.masked("fw 1.2.3.4.5, build 7.6.0.1.2, at 10.0.0.1., net 10.0.0.0/8", host="", user=""),
+                         "fw 1.2.3.4.5, build 7.6.0.1.2, at <private>., net <private>")
 
     def test_a_name_in_another_case_and_the_users_go(self):
         facts = {"box": {"kernel": "6.17.0-GX10-EFF9", "machine": "ASUSTeK GX10"}, "repo": {"branch": "Hasan/pairs"}}
@@ -101,11 +117,11 @@ class Masking(unittest.TestCase):
 
     def test_a_name_of_letters_next_to_a_dash_goes(self):
         # the example the code's own comment gives, and a branch named after its author (review, 2026-10-29)
-        facts = {"box": {"kernel": "6.17.0-spark-b"}, "repo": {"branch": "fix-hasan"},
+        facts = {"box": {"kernel": "6.17.0-atlas-b"}, "repo": {"branch": "fix-hasan"},
                  "software": {"docker": "dgx-spark-qwen38 on DGX-Spark-Qwen38"}}
-        out = P.masked_facts(facts, host="spark", user="hasan")
+        out = P.masked_facts(facts, host="atlas", user="hasan")
         self.assertEqual((out["box"]["kernel"], out["repo"]["branch"]), ("6.17.0-<host>-b", "fix-<user>"))
-        self.assertEqual(P.masked("dgx-spark-qwen38 on DGX-Spark-Qwen38", host="spark", user=""),
+        self.assertEqual(P.masked("dgx-spark-qwen38 on DGX-Spark-Qwen38", host="qwen38", user=""),
                          "dgx-spark-qwen38 on DGX-Spark-Qwen38", "this repo's own name, in any case")
 
     def test_a_port_named_after_its_mac_goes(self):

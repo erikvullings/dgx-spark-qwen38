@@ -13,7 +13,8 @@ which port. It changes nothing and starts nothing.
 
 What it never prints: an API key or any file that holds one (it opens none), a MAC address, an IP
 address (only its kind: private, link-local, shared, public), the host's name, your home directory
-or user name. --json prints the same facts for a program.
+or user name, but for a name every such box prints of itself (spark, gx10, nvidia, ubuntu), which
+says nothing of whose box it is. --json prints the same facts for a program.
 """
 import argparse
 import getpass
@@ -75,11 +76,19 @@ def user_name():
         return Path(HOME).name
 
 
+# Words a box of the kind prints of itself, vendor, product, kernel flavour and OS: a host or a user named
+# so says nothing of whose box it is, and masking it took the very facts the probe compares ("NVIDIA DGX
+# Spark" read "<user> DGX <host>" and the kernel "6.17.0-1032-<user>" for a host "spark" of a user
+# "nvidia", review, 2026-10-29)
+GENERIC = {"nvidia", "dgx", "spark", "gb10", "asus", "asustek", "ascent", "gx10", "dell", "hp", "lenovo",
+           "msi", "gigabyte", "acer", "ubuntu", "linux"}
+
+
 def masked(text, host=None, user=None, names=True):
     """Whatever a command said, without what could name the box or its owner: MAC addresses, valid IP
     addresses of either version (their kind only, a zero-padded one too), the home directory, and with
     names the host's name and the user's wherever they show as a word, in any case, this repo's own name
-    aside (a host named "spark" must not eat "dgx-spark-qwen38")."""
+    aside (a host named "qwen38" must not eat "dgx-spark-qwen38"), a name in GENERIC aside too."""
     host = socket.gethostname() if host is None else host
     user = user_name() if user is None else user
     text = re.sub(r"\benx[0-9a-f]{12}\b", "enx<mac>", text, flags=re.I)  # a port named after its MAC (udev)
@@ -89,7 +98,8 @@ def masked(text, host=None, user=None, names=True):
         if any(int(o) > 255 for o in octets):
             return m.group(0)                                          # a version like 580.178.04.1 stays
         return f"<{ip_kind('.'.join(str(int(o)) for o in octets))}>"   # 192.168.001.002 is an address too
-    text = re.sub(r"\b(?:\d{1,3}\.){3}\d{1,3}(?:/\d+)?\b", ip, text)
+    # never inside a longer dotted number: the four first parts of a version 1.2.3.4.5 are no address
+    text = re.sub(r"(?<![\w.])(?:\d{1,3}\.){3}\d{1,3}(?:/\d+)?\b(?!\.\d)", ip, text)
     def ip6(m):
         addr = m.group(1).split("%")[0]
         try:
@@ -102,13 +112,13 @@ def masked(text, host=None, user=None, names=True):
                   ip6, text, flags=re.I)
     text = text.replace(HOME, "~")
     if names:
-        # a name is a word between anything but letters, digits and "_": a kernel 6.17.0-spark-b, a branch
+        # a name is a word between anything but letters, digits and "_": a kernel 6.17.0-atlas-b, a branch
         # fix-hasan, an FQDN gx10-eff9.local. This repo's name is set aside first, the one place a word of
         # a host's name is expected (review, 2026-10-29: the first rule kept "spark" next to a dash)
         kept = re.findall(r"dgx-spark-qwen38", text, flags=re.I)
         text = re.sub(r"dgx-spark-qwen38", "\0", text, flags=re.I)
         for name, mark in ((host, "<host>"), (user, "<user>")):
-            if name:
+            if name and name.lower() not in GENERIC:
                 text = re.sub(r"(?<!\w)" + re.escape(name) + r"(?!\w)", mark, text, flags=re.I)
         for k in kept:
             text = text.replace("\0", k, 1)
@@ -116,7 +126,7 @@ def masked(text, host=None, user=None, names=True):
 
 
 # The facts that come as free text, where a name of the host or the user can show (a kernel built as
-# 6.17.0-spark-b, a branch hasan/pairs or fix-hasan). The others are words of the kernel, of systemd or of this probe
+# 6.17.0-atlas-b, a branch hasan/pairs or fix-hasan). The others are words of the kernel, of systemd or of this probe
 # (lo, up, yes, active/running): a host named "lo" or "yes" must leave them as they are.
 FREE_TEXT = {"machine", "os", "kernel", "gpu", "branch", "docker", "nvidia_ctk", "cards", "error"}
 
