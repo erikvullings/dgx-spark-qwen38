@@ -172,6 +172,21 @@ class TheJobThatNeedsTheOthers(unittest.TestCase):
         self.assertEqual(sorted(p_.name for p_ in tmp.iterdir()), [], out)
 
 
+    def test_a_checkout_with_its_test_venv_is_clean_enough_to_run(self):
+        # review of PR #60 (2026-10-29, decision 780): a full run looks for .venv-test and .venv and refuses a tree
+        # with changes, and .gitignore had .venv-test alone: a checkout with a .venv was refused for it
+        repo, tmp = self.make_repo(WORKFLOW.format(slow="true"),
+                                   files={".gitignore": (REPO / ".gitignore").read_text()})
+        for venv in (".venv", ".venv-test"):
+            py = repo / venv / "bin" / "python"
+            py.parent.mkdir(parents=True)
+            py.write_text("#!/bin/sh\nexec python3 \"$@\"\n")
+            py.chmod(0o755)
+        r = subprocess.run(["bash", str(SCRIPT)], cwd=repo, env=self.env(tmp), capture_output=True, text=True,
+                           timeout=120)
+        self.assertNotIn("the tree is not clean", r.stdout, r.stdout + r.stderr)
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+
     def test_a_stop_of_python_alone_ends_a_step_whose_bash_has_a_child(self):
         # review of PR #60 (2026-10-29, decision 780): stop() killed the step's bash by its pid alone; a child that
         # bash had started kept the pipes open and communicate() waited for it, so a SIGTERM to python (not to its
