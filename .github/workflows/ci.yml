@@ -1550,11 +1550,16 @@ jobs:
 
       - name: Google Chrome for arm64 (the arm64 runner has none)
         run: |
-          # The headless browser steps read CHROME or /usr/bin/google-chrome. GitHub's arm64 image ships
-          # no Chrome: it comes from Google's own arm64 repository, the one the reference box installs it
-          # from, once the key that signs it is the one the box trusts (its primary key, checked against
-          # the box's keyring on 2026-10-28). A machine that has a Chrome keeps it.
-          if ! command -v google-chrome >/dev/null; then
+          # The headless browser steps read CHROME, or the first of google-chrome, chromium and
+          # chromium-browser. GitHub's arm64 image ships none: Chrome comes from Google's own arm64
+          # repository, the one the reference box installs it from, once the key that signs it is the one
+          # the box trusts (its primary key, checked against the box's keyring on 2026-10-28). A machine
+          # that has one of them keeps it and gets nothing installed: ci-local.sh runs this step on a
+          # contributor's machine too, and one with only Chromium went to sudo apt (review of PR #60).
+          browser="${CHROME:-}"
+          [ -n "$browser" ] && [ -x "$browser" ] \
+            || browser="$(command -v google-chrome || command -v chromium || command -v chromium-browser || true)"
+          if [ -z "$browser" ]; then
             key="${RUNNER_TEMP:-${TMPDIR:-.}}/google-linux-signing-key.pub"
             curl -fsSL https://dl.google.com/linux/linux_signing_key.pub -o "$key"
             fpr=$(gpg --show-keys --with-colons "$key" | awk -F: '$1 == "fpr" { print $10; exit }')
@@ -1564,8 +1569,9 @@ jobs:
               | sudo tee /etc/apt/sources.list.d/google-chrome.list > /dev/null
             sudo apt-get update -qq
             sudo apt-get install -y -qq google-chrome-stable
+            browser="$(command -v google-chrome)"
           fi
-          google-chrome --version
+          "$browser" --version
 
       - name: The cockpit page survives losing its server (headless browser, a cockpit of its own)
         run: |
