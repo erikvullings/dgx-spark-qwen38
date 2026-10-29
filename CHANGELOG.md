@@ -88,6 +88,21 @@ although the mlx5 modules are loaded, and the probe says both. Three reviews of 
 before the release, from a peer that does not answer read as not measured to a host's name written in another
 case and a version of five parts read as an address. Each is fixed with its test.
 
+**Proved on the reference box.** This release was installed on the reference box from its branch, and the 8 real
+clients ran on the 7 text lanes there before it went to main. After the push, the box updated with the public
+one-liner, the 8 real clients answered through the final proxy on the lane that serves, Flash FP4-Local, and the
+cockpit showed no banner on any of its views. Then the 8 clients ran again on the 7 text lanes, each loaded as the
+cockpit's Load does, on what the one-liner installed: 55 of 56 OK on 2026-10-29, and on every lane the proxy wrote
+its line for a tool call naming one of those hosts. The one miss is Kolibri in Claude Code, which answered 1, the
+line number in the Read tool's answer, instead of the number on that line. The tool's answer reached the model
+whole, and the same question asked 5 times the night before and 5 times after this run got the right number 4 times,
+then 3: each miss gave the line number, or glued it to the number (17351). Four code reviews read the release and
+three more the probe, and three independent verifiers read the update and a fresh install, the security, and the
+notes with the tests. Each defect they found is fixed with a test that fails on the code before it.
+
+**What an update does.** The proxy (v6.48), the cockpit and the Agent tab's server restart, and nothing else: the
+lane that serves keeps serving, and the lane chosen for boot stays the one it was.
+
 **Tests.** `test_oc_merge_limits.py` (the order, the forms, a key added after the block, a user's own
 pattern), `test_install_opencode_pin.py`, `test_install_oc_artifact.py`, `test_agent_auto_deny.py` (three
 configs, one ending with a `"*"` of its own), `test_uninstall_opencode.py` (this repo's copy with the rules
