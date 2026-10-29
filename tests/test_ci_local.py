@@ -172,5 +172,64 @@ class TheJobThatNeedsTheOthers(unittest.TestCase):
         self.assertEqual(sorted(p_.name for p_ in tmp.iterdir()), [], out)
 
 
+    def test_a_stop_of_python_alone_ends_a_step_whose_bash_has_a_child(self):
+        # review of PR #60 (2026-10-29, decision 780): stop() killed the step's bash by its pid alone; a child that
+        # bash had started kept the pipes open and communicate() waited for it, so a SIGTERM to python (not to its
+        # group) ended the run only when that child ended. Here bash has a child: "sleep 30; true" is no exec.
+        workflow = ("name: ci\non: push\njobs:\n"
+                    "  long:\n    runs-on: ubuntu-24.04-arm\n    steps:\n"
+                    "      - name: The long one\n        run: sleep 30; true\n"
+                    "  other:\n    runs-on: ubuntu-24.04-arm\n    steps:\n"
+                    "      - name: The other one\n        run: sleep 30; true\n")
+        repo, tmp = self.make_repo(workflow)
+        p = subprocess.Popen(["bash", str(SCRIPT)], cwd=repo, env=self.env(tmp), stdout=subprocess.PIPE,
+                             stderr=subprocess.STDOUT, text=True, start_new_session=True)
+
+        def kill_all():
+            for pid in [p.pid] + self.descendants(p.pid):
+                try:
+                    os.kill(pid, signal.SIGKILL)
+                except ProcessLookupError:
+                    pass
+        self.addCleanup(kill_all)
+        self.assertIn("2 jobs side by side", p.stdout.readline())
+        time.sleep(1)
+        python = [pid for pid in self.descendants(p.pid) if self.comm(pid) == "python3"]
+        self.assertTrue(python, "no python under ci-local.sh")
+        os.kill(python[0], signal.SIGTERM)
+        t0 = time.monotonic()
+        out = p.communicate(timeout=60)[0]
+        self.assertLess(time.monotonic() - t0, 10, "the stop waited for the steps' children:\n" + out)
+        self.assertIn("[long] --   The long one (stopped)", out)
+        self.assertIn("[other] --   The other one (stopped)", out)
+
+    @staticmethod
+    def descendants(pid):
+        """Every process under pid, from /proc (no pgrep: it would match its own command line)."""
+        kids = {}
+        for d in os.listdir("/proc"):
+            if d.isdigit():
+                try:
+                    with open(f"/proc/{d}/stat") as f:
+                        ppid = int(f.read().rsplit(")", 1)[1].split()[1])
+                except (OSError, ValueError, IndexError):
+                    continue
+                kids.setdefault(ppid, []).append(int(d))
+        out, todo = [], [pid]
+        while todo:
+            for k in kids.get(todo.pop(), []):
+                out.append(k)
+                todo.append(k)
+        return out
+
+    @staticmethod
+    def comm(pid):
+        try:
+            with open(f"/proc/{pid}/comm") as f:
+                return f.read().strip()
+        except OSError:
+            return ""
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

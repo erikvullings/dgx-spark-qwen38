@@ -36,10 +36,21 @@ ok = fail = skip = 0
 stopping, running = threading.Event(), set()
 
 
+def kill_step(p):
+    """The step's bash and everything it started. Each step is its own process group: killing bash
+    by its pid alone left its children holding the pipes that communicate() reads to their end, so
+    a stop sent to python waited for them (review of PR #60, 2026-10-29). Its own group also means a
+    stop of this run's group reaches a step only through python, which kills the steps' groups here."""
+    try:
+        os.killpg(p.pid, signal.SIGKILL)
+    except ProcessLookupError:
+        pass
+
+
 def stop(signum, _frame):
     stopping.set()
     for p in list(running):
-        p.kill()
+        kill_step(p)
     sys.exit(128 + signum)
 
 
@@ -130,14 +141,15 @@ def run_job(job, steps, cwd):
             script = "\n".join(ln for ln in run.splitlines() if "pip install" not in ln)
             t0 = time.monotonic()
             with subprocess.Popen(["bash", "-e", "-c", script], stdout=subprocess.PIPE,
-                                  stderr=subprocess.PIPE, text=True, cwd=cwd, env=env) as p:
+                                  stderr=subprocess.PIPE, text=True, cwd=cwd, env=env,
+                                  start_new_session=True) as p:
                 running.add(p)
                 if stopping.is_set():
-                    p.kill()
+                    kill_step(p)
                 try:
                     out, err = p.communicate()
                 except BaseException:
-                    p.kill()
+                    kill_step(p)
                     raise
                 finally:
                     running.discard(p)
