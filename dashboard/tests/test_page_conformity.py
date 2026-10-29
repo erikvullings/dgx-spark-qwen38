@@ -97,6 +97,30 @@ class TheServicesBehindTheirClone(unittest.TestCase):
         self.assertIn("The clone moved on since the last install: the services run v1.36.0, the clone is v1.36.1.", b[0]["text"])
         self.assertIn("A git pull changes the files, not what runs.", b[0]["text"])
 
+    def test_the_same_release_says_the_commits_that_moved(self):
+        # Hasan's capture, 2026-10-29: "the services run v1.40.4, the clone is v1.40.4" said nothing of what moved
+        b = self.banner("{installed: 'v1.40.4', clone: 'v1.40.4', behind_clone: true, behind_clone_why: 'commit', "
+                        "installed_commit: '90bb772', clone_commit: 'd120eae', commits_count: 1, "
+                        "commits: ['d120eae v1.40.4: the notes say what the box proved after the push']}")
+        self.assertEqual(len(b), 1, b)
+        self.assertIn("The clone moved on since the last install: the services run v1.40.4 at 90bb772, the clone is "
+                      "one commit past it, at d120eae.", b[0]["text"])
+        self.assertIn("d120eae v1.40.4: the notes say what the box proved after the push. A git pull changes the "
+                      "files, not what runs.", b[0]["text"])
+        self.assertNotIn("the clone is v1.40.4", b[0]["text"])
+
+    def test_more_commits_than_listed_are_counted(self):
+        b = self.banner("{installed: 'v1.40.4', clone: 'v1.40.4', behind_clone: true, behind_clone_why: 'commit', "
+                        "installed_commit: 'aaaaaaa', clone_commit: 'bbbbbbb', commits_count: 7, "
+                        "commits: ['b1 one', 'b2 two', 'b3 three', 'b4 four', 'b5 five']}")
+        self.assertIn("the clone is 7 commits past it, at bbbbbbb.", b[0]["text"])
+        self.assertIn("b1 one, b2 two, b3 three, b4 four, b5 five and 2 more. A git pull", b[0]["text"])
+
+    def test_the_same_release_with_no_commits_known_still_names_both(self):
+        b = self.banner("{installed: 'v1.40.4', clone: 'v1.40.4', behind_clone: true, behind_clone_why: 'commit', "
+                        "installed_commit: 'aaaaaaa', clone_commit: 'bbbbbbb'}")
+        self.assertIn("the services run v1.40.4 at aaaaaaa, the clone is past it, at bbbbbbb.", b[0]["text"])
+
     def test_a_run_stopped_at_no_start(self):
         b = self.banner("{behind_clone: true, behind_clone_why: 'no-start'}")
         self.assertIn("The last install stopped at --no-start.", b[0]["text"])

@@ -1085,8 +1085,15 @@ function renderBanners(state, errors){
   // nor the proxy, nor the cockpit; a box no run of v1.36.0 or later recorded is said once.
   if (upd.behind_clone && !run){
     const why = upd.behind_clone_why;
-    if (why === 'commit') add('orange', `The clone moved on since the last install: the services run ${upd.installed}, the clone is ${upd.clone || 'newer'}.`,
-      'A git pull changes the files, not what runs. Run the installer so the services follow it:', updateCmd(F.config));
+    // the same release on both sides names the commits (Hasan's capture, 2026-10-29: "the services run
+    // v1.40.4, the clone is v1.40.4" said nothing of what moved)
+    const same = upd.installed_commit && upd.installed === upd.clone, n = upd.commits_count, cs = upd.commits || [];
+    const past = n ? `${n === 1 ? 'one commit' : n + ' commits'} past it` : 'past it';
+    if (why === 'commit') add('orange', same
+        ? `The clone moved on since the last install: the services run ${upd.installed} at ${upd.installed_commit}, the clone is ${past}, at ${upd.clone_commit}.`
+        : `The clone moved on since the last install: the services run ${upd.installed}, the clone is ${upd.clone || 'newer'}.`,
+      (same && cs.length ? `${cs.join(', ')}${n > cs.length ? ` and ${n - cs.length} more` : ''}. ` : '')
+      + 'A git pull changes the files, not what runs. Run the installer so the services follow it:', updateCmd(F.config));
     else if (why === 'no-start') add('orange', 'The last install stopped at --no-start.',
       'The side lanes, the proxy and the cockpit were not updated with it. Run it again without --no-start:', updateCmd(F.config));
     else add('orange', `No install of v1.36.0 or later recorded what this box runs.`,

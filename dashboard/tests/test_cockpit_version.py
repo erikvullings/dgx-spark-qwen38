@@ -125,6 +125,45 @@ class TheInstalledRelease(unittest.TestCase):
         self.assertTrue(self.update("v1.36.0")["behind"], "anything before v1.36.0 is older than it")
         self.assertFalse(self.update("v1.35.0")["behind"], "before v1.36.0 may be v1.35.0: no claim")
 
+    def test_the_same_release_on_both_sides_says_the_commits_between(self):
+        # "v1.40.4" on both sides said nothing of what moved (Hasan's capture, 2026-10-29): the banner
+        # names the two commits and the clone's commits past the recorded one, newest first
+        self.record(release="v1.36.1")
+        argvs, real = [], self.cp.run
+        def git(argv, **k):
+            argvs.append(argv)
+            if "rev-parse" in argv:
+                return HEAD + "\n"
+            if "rev-list" in argv:
+                return "2\n"
+            if "log" in argv:
+                return "fffffff tests: the second\neeeeee1 docs: the first\n"
+            return ""
+        self.cp.run = git
+        self.addCleanup(setattr, self.cp, "run", real)
+        out = self.update()
+        self.assertEqual((out["installed"], out["clone"], out["behind_clone_why"]), ("v1.36.1", "v1.36.1", "commit"))
+        self.assertEqual((out["installed_commit"], out["clone_commit"]), ("eeeeeee", "fffffff"))
+        self.assertEqual(out["commits"], ["fffffff tests: the second", "eeeeee1 docs: the first"])
+        self.assertEqual(out["commits_count"], 2)
+        self.assertIn(["git", "-C", str(self.cp.REPO_DIR), "log", "-n", "5", "--format=%h %s", "e" * 40 + ".." + HEAD], argvs)
+
+    def test_a_recorded_commit_git_does_not_know_still_names_both(self):
+        self.record(release="v1.36.1")
+        out = self.update()   # the class's git answers nothing past rev-parse: a commit this clone lost
+        self.assertEqual((out["installed_commit"], out["clone_commit"]), ("eeeeeee", "fffffff"))
+        self.assertNotIn("commits", out)
+
+    def test_a_recorded_commit_that_is_no_hash_never_reaches_git(self):
+        argvs, real = [], self.cp.run
+        self.cp.run = lambda argv, **k: argvs.append(argv) or (HEAD + "\n" if "rev-parse" in argv else "")
+        self.addCleanup(setattr, self.cp, "run", real)
+        self.record(release="v1.36.1", commit="--output=/tmp/x")
+        out = self.update()
+        self.assertEqual(out["behind_clone_why"], "commit")
+        self.assertNotIn("installed_commit", out)
+        self.assertEqual([a for a in argvs if any("--output" in x for x in a)], [])
+
     def test_the_library_line_says_the_same(self):
         self.record()
         rel = self.cp.upstream_snapshot(max_age=0.0)["release"]

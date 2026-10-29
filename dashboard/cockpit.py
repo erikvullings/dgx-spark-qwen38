@@ -124,6 +124,17 @@ def release_state():
            "clone": clone, "behind_clone": bool(lag)}
     if lag:
         out["behind_clone_why"] = lag
+    # the same release on both sides said nothing of what moved ("the services run v1.40.4, the clone
+    # is v1.40.4", Hasan's capture, 2026-10-29): the two commits, and the clone's past the recorded one
+    # when git still knows it. A recorded value that is no hash never reaches git's argv.
+    was = (rec or {}).get("commit") or ""
+    if lag == "commit" and head and re.fullmatch(r"[0-9a-f]{7,40}", was):
+        out["installed_commit"], out["clone_commit"] = was[:7], head[:7]
+        span = f"{was}..{head}"
+        log = run(["git", "-C", str(REPO_DIR), "log", "-n", "5", "--format=%h %s", span]).splitlines()
+        count = run(["git", "-C", str(REPO_DIR), "rev-list", "--count", span]).strip()
+        if log and count.isdigit():
+            out["commits"], out["commits_count"] = [ln[:160] for ln in log], int(count)
     return out
 
 
