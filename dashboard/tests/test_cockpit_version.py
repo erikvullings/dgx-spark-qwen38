@@ -134,6 +134,8 @@ class TheInstalledRelease(unittest.TestCase):
             argvs.append(argv)
             if "rev-parse" in argv:
                 return HEAD + "\n"
+            if "merge-base" in argv:
+                return "e" * 40 + "\n"
             if "rev-list" in argv:
                 return "2\n"
             if "log" in argv:
@@ -153,6 +155,37 @@ class TheInstalledRelease(unittest.TestCase):
         out = self.update()   # the class's git answers nothing past rev-parse: a commit this clone lost
         self.assertEqual((out["installed_commit"], out["clone_commit"]), ("eeeeeee", "fffffff"))
         self.assertNotIn("commits", out)
+
+    def test_a_clone_off_the_recorded_commits_history_is_never_said_past_it(self):
+        # review, 2026-10-30: a clone reset to an older commit, or whose history was rewritten, still has commits
+        # the recorded one lacks; listing them as "past it" said the clone runs ahead of what it does not descend from
+        self.record(release="v1.36.1")
+        real = self.cp.run
+        def git(argv, **k):
+            if "rev-parse" in argv:
+                return HEAD + "\n"
+            if "merge-base" in argv:
+                return "1" * 40 + "\n"   # the two commits meet earlier: the recorded one is no ancestor
+            if "rev-list" in argv:
+                return "1\n"
+            if "log" in argv:
+                return "fffffff tests: off the recorded history\n"
+            return ""
+        self.cp.run = git
+        self.addCleanup(setattr, self.cp, "run", real)
+        out = self.update()
+        self.assertEqual((out["installed_commit"], out["clone_commit"]), ("eeeeeee", "fffffff"))
+        self.assertNotIn("commits", out)
+        self.assertNotIn("commits_count", out)
+
+    def test_a_recorded_commit_that_is_no_string_never_fails_the_panel(self):
+        # load_record checks the schema and the choices, not the commit: a hand edit that leaves a number there
+        # must not take the update panel down (review, 2026-10-30)
+        self.record(raw=json.dumps({"schema": 1, "release": "v1.36.1", "commit": 123, "path": "full", "choices": {}}))
+        out = self.update()
+        self.assertNotIn("error", out)
+        self.assertEqual(out["behind_clone_why"], "commit")
+        self.assertNotIn("installed_commit", out)
 
     def test_a_recorded_commit_that_is_no_hash_never_reaches_git(self):
         argvs, real = [], self.cp.run

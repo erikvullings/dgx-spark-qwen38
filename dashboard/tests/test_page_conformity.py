@@ -119,7 +119,10 @@ class TheServicesBehindTheirClone(unittest.TestCase):
     def test_the_same_release_with_no_commits_known_still_names_both(self):
         b = self.banner("{installed: 'v1.40.4', clone: 'v1.40.4', behind_clone: true, behind_clone_why: 'commit', "
                         "installed_commit: 'aaaaaaa', clone_commit: 'bbbbbbb'}")
-        self.assertIn("the services run v1.40.4 at aaaaaaa, the clone is past it, at bbbbbbb.", b[0]["text"])
+        # no commit known between them (git lost the recorded one, or the clone is not past it): both are named and
+        # nothing says which way the clone went (review, 2026-10-30)
+        self.assertIn("the services run v1.40.4 at aaaaaaa, the clone is at bbbbbbb.", b[0]["text"])
+        self.assertNotIn("past it", b[0]["text"])
 
     def test_a_run_stopped_at_no_start(self):
         b = self.banner("{behind_clone: true, behind_clone_why: 'no-start'}")

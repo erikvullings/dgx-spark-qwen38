@@ -1086,11 +1086,12 @@ function renderBanners(state, errors){
   if (upd.behind_clone && !run){
     const why = upd.behind_clone_why;
     // the same release on both sides names the commits (Hasan's capture, 2026-10-29: "the services run
-    // v1.40.4, the clone is v1.40.4" said nothing of what moved)
+    // v1.40.4, the clone is v1.40.4" said nothing of what moved); "past it" only with the commits the server found
+    // past the recorded one, which it looks for only in a clone that descends from it (review, 2026-10-30)
     const same = upd.installed_commit && upd.installed === upd.clone, n = upd.commits_count, cs = upd.commits || [];
-    const past = n ? `${n === 1 ? 'one commit' : n + ' commits'} past it` : 'past it';
+    const past = n ? `${n === 1 ? 'one commit' : n + ' commits'} past it, at` : 'at';
     if (why === 'commit') add('orange', same
-        ? `The clone moved on since the last install: the services run ${upd.installed} at ${upd.installed_commit}, the clone is ${past}, at ${upd.clone_commit}.`
+        ? `The clone moved on since the last install: the services run ${upd.installed} at ${upd.installed_commit}, the clone is ${past} ${upd.clone_commit}.`
         : `The clone moved on since the last install: the services run ${upd.installed}, the clone is ${upd.clone || 'newer'}.`,
       (same && cs.length ? `${cs.join(', ')}${n > cs.length ? ` and ${n - cs.length} more` : ''}. ` : '')
       + 'A git pull changes the files, not what runs. Run the installer so the services follow it:', updateCmd(F.config));
