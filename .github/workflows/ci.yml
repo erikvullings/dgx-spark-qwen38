@@ -1634,8 +1634,8 @@ jobs:
           # (found in review, 2026-09-24). No cockpit test has a reason to skip here.
           skips=$(echo "$out" | grep -E "\.\.\. skipped '" || true)
           [ -z "$skips" ] || { echo "cockpit tests skipped:"; echo "$skips"; exit 1; }
-          # Each file is also run on its own, the way a human runs it, by the offline
-          # step below, under its witness HOME, with the count it reports checked: a
+          # Each file is also run on its own, the way a human runs it, by the suite job's
+          # offline step, under its witness HOME, with the count it reports checked: a
           # file without a __main__ block exits 0 having run nothing, and a file that
           # fails on its own but passes after the modules before it in the run above
           # fails there. It ran here as well until 2026-10-18, so each file ran three
