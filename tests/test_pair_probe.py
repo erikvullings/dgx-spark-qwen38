@@ -74,7 +74,7 @@ def commands(answers):
 class Masking(unittest.TestCase):
     def test_an_address_is_only_its_kind(self):
         self.assertEqual([P.ip_kind(a) for a in ("192.168.100.2", "10.0.0.7/24", "172.20.1.1", "169.254.3.4",
-                                                 "100.114.54.60", "8.8.8.8", "127.0.0.1", "not-an-ip")],
+                                                 "100.64.12.34", "8.8.8.8", "127.0.0.1", "not-an-ip")],
                          ["private", "private", "private", "link-local", "shared", "public", "loopback", "unknown"])
 
     def test_what_names_the_box_or_its_owner_goes(self):
