@@ -27,7 +27,7 @@ class AnEngineThatIsDown(unittest.TestCase):
         os.makedirs(os.path.join(self.home, ".config", "qwen38"))
         with open(os.path.join(self.home, ".config", "qwen38", "api-key"), "w") as f:
             f.write("test-key\n")
-        _, self.port = localports.held(self)    # nothing listens there, and no other program can
+        self.port = localports.held(self)    # nothing listens there, and no other program can
 
     def run_needle(self, *args):
         r = subprocess.run(["bash", str(NEEDLE), *args, "--trials", "1", "--depths", "1000", "--no-flush"],

@@ -379,7 +379,7 @@ class RelayTests(unittest.TestCase):
         self.assertIn("credentials", json.loads(body)["error"])
 
     def test_upstream_down_is_502(self):
-        _, port = localports.held(self)     # nothing listens there, and no other program can
+        port = localports.held(self)     # nothing listens there, and no other program can
         cfg = ar.RelayConfig(upstream=("127.0.0.1", port), credentials=lambda: ("a", "b"),
                              is_authed=lambda c: True, cockpit_port=30090)
         srv = ar.serve(cfg, "127.0.0.1", 0)

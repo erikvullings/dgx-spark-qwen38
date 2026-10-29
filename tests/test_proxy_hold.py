@@ -120,7 +120,7 @@ class Box:
             "exit 3\n")
         (self.t / "bin/systemctl").chmod(0o755)
         # the engine's port is gone until start_engine, and the test's all along: no one else can take it
-        _, self.engine_port = localports.held(test)
+        self.engine_port = localports.held(test)
         self.proc = None
         self.srv = None
         self.generations = []
@@ -546,7 +546,7 @@ class TheTwoQuestionsItAsks(unittest.TestCase):
             def do_GET(self):
                 self.send_response(self.server.code); self.send_header("Content-Length", "0"); self.end_headers()
         # held: once this engine is closed, nobody else can be listening on its port
-        _, port = localports.held(self)
+        port = localports.held(self)
         srv = localports.serve(port, http.server.ThreadingHTTPServer, Refusing)
         threading.Thread(target=srv.serve_forever, daemon=True).start()
         self.addCleanup(lambda: (srv.shutdown(), srv.server_close()))

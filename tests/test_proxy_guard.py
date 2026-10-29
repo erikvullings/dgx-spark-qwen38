@@ -468,7 +468,7 @@ class ProxyOnABoxSwitchedToImages(unittest.TestCase):
             f'[ "$*" = "is-active --quiet qwen38-image.service" ] && exit {0 if image_active else 3}\n'
             "exit 3\n")
         (fake / "systemctl").chmod(0o755)
-        _, dead = localports.held(self)                 # a port nothing listens on: the engine is gone
+        dead = localports.held(self)                 # a port nothing listens on: the engine is gone
         home = no_key_home()
         self.addCleanup(shutil.rmtree, home, True)
         env = dict(os.environ, UPSTREAM=f"http://127.0.0.1:{dead}", PATH=f"{fake}:{os.environ.get('PATH', '')}",

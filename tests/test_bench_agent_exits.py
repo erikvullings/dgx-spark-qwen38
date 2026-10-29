@@ -68,7 +68,7 @@ class TheExits(unittest.TestCase):
         self.assertNotIn("Traceback", r.stderr)
 
     def test_a_lane_that_is_gone(self):
-        _, port = localports.held(self)     # nothing listens there, and no other program can
+        port = localports.held(self)     # nothing listens there, and no other program can
         r = self.run_tool(port)
         self.assertEqual(r.returncode, 3, r.stderr)
         self.assertNotIn("Traceback", r.stderr)

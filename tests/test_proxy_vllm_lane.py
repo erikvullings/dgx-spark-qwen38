@@ -601,7 +601,7 @@ class ALaneSwitch(unittest.TestCase):
             "exit 3\n")
         (self.t / "bin/systemctl").chmod(0o755)
         # the engine's port is gone until start_engine, and the test's all along: no one else can take it
-        _, self.engine_port = localports.held(self)
+        self.engine_port = localports.held(self)
         saved, saved_argv = dict(os.environ), list(sys.argv)
         self.addCleanup(lambda: (os.environ.clear(), os.environ.update(saved), setattr(sys, "argv", saved_argv)))
         os.environ.update(UPSTREAM=f"http://127.0.0.1:{self.engine_port}", KEEPALIVE_S="0.4",
