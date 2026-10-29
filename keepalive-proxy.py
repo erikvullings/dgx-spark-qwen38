@@ -4264,14 +4264,24 @@ class H(BaseHTTPRequestHandler):
             pass
 
     def _tool_call_key(self, call, name):
-        """A call's key across a stream's events. An OpenAI delta names its call by index; one with
-        none (some parsers leave it out) by its id, else a name starts a new call, else it goes on
-        the last one: by the position in the event, two calls merged (found in review)."""
+        """A call's key across a stream's events. An OpenAI delta names its call by index, and a new
+        id or a new name at an index already used starts a new one: a parser that gives every call
+        index 0 merged a shell call into the read before it, under the read's name (review,
+        2026-10-29). One with no index (some parsers leave it out) by its id, else a name starts a
+        new call, else it goes on the last one: by the position in the event, two calls merged
+        (found in review)."""
         if call[0] != "o":
             return call
-        if call[2] is not None:
-            return call[:3]
         last = self.__dict__.setdefault("_tool_last", {})
+        if call[2] is not None:
+            slot = (call[1], call[2])
+            key, prev_id, prev_name = last.get(slot, (None, None, ""))
+            tid = call[3]
+            if key is None or (tid and prev_id and tid != prev_id) or (name and prev_name and name != prev_name):
+                self._tool_seq = getattr(self, "_tool_seq", 0) + 1
+                key = ("o",) + slot + (self._tool_seq,)
+            last[slot] = (key, tid or prev_id, name or prev_name)
+            return key
         ci, tid = call[1], call[3]
         prev, prev_name = last.get(ci, (None, ""))
         if tid:

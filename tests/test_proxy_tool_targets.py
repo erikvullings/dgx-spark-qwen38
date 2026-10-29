@@ -298,6 +298,26 @@ class ThePieces(unittest.TestCase):
         self.assertEqual(len(calls), 2, calls)
         self.assertEqual(self.mod.tool_targets(calls), [("bash", ["aliyuncs.com"])])
 
+    def test_a_parser_that_gives_every_call_index_0_tells_them_apart(self):
+        # a new id and a new name at an index already used: a shell call after a read merged into the
+        # read, kept its name, which is not read, and its arguments went (review, 2026-10-29)
+        ev = lambda tc: {"id": "c", "object": "chat.completion.chunk", "choices": [{"index": 0, "delta": {"tool_calls": [tc]}}]}
+        h = self.mod.H.__new__(self.mod.H)          # the real handler, no socket
+        rec = sse(ev({"index": 0, "id": "a", "type": "function", "function": {"name": "read", "arguments": '{"path": "x"}'}}),
+                  ev({"index": 0, "id": "b", "type": "function", "function": {"name": "bash", "arguments": ""}}),
+                  ev({"index": 0, "function": {"arguments": CMD}}))
+        self.mod.H._watch_tools(h, rec, False)
+        calls = [tuple(c) for c in h._tool_calls.values()]
+        self.assertEqual(self.mod.tool_targets(calls), [("bash", ["aliyuncs.com"])])
+        # and the id and the name said again on every piece of one call keep it one, the host split in two
+        h = self.mod.H.__new__(self.mod.H)
+        rec = sse(ev({"index": 0, "id": "a", "type": "function", "function": {"name": "bash", "arguments": CMD[:52]}}),
+                  ev({"index": 0, "id": "a", "function": {"name": "bash", "arguments": CMD[52:]}}))
+        self.mod.H._watch_tools(h, rec, False)
+        calls = [tuple(c) for c in h._tool_calls.values()]
+        self.assertEqual(len(calls), 1, calls)
+        self.assertEqual(self.mod.tool_targets(calls), [("bash", ["aliyuncs.com"])])
+
     def test_a_host_over_short_reads_of_a_whole_answer_is_seen(self):
         # the tail kept was the last chunk's alone: a host over three short reads went unseen
         h = self.mod.H.__new__(self.mod.H)
