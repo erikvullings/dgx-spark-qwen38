@@ -2643,8 +2643,10 @@ doc = {"$schema": "https://opencode.ai/config.json", "provider": providers,
        "model": default, "small_model": default}
 # Cohere's report (2026-10-26): the shell rules for its hosts, under a key of their own, as
 # oc-merge-limits.py --deny-permission gives them (OC_DENY). opencode merges this file over the
-# user's own config for oc and the Agent tab, so they come after the user's rules there whatever
-# those say (docs/agents-and-network.md). An OC_DENY that is set but empty stops here.
+# user's own config for oc and the Agent tab, so they come after the user's rules there, but for
+# a key added after the block in a global config that holds it too: opencode keeps a key where
+# the first config had it (review, 2026-10-29, docs/agents-and-network.md). An OC_DENY that is
+# set but empty stops here.
 if os.environ.get("OC_DENY") is not None:
     doc["permission"] = json.loads(os.environ["OC_DENY"])
 # With the version pinned, opencode looks for no update at all: false, the JSON boolean

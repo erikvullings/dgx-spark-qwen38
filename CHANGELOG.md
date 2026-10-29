@@ -69,21 +69,24 @@ every whole answer was parsed. A third review found the file and search tools of
 that act, a host over short reads of a whole answer unseen, a parser that repeats a tool's name on every piece
 splitting one call, spaces around `"tool_calls"` hiding it, and a journal vacuumed after a line keeping the
 banner up a day: `journalctl -g` ends 1 when nothing matches, as a read that failed does, so the day is read
-whole. The journal line now says how the request ended. Each has its test. Three verifications before the
-push, read in opencode's own code and replayed against it, found what these notes claimed beyond it: patterns
-that tell case apart, a project's own config, an agent's own permission and an "Always" answer that come after
-the rules, and an `uninstall.sh` that kept this repo's copy of the config, now moved aside again. The notes
-above say each, and the uninstall has its test.
+whole. A fourth review found two calls a parser streams at one index merged under the first one's name. The
+journal line now says how the request ended. Each has its test. Three verifications before the push, read in
+opencode's own code and replayed against it, found what these notes claimed beyond it: patterns that tell case
+apart, a project's own config, an agent's own permission and an "Always" answer that come after the rules, and
+an `uninstall.sh` that kept this repo's copy of the config, now moved aside again. The notes above say each,
+and the uninstall has its test.
 
 **A probe for a pair of boxes (#45).** `pair-probe.py`, run on each box, prints what a lane over two boxes
 needs to know about each one: the DGX OS update it runs, the kernel, the GPU driver, this repo's release and
 lanes, the ConnectX-7 ports, their RDMA side and the mlx5 modules, Docker, the time sync and the free disk,
 and with `--peer` the port the route to the other box takes, its loss and its round trip. It needs no sudo and
-changes nothing. It never prints a MAC or IP address (only its kind), the home directory, the host's name or
-the serial number, and it opens no file that holds a key. On the reference GX10, lspci shows no ConnectX-7
-although the mlx5 modules are loaded, and the probe says both. Two reviews of the probe found what it missed
+changes nothing. It never prints a MAC or IP address (only its kind), the home directory, the host's or the
+user's name or the serial number, and it opens no file that holds a key. A name every such box prints of
+itself (spark, gx10, nvidia, ubuntu) stays, since it says nothing of whose box it is and masking it erased the
+product and the kernel the two boxes are compared on. On the reference GX10, lspci shows no ConnectX-7
+although the mlx5 modules are loaded, and the probe says both. Three reviews of the probe found what it missed
 before the release, from a peer that does not answer read as not measured to a host's name written in another
-case. Each is fixed with its test.
+case and a version of five parts read as an address. Each is fixed with its test.
 
 **Tests.** `test_oc_merge_limits.py` (the order, the forms, a key added after the block, a user's own
 pattern), `test_install_opencode_pin.py`, `test_install_oc_artifact.py`, `test_agent_auto_deny.py` (three
