@@ -9,8 +9,10 @@ machine itself, and the last case keeps any test file from taking a port that wa
 idiom, not every way to write it: a closed server's port taken for a dead one, as test_proxy_hold did
 (found in the review of the fix), is a held port now too."""
 import http.server
+import json
 import os
 import pathlib
+import shutil
 import socket
 import subprocess
 import sys
@@ -167,6 +169,40 @@ class NoTestFile(unittest.TestCase):
         taking = [f for f in files if f not in SPARED and "getsockname()[1]" in (REPO / f).read_text()]
         self.assertEqual(taking, [], "take it from tests/localports.py: held() for a port nothing listens on, "
                                      "serve() for a server of the test's process, spawn() for one of its own")
+
+
+    def test_no_browser_check_takes_a_port_number_out_of_a_socket_it_closes(self):
+        # the .mjs checks too (review of PR #60, 2026-10-29): node reads a bound port from address().port, and
+        # five of them read it from a server they closed before starting theirs
+        files = sorted(str(p.relative_to(REPO)) for d in ("tests", "dashboard/tests") for p in (REPO / d).glob("*.mjs"))
+        self.assertIn("dashboard/tests/resilience-check.mjs", files)
+        taking = [f for f in files if "address().port" in (REPO / f).read_text()]
+        self.assertEqual(taking, [], "start the server on port 0 and read the port back: portOf() of "
+                                     "dashboard/tests/localports.mjs")
+
+
+@unittest.skipUnless(shutil.which("node"), "node runs the browser checks' helper")
+class TheBrowserChecksHelper(unittest.TestCase):
+    def node(self, body):
+        script = (f"import {{ portOf }} from {json.dumps(str(REPO / 'dashboard' / 'tests' / 'localports.mjs'))};\n"
+                  "import { spawn } from 'node:child_process';\n" + body)
+        return subprocess.run(["node", "--input-type=module", "-e", script], capture_output=True, text=True,
+                              timeout=60, env={**os.environ, "PY": sys.executable})
+
+    def test_reads_the_port_the_kernel_gave_a_server_on_port_0(self):
+        r = self.node("const p = spawn(process.env.PY, ['-m', 'http.server', '0', '--bind', '127.0.0.1'], {stdio: 'ignore'});\n"
+                      "try { const port = await portOf(p); const res = await fetch(`http://127.0.0.1:${port}/`);\n"
+                      "      console.log(port, res.status); } finally { p.kill(); }\n")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        port, status = r.stdout.split()
+        self.assertGreater(int(port), 0)
+        self.assertEqual(status, "200")
+
+    def test_says_when_the_server_ends_before_it_listens(self):
+        r = self.node("const p = spawn(process.env.PY, ['-c', 'import sys; sys.exit(3)'], {stdio: 'ignore'});\n"
+                      "try { await portOf(p, { within: 10000 }); console.log('no error'); }\n"
+                      "catch (e) { console.log(e.message); }\n")
+        self.assertIn("ended (3) before it listened", r.stdout, r.stdout + r.stderr)
 
 
 if __name__ == "__main__":

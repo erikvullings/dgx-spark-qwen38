@@ -19,7 +19,7 @@ import { randomBytes } from 'node:crypto';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import net from 'node:net';
+import { portOf } from './localports.mjs';
 const HERE = dirname(fileURLToPath(import.meta.url));
 const COCKPIT = join(HERE, '..', 'cockpit.py');
 const CHROME = process.env.CHROME || ['/usr/bin/google-chrome', '/usr/bin/chromium', '/usr/bin/chromium-browser',
@@ -27,7 +27,6 @@ const CHROME = process.env.CHROME || ['/usr/bin/google-chrome', '/usr/bin/chromi
 const checks = [];
 const ok = (name, cond, detail = '') => { checks.push({ name, ok: !!cond, detail: String(detail).slice(0, 180) }); };
 const sleep = ms => new Promise(r => setTimeout(r, ms));
-const freePort = () => new Promise(res => { const srv = net.createServer(); srv.listen(0, '127.0.0.1', () => { const p = srv.address().port; srv.close(() => res(p)); }); });
 const root = mkdtempSync(join(tmpdir(), 'cockpit-update-banner-'));
 let server = null, chrome = null;
 // process.exit() skips every finally: an early exit (the cockpit never healthy, the login
@@ -50,19 +49,22 @@ writeFileSync(join(cfgDir, 'api-key'), key + '\n', { mode: 0o600 });
 for (const cmd of ['docker', 'systemctl', 'journalctl', 'nvidia-smi', 'sudo', 'git', 'curl', 'tailscale', 'opencode']) {
   writeFileSync(join(fence, cmd), '#!/bin/sh\nexit 1\n'); chmodSync(join(fence, cmd), 0o755);
 }
-const PORT = await freePort();
-const BASE = `http://127.0.0.1:${PORT}`;
-// the same cockpit by a name that is not this machine's, as a box's LAN or Tailscale address is:
-// plain HTTP there is no secure context, and the browser has no clipboard API
-const FAR_NAME = 'cockpit.test', FAR = `http://${FAR_NAME}:${PORT}`;
 const CLOSED = 'http://127.0.0.1:1';
+// port 0, the kernel's own free port, read back once the cockpit listens: a number read from a socket that is
+// then closed is anyone's until the cockpit binds it (localports.mjs)
 server = spawn('python3', [COCKPIT], {
-  env: { ...process.env, COCKPIT_DRY_RUN: '1', COCKPIT_PORT: String(PORT), COCKPIT_CONFIG_DIR: cfgDir,
+  env: { ...process.env, COCKPIT_DRY_RUN: '1', COCKPIT_PORT: '0', COCKPIT_CONFIG_DIR: cfgDir,
          COCKPIT_BIND: '127.0.0.1', COCKPIT_AGENT_PORT: '0', COCKPIT_AUTOHEAL: '0', COCKPIT_AUTOFIT: '0',
          COCKPIT_UPDATE_CHECK: '0', COCKPIT_ENGINE: CLOSED, COCKPIT_PROXY: CLOSED, COCKPIT_IMAGE: CLOSED,
          HOME: root, PATH: `${fence}:${process.env.PATH}` },
   stdio: ['ignore', 'ignore', 'ignore'], detached: true,
 });
+let PORT;
+try { PORT = await portOf(server); } catch (e) { console.error(`the cockpit did not come up: ${e.message}`); process.exit(2); }
+const BASE = `http://127.0.0.1:${PORT}`;
+// the same cockpit by a name that is not this machine's, as a box's LAN or Tailscale address is:
+// plain HTTP there is no secure context, and the browser has no clipboard API
+const FAR_NAME = 'cockpit.test', FAR = `http://${FAR_NAME}:${PORT}`;
 try {
   const t0 = Date.now();
   for (;;) {
