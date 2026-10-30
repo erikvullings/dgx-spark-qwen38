@@ -125,20 +125,24 @@ class TheUnit(unittest.TestCase):
 
     def test_the_runtime_keeps_its_own_sockets_off_the_network(self):
         """Whatever the bind, the installed lane listened on *:30005 (torch's TCPStore) and on four
-        ports of the box's LAN address (gloo's and NCCL's bootstrap), none with a key (the
-        reference box, 2026-10-30, its firewall off). The bootstrap goes on lo, and a loopback bind
-        lets the lane's processes talk to loopback alone; a named address serves others on purpose."""
+        ports of the box's LAN address (gloo's and NCCL's bootstrap), none with a key (the reference
+        box, 2026-10-30, its firewall off). The bootstrap goes on lo, and a bind on any loopback
+        address lets the lane's processes talk to loopback alone; a named address serves others on
+        purpose, is told what that leaves open, and its unit's two filter lines are written empty,
+        which sets no filter."""
         service = UNIT_TPL.read_text().split("\n[Service]\n", 1)[1].split("\n[", 1)[0]
         for line in ("Environment=GLOO_SOCKET_IFNAME=lo", "Environment=NCCL_SOCKET_IFNAME=lo",
-                     "IPAddressAllow=localhost", "IPAddressDeny=__VIDEO_IP_DENY__"):
+                     "IPAddressAllow=__VIDEO_IP_ALLOW__", "IPAddressDeny=__VIDEO_IP_DENY__"):
             self.assertRegex(service, rf"(?m)^{re.escape(line)}$")
         t = INSTALLER.read_text()
         block = t[t.index('VIDEO_BIND="${VIDEO_BIND:-$(unit_flag --host)}"'):t.index("WEIGHTS_GB=")]
-        for bind, deny in (("127.0.0.1", "any"), ("localhost", "any"), ("192.168.1.20", "")):
-            r = subprocess.run(["bash", "-c", 'set -euo pipefail\ndie(){ echo "DIE: $*"; exit 1; }\n' + block
-                                + 'echo "deny=$VIDEO_IP_DENY"'], capture_output=True, text=True, timeout=30,
-                               env={"PATH": "/usr/bin:/bin", "VIDEO_BIND": bind})
-            self.assertEqual((r.returncode, r.stdout.splitlines()[-1]), (0, f"deny={deny}"), bind)
+        for bind, deny, allow, told in (("127.0.0.1", "any", "localhost", False), ("localhost", "any", "localhost", False),
+                                        ("127.0.0.2", "any", "localhost", False), ("192.168.1.20", "", "", True)):
+            r = subprocess.run(["bash", "-c", 'set -euo pipefail\ndie(){ echo "DIE: $*"; exit 1; }\n'
+                                f'. "{REPO}/lanes.sh"\n' + block + 'echo "deny=$VIDEO_IP_DENY allow=$VIDEO_IP_ALLOW"'],
+                               capture_output=True, text=True, timeout=30, env={"PATH": "/usr/bin:/bin", "VIDEO_BIND": bind})
+            self.assertEqual((r.returncode, r.stdout.splitlines()[-1]), (0, f"deny={deny} allow={allow}"), bind)
+            self.assertEqual("30005" in r.stdout, told, bind)
 
     def test_a_stop_is_a_ceiling_not_a_wait(self):
         """A stop cancels the generation in under a second (measured on all seven

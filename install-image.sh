@@ -123,25 +123,24 @@ WHEEL="${SGLANG_DIFFUSION_WHEEL:-0.5.21}"
 # for someone who means to, and is told what it costs.
 IMAGE_BIND="${IMAGE_BIND:-$(unit_flag --host)}"; IMAGE_BIND="${IMAGE_BIND:-127.0.0.1}"
 case "$IMAGE_BIND" in
-  127.0.0.1|localhost) ;;
+  127.*|localhost) ;;
   *) echo "WARNING: binding $IMAGE_BIND. This lane has no API key (the diffusion runtime has"
      echo "         no --api-key), so anyone who can reach that address can generate on your GPU."
      if [ "$IMAGE_BIND" = 0.0.0.0 ]; then
        echo "         0.0.0.0 is every interface: the LAN, the tailnet and any added later."
      fi
      echo "         The scheduler's own channel stays on 127.0.0.1 whatever this bind (scheduler-loopback)."
+     echo "         torch's rendezvous port, 30005, listens on all the box's addresses too, with no key,"
+     echo "         and a bind past loopback leaves it unfiltered (SECURITY.md)."
      echo "         Loopback plus the cockpit is the intended shape." ;;
 esac
 case "$IMAGE_BIND" in
   *[!0-9.]*|""|*..*) [ "$IMAGE_BIND" = localhost ] || die "IMAGE_BIND takes an IPv4 address, got: $IMAGE_BIND" ;;
 esac
-# The runtime listens past its bind: torch's TCPStore, the rendezvous of its one process group,
-# on port 30005 of every interface whatever address it is given, and gloo's and NCCL's bootstrap
-# on the box's own LAN address, four ports, none with a key (measured on the reference box,
-# 2026-10-30, its firewall off). The unit keeps that bootstrap on lo and, with a loopback bind,
-# lets the lane's processes talk to loopback alone (IPAddressDeny=any), which leaves the TCPStore
-# out of reach of any other machine. A bind past loopback serves others on purpose: no filter.
-case "$IMAGE_BIND" in 127.0.0.1|localhost) IMAGE_IP_DENY=any ;; *) IMAGE_IP_DENY="" ;; esac
+# The runtime listens past its bind: torch's TCPStore on port 30005 of every interface, and gloo's
+# and NCCL's bootstrap on the box's LAN address, none with a key (2026-10-30). The unit keeps that
+# bootstrap on lo, and a loopback bind gets its IP filter (lane_ip_deny, lanes.sh).
+IMAGE_IP_DENY="$(lane_ip_deny "$IMAGE_BIND")"; IMAGE_IP_ALLOW="${IMAGE_IP_DENY:+localhost}"
 WEIGHTS_GB=31; RUNTIME_GB=11   # the checkpoint; the venv, checkout and wheel (8.6 to 8.8) and the pip build tree
 
 if [ "$ACTION" = uninstall ]; then
@@ -205,7 +204,7 @@ install_service(){
   sed -e "s|__USER__|$(id -un)|g" -e "s|__GROUP__|$(id -gn "$(id -un)")|g" \
       -e "s|__IMAGE_LANE_DIR__|$LANE_DIR|g" -e "s|__IMAGE_VENV__|$VENV|g" \
       -e "s|__IMAGE_MODEL__|$MODEL|g" -e "s|__IMAGE_PORT__|$PORT|g" \
-      -e "s|__IMAGE_BIND__|$IMAGE_BIND|g" -e "s|__IMAGE_IP_DENY__|$IMAGE_IP_DENY|g" -e "s|__HF_CACHE__|$HF_CACHE|g" \
+      -e "s|__IMAGE_BIND__|$IMAGE_BIND|g" -e "s|__IMAGE_IP_DENY__|$IMAGE_IP_DENY|g" -e "s|__IMAGE_IP_ALLOW__|$IMAGE_IP_ALLOW|g" -e "s|__HF_CACHE__|$HF_CACHE|g" \
       -e "s|__HOME__|$HOME|g" \
       "$HERE/$UNIT.template" > "$RENDER"
   grep -q '__[A-Z][A-Z0-9_]*__' "$RENDER" && die "the unit template still holds an unsubstituted placeholder: $(grep -o '__[A-Z][A-Z0-9_]*__' "$RENDER" | sort -u | tr '\n' ' ')"
@@ -231,14 +230,18 @@ install_service(){
     *)    sudo systemctl daemon-reload
           echo "unit installed at $INSTALLED" ;;
   esac
-  # A lane that serves goes on serving the unit, the runtime and the start scripts it started with:
-  # said here when no proof follows to restart it, whether this run or an earlier update changed
-  # them (an update leaves a serving lane serving, and said nothing for the image and video lanes:
-  # found in review, 2026-10-14). The runtime's dates: runtime-changed, touched at each change
-  # since v1.30, and the notes of the wheel, which said the changes before.
+  # A lane that serves runs the unit, the runtime and the start scripts it started with, whether this run
+  # or an earlier update changed them (said nothing for the image and video lanes until found in review,
+  # 2026-10-14). The runtime's dates: runtime-changed, touched at each change since v1.30, and the notes
+  # of the wheel, which said the changes before.
   LANE_FILES=("$INSTALLED" "$RUNTIME_NOTE" "$WHEEL_NOTE" "$CONFIG_DIR/engine-preflight.sh")
+  # A serving image lane restarts to run them (Hasan, 2026-10-30, v1.40.6): about 70 s, and an image being made
+  # then is lost. Its own sockets' filter came in with a unit, which a lane that kept serving never read. The
+  # video lane, 12 to 15 min to boot, keeps its NOTE.
   if [ "$SMOKE" -eq 0 ] && lane_serves_older "$UNIT" "${LANE_FILES[@]}"; then
-    echo "NOTE: The image lane runs older files than the ones installed now (its unit, its runtime or its start scripts); it runs these after: sudo systemctl restart $UNIT   (or Load it again from the cockpit)"
+    echo "the image lane serves older files than the ones installed now (its unit, its runtime or its start scripts): restarting it (about 70 s)"
+    sudo systemctl restart "$UNIT" \
+      || echo "NOTE: the image lane did not restart; it runs the older files until: sudo systemctl restart $UNIT"
   fi
   # Installed, not switched to: the lane this box serves stays the lane it serves. The image
   # lane becomes the boot lane the same way the other two do, by a switch, which is also

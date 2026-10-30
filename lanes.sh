@@ -773,3 +773,12 @@ PY
   return 0
 }
 forget_run_mark(){ [ -z "$RUN_MARK" ] || rm -f -- "$RUN_MARK"; return 0; }
+
+# A diffusion lane's own sockets (v1.40.6): torch's TCPStore listens on every interface whatever its rendezvous
+# address (port 30005), and gloo's and NCCL's bootstrap took the box's LAN address until the unit pinned it to lo
+# (the reference box, 2026-10-30, no firewall). A bind on a loopback address, any 127.* or localhost, gets the unit's
+# IP filter, IPAddressDeny=any with IPAddressAllow=localhost: the lane talks to loopback alone. A bind past loopback
+# serves others on purpose and gets no filter. Printed: the deny list ("any"), or nothing.
+lane_ip_deny(){  # $1 the lane's bind
+  case "$1" in 127.*|localhost) echo any ;; *) echo "" ;; esac
+}
