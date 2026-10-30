@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""The SGLang text engines open no port for their rendezvous (2026-10-30).
+"""The SGLang text engines open no port for their rendezvous, and keep gloo and NCCL on lo (2026-10-30).
 
 An SGLang engine of one process still sets torch.distributed up, by default through a TCPStore at
 tcp://127.0.0.1:<a free port>, and torch makes that store listen on every interface whatever address
@@ -15,6 +15,10 @@ import unittest
 
 REPO = pathlib.Path(__file__).resolve().parents[1]
 FLAG = "-e SGLANG_DISTRIBUTED_INIT_METHOD_OVERRIDE=file:///tmp/sglang-rdv "
+# gloo's and NCCL's bootstrap on lo: under the real clients the 27B lane listened on four ports of the
+# reference box's LAN address without it, though the box's name resolves to 127.0.0.1 (2026-10-30), and
+# the flash lane and the diffusion lanes did the same.
+IFNAMES = "-e GLOO_SOCKET_IFNAME=lo -e NCCL_SOCKET_IFNAME=lo "
 
 
 def sglang_starts():
@@ -36,6 +40,7 @@ class EveryEngineStartTakesTheFileRendezvous(unittest.TestCase):
                 text = (REPO / name).read_text()
                 run = text[text.index("docker run"):]
                 self.assertEqual(run.count(FLAG), 1)
+                self.assertEqual(run.count(IFNAMES), 1)
                 # the file is the container's own: new at each start, never one a mount carries over
                 self.assertIn("docker run --rm ", text)
                 self.assertNotRegex(run, r"-v [^ ]*:/tmp[ /:]")
@@ -43,7 +48,8 @@ class EveryEngineStartTakesTheFileRendezvous(unittest.TestCase):
     def test_the_units_say_why(self):
         for name in sglang_starts():
             if name == "run.sh":
-                continue                      # verbatim the native unit's docker run (CI checks it)
+                continue                      # the native unit's docker run: CI compares their flags and
+                                              # values, and the test above their -e lines
             with self.subTest(name=name):
                 text = (REPO / name).read_text()
                 self.assertIn("SGLANG_DISTRIBUTED_INIT_METHOD_OVERRIDE: the rendezvous of the engine's one process",
