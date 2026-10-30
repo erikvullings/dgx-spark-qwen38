@@ -18,6 +18,16 @@ collect.
 end line as soon as the engine had seen the client go, and on a loaded GitHub runner the handler thread had not
 written it yet (2026-10-29). It now waits for that line, as the client-gone test of the same file already did.
 
+**The CI runs as six jobs side by side, on arm64.** It ran as one job, 4,312 s for v1.40.3, the sum of its steps. It
+now runs as six (static, suite, single, coverage, cockpit and fuzz), each on a runner of its own, on
+`ubuntu-24.04-arm`, the architecture of the boxes this repo serves, and `checks` ends the run under the name it always
+had: 14 min 35 s for the run that merged it. `./ci-local.sh` runs the same jobs side by side, each in a worktree of
+HEAD, so a full run wants a clean tree: about 13 minutes on the reference box, against 64 one step after the other.
+Every step's script is the one it was. On one machine the jobs share its ports: the test files that took a port
+number out of a socket they then closed, so that another job could be handed it in between, now take their ports from
+`tests/localports.py`, and the browser checks start theirs on port 0 and read it back, or below the range the system
+hands out.
+
 **opencode 1.19.5.** It lets a terminal's ticket stand for the password only on the route the server dispatches the
 request to, where 1.19.4 took it on any request whose path matched that route's pattern (anomalyco/opencode#58258).
 It also answers a request of the TUI's worker that fails instead of leaving it waiting, and otherwise removes unused
