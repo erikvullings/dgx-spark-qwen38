@@ -10,8 +10,8 @@ On 2026-10-26 Cohere reported that Qwen3.8-Flash-Next, given a shell in an agent
 
 ## What runs without asking
 
-- **opencode** (1.19.4, the version this repo pins) starts from permissive defaults: every tool, the shell included, runs without asking. It asks only before a loop it detects, before reaching outside the project directory and before reading a `.env` file. Read in its binary on 2026-10-28.
-- **`oc`** runs opencode with `--yolo`, an alias of `--auto` in 1.19.4: it approves those few questions too. A `deny` rule still holds under it.
+- **opencode** (1.19.5, the version this repo pins) starts from permissive defaults: every tool, the shell included, runs without asking. It asks only before a loop it detects, before reaching outside the project directory and before reading a `.env` file. Read in 1.19.4's binary on 2026-10-28, and the same in 1.19.5's on 2026-10-30.
+- **`oc`** runs opencode with `--yolo`, an alias of `--auto` in 1.19.4 and 1.19.5: it approves those few questions too. A `deny` rule still holds under it.
 - **The Agent tab**, installed without `AGENT_AUTO`, keeps opencode's defaults, so its shell commands run unasked as well. With `AGENT_AUTO=1` it approves every tool call, and opencode merges that setting after every rule of its config files: your own rules, `deny` included, do not hold under it.
 - **`claude-local`** starts Claude Code in its normal permission mode, which asks before each command ([clients.md](clients.md)).
 
@@ -36,7 +36,8 @@ opencode reads its permission rules in order and the last one that matches wins,
 - A config of your own, in which none of this repo's provider names (`qwen38`, `flashnext`, `kolibri`, `nemotron`, `nemotron-super`, `flash-local`, `ornith-122b`) shows, never gets the rules: `oc` and the Agent tab still get the rules, and for plain `opencode` the block above is the one to add, as the last member of your `"permission"`.
 - With `AGENT_AUTO=1`, the Agent tab's unit repeats the rules after its `"*": "allow"`, under `"*bash"`.
 
-Checked on the box on 2026-10-28 with opencode 1.19.4 and the FP4-Local lane: a shell command naming an aliyuncs.com host was refused under `--yolo` and under the new `AGENT_AUTO` value, and ran under the old one (`{"*":"allow"}` alone).
+Checked on the box on 2026-10-28 with opencode 1.19.4 and the FP4-Local lane: a shell command naming an aliyuncs.com host was refused under `--yolo` and under the new `AGENT_AUTO` value, and ran under the old one (`{"*":"allow"}` alone). On 2026-10-30 opencode 1.19.4 and 1.19.5 refused it the
+same way under both, against an endpoint that asked for that very command, where a command naming no such host ran.
 
 What they stop: the case Cohere observed, a shell command whose text names an aliyuncs.com host or a cloud metadata address. The first pattern is Alibaba Cloud's whole domain, its OSS buckets as well as DashScope and its container registry, and a command naming any of them is refused and raises the banner below. What they do not stop: a host written in capitals, since opencode's patterns tell case apart (the proxy below does not), a model that writes the address another way (a variable, an encoding, a script it writes first), and opencode's `webfetch`, which they leave alone. What opencode reads after them can allow what they deny: a project's own `opencode.json` or `.opencode` directory, which opencode loads after the configs above, an agent's own `permission` block, and an "Always" you give to a command (below). In a config of yours the rules stay in place after `uninstall.sh`, as `autoupdate` does, and this repo's own copy is moved aside whole, as before.
 

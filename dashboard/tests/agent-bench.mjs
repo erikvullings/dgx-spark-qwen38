@@ -33,8 +33,9 @@ const CHROME = process.env.CHROME || ['/usr/bin/google-chrome', '/usr/bin/chromi
   '/snap/bin/chromium'].find(existsSync);
 // install.sh pins the linux-arm64 asset, the one a DGX Spark runs; the CI runner is x86_64, so the bench
 // carries that asset's digest for the same release (GitHub's digest, checked against the download on
-// 2026-10-23). A new pin in install.sh fails here until its x64 digest is added: two pins, one release.
-const X64_SHA256 = { '1.19.4': '849bd6b3d959a1d2ef200ed1634a51c79a45ca236aa26665d75debd694805cce' };
+// 2026-10-23, and 1.19.5's on 2026-10-30). A new pin in install.sh fails here until its x64 digest is added:
+// two pins, one release.
+const X64_SHA256 = { '1.19.5': '588310a336fa3b9df36b3f0225b26f679d453efaad0cf3d66c3651ef3ec1647a' };
 const checks = [];
 const ok = (name, cond, detail = '') => { checks.push({ name, ok: !!cond, detail: String(detail).slice(0, 220) }); };
 const sleep = ms => new Promise(r => setTimeout(r, ms));

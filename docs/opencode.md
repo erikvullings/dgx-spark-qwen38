@@ -31,7 +31,7 @@ behaviour: the compaction threshold `oc-fit-limits.py` sizes the limits for, the
 32,000-token output cap the `oc` launcher lifts, the overflow phrases the proxy answers
 with so that a refusal makes opencode compact instead of failing, and `--yolo` /
 `OPENCODE_PERMISSION` for the Agent view. So `install.sh` pins the opencode it runs:
-**1.19.4** (`OPENCODE_VERSION`, with the sha256 GitHub publishes for
+**1.19.5** (`OPENCODE_VERSION`, with the sha256 GitHub publishes for
 `opencode-linux-arm64.tar.gz` in `OPENCODE_SHA256`). CI runs the Agent view against that release
 on an x86_64 runner, so `dashboard/tests/agent-bench.mjs` carries the digest of
 `opencode-linux-x64.tar.gz` for the same release (`X64_SHA256`): a new pin needs both. 1.18.32 was checked against the
@@ -58,6 +58,18 @@ only into a document with a length (it reads a chunked one too since v1.38.6). I
 Bun 1.4.4 (read in its binary), whose Brotli carries the fix for CVE-2026-111497, an
 out-of-bounds write in the decoder: 1.18.35 runs on Bun 1.3.14, without it, and the agent's
 web fetch decodes whatever a page sends.
+1.19.5 was checked against 1.19.4 on 2026-10-30, the binaries side by side again: the list of
+phrases and exclusions is the same block byte for byte, `max_tokens` 32,000 and 182,000 on the
+fake endpoint with the same headers, the same default permissions, `--yolo` still read as
+`--auto`, keys masked, and the sessions one wrote the other lists and reads, both ways. Behind
+a copy of the cockpit's relay, both answered a prompt, ran a command in the terminal and passed
+the phone layer, and an endpoint that asked for a shell command naming an aliyuncs.com host had
+it refused by both, under `--yolo` and under `AGENT_AUTO`'s permission. The release diff lets a
+terminal's ticket stand for the password only on the route the server dispatches the request
+to, no longer on a pattern of its path, answers a request of the TUI's worker that fails
+instead of leaving it waiting, updates the package of GitLab's provider, which this repo does
+not use, and otherwise removes unused code: the compaction, overflow, permission, flag and request
+code is as it was. It runs on the same Bun 1.4.4.
 
 What a run does with the opencode it finds:
 
