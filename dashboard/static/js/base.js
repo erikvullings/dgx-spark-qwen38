@@ -1011,7 +1011,8 @@ function renderBanners(state, errors){
   const want = [];
   // cmd: a command the banner asks to run, shown apart with a Copy button (Hasan, 2026-10-21:
   // selecting it by hand out of a sentence was the only way)
-  const add = (kind, strong, text, cmd) => want.push([kind, strong, text, cmd]);
+  // list: lines a banner shows one under the other, between its title and its sentence (the commits of the clone)
+  const add = (kind, strong, text, cmd, list) => want.push([kind, strong, text, cmd, list]);
   const otherUp = n => Object.entries(engines()).some(([m, x]) => m !== n && (!UNIT_DOWN.has(x.state) || x.restarting));
   if (offline) add('err', 'Connection lost.', `No data from the cockpit for ${fmtDur((Date.now() - lastMsgAt) / 1000)}: what is on screen is frozen and actions wait.`);
   if (F.config && F.config.dry_run) add('info', 'Dry run.', 'Every action is confirmed, logged and audited as usual, but nothing is executed. This instance exists for tests.');
@@ -1094,8 +1095,9 @@ function renderBanners(state, errors){
     if (why === 'commit') add('orange', same
         ? `The clone moved on since the last install: the services run ${upd.installed} at ${upd.installed_commit}, the clone is ${past} ${upd.clone_commit}.`
         : `The clone moved on since the last install: the services run ${upd.installed}, the clone is ${upd.clone || 'newer'}.`,
-      (same && cs.length ? `${cs.join(', ')}${n > cs.length ? ` and ${n - cs.length} more` : ''}. ` : '')
-      + 'A git pull changes the files, not what runs. Run the installer so the services follow it:', updateCmd(F.config));
+      'A git pull changes the files, not what runs. Run the installer so the services follow it:', updateCmd(F.config),
+      // one commit a line: joined by commas, subjects that hold commas themselves ran into each other (review)
+      same && cs.length ? cs.concat(n > cs.length ? [`and ${n - cs.length} more`] : []) : null);
     else if (why === 'no-start') add('orange', 'The last install stopped at --no-start.',
       'The side lanes, the proxy and the cockpit were not updated with it. Run it again without --no-start:', updateCmd(F.config));
     else add('orange', `No install of v1.36.0 or later recorded what this box runs.`,
@@ -1127,7 +1129,7 @@ function renderBanners(state, errors){
     `The container ${o.container} serves, but its unit is not running, so no other engine may start and a reboot will not bring it back. Start it from Lanes to replace it, or remove it:`, `docker rm -f ${o.container}`));
   if (errors.lifecycle) add('warn', 'Engine state unknown.', 'The lifecycle collector failed: ' + String(errors.lifecycle).slice(0, 120));
   // drawn only when it changed: a live region re-read twice a second is noise
-  const sig = JSON.stringify(want.map(w => [w[0], w[1], !!w[3]]));
+  const sig = JSON.stringify(want.map(w => [w[0], w[1], !!w[3], w[4] || null]));
   if (box.dataset.sig === sig){
     [...box.children].forEach((b, i) => {
       const t = b.querySelector('.t'); if (t) setText(t, want[i][2]);
@@ -1136,10 +1138,12 @@ function renderBanners(state, errors){
     return;
   }
   box.dataset.sig = sig; clear(box);
-  want.forEach(([kind, strong, text, cmd]) => {
+  want.forEach(([kind, strong, text, cmd, list]) => {
     const b = el('div', 'banner ' + kind);
     b.append(el('span', 'lamp ' + (kind === 'err' ? 'err' : kind === 'warn' ? 'warn' : kind === 'orange' ? 'orange' : '')));
-    const p = el('div'); p.append(el('b', null, strong + ' '), el('span', 't', text));
+    const p = el('div'); p.append(el('b', null, strong + ' '));
+    if (list && list.length){ const ul = el('ul', 'blist'); list.forEach(x => ul.append(el('li', null, x))); p.append(ul); }
+    p.append(el('span', 't', text));
     if (cmd){
       const pre = el('pre', 'cmd', cmd), btn = el('button', 'btn sm', 'Copy'), row = el('div', 'btn-row'), c = el('div', 'bcmd');
       btn.type = 'button'; btn.addEventListener('click', () => copyText(pre.textContent));
