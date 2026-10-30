@@ -1,5 +1,44 @@
 # Changelog
 
+## v1.40.6 (2026-10-30): a security release: the image, video and SGLang text lanes keep their engine's own sockets off the network
+
+**Why.** Each engine of this repo is one process, and it still sets torch.distributed up: a rendezvous store and, in the
+diffusion runtime, gloo's and NCCL's bootstrap. torch makes its TCPStore listen on every interface whatever address it
+is given, and that bootstrap took the box's LAN address. Measured on the reference box on 2026-10-30, which has no
+firewall: the installed image and video lanes listened on *:30005 and on four ports of 192.168.1.71, and the 27B lane on
+*:23906, a port drawn at each start, none of them with a key. A connection to 30005 from the box's LAN address and from
+its tailnet address went through. Found while proving the move of the diffusion lanes to SGLang v0.5.22: v1.40.1 had
+kept their scheduler's channel on loopback, not these. FP4-Local, a vLLM lane, listened on nothing of the kind.
+
+**The image and video lanes.** Their units pass GLOO_SOCKET_IFNAME=lo and NCCL_SOCKET_IFNAME=lo, which put that
+bootstrap on loopback, and with a loopback bind, their default, IPAddressDeny=any with IPAddressAllow=localhost: the
+kernel lets the lane's processes talk to loopback alone, so the TCPStore, which still listens on every interface, is out
+of reach of any other machine. The lanes need no network to run (HF_HUB_OFFLINE=1). A bind past loopback (IMAGE_BIND or
+VIDEO_BIND) serves others on purpose and gets no filter.
+
+**The SGLang text lanes.** The 27B lane, in all three of its units (the default, 1M of context, the 64 GB box), and the
+flash lane pass SGLANG_DISTRIBUTED_INIT_METHOD_OVERRIDE=file:///tmp/sglang-rdv: their rendezvous goes through a file in
+the container, which --rm makes new at each start, and no port opens for it. Both pinned images read it (the 27B's
+v0.5.22 and the flash lane's nightly, srt/distributed/bootstrap.py).
+
+**Proved on the reference box on 2026-10-30.** The installed image lane with the change laid on as a drop-in: nothing
+past loopback but *:30005, a connection to it from 192.168.1.71 and from 100.114.54.60 refused where both went through
+without the change a minute before, one from 127.0.0.1 accepted, and a 512x512 image in 4 s. The video lane with the
+change: nothing past loopback but *:30005 either, the same two connections refused and the one from 127.0.0.1 accepted,
+and the lane answered 711 s after its start, as it does without the change (691 to 715 s). The 27B lane started by its
+unit's own docker run with the variable: nothing listening past loopback that FP4-Local alone did not have, and an
+answer.
+
+**Tests.** Four tests fail on v1.40.5 and pass on this release: each diffusion unit keeps the runtime's bootstrap on lo
+and filters past loopback only for a loopback bind, as its installer computes it (the installer's own lines, run for
+127.0.0.1, localhost and other addresses), and every SGLang text start passes the file rendezvous once, in a container
+--rm makes new, with the reason in its unit (the 27B's three units, the flash lane's launcher and run.sh).
+
+**What an update does.** A box whose serving lane is the 27B or the flash SGLang lane restarts that engine once, as its
+unit changed (about 7 min for the 27B, 378 and 401 s on the reference box that day, 12 to 15 for the flash). Every other
+lane takes the change at its next start, a serving image or video lane included, as the installer says. The vLLM lanes
+do not move. The cockpit restarts once.
+
 ## v1.40.5 (2026-10-30): when the box and its clone are one release, the cockpit's update banner names the commits between them, and opencode 1.19.5
 
 **Why.** On 2026-10-29 the box ran v1.40.4 as installed at 90bb772 while its clone had moved to d120eae, the note of
