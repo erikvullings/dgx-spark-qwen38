@@ -13,6 +13,7 @@ import json
 import os
 import re
 import shutil
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -201,6 +202,34 @@ class TheInstalledRelease(unittest.TestCase):
         self.assertNotIn("error", out)
         self.assertEqual(out["behind_clone_why"], "commit")
         self.assertNotIn("installed_commit", out)
+
+    def test_a_commit_subject_git_cannot_convert_never_fails_the_panel(self):
+        # review, 2026-10-30: a commit that names its encoding (i18n.commitEncoding) with bytes that encoding cannot
+        # read reaches git log's output as those bytes, not UTF-8: read strictly, it took the whole update panel down
+        repo = Path(tempfile.mkdtemp(prefix="cockpit-sjis-"))
+        self.addCleanup(shutil.rmtree, repo, True)
+        env = {**os.environ, "GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@t", "GIT_COMMITTER_NAME": "t",
+               "GIT_COMMITTER_EMAIL": "t@t", "GIT_CONFIG_GLOBAL": "/dev/null", "GIT_CONFIG_NOSYSTEM": "1"}
+        def git(*a):
+            return subprocess.run(["git", "-C", str(repo), *a], check=True, capture_output=True, env=env).stdout.decode()
+        git("init", "-q")
+        git("commit", "-q", "--allow-empty", "-m", "first")
+        first = git("rev-parse", "HEAD").strip()
+        (repo / "msg").write_bytes(b"bad \x81\x20 sjis \xff\xfe end\n")
+        git("-c", "i18n.commitEncoding=SHIFT_JIS", "commit", "-q", "--allow-empty", "--cleanup=verbatim", "-F", str(repo / "msg"))
+        spec = importlib.util.spec_from_file_location("cockpit_real_run", DASH / "cockpit.py")
+        fresh = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(fresh)
+        here = str(self.cp.REPO_DIR)
+        real = self.cp.run
+        # the cockpit's own runner, its git pointed at that clone
+        self.cp.run = lambda argv, **k: fresh.run([str(repo) if a == here else a for a in argv], **k)
+        self.addCleanup(setattr, self.cp, "run", real)
+        self.record(release="v1.36.1", commit=first)
+        out = self.update()
+        self.assertNotIn("error", out)
+        self.assertEqual(out["commits_count"], 1)
+        self.assertTrue(out["commits"][0].endswith(" end") and "\ufffd" in out["commits"][0], out["commits"])
 
     def test_a_recorded_commit_that_is_no_hash_never_reaches_git(self):
         argvs, real = [], self.cp.run

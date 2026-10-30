@@ -137,7 +137,7 @@ def release_state():
         # whose history was rewritten, has commits the recorded one lacks without being past it (review, 2026-10-30)
         if run(["git", "-C", str(REPO_DIR), "merge-base", was, head]).strip().startswith(was):
             span = f"{was}..{head}"
-            log = run(["git", "-C", str(REPO_DIR), "log", "-n", "5", "--format=%h %s", span]).splitlines()
+            log = run(["git", "-C", str(REPO_DIR), "log", "-n", "5", "--format=%h %s", span], errors="replace").splitlines()
             count = run(["git", "-C", str(REPO_DIR), "rev-list", "--count", span]).strip()
             if log and count.isdigit():
                 out["commits"], out["commits_count"] = [ln[:160] for ln in log], int(count)
@@ -333,21 +333,24 @@ class Ran(str):
     ok = True
 
 
-def run(argv: list[str], timeout: float = 5.0, merge_err: bool = False) -> str:
+def run(argv: list[str], timeout: float = 5.0, merge_err: bool = False, errors: str = "strict") -> str:
     """Fixed-argv runner: never a shell, never client input.
 
     merge_err folds stderr into the result: docker logs streams the
     container's stderr (where SGLang actually speaks) to its own stderr,
     so every docker-logs reader MUST pass merge_err=True (field bug: the
     stage parser and decode telemetry read empty stdout for a night).
+    errors="replace" for text a user wrote that may not be UTF-8: a commit subject that names
+    an encoding it does not hold reaches git log's output as its bytes, and read strictly it
+    took the whole update panel down (review, 2026-10-30).
     """
     try:
         if merge_err:
             out = subprocess.run(argv, stdout=subprocess.PIPE,
-                                 stderr=subprocess.STDOUT, text=True,
+                                 stderr=subprocess.STDOUT, text=True, errors=errors,
                                  timeout=timeout)
         else:
-            out = subprocess.run(argv, capture_output=True, text=True,
+            out = subprocess.run(argv, capture_output=True, text=True, errors=errors,
                                  timeout=timeout)
         ran = Ran(out.stdout)
         ran.ok = out.returncode == 0
