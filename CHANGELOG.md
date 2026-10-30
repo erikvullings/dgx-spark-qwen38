@@ -1,5 +1,45 @@
 # Changelog
 
+## v1.40.5 (2026-10-30): when the box and its clone are one release, the cockpit's update banner names the commits between them, and opencode 1.19.5
+
+**Why.** On 2026-10-29 the box ran v1.40.4 as installed at 90bb772 while its clone had moved to d120eae, the note of
+the same release: the orange banner said "the services run v1.40.4, the clone is v1.40.4", which named no difference
+and left the next step to a guess.
+
+**The banner names the two commits and the ones between.** When the release recorded in installed.json and the
+clone's are the same, the banner says which commit the services run, how many commits the clone is past it and which
+commit it is at, and lists the clone's commits past it, newest first, one a line, at most five and then how many
+more. It says "past it", and lists those commits, only of a clone that descends from the recorded commit, as git's
+merge-base tells: a clone reset to an older commit, or whose history was rewritten, gets the two commits named and no
+list. The cockpit asks git about them only when both sides are one release, at most three short commands at each
+collect.
+
+**A proxy test no longer fails on a loaded runner.** `tests/test_proxy_engine_withholds_headers.py` read the proxy's
+end line as soon as the engine had seen the client go, and on a loaded GitHub runner the handler thread had not
+written it yet (2026-10-29). It now waits for that line, as the client-gone test of the same file already did.
+
+**opencode 1.19.5.** It lets a terminal's ticket stand for the password only on the route the server dispatches the
+request to, where 1.19.4 took it on any request whose path matched that route's pattern (anomalyco/opencode#58258).
+It also answers a request of the TUI's worker that fails instead of leaving it waiting, and otherwise removes unused
+code. It was checked against 1.19.4 side by side on 2026-10-30: the overflow phrases and exclusions are the same block
+of the binary byte for byte, `max_tokens` 32,000 and 182,000 on a fake endpoint with the same headers, the same default
+permissions, `--yolo` still read as `--auto`, keys still masked, sessions read both ways, and the Agent tab through a
+copy of the relay with its terminal and its phone layer. A fake endpoint that asked for a shell command naming an
+aliyuncs.com host had it refused, under `--yolo` and under `AGENT_AUTO`'s permission, where a command naming no such
+host ran. On the box's FP4-Local lane both sent the same request shapes, read hello.txt with a tool and answered 7351.
+
+**Tests.** Six tests fail on v1.40.4 and pass on this release: three of the cockpit's (the commits between the two, a
+recorded commit git no longer knows, a clone off the recorded commit's history) and three of the page's (the commits
+one a line, the count past five, both commits named when no list is known). Four more hold what this release got
+wrong on its way and v1.40.4 never did: git asked when the clone names another release, a recorded commit that is no
+string or no hash, and a commit subject git cannot convert to UTF-8. The opencode pin's test fails on the installer
+before it. The page's banner check passes 30 of 30, and the banner was seen on a cockpit served from the branch,
+desktop and phone, with no JavaScript error.
+
+**What an update does.** opencode 1.19.5 replaces an older one in `~/.opencode/bin` (a newer one is kept). The cockpit
+restarts once, with its new page and server, and then opencode-web once, on the new opencode, which ends a turn the
+Agent tab is in. Nothing else: the lane that serves keeps serving, and the lane chosen for boot stays the one it was.
+
 ## v1.40.4 (2026-10-28): opencode on this box refuses a shell command that names an Alibaba Cloud host or a cloud metadata address, AGENT_AUTO included, the cockpit says when a model asks for one, and pair-probe.py reads what a pair of boxes needs (#45)
 
 **Why.** On 2026-10-26 Cohere reported that Qwen3.8-Flash-Next, given a shell in an agent test without a
