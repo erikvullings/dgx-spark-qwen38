@@ -1087,8 +1087,9 @@ function renderBanners(state, errors){
     const why = upd.behind_clone_why;
     // the same release on both sides names the commits (Hasan's capture, 2026-10-29: "the services run
     // v1.40.4, the clone is v1.40.4" said nothing of what moved); "past it" only with the commits the server found
-    // past the recorded one, which it looks for only in a clone that descends from it (review, 2026-10-30)
-    const same = upd.installed_commit && upd.installed === upd.clone, n = upd.commits_count, cs = upd.commits || [];
+    // past the recorded one, which it looks for only in a clone that descends from it (review, 2026-10-30). The
+    // server names the two commits only for the same release on both sides: it alone decides that case here.
+    const same = !!upd.installed_commit, n = upd.commits_count, cs = upd.commits || [];
     const past = n ? `${n === 1 ? 'one commit' : n + ' commits'} past it, at` : 'at';
     if (why === 'commit') add('orange', same
         ? `The clone moved on since the last install: the services run ${upd.installed} at ${upd.installed_commit}, the clone is ${past} ${upd.clone_commit}.`

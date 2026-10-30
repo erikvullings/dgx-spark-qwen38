@@ -126,9 +126,12 @@ def release_state():
         out["behind_clone_why"] = lag
     # the same release on both sides said nothing of what moved ("the services run v1.40.4, the clone
     # is v1.40.4", Hasan's capture, 2026-10-29): the two commits, and the clone's past the recorded one
-    # when git still knows it. A recorded value that is no hash (or no string) never reaches git's argv.
+    # when git still knows it. A recorded value that is no hash (or no string) never reaches git's argv. Only
+    # for the same release on both sides, the one case the banner shows them: this runs at each collect, and
+    # the git calls ran for nothing on a box whose clone names another release (review, 2026-10-30).
     was = (rec or {}).get("commit") or ""
-    if lag == "commit" and head and isinstance(was, str) and re.fullmatch(r"[0-9a-f]{7,40}", was):
+    if (lag == "commit" and head and rec.get("release") == clone and isinstance(was, str)
+            and re.fullmatch(r"[0-9a-f]{7,40}", was)):
         out["installed_commit"], out["clone_commit"] = was[:7], head[:7]
         # "past it" only for a clone that descends from the recorded commit: one reset to an older commit, or
         # whose history was rewritten, has commits the recorded one lacks without being past it (review, 2026-10-30)

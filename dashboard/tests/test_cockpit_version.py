@@ -156,6 +156,21 @@ class TheInstalledRelease(unittest.TestCase):
         self.assertEqual((out["installed_commit"], out["clone_commit"]), ("eeeeeee", "fffffff"))
         self.assertNotIn("commits", out)
 
+    def test_another_release_in_the_clone_asks_git_nothing_more(self):
+        # review, 2026-10-30: the banner names the commits only for the same release on both sides, and the git
+        # calls ran at each collect on a box whose clone names another release
+        self.record(release="v1.36.0")
+        argvs, real = [], self.cp.run
+        def git(argv, **k):
+            argvs.append(argv)
+            return HEAD + "\n" if "rev-parse" in argv else "x\n"
+        self.cp.run = git
+        self.addCleanup(setattr, self.cp, "run", real)
+        out = self.update()
+        self.assertEqual((out["installed"], out["clone"], out["behind_clone_why"]), ("v1.36.0", "v1.36.1", "commit"))
+        self.assertNotIn("installed_commit", out)
+        self.assertEqual([a for a in argvs if "rev-parse" not in a], [])
+
     def test_a_clone_off_the_recorded_commits_history_is_never_said_past_it(self):
         # review, 2026-10-30: a clone reset to an older commit, or whose history was rewritten, still has commits
         # the recorded one lacks; listing them as "past it" said the clone runs ahead of what it does not descend from
