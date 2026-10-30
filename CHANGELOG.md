@@ -46,6 +46,14 @@ string or no hash, and a commit subject git cannot convert to UTF-8. The opencod
 before it. The page's banner check passes 30 of 30, and the banner was seen on a cockpit served from the branch,
 desktop and phone, with no JavaScript error.
 
+**Proved on the reference box.** After the push, the box updated with the public one-liner: the cockpit restarted
+with its new page and server, then opencode-web on opencode 1.19.5, and nothing else. The 8 real clients answered
+through the proxy on the lane that serves, Flash FP4-Local, the production checks passed, and the cockpit showed no
+banner on any of its 5 views, with no JavaScript error. Then the 8 clients, opencode 1.19.5 among them, ran on the 7
+text lanes, each loaded as the cockpit's Load does, on what the one-liner installed: 56 of 56 OK on 2026-10-30. On
+every lane a tool result in the shape Claude Code sends after a ToolSearch got an answer, the proxy wrote its line for
+a tool call naming an Alibaba Cloud host, and the prefix cache served, to the token, the counts the v1.40.3 notes give.
+
 **What an update does.** opencode 1.19.5 replaces an older one in `~/.opencode/bin` (a newer one is kept). The cockpit
 restarts once, with its new page and server, and then opencode-web once, on the new opencode, which ends a turn the
 Agent tab is in. Nothing else: the lane that serves keeps serving, and the lane chosen for boot stays the one it was.
