@@ -196,6 +196,26 @@ prefix cache of hybrid models (vllm#46384, #51113) are in this image, and the mi
 NaN after a turn from the cache on other builds (vllm#49918, #55766) does not reach the model runner
 this lane uses (its second version, which never takes a batch with a prompt in it for a decode).
 
+## A prompt the cache cannot serve
+
+A turn whose prompt the prefix cache serves comes back in seconds, whatever its length: the next turn of
+a chat of 494,120 tokens gave its first token in 1.8 s, all but 56 of its tokens from the cache, and
+Claude Code's next turn of 500,266 tokens took 4.3 s (2026-10-30). A prompt the cache cannot serve is
+computed whole before its first token, and each of its tokens attends to all those before it, so the
+time grows about with the square of its length: on the reference box, about 3 min for the first 200,000
+tokens, 6 for 300,000, 11 for 400,000 and 19 for 494,089, at 2,900 tokens a second at its start and 270
+at its end. A turn is computed whole after the lane starts or restarts, when an earlier message is
+edited or regenerated, when a client changes something near the start of its prompt (a date or a time in
+a system prompt, a resumed session whose first lines changed), or when other long requests have pushed
+it out of the cache, which holds 1,301,680 tokens.
+
+The client has to wait that long. Claude Code with its own default timeouts left such a turn after 10 min,
+twice, then sent it without streaming and left after 5 min, twice, and the engine kept what it had
+computed only every other time: its answer came after 35 min (issue #61). docs/clients.md
+says what widens each client's timeout. Since v1.40.7 the cockpit says while it lasts how long the
+request has been in flight and how much of its prompt the engine has computed, with a floor of the time
+left, and the proxy says when a client sends a long prompt again after leaving it.
+
 ## Memory
 
 vLLM loads 72.63 GiB of weights, and the KV cache takes its fixed 17 GiB. At the lane's window,

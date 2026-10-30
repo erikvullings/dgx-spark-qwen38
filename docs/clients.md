@@ -276,6 +276,18 @@ below (`0` turns a ceiling off).
   they are named in issue #2 and in the failure family diagnosed in
   issue #1 (clients cap total turn duration, not idle time). Quality and
   tool calls were validated here.
+
+  Measured again on the Ornith lane on 2026-10-30 with Claude Code 2.1.314
+  and none of these set (issue #61): a prompt of 494,089 tokens the cache
+  could not serve takes 19 min before its first token there, and Claude
+  Code left one of 500,161 tokens after 620 s, twice, then sent it without
+  streaming and left
+  after 300 s, twice. The engine kept part of what it had computed only
+  every other time (nothing after the first 10 min, 346,368 tokens after
+  the next), so the answer came at the fifth attempt, after 35 min. Since
+  v1.40.7 the proxy writes `RESENT` in its journal when a client sends a
+  long prompt again after leaving it without an answer, with the client's
+  name and what widens its timeout, and the cockpit shows it as a banner.
 - **VS Code Copilot BYOK**: reports the same total-duration watchdog in
   issue #1 (VSCode Copilot gives no timeout env to widen it). The fix that
   worked for the reporter is the config shape in that issue: chat-completions
