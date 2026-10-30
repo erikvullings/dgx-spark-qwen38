@@ -135,6 +135,13 @@ esac
 case "$IMAGE_BIND" in
   *[!0-9.]*|""|*..*) [ "$IMAGE_BIND" = localhost ] || die "IMAGE_BIND takes an IPv4 address, got: $IMAGE_BIND" ;;
 esac
+# The runtime listens past its bind: torch's TCPStore, the rendezvous of its one process group,
+# on port 30005 of every interface whatever address it is given, and gloo's and NCCL's bootstrap
+# on the box's own LAN address, four ports, none with a key (measured on the reference box,
+# 2026-10-30, its firewall off). The unit keeps that bootstrap on lo and, with a loopback bind,
+# lets the lane's processes talk to loopback alone (IPAddressDeny=any), which leaves the TCPStore
+# out of reach of any other machine. A bind past loopback serves others on purpose: no filter.
+case "$IMAGE_BIND" in 127.0.0.1|localhost) IMAGE_IP_DENY=any ;; *) IMAGE_IP_DENY="" ;; esac
 WEIGHTS_GB=31; RUNTIME_GB=11   # the checkpoint; the venv, checkout and wheel (8.6 to 8.8) and the pip build tree
 
 if [ "$ACTION" = uninstall ]; then
@@ -198,7 +205,7 @@ install_service(){
   sed -e "s|__USER__|$(id -un)|g" -e "s|__GROUP__|$(id -gn "$(id -un)")|g" \
       -e "s|__IMAGE_LANE_DIR__|$LANE_DIR|g" -e "s|__IMAGE_VENV__|$VENV|g" \
       -e "s|__IMAGE_MODEL__|$MODEL|g" -e "s|__IMAGE_PORT__|$PORT|g" \
-      -e "s|__IMAGE_BIND__|$IMAGE_BIND|g" -e "s|__HF_CACHE__|$HF_CACHE|g" \
+      -e "s|__IMAGE_BIND__|$IMAGE_BIND|g" -e "s|__IMAGE_IP_DENY__|$IMAGE_IP_DENY|g" -e "s|__HF_CACHE__|$HF_CACHE|g" \
       -e "s|__HOME__|$HOME|g" \
       "$HERE/$UNIT.template" > "$RENDER"
   grep -q '__[A-Z][A-Z0-9_]*__' "$RENDER" && die "the unit template still holds an unsubstituted placeholder: $(grep -o '__[A-Z][A-Z0-9_]*__' "$RENDER" | sort -u | tr '\n' ' ')"

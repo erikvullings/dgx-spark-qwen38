@@ -104,10 +104,10 @@ def box(context="1m", host="127.0.0.1", port="30000", hf=None, target27="RadixAr
             **common, "PORT": "30030", "GMU": "0.80", "IMAGE": "qwen38-kolibri:x", "MODEL": kolibri, "REV": "e" * 40}))
         lanes = f"{HOME}/.local/share"
         (units / "qwen38-image.service").write_text(render("qwen38-image.service.template", {
-            **common, "IMAGE_BIND": host, "IMAGE_PORT": "30010", "IMAGE_LANE_DIR": f"{lanes}/qwen38-image",
+            **common, "IMAGE_BIND": host, "IMAGE_IP_DENY": "any" if host in ("127.0.0.1", "localhost") else "", "IMAGE_PORT": "30010", "IMAGE_LANE_DIR": f"{lanes}/qwen38-image",
             "IMAGE_VENV": f"{lanes}/qwen38-image/venv", "IMAGE_MODEL": image_model}))
         (units / "qwen38-video.service").write_text(render("qwen38-video.service.template", {
-            **common, "VIDEO_BIND": host, "VIDEO_PORT": "30022", "VIDEO_LANE_DIR": f"{lanes}/qwen38-video",
+            **common, "VIDEO_BIND": host, "VIDEO_IP_DENY": "any" if host in ("127.0.0.1", "localhost") else "", "VIDEO_PORT": "30022", "VIDEO_LANE_DIR": f"{lanes}/qwen38-video",
             "VIDEO_VENV": f"{lanes}/qwen38-video/venv", "VIDEO_MODEL": "MiniMaxAI/MiniMax-H3",
             "VIDEO_VARIANT": video_variant}))
     if key_at is not None:

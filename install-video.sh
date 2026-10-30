@@ -140,6 +140,13 @@ esac
 case "$VIDEO_BIND" in
   *[!0-9.]*|""|*..*) [ "$VIDEO_BIND" = localhost ] || die "VIDEO_BIND takes an IPv4 address, got: $VIDEO_BIND" ;;
 esac
+# The runtime listens past its bind: torch's TCPStore, the rendezvous of its one process group,
+# on port 30005 of every interface whatever address it is given, and gloo's and NCCL's bootstrap
+# on the box's own LAN address, four ports, none with a key (measured on the reference box,
+# 2026-10-30, its firewall off). The unit keeps that bootstrap on lo and, with a loopback bind,
+# lets the lane's processes talk to loopback alone (IPAddressDeny=any), which leaves the TCPStore
+# out of reach of any other machine. A bind past loopback serves others on purpose: no filter.
+case "$VIDEO_BIND" in 127.0.0.1|localhost) VIDEO_IP_DENY=any ;; *) VIDEO_IP_DENY="" ;; esac
 WEIGHTS_GB=135; RUNTIME_GB=11   # the fl2va partition plus the shared components and root
 # metadata, measured 2026-09-25: 144.1 GB cached in 88 files, which is 134.2 GiB, and the
 # room check below counts GiB (it said 145, and a box with the whole checkpoint cached was
@@ -202,7 +209,7 @@ install_service(){
       -e "s|__VIDEO_LANE_DIR__|$LANE_DIR|g" -e "s|__VIDEO_VENV__|$VENV|g" \
       -e "s|__VIDEO_MODEL__|$MODEL|g" -e "s|__VIDEO_VARIANT__|$VARIANT|g" \
       -e "s|__VIDEO_PORT__|$PORT|g" \
-      -e "s|__VIDEO_BIND__|$VIDEO_BIND|g" -e "s|__HF_CACHE__|$HF_CACHE|g" \
+      -e "s|__VIDEO_BIND__|$VIDEO_BIND|g" -e "s|__VIDEO_IP_DENY__|$VIDEO_IP_DENY|g" -e "s|__HF_CACHE__|$HF_CACHE|g" \
       -e "s|__HOME__|$HOME|g" \
       "$HERE/$UNIT.template" > "$RENDER"
   grep -q '__[A-Z][A-Z0-9_]*__' "$RENDER" && die "the unit template still holds an unsubstituted placeholder: $(grep -o '__[A-Z][A-Z0-9_]*__' "$RENDER" | sort -u | tr '\n' ' ')"

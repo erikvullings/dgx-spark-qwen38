@@ -50,6 +50,12 @@ BindReadOnlyPaths=-__HOME__/.config/qwen38/engine-preflight.sh
 # this user (2026-10-17). "-": most boxes have no such directory; one made while the lane runs
 # shows to it until its next start.
 InaccessiblePaths=-/etc/qwen38
+# The runtime's own sockets (install-video.sh, VIDEO_IP_DENY): the bootstrap of its process group on lo
+# and, with a loopback bind, no traffic but loopback's.
+Environment=GLOO_SOCKET_IFNAME=lo
+Environment=NCCL_SOCKET_IFNAME=lo
+IPAddressAllow=localhost
+IPAddressDeny=__VIDEO_IP_DENY__
 # The cookbook's DGX Spark recipe, and nothing else: every component resident, no
 # offload flags. The cookbook verifies about 12.1 s per denoise step, about 40 s of
 # decode and about 12 min per warm request at 480P with no flags at all, and adding

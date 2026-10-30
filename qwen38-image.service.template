@@ -46,6 +46,12 @@ BindReadOnlyPaths=-__HOME__/.config/qwen38/engine-preflight.sh
 # this user (2026-10-17). "-": most boxes have no such directory; one made while the lane runs
 # shows to it until its next start.
 InaccessiblePaths=-/etc/qwen38
+# The runtime's own sockets (install-image.sh, IMAGE_IP_DENY): the bootstrap of its process group on lo
+# and, with a loopback bind, no traffic but loopback's.
+Environment=GLOO_SOCKET_IFNAME=lo
+Environment=NCCL_SOCKET_IFNAME=lo
+IPAddressAllow=localhost
+IPAddressDeny=__IMAGE_IP_DENY__
 # The cookbook's DGX Spark recipe, and nothing else: one GPU, every component resident,
 # the runtime picking its own attention (it logs "Defaulting to Torch SDPA backend on
 # SM12.x"), full-image VAE decode, eager execution, batch 1. Forcing any of those is how

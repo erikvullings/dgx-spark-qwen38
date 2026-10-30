@@ -481,6 +481,23 @@ class TheLocalPatches(unittest.TestCase):
         rc, out = self._bind("127.0.0.1")
         self.assertEqual((rc, out), (0, ""))
 
+    def test_the_runtime_keeps_its_own_sockets_off_the_network(self):
+        """Whatever the bind, the runtime listened on *:30005 (torch's TCPStore) and on four ports
+        of the box's LAN address (gloo's and NCCL's bootstrap), none with a key (the reference box,
+        2026-10-30, its firewall off). The bootstrap goes on lo, and a loopback bind lets the lane's
+        processes talk to loopback alone; a bind past loopback serves others on purpose."""
+        service = UNIT_TPL.read_text().split("\n[Service]\n", 1)[1].split("\n[", 1)[0]
+        for line in ("Environment=GLOO_SOCKET_IFNAME=lo", "Environment=NCCL_SOCKET_IFNAME=lo",
+                     "IPAddressAllow=localhost", "IPAddressDeny=__IMAGE_IP_DENY__"):
+            self.assertRegex(service, rf"(?m)^{re.escape(line)}$")
+        t = INSTALLER.read_text()
+        block = t[t.index('IMAGE_BIND="${IMAGE_BIND:-$(unit_flag --host)}"'):t.index("WEIGHTS_GB=")]
+        for bind, deny in (("127.0.0.1", "any"), ("localhost", "any"), ("192.168.1.20", ""), ("0.0.0.0", "")):
+            r = subprocess.run(["bash", "-c", 'set -euo pipefail\ndie(){ echo "DIE: $*"; exit 1; }\n' + block
+                                + 'echo "deny=$IMAGE_IP_DENY"'], capture_output=True, text=True, timeout=30,
+                               env={"PATH": "/usr/bin:/bin", "IMAGE_BIND": bind})
+            self.assertEqual((r.returncode, r.stdout.splitlines()[-1]), (0, f"deny={deny}"), bind)
+
     def test_the_installer_applies_exactly_the_patches_in_the_repo(self):
         listed = re.search(r"^PATCHES=\((.*)\)$", INSTALLER.read_text(), re.M).group(1).split()
         on_disk = sorted(f.stem for f in (REPO / "image-sglang").glob("*.patch"))
