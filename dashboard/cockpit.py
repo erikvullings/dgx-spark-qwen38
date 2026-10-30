@@ -614,8 +614,13 @@ KOLIBRI_CANNOT = {
 
 def vllm_metrics_facts(text: str) -> dict:
     """What the cockpit reads off vLLM's /metrics: requests running and waiting, the share of
-    the KV cache in use, and the cache's size in tokens (cache_config_info's label)."""
-    out = {"running": 0, "waiting": 0, "usage": 0.0, "pool": 0, "spec_accepted": 0.0, "spec_drafts": 0.0}
+    the KV cache in use, and the cache's size in tokens (cache_config_info's label). And four
+    counters for a prompt being computed (lc.prompt_progress): the tokens generated, which stand
+    still while it is, the tokens of every prompt admitted, which the prefix cache counts at its
+    admission, and the requests finished (every reason, an abort included) and preempted, which
+    say whether a jump of the prompts admitted is one request's."""
+    out = {"running": 0, "waiting": 0, "usage": 0.0, "pool": 0, "spec_accepted": 0.0, "spec_drafts": 0.0,
+           "gen": None, "queries": None, "finished": None, "preempted": None}
     for name, labels, value in _VLLM_GAUGE.findall(text or ""):
         try:
             v = float(value)
@@ -635,6 +640,14 @@ def vllm_metrics_facts(text: str) -> dict:
             out["spec_accepted"] += v
         elif name == "vllm:spec_decode_num_drafts_total":
             out["spec_drafts"] += v
+        elif name == "vllm:generation_tokens_total":
+            out["gen"] = (out["gen"] or 0.0) + v
+        elif name == "vllm:prefix_cache_queries_total":
+            out["queries"] = (out["queries"] or 0.0) + v
+        elif name == "vllm:request_success_total":
+            out["finished"] = (out["finished"] or 0.0) + v
+        elif name == "vllm:num_preemptions_total":
+            out["preempted"] = (out["preempted"] or 0.0) + v
     return out
 
 
@@ -644,7 +657,9 @@ def kolibri_load(timeout: float = 3.0):
         f = vllm_metrics_facts(r.read(2_000_000).decode("utf-8", "replace"))
     used = int(f["usage"] * f["pool"])
     return [{"dp_rank": 0, "num_reqs": f["running"] + f["waiting"], "num_waiting_reqs": f["waiting"],
-             "num_tokens": f["pool"], "num_used_tokens": used, "num_pending_tokens": f["pool"] - used}]
+             "num_tokens": f["pool"], "num_used_tokens": used, "num_pending_tokens": f["pool"] - used,
+             "gen_tokens": f["gen"], "prefix_queries": f["queries"], "finished": f["finished"],
+             "preemptions": f["preempted"]}]
 
 
 def kolibri_healthy() -> bool:
@@ -802,7 +817,9 @@ def nemotron_load(timeout: float = 3.0):
     used = int(f["usage"] * f["pool"])
     return [{"dp_rank": 0, "num_reqs": f["running"] + f["waiting"], "num_waiting_reqs": f["waiting"],
              "num_tokens": f["pool"], "num_used_tokens": used, "num_pending_tokens": f["pool"] - used,
-             "accept_len": spec_accept_len(f["spec_accepted"], f["spec_drafts"], time.time())}]
+             "accept_len": spec_accept_len(f["spec_accepted"], f["spec_drafts"], time.time()),
+             "gen_tokens": f["gen"], "prefix_queries": f["queries"], "finished": f["finished"],
+             "preemptions": f["preempted"]}]
 
 
 def _nemotron_log(container: str = "qwen38-nemotron") -> list[str]:
@@ -917,6 +934,9 @@ HEALTH = {"ts": 0.0, "ok": False}
 HEALTH_RECHECK_S = float(os.environ.get("COCKPIT_HEALTH_RECHECK_S", "30"))
 
 
+PROMPT_STATE: dict = {}       # the reads lc.prompt_progress needs, between two ticks
+
+
 @guard
 def collect_engine_fast():
     try:
@@ -996,7 +1016,10 @@ def collect_engine_fast():
             # the whole cause: the proxy's or the lane's reason came past the 80 characters it was cut at
             audit({"kind": "mem_floor", "avail_gib": avail, "num_reqs": num_reqs, "ok": False, "err": str(e)[:240]})
             add_event("mem_floor", f"memory floor: {reason}; abort failed: {str(e)[:240]}")
+    # a prompt being computed: how far it has got, and a floor of the time left (issue #61)
+    lc.prompt_read(PROMPT_STATE, now, (load or [None])[0])
     return {"node_id": "local", "load": load, "healthy": healthy,
+            "prompt": lc.prompt_progress(PROMPT_STATE, now),
             "mem_floor": {"gib": MEM_FLOOR_GIB, "avail_gib": avail, "aborts": MEM_FLOOR["aborts"],
                           "last_abort": MEM_FLOOR["last_abort"], "via": MEM_FLOOR["last_via"],
                           "said": MEM_FLOOR["last_said"]}}
@@ -1416,7 +1439,7 @@ def collect_feed():
             timeout = 15
     raw = run(argv, timeout=timeout)
     FEED_BOOTED[0] = FEED_BOOTED[0] or answered(raw)      # a read that timed out is tried again
-    rows = lc.parse_feed(raw, carry=FEED_CARRY)
+    rows = lc.feed_ages(lc.parse_feed(raw, carry=FEED_CARRY), time.time())
     FEED_CARRY[:] = [dict(r) for r in rows if r["outcome"] == "in flight"]
     return {"node_id": "local", "rows": lc.mark_probes(rows, "/v1/systemone", len(SYSTEMONE_PROBE_BODY))}
 
@@ -1467,7 +1490,8 @@ def collect_guard():
     state, verdict = lc.guard_verdict(zombies, g, override)
     return {"node_id": "local", "lane": active, "window": ZOMBIE_WINDOW,
             "zombies": zombies, "guard": g, "override": override,
-            "state": state, "verdict": verdict, "tool_targets": tool_targets_seen()}
+            "state": state, "verdict": verdict, "tool_targets": tool_targets_seen(),
+            "resent": TOOL_TARGETS["resent"]}
 
 
 # The proxy's role 8 (v6.48): the tool calls that named a host of Cohere's report over the last
@@ -1475,7 +1499,8 @@ def collect_guard():
 # seconds rather than at each tick of the guard: a week of the reference box's proxy journal,
 # 22,656 lines, took 0.47 s to scan (2026-10-28).
 TOOL_TARGETS_EVERY = 300.0
-TOOL_TARGETS = {"at": 0.0, "raw": "", "seen": {"count": 0, "last": None}}
+TOOL_TARGETS = {"at": 0.0, "raw": "", "seen": {"count": 0, "last": None},
+                "raw_resent": "", "resent": {"count": 0, "last": None}}
 
 
 def tool_targets_seen() -> dict:
@@ -1490,8 +1515,10 @@ def tool_targets_seen() -> dict:
                "-o", "short-unix"], timeout=6)
     if answered(raw):
         TOOL_TARGETS["raw"] = "\n".join(ln for ln in raw.splitlines() if " TOOL TARGET " in ln)
+        # the proxy's role 9 (v6.49, issue #61) from the same read of the day
+        TOOL_TARGETS["raw_resent"] = "\n".join(ln for ln in raw.splitlines() if " RESENT the prompt " in ln)
     seen = lc.parse_tool_targets(TOOL_TARGETS["raw"], since=now - 86400)
-    TOOL_TARGETS.update(at=now, seen=seen)
+    TOOL_TARGETS.update(at=now, seen=seen, resent=lc.parse_resent(TOOL_TARGETS["raw_resent"], since=now - 86400))
     return seen
 
 

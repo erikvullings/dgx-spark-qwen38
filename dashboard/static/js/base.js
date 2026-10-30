@@ -210,7 +210,7 @@ const boxName = (box = (F.machine || {}).box || {}) => box.cls ? `${box.name || 
 
 // ── the facts every view shares (each guarded against missing data) ──────────
 const F = {life: null, units: {}, config: {}, job: null, load: {}, pool: null, window: 262144, ceiling: 0, usable: 0.92,
-           maxRun: null, target: null, containers: {}, proxy: null, agent: null, update: null, memFloor: null, toolTargets: null, machine: null,
+           maxRun: null, target: null, containers: {}, proxy: null, agent: null, update: null, memFloor: null, toolTargets: null, resent: null, machine: null,
            gpu: null, ocfit: null};
 const engines = () => (F.life && F.life.engines) || {};
 function servingEngine(){ return Object.entries(engines()).find(([, e]) => !UNIT_DOWN.has(e.state) || e.restarting) || null; }
@@ -1071,6 +1071,15 @@ function renderBanners(state, errors){
   if (tt && tt.count && tt.last)
     add('err', `A model asked a tool to reach ${tt.last.hosts}.`,
       `${tt.count === 1 ? 'One tool call' : `${tt.count} tool calls`} in the last 24 h named an Alibaba Cloud host or a cloud metadata address (Cohere's report on Qwen3.8-Flash-Next), the last ${fmtDur(Math.max(0, Date.now() / 1000 - tt.last.at))} ago in a ${tt.last.tool} call on ${tt.last.path}. The proxy only reports it: whether the call ran depends on the client and its rules (docs/agents-and-network.md).`);
+  // A long prompt sent again after its client left it without an answer (proxy v6.49, issue #61): on
+  // the Ornith lane Claude Code left a prompt of 500,161 tokens after 620 s, twice, then 300 s, twice,
+  // and the engine kept what it had computed only every other time, so its answer came after 35 min
+  const rs = F.resent;
+  if (rs && rs.count && rs.last)
+    add('warn', 'A client gave up on a long prompt and sent it again.',
+      `${rs.count === 1 ? 'Once' : `${rs.count} times`} in the last 24 h, the last ${fmtDur(Math.max(0, Date.now() / 1000 - rs.last.at))} ago: `
+      + `${rs.last.who} left it without an answer after ${fmtDur(rs.last.secs)} (${rs.last.n} time${rs.last.n > 1 ? 's' : ''} in a row), `
+      + `and the engine computed it again, from what its prefix cache had kept of it, if anything. ${rs.last.advice}.`);
   const upd = F.update || {};
   // An update that runs now (install.sh keeps a file while it lasts, the cockpit checks its process):
   // the banners that ask for one wait, since one runs (an ASUS Ascent GX10, 2026-10-21: an update of
@@ -1205,7 +1214,7 @@ on('engine_info', d => {
   if (i.context_length) F.window = i.context_length;
   if (i.max_running_requests) F.maxRun = i.max_running_requests;
 });
-on('engine_fast', d => { F.load = (d.load || [])[0] || {}; F.noEngine = !d.load; F.memFloor = d.mem_floor || F.memFloor; });
+on('engine_fast', d => { F.load = (d.load || [])[0] || {}; F.noEngine = !d.load; F.memFloor = d.mem_floor || F.memFloor; F.prompt = d.prompt || null; });
 on('machine', d => { F.machine = d; });
 on('gpu', d => { F.gpu = d; });
 on('opencode', d => { F.ocfit = d.fit || null; });
@@ -1232,6 +1241,18 @@ const physTokens = l => (l.num_used_tokens != null ? l.num_used_tokens : l.num_t
 const runningReqs = l => Math.max(0, (l.num_reqs || 0) - (l.num_waiting_reqs || 0));
 const waitingReqs = l => l.num_waiting_reqs || 0;
 const loadWords = l => [runningReqs(l) ? `${runningReqs(l)} running` : '', waitingReqs(l) ? `${waitingReqs(l)} waiting` : ''].filter(Boolean).join(', ');
+// The one running request's prompt, while vLLM computes it (lc.prompt_progress): a prompt the cache
+// cannot serve takes minutes, 19 for 494,089 tokens on the Ornith lane, and the page said only
+// "1 running" and "quiet" through all of it (issue #61, 2026-10-30). The time left is a floor.
+// a floor stays a floor once written: rounded down, where fmtMin rounds to the nearest minute and said
+// "at least 3 min" of 150 s (code review, 2026-10-31)
+const fmtAtLeast = s => {
+  if (s < 90) return Math.floor(s) + ' s';
+  const m = Math.floor(s / 60);
+  return m < 60 ? m + ' min' : Math.floor(m / 60) + ' h ' + String(m % 60).padStart(2, '0');
+};
+const promptWords = p => !p ? '' : `computing its prompt: ${Math.round(100 * p.share)} % of ${fmtN(p.tokens)} tokens after ${fmtDur(p.elapsed)}`
+  + (p.left_min_s != null ? `, at least ${fmtAtLeast(p.left_min_s)} left` : p.share >= 0.99 ? ', almost done' : '');
 
 // ── wiring the shell ──────────────────────────────────────────────────────────
 function wireShell(){

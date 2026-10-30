@@ -881,6 +881,85 @@ class ATableCellCarriesItsColumnName(unittest.TestCase):
         self.assertEqual(out["b"], ["Recipe", None])
 
 
+class ALongPromptIsSaidWhileItIsComputed(unittest.TestCase):
+    """Issue #61 (2026-10-30): a prompt of 494,089 tokens the cache could not serve took 19 min before
+    its first token on the Ornith lane, and the page said "1 running", its last five minutes "quiet",
+    and showed the request "in flight" with an empty Took cell: a user took it for a hang."""
+
+    BODY = r"""
+    const U = JSON.parse(JSON.stringify(UNITS));
+    U.units['qwen38-sglang.service'] = {active: 'inactive', enabled: 'disabled'};
+    U.units['qwen38-ornith-122b.service'] = {active: 'active', enabled: 'enabled'};
+    feed({config: CONFIG, units: U, lifecycle: life({'qwen38-ornith-122b.service': eng('ready', {target: 'ornith-122b'})})});
+    feed({engine_fast: {load: [{num_reqs: 1, num_waiting_reqs: 0, num_tokens: 1301680, num_used_tokens: 312000}], prompt: %s}});
+    feed({feed: {rows: [{ts: '2026-10-30T20:17:24', peer: '127.0.0.1:58172', path: '/v1/chat/completions', bytes: 1885967,
+                         secs: null, age: 760.2, kind: 'live', outcome: 'in flight', detail: null}]}});
+    feed({metrics: {lane: 'qwen38-ornith-122b.service', requests: 0, watched_s: 160}});
+    const row = $('feed').tBodies[0].rows[0];
+    report({lede: txt('now-lede'), cap: txt('tr-cap'), took: row.cells[4].textContent,
+            outcome: row.cells[5].textContent, wm: txt('wm-cap')});
+    """
+    PROMPT = "{tokens: 494089, held: 312000, share: 0.631, elapsed: 760, left_min_s: 380}"
+
+    def test_how_far_the_prompt_has_got_and_a_floor_of_the_time_left(self):
+        r = run(self, self.BODY % self.PROMPT)
+        said = "computing its prompt: 63 % of 494,089 tokens after 12 min 40, at least 6 min left"
+        self.assertIn(f"1 request is running, {said}.", r["lede"])
+        self.assertEqual(r["cap"], "1 running, computing a prompt")
+        self.assertEqual(r["took"], "12 min 40", "the request in flight says how long it has been so")
+        self.assertIn(said, r["outcome"])
+        self.assertEqual(r["wm"], "computing a prompt", "not \"quiet\"")
+
+    def test_without_a_prompt_being_computed_the_page_says_what_it_said(self):
+        r = run(self, self.BODY % "null")
+        self.assertIn("1 request is running.", r["lede"])
+        self.assertNotIn("computing", r["lede"] + r["cap"] + r["outcome"])
+        self.assertEqual(r["cap"], "1 running")
+        self.assertEqual(r["took"], "12 min 40")
+        self.assertEqual(r["wm"], "quiet")
+
+    def test_a_floor_is_said_rounded_down(self):
+        # fmtMin rounds to the nearest minute: a floor of 150 s read "at least 3 min" (code review, 2026-10-31)
+        for left, said in ((150, "at least 2 min left"), (89.9, "at least 89 s left"), (3659, "at least 1 h 00 left"),
+                           (90, "at least 1 min left")):
+            with self.subTest(left=left):
+                r = run(self, self.BODY % f"{{tokens: 494089, held: 312000, share: 0.631, elapsed: 760, left_min_s: {left}}}")
+                self.assertIn(said, r["lede"])
+
+    def test_near_its_end_no_floor_is_said(self):
+        r = run(self, self.BODY % "{tokens: 494089, held: 489148, share: 0.99, elapsed: 1121, left_min_s: null}")
+        self.assertIn("computing its prompt: 99 % of 494,089 tokens after 18 min 41, almost done.", r["lede"])
+
+
+class ALongPromptSentAgainIsSaid(unittest.TestCase):
+    """Issue #61 (2026-10-30): Claude Code left a prompt of 500,161 tokens without an answer after 620 s,
+    twice, then 300 s, twice, and the engine kept what it had computed only every other time. The
+    proxy says so (v6.49), and the page with it, with what widens the client's timeout."""
+
+    def test_the_banner_says_who_left_after_how_long_and_what_to_change(self):
+        r = run(self, r"""
+        const now = Date.now() / 1000;
+        feed({config: CONFIG, units: UNITS, reqguard: {guard: {}, zombies: {}, state: 'ok', verdict: 'holding',
+              resent: {count: 2, last: {at: now - 600, secs: 621, n: 2, who: 'claude-cli/2.1.314',
+                                        advice: 'Claude Code gives up on a turn after 10 min, then 5 min without streaming: claude-local lets it wait (docs/clients.md)'}}}});
+        report({banner: txt('banners')});
+        """)
+        self.assertIn("A client gave up on a long prompt and sent it again.", r["banner"])
+        self.assertIn("2 times in the last 24 h, the last 10 min 00 ago: claude-cli/2.1.314 left it without an answer "
+                      "after 10 min 21 (2 times in a row)", r["banner"])
+        self.assertIn("claude-local lets it wait (docs/clients.md).", r["banner"])
+        # what its prefix cache kept, if anything: on 2026-10-30 it kept nothing of the first 10 min
+        self.assertIn("and the engine computed it again, from what its prefix cache had kept of it, if anything.", r["banner"])
+
+    def test_no_banner_without_a_line(self):
+        r = run(self, r"""
+        feed({config: CONFIG, units: UNITS, reqguard: {guard: {}, zombies: {}, state: 'ok', verdict: 'holding',
+              resent: {count: 0, last: null}}});
+        report({banner: txt('banners')});
+        """)
+        self.assertNotIn("sent it again", r["banner"] or "")
+
+
 class TheCockpitsProbeWearsNoAlarmColour(unittest.TestCase):
     """The request log painted the cockpit's own route probe the red of a failure."""
 
