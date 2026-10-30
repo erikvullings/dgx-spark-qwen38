@@ -25,6 +25,10 @@ ExecStartPre=/bin/bash __HOME__/.config/qwen38/engine-secrets.sh
 # while it starts and 200 once it serves, instead of generating a token whenever the engine is
 # idle. /health takes no key, and the proxy relayed it from the network (D02 of the 2026-10-24
 # security review); /health_generate still generates, and the proxy asks the key for it.
+# SGLANG_DISTRIBUTED_INIT_METHOD_OVERRIDE: the rendezvous of the engine's one process goes through a file
+# in the container, which --rm makes new at each start. torch's TCPStore, the default, listened on every
+# interface whatever address it was given (*:23906 on the reference box, 2026-10-30, no key, no firewall)
+# and SGLang has no other way to keep it in: with the file no port opens for it, and the lane served the same.
 # --enable-cache-report: each answer says how much of its prompt the prefix cache served
 # (usage.prompt_tokens_details.cached_tokens, and cache_read_input_tokens beside input_tokens on
 # /v1/messages), which the engine counts anyway. Asked in discussion #49, measured on this lane
@@ -34,6 +38,7 @@ ExecStart=/bin/bash -c 'exec /usr/bin/docker run --rm --name qwen38-sglang --gpu
   -e TORCHINDUCTOR_CACHE_DIR=/cache/inductor -e SGLANG_ALLOW_OVERWRITE_LONGER_CONTEXT_LEN=1 -e HF_HUB_OFFLINE=1 \
   -e SGLANG_ENABLE_REQUEST_HEADER_OVERRIDES=1 \
   -e SGLANG_ENABLE_HEALTH_ENDPOINT_GENERATION=0 \
+  -e SGLANG_DISTRIBUTED_INIT_METHOD_OVERRIDE=file:///tmp/sglang-rdv \
   -v __HOME__/.config/qwen38/sglang-cache:/cache \
   -v __HF_CACHE__:/root/.cache/huggingface \
   -v __HOME__/.config/qwen38:/out:ro \

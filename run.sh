@@ -130,6 +130,7 @@ exec docker run --rm --name qwen38-sglang-run --gpus all \
   -e TORCHINDUCTOR_CACHE_DIR=/cache/inductor \
   -e SGLANG_ENABLE_REQUEST_HEADER_OVERRIDES=1 \
   -e SGLANG_ENABLE_HEALTH_ENDPOINT_GENERATION=0 \
+  -e SGLANG_DISTRIBUTED_INIT_METHOD_OVERRIDE=file:///tmp/sglang-rdv \
   -e HF_HUB_OFFLINE=1 \
   -v "$CONFIG_DIR/sglang-cache":/cache \
   -v "$HF_CACHE":/root/.cache/huggingface \
