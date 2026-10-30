@@ -492,7 +492,7 @@ jobs:
           # target added to the switcher and forgotten in the cockpit's enum is
           # still caught.
           FLAG_LANES = ["image", "image-turbo", "video", "kolibri", "kolibri-nvfp4", "nemotron", "nemotron-super", "flash-local",
-                        "ornith-122b"]
+                        "ornith-122b", "nanbeige", "ling"]
           ref = choices
           switch_ref = sorted(ref + FLAG_LANES)
           text_lists = {"install.sh MODEL_CHOICE": choices, "recipes BUILTIN_IDS": sorted(builtins)}
@@ -964,10 +964,10 @@ jobs:
           script = pathlib.Path("switch-model.sh").read_text()
           alw = pathlib.Path("dashboard/sudoers-cockpit.template").read_text()
           allowed = {m.strip() for m in re.findall(r"NOPASSWD:\s*(.+)$", alw, re.M)}
-          stage = dict(re.findall(r'^(STAGE_UNIT|STAGE_CEIL|IMG_STAGE|KOL_STAGE|NEM_STAGE|NSV_STAGE|FLL_STAGE|ORN_STAGE)="\$CONFIG_DIR/([^"]+)"', script, re.M))
+          stage = dict(re.findall(r'^(STAGE_UNIT|STAGE_CEIL|IMG_STAGE|KOL_STAGE|NEM_STAGE|NSV_STAGE|FLL_STAGE|ORN_STAGE|NAN_STAGE|LNG_STAGE)="\$CONFIG_DIR/([^"]+)"', script, re.M))
           units = {"qwen38-sglang.service", "qwen38-flash.service"}
           engines = units | {"qwen38-image.service", "qwen38-video.service", "qwen38-kolibri.service", "qwen38-nemotron.service",
-                             "qwen38-nemotron-super.service", "qwen38-flash-local.service", "qwen38-ornith-122b.service"}
+                             "qwen38-nemotron-super.service", "qwen38-flash-local.service", "qwen38-ornith-122b.service", "qwen38-nanbeige.service", "qwen38-ling.service"}
           values = {
               "TEXT_UNIT_NAME": engines, "TARGET_UNIT_NAME": units, "OTHER_UNIT_NAME": engines,
               "IMAGE_UNIT_NAME": {"qwen38-image.service"},
@@ -976,6 +976,8 @@ jobs:
               "NEMOTRON_UNIT_NAME": {"qwen38-nemotron.service"},
               "NEMOTRON_SUPER_UNIT_NAME": {"qwen38-nemotron-super.service"},
               "FLASH_LOCAL_UNIT_NAME": {"qwen38-flash-local.service"},
+              "LING_UNIT_NAME": {"qwen38-ling.service"},
+              "NANBEIGE_UNIT_NAME": {"qwen38-nanbeige.service"},
               "ORNITH_122B_UNIT_NAME": {"qwen38-ornith-122b.service"},
               "TARGET_UNIT": {re.search(r'^SGL_UNIT="([^"]+)"', script, re.M).group(1)},
               "IMAGE_UNIT": {re.search(r'^IMAGE_UNIT="([^"]+)"', script, re.M).group(1)},
@@ -983,6 +985,8 @@ jobs:
               "NEMOTRON_UNIT": {re.search(r'^NEMOTRON_UNIT="([^"]+)"', script, re.M).group(1)},
               "NEMOTRON_SUPER_UNIT": {re.search(r'^NEMOTRON_SUPER_UNIT="([^"]+)"', script, re.M).group(1)},
               "FLASH_LOCAL_UNIT": {re.search(r'^FLASH_LOCAL_UNIT="([^"]+)"', script, re.M).group(1)},
+              "LING_UNIT": {re.search(r'^LING_UNIT="([^\"]+)"', script, re.M).group(1)},
+              "NANBEIGE_UNIT": {re.search(r'^NANBEIGE_UNIT="([^\"]+)"', script, re.M).group(1)},
               "ORNITH_122B_UNIT": {re.search(r'^ORNITH_122B_UNIT="([^"]+)"', script, re.M).group(1)},
               "STAGE_UNIT": {"__HOME__/.config/qwen38/" + stage["STAGE_UNIT"]},
               "STAGE_CEIL": {"__HOME__/.config/qwen38/" + stage["STAGE_CEIL"]},
@@ -991,6 +995,8 @@ jobs:
               "NEM_STAGE": {"__HOME__/.config/qwen38/" + stage["NEM_STAGE"]},
               "NSV_STAGE": {"__HOME__/.config/qwen38/" + stage["NSV_STAGE"]},
               "FLL_STAGE": {"__HOME__/.config/qwen38/" + stage["FLL_STAGE"]},
+              "LNG_STAGE": {"__HOME__/.config/qwen38/" + stage["LNG_STAGE"]},
+              "NAN_STAGE": {"__HOME__/.config/qwen38/" + stage["NAN_STAGE"]},
               "ORN_STAGE": {"__HOME__/.config/qwen38/" + stage["ORN_STAGE"]},
           }
           seen, bad = 0, []

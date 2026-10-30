@@ -66,8 +66,11 @@ MODEL = served_model()
 # SGLang flash lane, its header, reference and warm-up note above its own numbers, and any other
 # name the 27B lane, whose 71.4 headed Kolibri's and the Nemotron lanes' (found in review, 2026-10-20).
 LANE = {"qwen3.8-27b": "27b", "qwen3.8-flash-next": "flash",
-        "qwen3.8-flash-next-fp4": "flash-local", "ornith-1.5-122b": "ornith-122b"}.get(MODEL, "other")
+        "qwen3.8-flash-next-fp4": "flash-local", "ling-v3-flash-fp4": "ling", "nanbeige4.3-33b": "nanbeige", "ornith-1.5-122b": "ornith-122b"}.get(MODEL, "other")
 HEADERS = {
+    "ling": ("Ling 3.0 Flash MXFP4 Humming NEXTN benchmark", "No local Spark reference yet; discard warmup and repeat three times."),
+    "nanbeige": ("Nanbeige4.3-33B mixed NVFP4/FP8 (experimental) benchmark",
+                  "No Spark reference measurement yet. Discard warmup; repeat three times."),
     # The median is the v1.14 campaign on the official release image (README, CHANGELOG
     # v1.14.0); the per-probe figures are the last ones published, v1.9's, whose median was
     # ~65. This line said ~65 after the README moved to 71.4 (found in review, 2026-09-24).

@@ -507,7 +507,11 @@ NO_NEMOTRON_SUPER=0
 WITH_FLASH_LOCAL=0
 NO_FLASH_LOCAL=0
 WITH_ORNITH_122B=0
+WITH_NANBEIGE=0
+WITH_LING=0
 NO_ORNITH_122B=0
+NO_NANBEIGE=0
+NO_LING=0
 ALL_WEIGHTS=0
 PLAN_ONLY=0
 # --recommended (v1.36.0): every setting the list before step 1 compares, but the site's (the
@@ -543,7 +547,11 @@ for arg in "$@"; do
     --with-flash-local) WITH_FLASH_LOCAL=1 ;;
     --no-flash-local) NO_FLASH_LOCAL=1 ;;
     --with-ornith-122b) WITH_ORNITH_122B=1 ;;
+    --with-nanbeige) WITH_NANBEIGE=1 ;;
+    --with-ling) WITH_LING=1 ;;
     --no-ornith-122b) NO_ORNITH_122B=1 ;;
+    --no-nanbeige) NO_NANBEIGE=1 ;;
+    --no-ling) NO_LING=1 ;;
     --all-weights) ALL_WEIGHTS=1 ;;
     --with-claude-warmup)
       echo "NOTE: --with-claude-warmup was removed in v1.3 (the repo's client story moved to opencode)."
@@ -629,6 +637,10 @@ without a terminal.
   --no-flash-local      leave the Flash FP4-Local lane (vLLM, 121 GB) out of this
                         run, the same way (./install-flash-local.sh --uninstall)
   --with-flash-local    install it whole now and prove it
+  --with-ling          install the experimental Ling MXFP4 Humming lane (128 GB only)
+  --no-ling            skip this run
+  --with-nanbeige      install the experimental Nanbeige4.3-33B mixed NVFP4/FP8 lane (128 GB only)
+  --no-nanbeige        skip updating that lane in this run
   --no-ornith-122b      leave the Ornith 1.5 122B lane (vLLM, 96 GB) out of this
                         run, the same way (./install-ornith-122b.sh --uninstall)
   --with-ornith-122b    install it whole now and prove it
@@ -774,6 +786,8 @@ NEMOTRON_UNIT_PATH="/etc/systemd/system/qwen38-nemotron.service"
 NEMOTRON_SUPER_UNIT_PATH="/etc/systemd/system/qwen38-nemotron-super.service"
 FLASH_LOCAL_UNIT_PATH="/etc/systemd/system/qwen38-flash-local.service"
 ORNITH_122B_UNIT_PATH="/etc/systemd/system/qwen38-ornith-122b.service"
+NANBEIGE_UNIT_PATH="/etc/systemd/system/qwen38-nanbeige.service"
+LING_UNIT_PATH="/etc/systemd/system/qwen38-ling.service"
 for _p in "$SGL_UNIT_PATH" "$FLASH_UNIT_PATH"; do
   if [ -f "$_p" ] && [ ! -r "$_p" ]; then
     echo "NOTE: an installed unit ($_p) exists but is not readable (pre-v1.2.3 installs used mode 600),"
@@ -927,6 +941,8 @@ if [ -z "$SECONDARY" ] && systemctl is-enabled --quiet qwen38-flash-local.servic
 fi
 # And the Ornith 1.5 122B lane, under the same promise.
 ORNITH_122B_BOOT=0
+NANBEIGE_BOOT=0
+LING_BOOT=0
 if [ -z "$SECONDARY" ] && systemctl is-enabled --quiet qwen38-ornith-122b.service 2>/dev/null \
    && [ "$SGL_ENABLED" -eq 0 ] && [ "$FLASH_ENABLED" -eq 0 ]; then
   if [ -n "$_ENV_MODEL_CHOICE" ]; then
@@ -939,7 +955,31 @@ if [ -z "$SECONDARY" ] && systemctl is-enabled --quiet qwen38-ornith-122b.servic
     echo "without making one of them the boot lane again. Switch from the cockpit when you want another."
   fi
 fi
-SIDE_BOOT=$((IMAGE_BOOT + VIDEO_BOOT + KOLIBRI_BOOT + NEMOTRON_BOOT + NEMOTRON_SUPER_BOOT + FLASH_LOCAL_BOOT + ORNITH_122B_BOOT))
+if [ -z "$SECONDARY" ] && systemctl is-enabled --quiet qwen38-nanbeige.service 2>/dev/null \
+   && [ "$SGL_ENABLED" -eq 0 ] && [ "$FLASH_ENABLED" -eq 0 ]; then
+  if [ -n "$_ENV_MODEL_CHOICE" ]; then
+    echo "MODEL_CHOICE=$_ENV_MODEL_CHOICE given on a box booting the Nanbeige4.3 33B lane: making that text lane the boot lane again."
+  elif [ "$RECOMMENDED" -eq 1 ]; then
+    echo "--recommended on a box booting the Nanbeige4.3 33B lane: the 27B lane becomes the boot lane again, as on a new box."
+  else
+    NANBEIGE_BOOT=1
+    echo "The Nanbeige4.3 33B lane is this box's boot lane: this run brings the other lanes up to date"
+    echo "without making one of them the boot lane again. Switch from the cockpit when you want another."
+  fi
+fi
+if [ -z "$SECONDARY" ] && systemctl is-enabled --quiet qwen38-ling.service 2>/dev/null \
+   && [ "$SGL_ENABLED" -eq 0 ] && [ "$FLASH_ENABLED" -eq 0 ]; then
+  if [ -n "$_ENV_MODEL_CHOICE" ]; then
+    echo "MODEL_CHOICE=$_ENV_MODEL_CHOICE given on a box booting the Ling 3.0 Flash lane: making that text lane the boot lane again."
+  elif [ "$RECOMMENDED" -eq 1 ]; then
+    echo "--recommended on a box booting the Ling 3.0 Flash lane: the 27B lane becomes the boot lane again, as on a new box."
+  else
+    LING_BOOT=1
+    echo "The Ling 3.0 Flash lane is this box's boot lane: this run brings the other lanes up to date"
+    echo "without making one of them the boot lane again. Switch from the cockpit when you want another."
+  fi
+fi
+SIDE_BOOT=$((IMAGE_BOOT + VIDEO_BOOT + KOLIBRI_BOOT + NEMOTRON_BOOT + NEMOTRON_SUPER_BOOT + FLASH_LOCAL_BOOT + ORNITH_122B_BOOT + NANBEIGE_BOOT + LING_BOOT))
 # Which text lane to bring up to date on that path. Both text units can be on disk with
 # neither enabled, since a switch to a side lane disables both, so enablement cannot say which
 # one was in use; switch-model.sh writes it down instead (lanes.sh: one record since v1.30, the
@@ -1315,6 +1355,14 @@ if [ "$NO_ORNITH_122B" -eq 1 ] && [ "$WITH_ORNITH_122B" -eq 1 ]; then
   printf -- '--no-ornith-122b and --with-ornith-122b contradict each other (drop one flag)\n' >&2; exit 1
 fi
 
+if [ "$NO_NANBEIGE" -eq 1 ] && [ "$WITH_NANBEIGE" -eq 1 ]; then
+  printf -- '--no-nanbeige and --with-nanbeige contradict each other (drop one flag)\n' >&2; exit 1
+fi
+
+if [ "$NO_LING" -eq 1 ] && [ "$WITH_LING" -eq 1 ]; then
+  printf -- '--no-ling and --with-ling contradict each other (drop one flag)\n' >&2; exit 1
+fi
+
 # --no-start and --no-service both return before the image step, so the flag would be
 # accepted and silently do nothing. Say so here rather than at the end of a long install.
 if [ "$WITH_IMAGE" -eq 1 ] && { [ "$NO_START" -eq 1 ] || [ "$NO_SERVICE" -eq 1 ]; }; then
@@ -1350,6 +1398,16 @@ fi
 if [ "$WITH_ORNITH_122B" -eq 1 ] && { [ "$NO_START" -eq 1 ] || [ "$NO_SERVICE" -eq 1 ]; }; then
   printf -- '--with-ornith-122b needs the full install: it installs a systemd unit and proves it serves.\n' >&2
   printf -- 'Run ./install.sh without --no-start/--no-service, or ./install-ornith-122b.sh on its own.\n' >&2
+  exit 1
+fi
+if [ "$WITH_NANBEIGE" -eq 1 ] && { [ "$NO_START" -eq 1 ] || [ "$NO_SERVICE" -eq 1 ]; }; then
+  printf -- '--with-nanbeige needs the full install: it installs a systemd unit and proves it serves.\n' >&2
+  printf -- 'Run ./install.sh without --no-start/--no-service, or ./install-nanbeige.sh on its own.\n' >&2
+  exit 1
+fi
+if [ "$WITH_LING" -eq 1 ] && { [ "$NO_START" -eq 1 ] || [ "$NO_SERVICE" -eq 1 ]; }; then
+  printf -- '--with-ling needs the full install: it installs a systemd unit and proves it serves.\n' >&2
+  printf -- 'Run ./install.sh without --no-start/--no-service, or ./install-ling.sh on its own.\n' >&2
   exit 1
 fi
 # the same for the whole box: --no-service did none of it, --no-start the other text lane alone
@@ -1396,7 +1454,9 @@ lane_title(){  # $1 a lane, by its flag's name: the name a run says
     27b) echo "27B" ;; flash) echo "flash 176B" ;; image) echo "image (Qwen-Image 2.1)" ;;
     video) echo "video (MiniMax-H3)" ;; kolibri) echo "Kolibri-1" ;; nemotron) echo "Nemotron 3.5 Bolt" ;;
     nemotron-super) echo "Nemotron 3.5 Super VL" ;; flash-local) echo "Flash FP4-Local" ;;
-    ornith-122b) echo "Ornith 1.5 122B" ;; *) echo "$1" ;;
+    ornith-122b) echo "Ornith 1.5 122B" ;;
+    nanbeige) echo "Nanbeige4.3 33B" ;;
+    ling) echo "Ling 3.0 Flash" ;; *) echo "$1" ;;
   esac
 }
 lane_wanted(){  # $1 lane (image, video, flash, 27b), $2 --no-$1 given, $3 --with-$1 given: sets WANT
@@ -1426,6 +1486,8 @@ serves_anyway(){ [ "$1" = "$LANE" ] && [ "$SIDE_BOOT" -eq 0 ]; }   # $1 a lane l
 # gets its units only, and the run then says so (issue #54; both said, found in review, 2026-10-21).
 serves_said(){ echo "The ${1/27b/27B} lane is the one this run serves: --no-$1 leaves nothing out of it."; }
 WANT_IMAGE=0; WANT_VIDEO=0; WANT_FLASH=0; WANT_27B=0; WANT_KOLIBRI=0; WANT_NEMOTRON=0; WANT_NEMOTRON_SUPER=0; WANT_FLASH_LOCAL=0; WANT_ORNITH_122B=0
+WANT_NANBEIGE=0
+WANT_LING=0
 TOO_BIG=()
 if [ -z "$SECONDARY" ]; then
   lane_wanted image "$NO_IMAGE" "$WITH_IMAGE"; WANT_IMAGE="$WANT"
@@ -1437,6 +1499,8 @@ if [ -z "$SECONDARY" ]; then
   lane_wanted nemotron-super "$NO_NEMOTRON_SUPER" "$WITH_NEMOTRON_SUPER"; WANT_NEMOTRON_SUPER="$WANT"
   lane_wanted flash-local "$NO_FLASH_LOCAL" "$WITH_FLASH_LOCAL"; WANT_FLASH_LOCAL="$WANT"
   lane_wanted ornith-122b "$NO_ORNITH_122B" "$WITH_ORNITH_122B"; WANT_ORNITH_122B="$WANT"
+  if [ "$NO_NANBEIGE" -eq 0 ] && { [ "$WITH_NANBEIGE" -eq 1 ] || [ -f "$NANBEIGE_UNIT_PATH" ]; }; then WANT_NANBEIGE=1; fi
+  if [ "$NO_LING" -eq 0 ] && { [ "$WITH_LING" -eq 1 ] || [ -f "$LING_UNIT_PATH" ]; }; then WANT_LING=1; fi
 fi
 too_big(){ local l; for l in ${TOO_BIG[@]+"${TOO_BIG[@]}"}; do [ "$l" = "$1" ] && return 0; done; return 1; }   # $1 a lane
 if [ "${#TOO_BIG[@]}" -gt 0 ]; then
@@ -1510,6 +1574,8 @@ side_begun(){  # $1 lane (image, video, kolibri, nemotron, nemotron-super, flash
     nemotron-super) side_nemotron_begun "$NEMOTRON_SUPER_UNIT_PATH" ;;
     flash-local) side_pulled_begun "$FLASH_LOCAL_UNIT_PATH" ;;
     ornith-122b) side_pulled_begun "$ORNITH_122B_UNIT_PATH" ;;
+    nanbeige) side_pulled_begun "$NANBEIGE_UNIT_PATH" ;;
+    ling) side_pulled_begun "$LING_UNIT_PATH" ;;
     *) return 1 ;;
   esac
 }
@@ -1788,6 +1854,8 @@ if [ -z "$SECONDARY" ] && ss -tlnH 2>/dev/null | awk '{print $4}' | grep -q ":$P
     echo "Note: the Nemotron Super lane is serving on :$PORT; this run updates the lanes beside it."
   elif docker inspect qwen38-flash-local --format '{{join .Args " "}}' 2>/dev/null | grep -qE -- "--port ${PORT}(\s|$)"; then
     echo "Note: the Flash FP4-Local lane is serving on :$PORT; this run updates the lanes beside it."
+  elif docker inspect qwen38-nanbeige --format '{{join .Args " "}}' 2>/dev/null | grep -qE -- "--port ${PORT}(\s|$)"; then
+    echo "Note: the Nanbeige4.3 33B lane is serving on :$PORT; this run updates the lanes beside it."
   elif docker inspect qwen38-ornith-122b --format '{{join .Args " "}}' 2>/dev/null | grep -qE -- "--port ${PORT}(\s|$)"; then
     echo "Note: the Ornith 1.5 122B lane is serving on :$PORT; this run updates the lanes beside it."
   else
@@ -2334,6 +2402,8 @@ OC_PORT="$PROXY_PORT"
 # installed right now always appears. The default model is the one being
 # installed. json.dump writes the file: no hand-escaping.
 OC_27B=0; OC_FLASH=0; OC_KOLIBRI=0; OC_NEMOTRON=0; OC_NEMOTRON_SUPER=0; OC_FLASH_LOCAL=0; OC_ORNITH_122B=0
+OC_NANBEIGE=0
+OC_LING=0
 { [ "$LANE" = "27b" ] || [ -f "$SGL_UNIT_PATH" ]; } && OC_27B=1
 { [ "$LANE" = "flash" ] || [ -f "$FLASH_UNIT_PATH" ]; } && OC_FLASH=1
 # The Kolibri lane is installed at the end of a run (install-kolibri.sh): its provider comes
@@ -2379,12 +2449,28 @@ if [ "$OC_FLASH_LOCAL" -eq 1 ]; then
 fi
 # The Ornith 1.5 122B lane, its own provider (its own served model) with its unit.
 [ -f "$ORNITH_122B_UNIT_PATH" ] && OC_ORNITH_122B=1
+[ -f "$NANBEIGE_UNIT_PATH" ] && OC_NANBEIGE=1
+[ -f "$LING_UNIT_PATH" ] && OC_LING=1
 OC_ORNITH_122B_CTX=""; OC_ORNITH_122B_OUT=""; OC_ORNITH_122B_NAME=""
+OC_NANBEIGE_CTX=""; OC_NANBEIGE_OUT=""; OC_NANBEIGE_NAME=""
+OC_LING_CTX=""; OC_LING_OUT=""; OC_LING_NAME=""
 if [ "$OC_ORNITH_122B" -eq 1 ]; then
   OC_ORNITH_122B_PAIR="$("$REPO_DIR/oc-limits.sh" ornith-122b)" \
     || die "oc-limits.sh refused ornith-122b (repo bug: please open an issue)"
   OC_ORNITH_122B_CTX="${OC_ORNITH_122B_PAIR%% *}"; OC_ORNITH_122B_OUT="$(echo "$OC_ORNITH_122B_PAIR" | cut -d' ' -f2)"
   OC_ORNITH_122B_NAME="$(python3 "$REPO_DIR/oc-point-default.py" --label ornith-122b 1048576 || true)"
+fi
+if [ "$OC_NANBEIGE" -eq 1 ]; then
+  OC_NANBEIGE_PAIR="$("$REPO_DIR/oc-limits.sh" nanbeige)" \
+    || die "oc-limits.sh refused nanbeige (repo bug: please open an issue)"
+  OC_NANBEIGE_CTX="${OC_NANBEIGE_PAIR%% *}"; OC_NANBEIGE_OUT="$(echo "$OC_NANBEIGE_PAIR" | cut -d' ' -f2)"
+  OC_NANBEIGE_NAME="$(python3 "$REPO_DIR/oc-point-default.py" --label nanbeige 32768 || true)"
+fi
+if [ "$OC_LING" -eq 1 ]; then
+  OC_LING_PAIR="$("$REPO_DIR/oc-limits.sh" ling)" \
+    || die "oc-limits.sh refused ling (repo bug: please open an issue)"
+  OC_LING_CTX="${OC_LING_PAIR%% *}"; OC_LING_OUT="$(echo "$OC_LING_PAIR" | cut -d' ' -f2)"
+  OC_LING_NAME="$(python3 "$REPO_DIR/oc-point-default.py" --label ling 262144 || true)"
 fi
 # How much of a conversation survives a compaction verbatim, from the same table.
 OC_KEEP="$("$REPO_DIR/oc-limits.sh" --preserve "$OC_CTX")" \
@@ -2436,6 +2522,14 @@ fi
 if [ "$ORNITH_122B_BOOT" -eq 1 ] && [ "$OC_ORNITH_122B" -eq 1 ] && [ -n "$OC_ORNITH_122B_CTX" ]; then
   OC_KEEP="$("$REPO_DIR/oc-limits.sh" --preserve "$OC_ORNITH_122B_CTX")" \
     || die "oc-limits.sh --preserve failed for $OC_ORNITH_122B_CTX (repo bug: please open an issue)"
+fi
+if [ "$NANBEIGE_BOOT" -eq 1 ] && [ "$OC_NANBEIGE" -eq 1 ] && [ -n "$OC_NANBEIGE_CTX" ]; then
+  OC_KEEP="$("$REPO_DIR/oc-limits.sh" --preserve "$OC_NANBEIGE_CTX")" \
+    || die "oc-limits.sh --preserve failed for $OC_NANBEIGE_CTX (repo bug: please open an issue)"
+fi
+if [ "$LING_BOOT" -eq 1 ] && [ "$OC_LING" -eq 1 ] && [ -n "$OC_LING_CTX" ]; then
+  OC_KEEP="$("$REPO_DIR/oc-limits.sh" --preserve "$OC_LING_CTX")" \
+    || die "oc-limits.sh --preserve failed for $OC_LING_CTX (repo bug: please open an issue)"
 fi
 # The other engine's limits, for when both providers are present: the 27B block
 # keeps its context-mode limits, flash always serves its native window. A flash install
@@ -2504,7 +2598,11 @@ OC_NEMOTRON_SUPER_NAME="$OC_NEMOTRON_SUPER_NAME" OC_NEMOTRON_SUPER_BOOT="$NEMOTR
 OC_FLASH_LOCAL="$OC_FLASH_LOCAL" OC_FLASH_LOCAL_CTX="$OC_FLASH_LOCAL_CTX" OC_FLASH_LOCAL_OUT="$OC_FLASH_LOCAL_OUT" \
 OC_FLASH_LOCAL_NAME="$OC_FLASH_LOCAL_NAME" OC_FLASH_LOCAL_BOOT="$FLASH_LOCAL_BOOT" \
 OC_ORNITH_122B="$OC_ORNITH_122B" OC_ORNITH_122B_CTX="$OC_ORNITH_122B_CTX" OC_ORNITH_122B_OUT="$OC_ORNITH_122B_OUT" \
+OC_NANBEIGE="$OC_NANBEIGE" OC_NANBEIGE_CTX="$OC_NANBEIGE_CTX" OC_NANBEIGE_OUT="$OC_NANBEIGE_OUT" \
+OC_LING="$OC_LING" OC_LING_CTX="$OC_LING_CTX" OC_LING_OUT="$OC_LING_OUT" \
 OC_ORNITH_122B_NAME="$OC_ORNITH_122B_NAME" OC_ORNITH_122B_BOOT="$ORNITH_122B_BOOT" \
+OC_NANBEIGE_NAME="$OC_NANBEIGE_NAME" OC_NANBEIGE_BOOT="$NANBEIGE_BOOT" \
+OC_LING_NAME="$OC_LING_NAME" OC_LING_BOOT="$LING_BOOT" \
 OC_KEEP="$OC_KEEP" OC_PIN="$OPENCODE_PIN" OC_DENY="$(python3 "$REPO_DIR/oc-merge-limits.py" --deny-permission)" \
 OC_CONFIG_DIR="$CONFIG_DIR" python3 - <<'PYEOF' || die "could not write the opencode provider config"
 import json
@@ -2618,6 +2716,24 @@ if os.environ.get("OC_ORNITH_122B") == "1":
     providers["ornith-122b"] = oco.provider(base_url, f"{cfg_dir}/api-key",
                                             int(os.environ["OC_ORNITH_122B_CTX"]), int(os.environ["OC_ORNITH_122B_OUT"]),
                                             os.environ.get("OC_ORNITH_122B_NAME") or "Ornith 1.5 122B (local, 1M)")
+if os.environ.get("OC_NANBEIGE") == "1":
+    # one definition, shared with switch-model.sh (oc-nanbeige.py says why)
+    import importlib.util
+    spec = importlib.util.spec_from_file_location("oc_nanbeige", os.path.join(os.environ["OC_REPO_DIR"], "oc-nanbeige.py"))
+    oco = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(oco)
+    providers["nanbeige"] = oco.provider(base_url, f"{cfg_dir}/api-key",
+                                            int(os.environ["OC_NANBEIGE_CTX"]), int(os.environ["OC_NANBEIGE_OUT"]),
+                                            os.environ.get("OC_NANBEIGE_NAME") or "Nanbeige4.3 33B (local, 32K)")
+if os.environ.get("OC_LING") == "1":
+    # one definition, shared with switch-model.sh (oc-ling.py says why)
+    import importlib.util
+    spec = importlib.util.spec_from_file_location("oc_ling", os.path.join(os.environ["OC_REPO_DIR"], "oc-ling.py"))
+    oco = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(oco)
+    providers["ling"] = oco.provider(base_url, f"{cfg_dir}/api-key",
+                                            int(os.environ["OC_LING_CTX"]), int(os.environ["OC_LING_OUT"]),
+                                            os.environ.get("OC_LING_NAME") or "Ling 3.0 Flash (local, 256K)")
 
 default = "flashnext/qwen3.8-flash-next" if lane == "flash" else "qwen38/qwen3.8-27b"
 if os.environ.get("OC_KOLIBRI_BOOT") == "1" and "kolibri" in providers:
@@ -2630,6 +2746,10 @@ if os.environ.get("OC_FLASH_LOCAL_BOOT") == "1" and "flash-local" in providers:
     default = "flash-local/qwen3.8-flash-next-fp4"
 if os.environ.get("OC_ORNITH_122B_BOOT") == "1" and "ornith-122b" in providers:
     default = "ornith-122b/ornith-1.5-122b"
+if os.environ.get("OC_NANBEIGE_BOOT") == "1" and "nanbeige" in providers:
+    default = "nanbeige/nanbeige4.3-33b"
+if os.environ.get("OC_LING_BOOT") == "1" and "ling" in providers:
+    default = "ling/ling-v3-flash-fp4"
 # Compaction is global in opencode.json, not per-model, so it is sized from the
 # INSTALLED target (oc-limits.sh --preserve) and rewritten by every install and
 # switch. preserve_recent_tokens exists because opencode's own default clamps it
@@ -2776,6 +2896,14 @@ fi
 if [ "$ORNITH_122B_BOOT" -eq 1 ] && [ "$OC_ORNITH_122B" -eq 1 ]; then
   # the Ornith 1.5 122B lane is this box's lane: opencode's default stays on it
   OC_POINT_LANE=ornith-122b; OC_POINT_CHOICE=ornith-122b; OC_POINT_WINDOW=1048576
+fi
+if [ "$NANBEIGE_BOOT" -eq 1 ] && [ "$OC_NANBEIGE" -eq 1 ]; then
+  # the Nanbeige4.3 33B lane is this box's lane: opencode's default stays on it
+  OC_POINT_LANE=nanbeige; OC_POINT_CHOICE=nanbeige; OC_POINT_WINDOW=32768
+fi
+if [ "$LING_BOOT" -eq 1 ] && [ "$OC_LING" -eq 1 ]; then
+  # the Ling 3.0 Flash lane is this box's lane: opencode's default stays on it
+  OC_POINT_LANE=ling; OC_POINT_CHOICE=ling; OC_POINT_WINDOW=262144
 fi
 python3 "$REPO_DIR/oc-point-default.py" "$CONFIG_DIR/opencode.json" "$OC_POINT_LANE" "$OC_POINT_CHOICE" "$OC_POINT_WINDOW" \
   || die "could not point the generated opencode config at the installed lane"
@@ -3151,6 +3279,14 @@ if [ -z "$SECONDARY" ] && [ "$ORNITH_122B_BOOT" -eq 0 ] && systemctl is-enabled 
   echo "disabling the Ornith 1.5 122B lane at boot (unit kept, switch back anytime from the cockpit)"
   sudo systemctl disable qwen38-ornith-122b.service
 fi
+if [ -z "$SECONDARY" ] && [ "$NANBEIGE_BOOT" -eq 0 ] && systemctl is-enabled --quiet qwen38-nanbeige.service 2>/dev/null; then
+  echo "disabling the Nanbeige4.3 33B lane at boot (unit kept, switch back anytime from the cockpit)"
+  sudo systemctl disable qwen38-nanbeige.service
+fi
+if [ -z "$SECONDARY" ] && [ "$LING_BOOT" -eq 0 ] && systemctl is-enabled --quiet qwen38-ling.service 2>/dev/null; then
+  echo "disabling the Ling 3.0 Flash lane at boot (unit kept, switch back anytime from the cockpit)"
+  sudo systemctl disable qwen38-ling.service
+fi
 KEEPALIVE_UNIT="qwen38-keepalive.service"
 KA_CHANGED=0      # whether this run changed what the proxy runs (see its restart below)
 # The proxy, its code and its unit are the serving run's (see the secondary run above).
@@ -3236,7 +3372,7 @@ if [ -n "$SECONDARY" ]; then
   fi
   exit 0
 fi
-if [ -z "$ATS_CANNOT" ] && [ "$IMAGE_BOOT" -eq 0 ] && [ "$VIDEO_BOOT" -eq 0 ] && [ "$KOLIBRI_BOOT" -eq 0 ] && [ "$NEMOTRON_BOOT" -eq 0 ] && [ "$NEMOTRON_SUPER_BOOT" -eq 0 ] && [ "$FLASH_LOCAL_BOOT" -eq 0 ] && [ "$ORNITH_122B_BOOT" -eq 0 ]; then
+if [ -z "$ATS_CANNOT" ] && [ "$IMAGE_BOOT" -eq 0 ] && [ "$VIDEO_BOOT" -eq 0 ] && [ "$KOLIBRI_BOOT" -eq 0 ] && [ "$NEMOTRON_BOOT" -eq 0 ] && [ "$NEMOTRON_SUPER_BOOT" -eq 0 ] && [ "$FLASH_LOCAL_BOOT" -eq 0 ] && [ "$ORNITH_122B_BOOT" -eq 0 ] && [ "$NANBEIGE_BOOT" -eq 0 ] && [ "$LING_BOOT" -eq 0 ]; then
   sudo systemctl enable "$UNIT_NAME"
   text_lane_note "$UNIT_NAME"
 else
@@ -3297,6 +3433,14 @@ else
     "$REPO_DIR/install-ornith-122b.sh" "$(side_mode ornith-122b "$WITH_ORNITH_122B")" \
       || echo "NOTE: the Ornith 1.5 122B lane did not install or update; retry with ./install-ornith-122b.sh --no-smoke"
   fi
+  if [ "$WANT_NANBEIGE" -eq 1 ]; then
+    "$REPO_DIR/install-nanbeige.sh" "$(side_mode nanbeige "$WITH_NANBEIGE")" \
+      || echo "NOTE: the Nanbeige4.3 33B lane did not install or update; retry with ./install-nanbeige.sh --no-smoke"
+  fi
+  if [ "$WANT_LING" -eq 1 ]; then
+    "$REPO_DIR/install-ling.sh" "$(side_mode ling "$WITH_LING")" \
+      || echo "NOTE: the Ling 3.0 Flash lane did not install or update; retry with ./install-ling.sh --no-smoke"
+  fi
   SERVING_LANE=""
   [ "$IMAGE_BOOT" -eq 1 ] && SERVING_LANE="image"
   [ "$VIDEO_BOOT" -eq 1 ] && SERVING_LANE="video"
@@ -3305,6 +3449,8 @@ else
   [ "$NEMOTRON_SUPER_BOOT" -eq 1 ] && SERVING_LANE="Nemotron Super"
   [ "$FLASH_LOCAL_BOOT" -eq 1 ] && SERVING_LANE="Flash FP4-Local"
   [ "$ORNITH_122B_BOOT" -eq 1 ] && SERVING_LANE="Ornith 1.5 122B"
+  [ "$NANBEIGE_BOOT" -eq 1 ] && SERVING_LANE="Nanbeige4.3 33B"
+  [ "$LING_BOOT" -eq 1 ] && SERVING_LANE="Ling 3.0 Flash"
   if [ -n "$ATS_CANNOT" ]; then
     step "Done: this box is up to date, and its flash lane, which this GPU cannot start, was not started"
     echo "  why       : $ATS_CANNOT"
@@ -3635,6 +3781,8 @@ except Exception as e:
     # runtime is not on the box (installed on demand, its units only: --all-weights on such a
     # box built every lane and proved none, found in review, 2026-10-15).
     IMAGE_FRESH=0; VIDEO_FRESH=0; KOLIBRI_FRESH=0; NEMOTRON_FRESH=0; NEMOTRON_SUPER_FRESH=0; FLASH_LOCAL_FRESH=0; ORNITH_122B_FRESH=0
+    NANBEIGE_FRESH=0
+    LING_FRESH=0
     { [ -f /etc/systemd/system/qwen38-image.service ] && side_begun image; } || IMAGE_FRESH=1
     { [ -f /etc/systemd/system/qwen38-video.service ] && side_begun video; } || VIDEO_FRESH=1
     { [ -f "$KOLIBRI_UNIT_PATH" ] && side_begun kolibri; } || KOLIBRI_FRESH=1
@@ -3642,7 +3790,11 @@ except Exception as e:
     { [ -f "$NEMOTRON_SUPER_UNIT_PATH" ] && side_begun nemotron-super; } || NEMOTRON_SUPER_FRESH=1
     { [ -f "$FLASH_LOCAL_UNIT_PATH" ] && side_begun flash-local; } || FLASH_LOCAL_FRESH=1
     { [ -f "$ORNITH_122B_UNIT_PATH" ] && side_begun ornith-122b; } || ORNITH_122B_FRESH=1
+    { [ -f "$NANBEIGE_UNIT_PATH" ] && side_begun nanbeige; } || NANBEIGE_FRESH=1
+    { [ -f "$LING_UNIT_PATH" ] && side_begun ling; } || LING_FRESH=1
     IMAGE_STATE=off; VIDEO_STATE=off; KOLIBRI_STATE=off; NEMOTRON_STATE=off; NEMOTRON_SUPER_STATE=off; FLASH_LOCAL_STATE=off; ORNITH_122B_STATE=off
+    NANBEIGE_STATE=off
+    LING_STATE=off
     if [ "$WANT_IMAGE" -eq 1 ]; then
       step "Qwen-Image 2.1 lane (text-to-image, editing, native RGBA)"
       IMAGE_MODE="$(side_mode image "$WITH_IMAGE")"
@@ -3699,12 +3851,30 @@ except Exception as e:
         echo "NOTE: the Ornith 1.5 122B lane did not install (the lines above say why); the rest goes on."
       fi
     fi
+    if [ "$WANT_NANBEIGE" -eq 1 ]; then
+      step "Nanbeige4.3 33B lane (experimental 33B mixed NVFP4/FP8 text model on vLLM)"
+      NANBEIGE_MODE="$(side_mode nanbeige "$WITH_NANBEIGE")"
+      if "$REPO_DIR/install-nanbeige.sh" "$NANBEIGE_MODE"; then NANBEIGE_STATE=installed; [ "$NANBEIGE_MODE" = --units-only ] && NANBEIGE_STATE=units; else
+        NANBEIGE_STATE=failed
+        echo "NOTE: the Nanbeige4.3 33B lane did not install (the lines above say why); the rest goes on."
+      fi
+    fi
+    if [ "$WANT_LING" -eq 1 ]; then
+      step "Ling 3.0 Flash lane (experimental 33B mixed NVFP4/FP8 text model on vLLM)"
+      LING_MODE="$(side_mode ling "$WITH_LING")"
+      if "$REPO_DIR/install-ling.sh" "$LING_MODE"; then LING_STATE=installed; [ "$LING_MODE" = --units-only ] && LING_STATE=units; else
+        LING_STATE=failed
+        echo "NOTE: the Ling 3.0 Flash lane did not install (the lines above say why); the rest goes on."
+      fi
+    fi
     # What to prove: what this run installed for the first time, or what was asked for
     # by name (--with-<lane>, which also proves a lane already there).
     SECOND_WITH=0
     { [ "$SECOND_LANE" = flash ] && [ "$WITH_FLASH" -eq 1 ]; } && SECOND_WITH=1
     { [ "$SECOND_LANE" = 27b ] && [ "$WITH_27B" -eq 1 ]; } && SECOND_WITH=1
     PROVE_SECOND=0; PROVE_IMAGE=0; PROVE_VIDEO=0; PROVE_KOLIBRI=0; PROVE_NEMOTRON=0; PROVE_NEMOTRON_SUPER=0; PROVE_FLASH_LOCAL=0; PROVE_ORNITH_122B=0
+    PROVE_NANBEIGE=0
+    PROVE_LING=0
     { [ "$SECOND_STATE" = installed ] && { [ "$SECOND_NEW" -eq 1 ] || [ "$SECOND_WITH" -eq 1 ]; }; } && PROVE_SECOND=1
     { [ "$IMAGE_STATE" = installed ] && { [ "$IMAGE_FRESH" -eq 1 ] || [ "$WITH_IMAGE" -eq 1 ]; }; } && PROVE_IMAGE=1
     { [ "$VIDEO_STATE" = installed ] && { [ "$VIDEO_FRESH" -eq 1 ] || [ "$WITH_VIDEO" -eq 1 ]; }; } && PROVE_VIDEO=1
@@ -3713,7 +3883,9 @@ except Exception as e:
     { [ "$NEMOTRON_SUPER_STATE" = installed ] && { [ "$NEMOTRON_SUPER_FRESH" -eq 1 ] || [ "$WITH_NEMOTRON_SUPER" -eq 1 ]; }; } && PROVE_NEMOTRON_SUPER=1
     { [ "$FLASH_LOCAL_STATE" = installed ] && { [ "$FLASH_LOCAL_FRESH" -eq 1 ] || [ "$WITH_FLASH_LOCAL" -eq 1 ]; }; } && PROVE_FLASH_LOCAL=1
     { [ "$ORNITH_122B_STATE" = installed ] && { [ "$ORNITH_122B_FRESH" -eq 1 ] || [ "$WITH_ORNITH_122B" -eq 1 ]; }; } && PROVE_ORNITH_122B=1
-    if [ $((PROVE_SECOND + PROVE_IMAGE + PROVE_VIDEO + PROVE_KOLIBRI + PROVE_NEMOTRON + PROVE_NEMOTRON_SUPER + PROVE_FLASH_LOCAL + PROVE_ORNITH_122B)) -gt 0 ]; then
+    { [ "$NANBEIGE_STATE" = installed ] && { [ "$NANBEIGE_FRESH" -eq 1 ] || [ "$WITH_NANBEIGE" -eq 1 ]; }; } && PROVE_NANBEIGE=1
+    { [ "$LING_STATE" = installed ] && { [ "$LING_FRESH" -eq 1 ] || [ "$WITH_LING" -eq 1 ]; }; } && PROVE_LING=1
+    if [ $((PROVE_SECOND + PROVE_IMAGE + PROVE_VIDEO + PROVE_KOLIBRI + PROVE_NEMOTRON + PROVE_NEMOTRON_SUPER + PROVE_FLASH_LOCAL + PROVE_ORNITH_122B + PROVE_NANBEIGE + PROVE_LING)) -gt 0 ]; then
       step "Proving the new lanes serve: the ${LANE/27b/27B} lane stops meanwhile, then comes back"
       sudo systemctl stop "$UNIT_NAME"
       if [ "$PROVE_SECOND" -eq 1 ]; then
@@ -3742,6 +3914,12 @@ except Exception as e:
       fi
       if [ "$PROVE_ORNITH_122B" -eq 1 ]; then
         if "$REPO_DIR/install-ornith-122b.sh"; then ORNITH_122B_STATE=proved; else ORNITH_122B_STATE=unproved; fi
+      fi
+      if [ "$PROVE_NANBEIGE" -eq 1 ]; then
+        if "$REPO_DIR/install-nanbeige.sh"; then NANBEIGE_STATE=proved; else NANBEIGE_STATE=unproved; fi
+      fi
+      if [ "$PROVE_LING" -eq 1 ]; then
+        if "$REPO_DIR/install-ling.sh"; then LING_STATE=proved; else LING_STATE=unproved; fi
       fi
       step "The ${LANE/27b/27B} lane again"
       prove_text_lane "$UNIT_NAME" "$SMOKE_MODEL" \
@@ -3861,6 +4039,8 @@ except Exception as e:
     lane_line "Super VL   " "$NEMOTRON_SUPER_STATE" nemotron-super nemotron-super "102 GB" "$NEMOTRON_SUPER_UNIT_PATH"
     lane_line "FP4-Local  " "$FLASH_LOCAL_STATE" flash-local flash-local "121 GB" "$FLASH_LOCAL_UNIT_PATH"
     lane_line "Ornith 122B" "$ORNITH_122B_STATE" ornith-122b ornith-122b "96 GB" "$ORNITH_122B_UNIT_PATH"
+    lane_line "Nanbeige 33B" "$NANBEIGE_STATE" nanbeige nanbeige "45 GB" "$NANBEIGE_UNIT_PATH"
+    lane_line "Ling Flash" "$LING_STATE" ling ling "105 GB" "$LING_UNIT_PATH"
     [ "$LANE" = "27b" ] && echo "  Benchmark  : ./bench.sh"
     # A 64 GB DGX Spark serves Nemotron 3.5 Bolt (Hasan, 2026-10-24): there the 27B gets two requests
     # and a pool of 59,625 tokens (measured on a 64 GB budget, 2026-10-24, its Mamba cache taking much

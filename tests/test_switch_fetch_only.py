@@ -44,14 +44,14 @@ class Box:
         (repo / "install.sh").write_text((REPO / "install.sh").read_text())
         text = SWITCH
         for unit in ("qwen38-sglang.service", "qwen38-flash.service", "qwen38-nemotron.service",
-                     "qwen38-nemotron-super.service", "qwen38-flash-local.service", "qwen38-ornith-122b.service"):
+                     "qwen38-nemotron-super.service", "qwen38-flash-local.service", "qwen38-ornith-122b.service", "qwen38-nanbeige.service"):
             old = f'"/etc/systemd/system/{unit}"'
             assert old in text, f"switch-model.sh no longer names {unit} that way"
             text = text.replace(old, f'"{units}/{unit}"')
         (repo / "switch-model.sh").write_text(text)
         # install-flash-local.sh --room runs before its fetch, with what it sources and its table's tool
         for f in ("lanes.sh", "ckpt-fetch.py", "install-nemotron.sh", "install-nemotron-super.sh", "install-flash-local.sh",
-                  "install-ornith-122b.sh", "vllm-lane.sh", "ple-table.py"):
+                  "install-ornith-122b.sh", "install-nanbeige.sh", "vllm-lane.sh", "ple-table.py"):
             (repo / f).write_text((REPO / f).read_text())
         # the Nemotron lane's unit, as install-nemotron.sh writes it: its image, its cache, the
         # checkpoint and the memory share on lines of their own
@@ -99,6 +99,16 @@ class Box:
             f"  -v {self.home}/.cache/huggingface:/root/.cache/huggingface \\\n"
             f"  {self.flocal_pins['FLASH_LOCAL_IMAGE']} \\\n"
             f"  vllm serve {self.ornith_pins['ORNITH_122B_REPO']} --revision {self.ornith_pins['ORNITH_122B_REV']} \\\n"
+            "    --gpu-memory-utilization 0.8 --port 30000'\n")
+        npins = dict(line.split("=", 1) for line in (REPO / "install-nanbeige.sh").read_text().splitlines()
+                     if line.startswith("NANBEIGE_") and "=" in line)
+        self.nanbeige_pins = {k: v.strip('"') for k, v in npins.items()}
+        self.nanbeige_unit = units / "qwen38-nanbeige.service"
+        self.nanbeige_unit.write_text(
+            "[Service]\nExecStart=/bin/bash -c 'exec /usr/bin/docker run --rm --name qwen38-nanbeige \\\n"
+            f"  -v {self.home}/.cache/huggingface:/root/.cache/huggingface \\\n"
+            f"  {self.flocal_pins['FLASH_LOCAL_IMAGE']} \\\n"
+            f"  vllm serve {self.nanbeige_pins['NANBEIGE_REPO']} --revision {self.nanbeige_pins['NANBEIGE_REV']} \\\n"
             "    --gpu-memory-utilization 0.8 --port 30000'\n")
         (repo / "switch-model.sh").chmod(0o755)
         self.bin = self.t / "bin"
@@ -199,6 +209,20 @@ class FetchOnly(unittest.TestCase):
         self.assertEqual(box.ornith_unit.read_bytes(), unit_before)
         self.assertFalse([c for c in calls if re.search(r"\b(enable|disable|daemon-reload|restart|start|stop)\b", c)], calls)
 
+    def test_the_nanbeige_lane_fetches_in_the_shared_image_and_stops(self):
+        box = Box()
+        unit_before = box.nanbeige_unit.read_bytes()
+        rc, out, runs, calls = box.run("nanbeige", "--fetch")
+        self.assertEqual(rc, 0, out)
+        self.assertIn("is in the cache; nothing else was changed", out)
+        pins = box.nanbeige_pins
+        self.assertEqual(len(runs), 1, runs)
+        self.assertIn(f"/opt/qwen38/ckpt-fetch.py {pins['NANBEIGE_REPO']} {pins['NANBEIGE_REV']} ", runs[0])
+        self.assertIn(f"--need-gb {pins['NANBEIGE_GB']} ", runs[0])
+        self.assertIn(f" {box.flocal_pins['FLASH_LOCAL_IMAGE']} ", runs[0], "in the Flash FP4-Local lane's image, by digest")
+        self.assertEqual(box.nanbeige_unit.read_bytes(), unit_before)
+        self.assertFalse([c for c in calls if re.search(r"\b(enable|disable|daemon-reload|restart|start|stop)\b", c)], calls)
+
     def test_without_it_the_switch_goes_on_past_the_download(self):
         rc, out, runs, _ = Box().run("stock")
         self.assertEqual(len(runs), 1, out)
@@ -211,11 +235,11 @@ class FetchOnly(unittest.TestCase):
         self.assertEqual((runs, calls), ([], []))
 
     def test_every_lane_stops_right_after_its_own_download(self):
-        # the seven branches that fetch (Kolibri, Nemotron, Flash FP4-Local, Ornith, image, video, the text lanes): each
+        # The eight fetch branches include the optional Nanbeige lane; each
         # one's fetch command is followed at once by the --fetch stop, before anything it writes;
         # the Nemotron lane's loop over its model and its drafter ends first, with nothing else in it
         calls = [m.start() for m in re.finditer(r"ckpt-fetch\.py\"? \"\$", SWITCH)]
-        self.assertEqual(len(calls), 7)
+        self.assertEqual(len(calls), 9)
         for at in calls:
             rest = SWITCH[at:]
             die = rest.index("|| die ")

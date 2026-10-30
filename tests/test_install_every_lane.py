@@ -319,10 +319,10 @@ def vllm_lane_disabled(case, lane, secondary, lane_boot):
     (d / "systemctl").write_text(f'#!/bin/bash\n[ "$1" = is-enabled ] && [ "${{@: -1}}" = qwen38-{lane}.service ]\n')
     for f in ("sudo", "systemctl"):
         (d / f).chmod(0o755)
-    boots = {"kolibri": 0, "nemotron": 0, "nemotron-super": 0, "flash-local": 0, "ornith-122b": 0, lane: lane_boot}
+    boots = {"kolibri": 0, "nemotron": 0, "nemotron-super": 0, "flash-local": 0, "ornith-122b": 0, "nanbeige": 0, lane: lane_boot}
     r = subprocess.run(["bash", "-c", f'set -euo pipefail\nRECOMMENDED=0\nSECONDARY="{secondary}"; KOLIBRI_BOOT={boots["kolibri"]}; '
                         f'NEMOTRON_BOOT={boots["nemotron"]}; NEMOTRON_SUPER_BOOT={boots["nemotron-super"]}; '
-                        f'FLASH_LOCAL_BOOT={boots["flash-local"]}; ORNITH_122B_BOOT={boots["ornith-122b"]}\n' + block],
+                        f'FLASH_LOCAL_BOOT={boots["flash-local"]}; ORNITH_122B_BOOT={boots["ornith-122b"]}; NANBEIGE_BOOT={boots["nanbeige"]}; LING_BOOT=0\n' + block],
                        capture_output=True, text=True, timeout=30,
                        env={"PATH": f"{d}:/usr/bin:/bin"})
     case.assertEqual(r.returncode, 0, r.stderr)
@@ -805,7 +805,8 @@ class TheOtherLanesAndTheirProofs(unittest.TestCase):
             second_state="installed", second_fresh=1, image_rc=0, video_rc=0, prove_fail="",
             want_kolibri=1, with_kolibri=0, kolibri_rc=0, prepared=(), all_weights=0, begun=(), second_new=None,
             want_nemotron=1, with_nemotron=0, nemotron_rc=0, want_super=1, with_super=0, super_rc=0,
-            nemotron_image=None, want_flocal=0, with_flocal=0, flocal_rc=0, want_ornith=0, with_ornith=0, ornith_rc=0):
+            nemotron_image=None, want_flocal=0, with_flocal=0, flocal_rc=0, want_ornith=0, with_ornith=0, ornith_rc=0,
+            want_nanbeige=0, with_nanbeige=0, nanbeige_rc=0):
         t = tmp("lane-end-")
         unit_dir = t / "units"
         unit_dir.mkdir()
@@ -848,7 +849,7 @@ class TheOtherLanesAndTheirProofs(unittest.TestCase):
         for name, rc in (("install-image.sh", image_rc), ("install-video.sh", video_rc),
                          ("install-kolibri.sh", kolibri_rc), ("install-nemotron.sh", nemotron_rc),
                          ("install-nemotron-super.sh", super_rc), ("install-flash-local.sh", flocal_rc),
-                         ("install-ornith-122b.sh", ornith_rc)):
+                         ("install-ornith-122b.sh", ornith_rc), ("install-nanbeige.sh", nanbeige_rc)):
             stub(repo / name, f'echo "{name} $*" >> "{log}"\n'
                               f'case "$*" in *--no-smoke*) exit {rc} ;; esac\nexit 0')
         (repo / "oc-fit-limits.py").write_text(f"open({str(log)!r}, 'a').write('oc-fit-limits\\n')\n")
@@ -876,6 +877,8 @@ class TheOtherLanesAndTheirProofs(unittest.TestCase):
                   f'NEMOTRON_SUPER_UNIT_PATH="{unit_dir}/qwen38-nemotron-super.service"\n'
                   f'FLASH_LOCAL_UNIT_PATH="{unit_dir}/qwen38-flash-local.service"\n'
                   f'ORNITH_122B_UNIT_PATH="{unit_dir}/qwen38-ornith-122b.service"\n'
+                  f'NANBEIGE_UNIT_PATH="{unit_dir}/qwen38-nanbeige.service"\n'
+                  f'LING_UNIT_PATH="{unit_dir}/qwen38-ling.service"\n'
                   'KEEPALIVE_UNIT=qwen38-keepalive.service; PORT=30000; PROXY_PORT=30001; CONTEXT_MODE=1m; OPENCODE=1; KA_CHANGED=0\n'
                   f"WANT_IMAGE={want_image}; WANT_VIDEO={want_video}; WITH_IMAGE={with_image}; WITH_VIDEO={with_video}\n"
                   f"WITH_FLASH={with_flash}; WITH_27B=0; WANT_KOLIBRI={want_kolibri}; WITH_KOLIBRI={with_kolibri}\n"
@@ -883,12 +886,22 @@ class TheOtherLanesAndTheirProofs(unittest.TestCase):
                   f"WANT_NEMOTRON_SUPER={want_super}; WITH_NEMOTRON_SUPER={with_super}\n"
                   f"WANT_FLASH_LOCAL={want_flocal}; WITH_FLASH_LOCAL={with_flocal}\n"
                   f"WANT_ORNITH_122B={want_ornith}; WITH_ORNITH_122B={with_ornith}\n"
+                  f"WANT_NANBEIGE={want_nanbeige}; WITH_NANBEIGE={with_nanbeige}; WANT_LING=0; WITH_LING=0\n"
                   f"SECOND_LANE=flash; SECOND_UNIT=qwen38-flash.service; SECOND_STATE={second_state}; SECOND_FRESH={second_fresh}; SECOND_NEW={second_fresh if second_new is None else second_new}\n"
                   + block + '\necho "STATES second=$SECOND_STATE image=$IMAGE_STATE video=$VIDEO_STATE kolibri=$KOLIBRI_STATE'
                   ' nemotron=$NEMOTRON_STATE super=$NEMOTRON_SUPER_STATE flocal=$FLASH_LOCAL_STATE ornith=$ORNITH_122B_STATE"\n')
         r = subprocess.run(["bash", "-c", script], capture_output=True, text=True, timeout=30,
                            env={"PATH": f"{bin_}:/usr/bin:/bin"})
         return r.returncode, r.stdout + r.stderr, log.read_text().splitlines()
+
+    def test_explicit_nanbeige_install_is_whole_and_proved_but_plain_install_leaves_it_out(self):
+        rc, out, calls = self.end(want_nanbeige=1, with_nanbeige=1)
+        self.assertEqual(rc, 0, out)
+        self.assertIn("install-nanbeige.sh --no-smoke", calls)
+        self.assertIn("install-nanbeige.sh ", calls)
+        rc, out, calls = self.end()
+        self.assertEqual(rc, 0, out)
+        self.assertFalse(any("install-nanbeige" in c for c in calls))
 
     def test_a_new_box_installs_the_side_lanes_on_demand_and_proves_its_text_lanes(self):
         # their units only: the cockpit's first Load of each builds it (on demand, 2026-10-14)

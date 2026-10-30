@@ -130,7 +130,7 @@ vlane_uninstall_runtime(){  # $1 the image's repository, $2 the base image, $3..
   rm -rf "$CONFIG_DIR/$VLANE-cache" 2>/dev/null || sudo rm -rf --one-file-system "$CONFIG_DIR/$VLANE-cache"
   # The key's middleware is every vLLM lane's (the unit mounts it, read-only, at every start): it
   # stays while another one is installed. Removed by either, it left the other's engine without it.
-  for u in qwen38-kolibri.service qwen38-nemotron.service qwen38-nemotron-super.service qwen38-flash-local.service qwen38-ornith-122b.service; do
+  for u in qwen38-kolibri.service qwen38-nemotron.service qwen38-nemotron-super.service qwen38-flash-local.service qwen38-ornith-122b.service qwen38-nanbeige.service qwen38-ling.service; do
     [ "$u" != "$UNIT" ] && [ -f "$LANES_UNIT_DIR/$u" ] && keep=1
   done
   if [ -n "$keep" ]; then
@@ -317,7 +317,7 @@ vlane_prove(){
   { [ -n "${LANE_FILES+x}" ] && [ "${#LANE_FILES[@]}" -gt 0 ]; } \
     || die "the proof runs before the service step (repo bug: please open an issue)"
   VLANE_WAS=""
-  for u in qwen38-sglang.service qwen38-flash.service qwen38-image.service qwen38-video.service qwen38-kolibri.service qwen38-nemotron.service qwen38-nemotron-super.service qwen38-flash-local.service qwen38-ornith-122b.service; do
+  for u in qwen38-sglang.service qwen38-flash.service qwen38-image.service qwen38-video.service qwen38-kolibri.service qwen38-nemotron.service qwen38-nemotron-super.service qwen38-flash-local.service qwen38-ornith-122b.service qwen38-nanbeige.service qwen38-ling.service; do
     [ "$u" = "$UNIT" ] && continue
     systemctl is-active --quiet "$u" 2>/dev/null && VLANE_WAS="$u"
   done

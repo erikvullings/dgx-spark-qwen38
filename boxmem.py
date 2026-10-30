@@ -31,13 +31,13 @@ MIN_64_GIB = 48
 # budget.
 FITS_64 = ("27b", "nemotron", "speech")
 LANES = ("27b", "flash", "image", "video", "kolibri", "nemotron", "nemotron-super", "flash-local",
-         "ornith-122b", "speech")
+         "ornith-122b", "nanbeige", "ling", "speech")
 # Each target switch-model.sh and MODEL_CHOICE name, and its lane.
 TARGETS = {"stock": "27b", "uncensored": "27b", "fp8": "27b", "uncensored-fp8": "27b",
            "flash": "flash", "flash-nvda": "flash", "flash-uncensored": "flash",
            "image": "image", "image-turbo": "image", "video": "video",
            "kolibri": "kolibri", "kolibri-nvfp4": "kolibri", "nemotron": "nemotron",
-           "nemotron-super": "nemotron-super", "flash-local": "flash-local", "ornith-122b": "ornith-122b"}
+           "nemotron-super": "nemotron-super", "flash-local": "flash-local", "ornith-122b": "ornith-122b", "nanbeige": "nanbeige", "ling": "ling"}
 # Targets of a lane that fits, which a 64 GB box still does not take: Qwen's FP8 weights of the 27B
 # (30.9 GB against 22.0 GB for NVFP4) leave its KV pool too little, and no 64 GB run measured them.
 HEAVY_64 = ("fp8", "uncensored-fp8")

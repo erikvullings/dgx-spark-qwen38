@@ -1153,7 +1153,7 @@ def ornith_effort(body, path):
     any other lane, any doubt: the body goes as it came."""
     if not body or path.split("?", 1)[0] != "/v1/chat/completions" or b'"reasoning_effort"' not in body:
         return body, None
-    if _SERVED["engine"] != "vllm" or not any(str(n).startswith("ornith-") for n in _SERVED["names"]):
+    if _SERVED["engine"] != "vllm" or not any(str(n).startswith(("ornith-", "nanbeige4.3-")) for n in _SERVED["names"]):
         return body, None
     try:
         j = json.loads(body)
@@ -3051,6 +3051,8 @@ def systemone_model(requested):
         # name its model is worse than a wait.
         raise SystemOneHold("this lane has not named itself yet: GET /v1/models did not answer, so no "
                             "answer here could say which model produced it; retry in a few seconds")
+    if any(str(n).startswith("ling-") for n in names):
+        raise SystemOneUsage("System One labels are not validated for Ling; load a Qwen lane.", plain=False)
     if _SERVED["engine"] == "vllm":
         # v6.37: its option labels are measured on the Qwen tokenizer, and the Kolibri lane's
         # engine caps top_logprobs far below the fan-out's (it failed as a 502 there). vLLM caps

@@ -943,3 +943,22 @@ All the heavy lifting belongs to the [SGLang](https://github.com/sgl-project/sgl
 ## License
 
 MIT, see [LICENSE](LICENSE). Performance numbers are point-in-time measurements on one machine; your acceptance lengths (and therefore tok/s) vary with workload and language, see [BENCHMARKS.md](BENCHMARKS.md).
+
+## Optional experimental Nanbeige lane (fork)
+
+This fork adds a tenth engine lane using
+[`primitive-ai/Nanbeige4.3-33B-mixed-NVFP4-FP8`](https://huggingface.co/primitive-ai/Nanbeige4.3-33B-mixed-NVFP4-FP8).
+It is opt-in and requires the 128 GB Spark. It is not part of the upstream measured lanes.
+See [the setup and validation guide](docs/nanbeige-lane.md) before installing.
+
+```bash
+./install.sh --with-nanbeige
+```
+
+The installer tests a reply and tool call, then restores the previous serving lane.
+Load Nanbeige from the cockpit to keep using it. Model name: `nanbeige4.3-33b`.
+
+## Optional Ling 3.0 Flash lane (fork)
+
+`./install.sh --with-ling` installs the experimental MXFP4 Humming lane for a 128 GB Spark.
+See [Ling deployment and validation](docs/ling-lane.md). It preserves exclusive engine switching.

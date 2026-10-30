@@ -71,6 +71,10 @@ eval "$fline"
 # The Ornith lane's: its authors' checkpoint (its image is the Flash FP4-Local lane's, checked below).
 oline="$(grep -E '^ORNITH_122B_(REPO|REV)=' "$REPO_DIR/install-ornith-122b.sh")"
 eval "$oline"
+nbline="$(grep -E '^NANBEIGE_(REPO|REV)=' "$REPO_DIR/install-nanbeige.sh")"
+eval "$nbline"
+lgline="$(grep -E '^LING_(REPO|REV)=' "$REPO_DIR/install-ling.sh")"
+eval "$lgline"
 # The speech lane's: llama.cpp's commit, each recognizer's two GGUF at its revision with the
 # sha256 the install checks, and Kokoro's two files, which nothing checked either (found in the
 # audit of 2026-10-16). Each recognizer size is a branch of install-speech.sh's case on
@@ -418,6 +422,10 @@ echo "Flash FP4-Local lane"
 check_model  flash-local    "$FLASH_LOCAL_REPO" "$FLASH_LOCAL_REV"
 echo "Ornith 1.5 122B lane"
 check_model  ornith-122b    "$ORNITH_122B_REPO" "$ORNITH_122B_REV"
+echo "Experimental Nanbeige lane"
+check_model nanbeige "$NANBEIGE_REPO" "$NANBEIGE_REV"
+echo "Ling lane"
+check_model ling "$LING_REPO" "$LING_REV"
 echo "Speech lane"
 check_commit speech-llama-cpp ggml-org/llama.cpp "$LLAMA_CPP_PIN"
 for size in $ASR_SIZES; do
