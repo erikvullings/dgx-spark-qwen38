@@ -197,6 +197,14 @@ to loopback and keeps an explicit address. A side effect, the same path every la
 loopback already took: with a local channel, the scheduler hands large outputs over through
 a temporary file instead of in the message.
 
+The process's own coordination ports listened on the network too, whatever the bind: PyTorch's
+store on `*:30005` and gloo on four ports of the LAN address, with no key (measured 2026-10-30).
+Since v1.40.6 the unit pins gloo and NCCL to `lo` and, with a loopback bind (any `127.*` or
+`localhost`), lets the lane talk to loopback alone (`IPAddressDeny=any`, `IPAddressAllow=localhost`):
+the store still listens on `*:30005`, out of reach of any other machine. An edit no longer fetches
+its image by its URL: send the image itself, as the cockpit does. A bind past loopback gets no
+filter, and its port 30005 is then open to the network: the installer says so.
+
 ## The Turbo checkpoint
 
 [`Qwen/Qwen-Image-2.1-Turbo`](https://huggingface.co/Qwen/Qwen-Image-2.1-Turbo), published by

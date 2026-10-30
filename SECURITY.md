@@ -117,8 +117,8 @@ ZMQ socket that unpickles what it is sent, and upstream derives that socket's ad
 the same `--host`: until v1.40.1 a lane bound off loopback took requests on that channel from
 the network too, which let anyone who reached it run code as the lane's user (found in a
 security review, 2026-10-24). `image-sglang/scheduler-loopback.patch` keeps it on 127.0.0.1
-whatever `--host` is. An image or video lane that serves during an update keeps the code it
-started with until it restarts.
+whatever `--host` is. A video lane that serves during an update keeps the code it started with
+until it restarts, and an image lane is restarted by the update (since v1.40.6, about 70 s).
 
 **The cockpit (`dashboard/`, :30090)** runs as the user who installed the box,
 and that user is already root-equivalent: `install.sh` requires it to be in the
@@ -216,19 +216,32 @@ discussion, not a disclosure.
   through an SSH tunnel. `SPEECH_BIND` puts them on another address, and the installer
   says what that costs: anyone who reaches it can transcribe and speak with the box's
   CPU. Its recognizer (`:30025`) binds loopback whatever is set.
-- **Each engine opens its own coordination port on every interface.** The API of a
-  lane binds where it is told (loopback by default), but the engine process also runs
-  PyTorch's distributed store, and torch binds that listener to all interfaces with no
-  setting to narrow it. Measured on the reference box on 2026-09-30: the flash lane's
-  scheduler listens on `*:45385` (a random port, new at each boot) beside its API on
-  `127.0.0.1:30000`, and a TCP connection to it succeeds on the LAN and the tailnet
-  addresses; its four other listeners are on loopback. The video lane does the same on
-  `*:30005`, with four gloo ports on the LAN address (measured 2026-09-29, again on 2026-09-30). The port
-  takes no key and serves no model and no data, but PyTorch states that its distributed
-  features are not built for untrusted networks: a hostile connection can disturb the
-  engine, a denial of service. It sits inside the trusted-network edge above, like the
-  plain HTTP ports. To see them on your box while a lane serves:
-  `sudo ss -ltnp | grep -v 127.0.0.1`. On a LAN you do not control, firewall the box to
+- **The engines' coordination ports stay off the network** (since v1.40.6, for lanes bound to
+  loopback, the default). An engine of one process still runs PyTorch's distributed store, which torch
+  binds to all interfaces whatever address it is given, and gloo's and NCCL's bootstrap took the box's
+  LAN address, though its name resolves to 127.0.0.1. Measured on the reference box, which has no
+  firewall: the flash lane's scheduler listened on `*:45385` (a random port, new at each engine start,
+  2026-09-30), and a TCP connection to it went through from the LAN and the tailnet addresses. The video
+  lane listened on `*:30005` with four ports on the LAN address (2026-09-29 and 2026-09-30), the image
+  lane the same, where a connection to `30005` went through from both addresses (2026-10-30), the 27B
+  lane on `*:23906`, and under the real clients the 27B and flash lanes on four ports of the LAN address
+  as well (2026-10-30). The ports take no key and serve no model and no data, but PyTorch states that
+  its distributed features are not built for untrusted networks: a hostile connection can disturb the
+  engine, a denial of service. This page said until v1.40.6 that no setting narrowed them. Two do. The
+  SGLang text lanes take their rendezvous through a file in their container
+  (`SGLANG_DISTRIBUTED_INIT_METHOD_OVERRIDE`), so no port opens for it, and pin gloo and NCCL to `lo`:
+  under the same eight real clients, the 27B and flash lanes started with them listened on no TCP port
+  past loopback, where the 27B without them had its store and four ports on the LAN address
+  (2026-10-30). The image and video units pin gloo and NCCL to `lo` and, with a loopback bind, let the
+  lane talk to loopback alone (`IPAddressDeny=any`, `IPAddressAllow=localhost`): the store still
+  listens on `*:30005`, and what another machine sends it is dropped, unanswered. The same filter stops
+  the lane fetching an image by its URL. A diffusion lane bound past loopback has no filter, and its
+  port 30005 is then open to the network: the installer says so. A video lane that served through the
+  update takes its filter at its next start. The vLLM lanes opened no such port (2026-10-30). It all
+  sits inside the trusted-network edge above anyway, like the plain HTTP ports. To see the listeners
+  while a lane serves: `sudo ss -ltnp | grep -v 127.0.0.1` (a filtered diffusion lane still shows
+  `*:30005` there, and `systemctl show qwen38-image.service -p IPAddressDeny` its filter). On a LAN you
+  do not control, firewall the box to
   the ports you use before anything else; with ufw (inactive on the reference box):
 
   ```bash
