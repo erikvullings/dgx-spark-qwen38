@@ -50,6 +50,17 @@ once, in a container --rm makes new, with the reason in its unit (the 27B's thre
 run.sh). The conformity tests take the diffusion units' rule from lanes.sh instead of a copy, a rule v1.40.5's lanes.sh
 does not have.
 
+**After the push.** The reference box updated with the public one-liner at efadad7 on 2026-10-31: the cockpit restarted
+once and nothing else, and Flash FP4-Local, the lane that served, kept serving. The 27B's unit, the flash lane's launcher
+and the image and video units were rewritten. The 8 real clients answered through the proxy on Flash FP4-Local, the
+production checks passed, and the cockpit showed no banner on any of its 5 views, with no JavaScript error. Then the 8
+clients ran on the 27B and flash lanes, each loaded as the cockpit's Load does, on what the one-liner installed: 16 of
+16 OK. On both, a tool result in the shape Claude Code sends after a ToolSearch got an answer, the proxy wrote its line
+for a tool call naming an Alibaba Cloud host, and the prefix cache served the 8,192 tokens of a repeated prompt, as the
+OpenAI and the Anthropic usage both said. What listened past loopback, read every 20 s through those 42 min, stayed what
+listened with Flash FP4-Local before them, with no port of either engine, where during the v1.40.5 matrix each had
+listened on its store and on four ports of the box's LAN address.
+
 **What an update does.** A box whose serving lane is the 27B or the flash SGLang lane restarts that engine once, as its
 unit changed (about 7 min for the 27B, 378 and 401 s on the reference box that day, 12 to 15 for the flash). A serving
 image lane restarts too, in about 70 s, and an image being made then is lost (Hasan's choice, 2026-10-30). Every other
