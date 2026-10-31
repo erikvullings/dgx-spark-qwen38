@@ -1,5 +1,86 @@
 # Changelog
 
+## v1.40.7 (2026-10-31): on the Ornith lane a long prompt no longer holds up the other requests, and the cockpit says while a prompt is computed (#61)
+
+**Why.** On 2026-10-30 a user of the Ornith lane on a 128 GB Lenovo box reported that requests stop answering once
+their size in the cockpit's Traffic view nears 1835 KB, in a long chat in a WebUI and in Claude Code near 450,000 to
+500,000 tokens (#61). Reproduced on the reference box the same evening, nothing hangs. A prompt of that size that the
+prefix cache cannot serve is computed whole before its first token, and on Ornith that took 19 min for 494,089 tokens,
+the time growing about with the square of the length. Through all of it the cockpit showed the request "in flight"
+with no time, its last five minutes "quiet", and vLLM's own log printed 0.0 prompt tokens a second, as vLLM counts a
+prompt's tokens once it is done. And Claude Code with its own default timeouts left such a turn after 620 s, twice,
+then sent it without streaming and left after 300 s, twice: each request its client had left was closed, the engine
+kept part of what it had computed only every other time, and the answer came at the fifth attempt, after 35 min. The
+user then wrote that while such a prompt is computed, his other services and his other users' requests stall too,
+small ones of 20 KB taking ages, then timing out and coming again. Measured on 2026-10-31 with 10 clients sending
+requests of about 20 KB in a loop while a cold prompt of 362,694 tokens was computed: their 64 tokens came after 265 s
+at the median and 484 s at worst, where ten such requests at once take 20 s with nothing else running.
+
+**The Ornith lane.** Its engine starts with four of vLLM's scheduler settings. `--max-parallel-prefills auto` lets up
+to four prompts share an engine step, round-robin, a prompt alone keeping the whole budget. `--prefill-policy
+decode-aware` keeps one of those places for the prompt nearest its answer. `--prefill-compute-share 0.25` gives the
+prompts a quarter of the time the engine is shared, and the answers being written the rest. And
+`--max-num-prefill-tokens-per-step 1024` caps a shared step's prompt tokens, a step the prompt has alone keeping its
+4,096. On the same prompt and the same 10 clients, each setting started by the lane's own command: the 64 tokens came
+after 34 s at the median and 62 s at worst instead of 265 and 484, the first token after 30 s instead of 101, and
+16.7 requests were served a minute instead of 2.4. The long prompt took 1,653 s instead of 698, sharing the engine for
+its first 20 min 35 s, until the clients stopped, and alone for the rest. Alone it takes
+the time it took: 418 s for 277,608 tokens, 416 s with v1.40.6's settings, as vLLM schedules a step the prompt has
+alone as before. Answers changed no more than the engine's own noise: two runs of the same ten prompts at temperature
+0 on one engine gave the same text for two to five of them, and these settings against v1.40.6's for three, the
+largest gap of a token's log-probability 0.50 against 0.54 between two runs of v1.40.6's own. A share of "auto"
+served the small requests less well (86 s at the median, 161 s at worst), and steps of 8,192 tokens made a prompt
+alone 5 % faster but kept 8 small requests of 80 waiting 668 to 777 s for their first token, so the lane keeps 4,096
+(docs/ornith-lane.md).
+
+**The cockpit.** A request in flight shows how long it has been so in the Traffic view. On the vLLM lanes, while one
+request computes its prompt alone (no token written for 10 s), the Now view, that request's row in the Traffic view
+and the Traffic view's state say how much of its prompt the engine holds, from the KV cache it fills and the prompt's
+length the prefix cache counted when it was admitted, with a floor of the time left: "computing its prompt: 37 % of
+523,914 tokens after 2 min 29, at least 16 min left", with 18.7 min left. The floor is read off the request's own curve (the time grows as
+the tokens to a power k, held between 1 and 2), with the half second the cockpit reads the engine at and a block of its
+KV cache counted against it, and rounded down, on the page too. The last five minutes say "computing a prompt" instead
+of "quiet". It follows a prompt only from an admission vLLM's counters prove to be one request (one more running, none
+waiting, none finished and none preempted between two reads), says it only while that request runs alone and before its
+first token, and says no floor once another request has shared the engine with it. With small requests coming and
+going beside a long prompt, a page that followed the last admission would have said "99 % of 4,812 tokens, almost
+done" of a prompt of 388,753 that went on (found in review before the release, and replayed in its tests). A read the cockpit could not make changes nothing, and what it
+knew is said no longer than 10 s after its last read.
+
+**The proxy (v6.49).** A client that leaves a request of at least 256 KiB after at least 60 s and before any answer
+(streamed or not, but not while its answer is relayed, nor while a starting lane holds it) has its prompt kept for two
+minutes (its whole body hashed, but for the stream and the answer's length, which Claude Code's retries change),
+and the same prompt sent again within them is written as "RESENT the prompt its client left without an answer after
+631 s (1 time in a row, claude-cli/2.1.314)", with what widens that client's timeout: for Claude Code, claude-local,
+or API_TIMEOUT_MS=3600000 with CLAUDE_STREAM_IDLE_TIMEOUT_MS and CLAUDE_BYTE_STREAM_IDLE_TIMEOUT_MS at 1800000. The
+cockpit shows the lines of the last day as a banner. Nothing relayed changes.
+
+**Proved on the reference box.** On 2026-10-31 at night, the branch's cockpit, served on a port of its own and acting
+on nothing, watched Claude Code with claude-local's timeouts send a cold prompt of 523,914 tokens through the box's
+proxy: one request, its answer after 1289 s. About every 2 min 40 the Now view said, for example, "37 % of 523,914 tokens
+after 2 min 29, at least 16 min left" when 18.7 were left, then 52 % and at least 14 when 16.0 were, down to 99 % and
+at least 35 s, and "almost done": every floor under the time that was left, the Traffic view saying "computing a
+prompt" until the prompt was done, and no JavaScript error. The same afternoon, Claude Code 2.1.314 with its own default timeouts sent a cold
+prompt of 1,762,107 bytes on Ornith through the branch's proxy: it left after 630.8 s and sent the same prompt again at
+once, and the proxy wrote its RESENT line with the advice for Claude Code. The scheduler settings were measured as said
+above. Then the lane's unit as this release writes it, started as is, served the 8 real clients through this
+release's proxy, all OK: Claude Code, opencode, Hermes, pi, the OpenAI and Anthropic SDKs, fetch under Node and Bun,
+and LiteLLM, its engine ready in 155 s.
+
+**Tests.** 47 tests fail on v1.40.6 and pass on this release. The cockpit's reading of a prompt: the real counters of
+the prompt of 494,089 tokens replayed, every floor under the time that was left, the exact edges of each rule, and a
+request admitted beside others, a jump of two prompts at one read, a probe that came and went in the same read, a
+prompt preempted and admitted again, a request waiting beside it, a read that failed, a decode that stalls after the
+first token, and an idle lane that keeps nothing growing. The four counters read off vLLM's page. The page's words, the
+floor rounded down and the banner. The proxy's RESENT line, from a real proxy in front of an engine that answers
+nothing, every way the proxy ends a request on a client that left counted or not on purpose, and the fingerprint. And
+the Ornith unit's four settings. lifecycle.py stays at 100 % of its branches.
+
+**What an update does.** The proxy restarts once (v6.49), which ends a request it relays then, and so does the cockpit,
+which drops its open pages and the Agent tab's connection. On a 128 GB box the Ornith unit is rewritten (a 64 GB box has
+none): a box whose serving lane is Ornith keeps its running engine until its next Load, as the installer's NOTE and the
+cockpit say, and has the new settings from there. Nothing else moves.
+
 ## v1.40.6 (2026-10-31): the engines' own coordination ports stay off the network, where SECURITY.md said no setting could keep them
 
 **Why.** SECURITY.md has said since 2026-09-30 that each engine opens its own coordination port on every interface, with
