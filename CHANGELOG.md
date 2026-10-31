@@ -76,6 +76,21 @@ floor rounded down and the banner. The proxy's RESENT line, from a real proxy in
 nothing, every way the proxy ends a request on a client that left counted or not on purpose, and the fingerprint. And
 the Ornith unit's four settings. lifecycle.py stays at 100 % of its branches.
 
+**After the push.** The reference box updated with the public one-liner at a291a64 on 2026-10-31: the proxy restarted
+once, on v6.49, and the cockpit once, and nothing else, the Ornith unit rewritten with its four settings while Flash
+FP4-Local, the lane that served, kept serving. The 8 real clients answered through the proxy on Flash FP4-Local, the
+production checks passed, and the cockpit showed no banner on any of its 5 views, with no JavaScript error. Then the 8
+clients ran on the 7 text lanes, each loaded as the cockpit's Load does, on what the one-liner installed: 56 of 56 OK,
+Ornith on its new settings among them. On every lane a tool result in the shape Claude Code sends after a ToolSearch
+got an answer, the proxy wrote its line for a tool call naming an Alibaba Cloud host, and the prefix cache served, to
+the token, the counts the v1.40.3 notes give, and Ornith decoded at 43.0, 42.4 and 42.5 tok/s (42.8, 42.7 and 42.2 in
+v1.40.5's matrix). Last, the installed cockpit watched Ornith compute a cold prompt alone: "52 % of 297,464 tokens after
+88 s, at least 83 s left", then 72 % and at least 71 s, 88 % and at least 38 s, every floor under the time that was
+left (its first token came at 468 s), then "almost done". And a cold prompt of 264,382 tokens with 3 clients sending
+small requests beside it for 5 min: while they ran, the page said only how many requests were running, and once the
+prompt ran alone, "90 % of 264,382 tokens after 6 min 20" with no floor, then "almost done". It never named another
+request's tokens.
+
 **What an update does.** The proxy restarts once (v6.49), which ends a request it relays then, and so does the cockpit,
 which drops its open pages and the Agent tab's connection. On a 128 GB box the Ornith unit is rewritten (a 64 GB box has
 none): a box whose serving lane is Ornith keeps its running engine until its next Load, as the installer's NOTE and the
