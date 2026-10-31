@@ -62,7 +62,7 @@ LABEL = {"stock": "Qwen3.8-27B NVFP4 + DFlash2",
          # NVIDIA's own FP4-Local build of the flash model, a lane of its own on vLLM.
          "flash-local": "Qwen3.8-Flash-Next FP4-Local NVIDIA + MTP",
          # Ornith AI's Ornith 1.5 122B, a lane of its own on vLLM.
-         "nanbeige": "Nanbeige4.3-33B mixed NVFP4/FP8 (experimental)", "ling": "Ling-3.0-Flash MXFP4 Humming (experimental)",
+         "nanbeige": "Nanbeige4.3-33B mixed NVFP4/FP8 (experimental)", "groot": "Groot-65B-A6B NVFP4/FP8 (experimental)",
          "ornith-122b": "Ornith 1.5 122B NVFP4 + MTP"}
 
 
@@ -95,7 +95,7 @@ def main() -> None:
             "nemotron": "nemotron/nemotron-3.5-bolt",
             "nemotron-super": "nemotron-super/nemotron-3.5-super-vl",
             "flash-local": "flash-local/qwen3.8-flash-next-fp4",
-            "nanbeige": "nanbeige/nanbeige4.3-33b", "ling": "ling/ling-v3-flash-fp4",
+            "nanbeige": "nanbeige/nanbeige4.3-33b", "groot": "groot/groot-65b-a6b",
             "ornith-122b": "ornith-122b/ornith-1.5-122b"}.get(lane, "qwen38/qwen3.8-27b")
     prov, mid = want.split("/")
     try:

@@ -50,7 +50,7 @@ import re
 import shlex
 import sys
 
-OURS = ("qwen38", "flashnext", "kolibri", "nemotron", "nemotron-super", "flash-local", "ornith-122b")
+OURS = ("qwen38", "flashnext", "kolibri", "nemotron", "nemotron-super", "flash-local", "ornith-122b", "nanbeige", "groot")
 RESIZE = {"maxWidth": 1568, "maxHeight": 1568, "maxBytes": 524288, "jpegQuality": 75}
 
 
@@ -162,7 +162,9 @@ PI_COMPAT = {"supportsDeveloperRole": False}
 EFFORT_FIELD = {"kolibri": ({"off": "none", "minimal": "low", "xhigh": "high"}, "high"),
                 "nemotron": ({"off": "none", "minimal": "low", "xhigh": "high"}, "high"),
                 "nemotron-super": ({"off": "none", "minimal": "low", "xhigh": "high"}, "high"),
-                "ornith-122b": ({"off": "none"}, "high")}
+                "ornith-122b": ({"off": "none"}, "high"),
+                "nanbeige": ({"off": "none"}, "high"),
+                "groot": ({"off": "none", "minimal": "low", "high": "xhigh", "max": "xhigh"}, "xhigh")}
 
 
 def model_meta(mid, m):
@@ -244,7 +246,7 @@ OMP_LEVEL = {"lean": "minimal", "low": "low", "medium": "medium", "minimal": "mi
 # it took lean for every patched template, and a LEAN_DEFAULT=0 box got lean in omp alone (found in
 # review, 2026-10-20).
 LANE_TEMPLATE = {"qwen38": "chat-template-sglang.jinja", "flashnext": "chat-template-flashnext.jinja",
-                 "flash-local": "chat-template-flash-local.jinja"}
+                 "flash-local": "chat-template-flash-local.jinja", "groot": "chat-template-groot.jinja"}
 TEMPLATE_DEFAULT = re.compile(r"reasoning_effort\s*\|\s*default\(\s*['\"]([a-z]+)['\"]\s*\)")
 
 

@@ -55,15 +55,28 @@ class TheTranslation(unittest.TestCase):
                     self.assertEqual(sent["chat_template_kwargs"], {"enable_thinking": on})
                     self.assertNotIn("reasoning_effort", sent)
 
-    def test_ling_systemone_labels_are_refused_even_on_sglang(self):
-        self.mod._SERVED.update(names=("ling-v3-flash-fp4",), engine="sglang")
+    def test_groot_systemone_labels_are_refused_even_on_sglang(self):
+        self.mod._SERVED.update(names=("groot-65b-a6b",), engine="sglang")
         original = self.mod.served_models
-        self.mod.served_models = lambda: ("ling-v3-flash-fp4",)
+        self.mod.served_models = lambda: ("groot-65b-a6b",)
         try:
             with self.assertRaises(self.mod.SystemOneUsage):
                 self.mod.systemone_model("jev-latest")
         finally:
             self.mod.served_models = original
+
+    def test_groot_retains_native_tiers_and_turns_thinking_off(self):
+        self.mod._SERVED.update(names=("groot-65b-a6b",), engine="vllm")
+        for level, native in (("low", "low"), ("medium", "medium"), ("high", "xhigh"), ("xhigh", "xhigh")):
+            sent, got = self.go({"reasoning_effort": level, "messages": [],
+                                 "chat_template_kwargs": {"preserve_thinking": True}})
+            self.assertEqual(got, level)
+            self.assertEqual(sent["chat_template_kwargs"]["reasoning_effort"], native)
+            self.assertTrue(sent["chat_template_kwargs"]["preserve_thinking"])
+        sent, _ = self.go({"reasoning_effort": "none", "messages": [],
+                           "chat_template_kwargs": {"enable_thinking": True}})
+        self.assertFalse(sent["chat_template_kwargs"]["enable_thinking"])
+        self.assertNotIn("reasoning_effort", sent)
 
     def test_nanbeige_uses_the_same_boolean_translation_without_losing_agent_kwargs(self):
         self.mod._SERVED.update(names=("nanbeige4.3-33b",), engine="vllm")

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Ling must be managed as vLLM and never receive the Qwen-only control routes."""
+"""Groot must be managed as vLLM and never receive the Qwen-only control routes."""
 import importlib.util
 import os
 from pathlib import Path
@@ -9,10 +9,10 @@ import unittest
 from unittest.mock import patch
 
 DASH = Path(__file__).resolve().parents[1]
-U = 'qwen38-ling.service'
+U = 'qwen38-groot.service'
 
 
-class LingManagement(unittest.TestCase):
+class GrootManagement(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls.tmp = tempfile.TemporaryDirectory()
@@ -21,12 +21,12 @@ class LingManagement(unittest.TestCase):
         cls.env.start()
         cls.old_path = list(sys.path)
         sys.path.insert(0, str(DASH))
-        spec = importlib.util.spec_from_file_location('ling_cockpit_test', DASH / 'cockpit.py')
+        spec = importlib.util.spec_from_file_location('groot_cockpit_test', DASH / 'cockpit.py')
         cls.ck = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(cls.ck)
         cls.unit = Path(cls.tmp.name) / U
-        cls.unit.write_text('ExecStart=docker run qwen38-ling:079d404-v1\n')
-        cls.ck.LING_UNIT_PATH = cls.unit
+        cls.unit.write_text('ExecStart=docker run eugr/spark-vllm-b12x@sha256:' + 'a' * 64 + '\n')
+        cls.ck.GROOT_UNIT_PATH = cls.unit
 
     @classmethod
     def tearDownClass(cls):
@@ -38,36 +38,37 @@ class LingManagement(unittest.TestCase):
         self.ck.LIFE['states'] = {U: 'ready'}
 
     def test_lane_target_and_pin_are_consistent(self):
-        self.assertEqual(self.ck.target_lane('ling'), 'ling')
-        self.assertEqual(self.ck.target_unit('ling'), self.unit)
-        self.assertEqual(self.ck.TARGET_PIN['ling'], 'LING_REV')
-        self.assertIn('ling', self.ck.ACTIONS['switch']['params']['target'])
+        self.assertEqual(self.ck.target_lane('groot'), 'groot')
+        self.assertEqual(self.ck.target_unit('groot'), self.unit)
+        self.assertEqual(self.ck.TARGET_PIN['groot'], 'GROOT_REV')
+        self.assertIn('groot', self.ck.ACTIONS['switch']['params']['target'])
         self.assertIn(U, self.ck.lc.ENGINE_UNITS)
         self.assertNotIn(U, self.ck.lc.TEXT_UNITS)
-        self.assertEqual(self.ck.NEMOTRON_LANES[U][3], 'mxfp4')
-        self.assertEqual(self.ck.B12X_SPEC[U], 'NEXTN')
+        self.assertEqual(self.ck.NEMOTRON_LANES[U][3], 'nvfp4/fp8')
+        self.assertIsNone(self.ck.B12X_SPEC[U])
 
     def test_prepared_checks_the_pinned_image(self):
         with patch.object(self.ck, 'run', return_value='sha256:' + 'b' * 64):
-            self.assertTrue(self.ck.lane_prepared('ling'))
+            self.assertTrue(self.ck.lane_prepared('groot'))
         with patch.object(self.ck, 'run', return_value=''):
-            self.assertFalse(self.ck.lane_prepared('ling'))
+            self.assertFalse(self.ck.lane_prepared('groot'))
 
     def test_sglang_only_actions_are_refused_with_the_correct_lane_name(self):
         for name in ('flush_cache', 'abort_all', 'fit_opencode'):
-            self.assertIn('Ling', self.ck.b12x_cannot(name))
+            self.assertIn('Groot', self.ck.b12x_cannot(name))
 
     def test_systemone_is_explicitly_unavailable_on_this_tokenizer(self):
         out = self.ck.systemone_available()
         self.assertFalse(out['available'])
-        self.assertIn('Ling', out['reason'])
+        self.assertIn('Groot', out['reason'])
 
-    def test_sglang_boot_reader_is_used(self):
+    def test_standard_vllm_boot_reader_is_used(self):
         with patch.object(self.ck, 'run', return_value='container'), \
              patch.object(self.ck, 'kolibri_healthy', return_value=False), \
-             patch.object(self.ck, '_nemotron_log', return_value=['[2026-10-30 12:00:00] The server is fired up and ready to roll!']):
+             patch.object(self.ck, '_nemotron_log', return_value=['Initializing a V1 LLM engine',
+                                                                'Application startup complete']):
             _, boot, running = self.ck.nemotron_engine_state(U, active='active', sub='running',
-                                                            prev_state='starting', enter_key='ling-test')
+                                                            prev_state='starting', enter_key='groot-test')
         self.assertTrue(running)
         self.assertTrue(boot['fired_up'])
         self.assertNotIn('MTP', boot.get('detail', ''))

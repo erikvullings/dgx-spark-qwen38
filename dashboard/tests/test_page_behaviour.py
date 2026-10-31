@@ -35,7 +35,7 @@ const UNITS = {units: {'qwen38-sglang.service': {active: 'active', enabled: 'ena
                        'qwen38-flash-local.service': {active: 'inactive', enabled: 'disabled'},
                        'qwen38-ornith-122b.service': {active: 'inactive', enabled: 'disabled'},
                        'qwen38-nanbeige.service': {active: 'inactive', enabled: 'disabled'},
-                       'qwen38-ling.service': {active: 'inactive', enabled: 'disabled'},
+                       'qwen38-groot.service': {active: 'inactive', enabled: 'disabled'},
                        'qwen38-keepalive.service': {active: 'active', enabled: 'enabled'}}};
 const life = (engines, extra) => Object.assign({engines, events: [], blocked: {}}, extra || {});
 const eng = (state, extra) => Object.assign({state, target: 'stock', elapsed: 600}, extra || {});
@@ -1251,7 +1251,7 @@ class TheBootLaneIsSaidOnlyWhenOneIs(unittest.TestCase):
     const units = JSON.parse(JSON.stringify(UNITS));
     for (const u of ['qwen38-sglang.service', 'qwen38-flash.service', 'qwen38-image.service', 'qwen38-video.service', 'qwen38-kolibri.service',
                      'qwen38-nemotron.service', 'qwen38-nemotron-super.service', 'qwen38-flash-local.service',
-                     'qwen38-ornith-122b.service', 'qwen38-nanbeige.service', 'qwen38-ling.service'])
+                     'qwen38-ornith-122b.service', 'qwen38-nanbeige.service', 'qwen38-groot.service'])
       if (%s !== null) units.units[u].enabled = %s;
     feed({config: CONFIG, units, lifecycle: life({'qwen38-sglang.service': eng('stopped', {target: 'uncensored'}),
                                                  'qwen38-flash.service': eng('stopped', {target: 'flash'})})});
@@ -2183,7 +2183,7 @@ class EachLaneWearsItsMakersMark(unittest.TestCase):
                 hidden: [...document.querySelectorAll('#rack .mark, #lanes-list .mark')].map(m => m.getAttribute('aria-hidden')),
                 none, flash, video});
         """)
-        lanes = ["qwen.svg", "qwen.svg", "nvidia.svg", "ornith.svg", "nanbeige.svg", "ling.svg", "alephalpha.svg", "nvidia.svg", "nvidia.svg", "qwen.svg",
+        lanes = ["qwen.svg", "qwen.svg", "nvidia.svg", "ornith.svg", "nanbeige.svg", "groot.svg", "alephalpha.svg", "nvidia.svg", "nvidia.svg", "qwen.svg",
                  "minimax.svg"]   # 27B, flash, Flash FP4-Local, Ornith, Kolibri, the Nemotron lanes, image, video
         self.assertEqual(r["bays"], lanes)
         self.assertEqual(r["cards"], lanes)
@@ -2198,14 +2198,14 @@ class EachLaneWearsItsMakersMark(unittest.TestCase):
         names = set()
         for f in (pagejs.STATIC / "js").glob("*.js"):
             names |= set(re.findall(r"maker: '([a-z]+)'", f.read_text()))
-        self.assertEqual(names, {"qwen", "minimax", "alephalpha", "nvidia", "ornith", "nanbeige", "ling"})
+        self.assertEqual(names, {"qwen", "minimax", "alephalpha", "nvidia", "ornith", "nanbeige", "groot"})
         for n in names:
             self.assertTrue((pagejs.STATIC / "img" / "logos" / f"{n}.svg").is_file(), n)
         css = (pagejs.STATIC / "css" / "cockpit.css").read_text()
         # the lanes whose name holds a dash too: read without it, Super VL's and FP4-Local's hues went
         # unchecked (found when the Ornith lane came, 2026-10-21)
         lanes = set(re.findall(r"lane: '([a-z0-9-]+)'", (pagejs.STATIC / "js" / "base.js").read_text()))
-        self.assertEqual(lanes, {"27b", "flash", "kolibri", "nemotron", "nemotron-super", "flash-local", "ornith-122b", "nanbeige", "ling",
+        self.assertEqual(lanes, {"27b", "flash", "kolibri", "nemotron", "nemotron-super", "flash-local", "ornith-122b", "nanbeige", "groot",
                                  "image", "video"})
         for lane in lanes:
             self.assertRegex(css, r"--lane-%s:#[0-9a-f]{6};" % lane)
@@ -2323,7 +2323,7 @@ class TheBoxItIs(unittest.TestCase):
     BODY = r"""
     const units = JSON.parse(JSON.stringify(UNITS));
     const BIG = ['qwen38-flash.service', 'qwen38-image.service', 'qwen38-video.service', 'qwen38-kolibri.service',
-                 'qwen38-nemotron-super.service', 'qwen38-flash-local.service', 'qwen38-ornith-122b.service', 'qwen38-nanbeige.service', 'qwen38-ling.service'];
+                 'qwen38-nemotron-super.service', 'qwen38-flash-local.service', 'qwen38-ornith-122b.service', 'qwen38-nanbeige.service', 'qwen38-groot.service'];
     for (const u of BIG) units.units[u].enabled = '';
     const fits = %s === '64' ? ['qwen38-nemotron.service', 'qwen38-sglang.service'] : Object.keys(units.units);
     const targets = fits.length === 2 ? ['nemotron', 'stock', 'uncensored'] : Object.keys(TARGET_NAME);

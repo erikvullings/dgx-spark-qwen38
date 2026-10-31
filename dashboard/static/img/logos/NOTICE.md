@@ -21,4 +21,4 @@ runs.
 
 `nanbeige.svg` is an original letter N monogram made for this fork, not an official Nanbeige logo.
 
-`ling.svg` is an original letter L monogram for this fork, not an official inclusionAI logo.
+`groot.svg` is an original letter G monogram for this fork, not an official GrootTeam logo.

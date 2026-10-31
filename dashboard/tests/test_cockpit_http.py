@@ -703,11 +703,11 @@ class ReadRoutes(Base):
         # and the allowlist is exactly these: the lanes' containers and this repo's units.
         # A truthiness check of the union could not fail (found in review, 2026-09-24).
         self.assertEqual(set(self.cp.CONTAINERS), {"qwen38-sglang", "qwen38-flash", "qwen38-kolibri", "qwen38-nemotron",
-                                                   "qwen38-nemotron-super", "qwen38-flash-local", "qwen38-ornith-122b", "qwen38-nanbeige", "qwen38-ling"})
+                                                   "qwen38-nemotron-super", "qwen38-flash-local", "qwen38-ornith-122b", "qwen38-nanbeige", "qwen38-groot"})
         self.assertEqual(set(self.cp.JOURNAL_UNITS), {
             "qwen38-sglang.service", "qwen38-flash.service", "qwen38-image.service",
             "qwen38-video.service", "qwen38-kolibri.service", "qwen38-nemotron.service",
-            "qwen38-nemotron-super.service", "qwen38-flash-local.service", "qwen38-ornith-122b.service", "qwen38-nanbeige.service", "qwen38-ling.service",
+            "qwen38-nemotron-super.service", "qwen38-flash-local.service", "qwen38-ornith-122b.service", "qwen38-nanbeige.service", "qwen38-groot.service",
             "qwen38-keepalive.service", "opencode-web.service"})
 
     def test_a_known_log_source_answers_with_bounded_lines(self):

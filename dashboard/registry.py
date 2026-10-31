@@ -38,7 +38,7 @@ PIN_MODELS = {
     "NEMOTRON_SUPER_REV": "nvidia/NVIDIA-Nemotron-3.5-Super-VL-120B-A12B-NVFP4",
     "NEMOTRON_SUPER_DRAFT_REV": "nvidia/NVIDIA-Nemotron-3.5-Super-VL-120B-A12B-NVFP4-LiLiCorr",
     "FLASH_LOCAL_REV": "nvidia/Qwen3.8-Flash-Next-FP4-Local",
-    "NANBEIGE_REV": "primitive-ai/Nanbeige4.3-33B-mixed-NVFP4-FP8", "LING_REV": "inclusionAI/Ling-3.0-flash-fp4",
+    "NANBEIGE_REV": "primitive-ai/Nanbeige4.3-33B-mixed-NVFP4-FP8", "GROOT_REV": "GrootTeam/Groot-65B-A6B-261023-NVFP4",
     "ORNITH_122B_REV": "ornith-ai/Ornith-1.5-122B-NVFP4",
 }
 
@@ -46,7 +46,7 @@ PIN_MODELS = {
 # lane's in its own installer.
 PIN_FILES = ("switch-model.sh", "run.sh", "install.sh",
              "install-image.sh", "install-video.sh", "install-kolibri.sh", "install-nemotron.sh",
-             "install-nemotron-super.sh", "install-flash-local.sh", "install-ornith-122b.sh", "install-nanbeige.sh", "install-ling.sh")
+             "install-nemotron-super.sh", "install-flash-local.sh", "install-ornith-122b.sh", "install-nanbeige.sh", "install-groot.sh")
 
 PIN_RE = re.compile(r'^\s*([A-Z][A-Z0-9_]*REV)="?\$?\{?[A-Z0-9_:-]*?([0-9a-f]{40})',
                     re.MULTILINE)
@@ -56,7 +56,7 @@ PIN_RE = re.compile(r'^\s*([A-Z][A-Z0-9_]*REV)="?\$?\{?[A-Z0-9_:-]*?([0-9a-f]{40
 # missing from Library's engine images (found on the reference box, 2026-10-16). The Flash
 # FP4-Local lane runs the community b12x image its model card names, pulled by digest.
 ENGINE_IMAGE_RE = re.compile(
-    r"^(lmsysorg/sglang|qwen38-flash|qwen38-dflash2|qwen38-sglang|qwen38-ling:|qwen38-kolibri:|qwen38-nemotron:|vllm|eugr/spark-vllm-b12x)")
+    r"^(lmsysorg/sglang|qwen38-flash|qwen38-dflash2|qwen38-sglang|qwen38-groot:|qwen38-kolibri:|qwen38-nemotron:|vllm|eugr/spark-vllm-b12x)")
 
 
 # Where a lane's unit or launcher says its Hugging Face cache is: a text lane mounts it into

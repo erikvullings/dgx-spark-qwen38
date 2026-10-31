@@ -269,9 +269,9 @@ case "$CHOICE" in
     #     205,000 - 20,000 + 43,863 + 32,000 = 260,863  <=  262,144
     CTX=205000; OUT=32000; LABEL="local, 262K"
     ;;
-  ling)
-    # Conservative initial client budget under the notebook's 256K window.
-    CTX=180000; OUT=16000; LABEL="experimental, 256K"
+  groot)
+    # Conservative client budget under the 128K server window.
+    CTX=100000; OUT=16000; LABEL="experimental, 128K"
     ;;
   nanbeige)
     # Experimental 32K window. OpenCode reserves 20K before compaction,

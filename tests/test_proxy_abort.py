@@ -275,7 +275,7 @@ class Abort(unittest.TestCase):
                 got += c
         if hard_close:
             # RST, so the proxy's next write fails now instead of buffering
-            s.setsockopt(socket.SOL_SOCKET, socket.SO_LINGER, struct.pack("ii", 1, 0))
+            s.setsockopt(socket.SOL_SOCKET, socket.SO_GROOTER, struct.pack("ii", 1, 0))
         s.close()
         return got
 

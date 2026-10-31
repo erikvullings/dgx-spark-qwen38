@@ -491,7 +491,7 @@ class RelaySimulation(RuleBasedStateMachine):
         if linger:
             time.sleep(linger)
         if hard_close:
-            s.setsockopt(socket.SOL_SOCKET, socket.SO_LINGER, struct.pack("ii", 1, 0))
+            s.setsockopt(socket.SOL_SOCKET, socket.SO_GROOTER, struct.pack("ii", 1, 0))
         s.close()
         self.opened += 1
         return got
