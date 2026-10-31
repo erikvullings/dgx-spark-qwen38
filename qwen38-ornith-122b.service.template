@@ -74,6 +74,22 @@ ExecStartPre=/bin/bash __HOME__/.config/qwen38/engine-preflight.sh qwen38-ornith
 # --enable-prompt-tokens-details: each answer says how much of its prompt the prefix cache served
 # (usage.prompt_tokens_details.cached_tokens, and cache_read_input_tokens beside input_tokens on
 # /v1/messages, input_tokens then counting the rest), which the engine counts anyway: discussion #49.
+# The scheduler while a long prompt is computed (issue #61). Each engine step carries up to 4,096 tokens of
+# a prompt, which take seconds once it is long, and with vLLM's defaults the other requests waited: while a
+# cold prompt of 362,694 tokens was computed (698 s), 20 KB requests sent by 10 clients got their first
+# token after 101 s at the median and their 64 tokens after 265 s (484 s at worst), where ten at once take
+# 11.5 and 20 s with nothing else running (the reference box, 2026-10-31). --max-parallel-prefills auto lets
+# up to four prompts share a step, round-robin, a prompt alone keeping the whole budget. --prefill-policy
+# decode-aware keeps one of those places for the prompt nearest its answer. --prefill-compute-share 0.25
+# gives the prompts a quarter of the time the engine is shared, and the answers being written the rest. And
+# --max-num-prefill-tokens-per-step 1024 caps a shared step's prompt tokens, a step the prompt has alone
+# keeping its 4,096 (vLLM's own descriptions, vllm/config/scheduler.py). With them, on the same prompt: the
+# first token after 30 s at the median, the 64 tokens after 34 s (62 s at worst), 16.7 requests served a minute
+# instead of 2.4, and the long prompt took 1,653 s, its last 388 s alone once the clients had stopped. A prompt
+# alone takes the time it took (418 s
+# for 277,608 tokens, 416 s before). A share of "auto" served them less well (86 s at the median, 161 s at
+# worst), and steps of 8,192 tokens made a prompt alone 5 % faster but kept 8 requests of 80 waiting 668 to
+# 777 s for their first token (docs/ornith-lane.md).
 ExecStart=/bin/bash -c 'exec /usr/bin/docker run --rm --name qwen38-ornith-122b --gpus all \
   --memory 110g --memory-swap 110g --shm-size 16g --network host --ipc=host \
   --ulimit memlock=-1 --ulimit stack=67108864 \
@@ -106,6 +122,8 @@ ExecStart=/bin/bash -c 'exec /usr/bin/docker run --rm --name qwen38-ornith-122b 
     --mamba-cache-mode align --enable-prefix-caching --enable-chunked-prefill \
     --prefix-match-unit 16 \
     --max-model-len 1048576 --max-num-seqs __SEQS__ --max-num-batched-tokens 4096 \
+    --max-parallel-prefills auto --prefill-policy decode-aware --prefill-compute-share 0.25 \
+    --max-num-prefill-tokens-per-step 1024 \
     --gpu-memory-utilization __GMU__ --kv-cache-memory-bytes __KV_BYTES__ \
     --hf-overrides.text_config.rope_parameters.mrope_interleaved true \
     --hf-overrides.text_config.rope_parameters.mrope_section "[11,11,10]" \

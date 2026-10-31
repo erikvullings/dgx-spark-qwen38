@@ -216,6 +216,40 @@ says what widens each client's timeout. Since v1.40.7 the cockpit says while it 
 request has been in flight and how much of its prompt the engine has computed, with a floor of the time
 left, and the proxy says when a client sends a long prompt again after leaving it.
 
+## Other requests while a long prompt is computed
+
+Each engine step carries up to 4,096 tokens of a prompt, and once a prompt is long those take seconds. With
+vLLM's default scheduler the other requests waited (issue #61): while a cold prompt of 362,694 tokens was
+computed, 10 clients each sending requests of about 20 KB in a loop got their first token after 101 s at the
+median and their 64 tokens after 265 s, 484 s at worst, where ten such requests at once take 11.5 and 20 s
+on an engine with nothing else to do. A client whose timeout is shorter gives up and sends its request
+again, as the user who reported it saw.
+
+Since v1.40.7 the lane starts with four of vLLM's scheduler settings (vllm/config/scheduler.py says what each
+does). `--max-parallel-prefills auto` lets up to four prompts share a step, round-robin, a prompt alone
+keeping the whole budget. `--prefill-policy decode-aware` keeps one of those places for the prompt nearest its
+answer. `--prefill-compute-share 0.25` gives the prompts a quarter of the time the engine is shared, and the
+answers being written the rest. `--max-num-prefill-tokens-per-step 1024` caps a shared step's prompt tokens,
+a step the prompt has alone keeping its 4,096. Measured on the reference box on 2026-10-31, each setting
+started by the lane's own command, the same long prompt and the same 10 clients:
+
+| Settings | 64 tokens, median | worst | first token, median | requests served a minute | the long prompt | a prompt alone, 277,608 tokens |
+|---|---|---|---|---|---|---|
+| vLLM's defaults (v1.40.6) | 265 s | 484 s | 101 s | 2.4 | 698 s | 416 s |
+| the four, a share of "auto" | 86 s | 161 s | 40 s | 7.1 | 1,113 s | 415 s |
+| the four, a share of 0.25 (v1.40.7) | 34 s | 62 s | 30 s | 16.7 | 1,653 s, its last 388 s alone | 418 s |
+| the four with "auto", steps of 8,192 | 22 s | 780 s | 21 s | 6.2 | 791 s | 393 s |
+
+The clients stop after 20 min: on v1.40.7's settings the long prompt outlived them and ran its last 388 s alone,
+the others ended while they still sent.
+
+The long prompt takes longer while it shares the engine, and the time it takes alone does not change: a step
+it has alone is scheduled as before. Steps of 8,192 tokens made a prompt alone 5 % faster, but 8 small
+requests of 80 waited 668 to 777 s for their first token, so the lane keeps 4,096. Answers changed no more than the engine's
+own noise: two runs of the same ten prompts at temperature 0 on one engine gave the same text for two to five
+of them, and v1.40.7's settings against v1.40.6's for three, the largest gap of a token's log-probability 0.50
+against 0.54 between two runs of v1.40.6's own.
+
 ## Memory
 
 vLLM loads 72.63 GiB of weights, and the KV cache takes its fixed 17 GiB. At the lane's window,
