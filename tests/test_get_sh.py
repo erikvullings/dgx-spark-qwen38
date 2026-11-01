@@ -7,6 +7,7 @@ contains this project's slug (so get.sh's origin check passes), clones it, and
 replaces install.sh with a stub that records its arguments, so the whole script
 runs to its exec without touching a real install."""
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -38,8 +39,17 @@ def fixture(base):
     return origin, work
 
 
+def isolated(base, extra=None):
+    """What every run of get.sh here gets: no DIR inherited, the fixture's folder for HOME, git with no network
+    protocol but local paths, and no repository looked for above that folder (a TMPDIR inside a real clone
+    would hand Case 1 that clone). So no run reaches the network, a real clone of this repo or a real
+    installer (code review, 2026-11-01)."""
+    return {k: v for k, v in os.environ.items() if k != "DIR"} | {
+        "HOME": base, "GIT_ALLOW_PROTOCOL": "file", "GIT_CEILING_DIRECTORIES": os.path.dirname(base), **(extra or {})}
+
+
 def run_get(work, env_extra=None, args=()):
-    env = {**os.environ, "DIR": work, **(env_extra or {})}
+    env = isolated(os.path.dirname(os.path.abspath(work)), env_extra) | {"DIR": work}
     return subprocess.run(["bash", GET, *args], capture_output=True, text=True, env=env)
 
 
@@ -120,6 +130,116 @@ def main() -> None:
         r = run_get(work)
         assert r.returncode == 0, f"a local tag of the same name failed the update: {r.stderr}"
         assert "INSTALL_RAN" in r.stdout, r.stdout
+
+        # 10. The repository's new name (hasso5703/alzeo, before Qwen4) is this repo too, the old
+        #     name stays accepted (every box installed before carries it), and another account's
+        #     repository of the same name is not.
+        for slug, ok in (("hasso5703/alzeo.git", True), ("someone/alzeo.git", False),
+                         ("hasso5703/alzeo-site.git", False), ("xhasso5703/alzeo.git", False)):
+            renamed = os.path.join(base, *slug.split("/"))
+            os.makedirs(os.path.dirname(renamed), exist_ok=True)
+            git("clone", "-q", "--bare", os.path.join(base, "hasso5703", "dgx-spark-qwen38.git"), renamed, cwd=base)
+            clone = os.path.join(base, "clone-" + slug.replace("/", "-"))
+            git("clone", "-q", renamed, clone, cwd=base)
+            r = run_get(clone)
+            if ok:
+                assert r.returncode == 0 and "INSTALL_RAN" in r.stdout, f"{slug} refused: {r.stderr}"
+            else:
+                assert r.returncode != 0 and "not a clone of this repo" in r.stderr, f"{slug} accepted: {r.stdout}"
+            # and from inside the clone, with no DIR: its own origin picks it, as for the old name. Only
+            # for the accepted one: a refused clone sends get.sh on to its default folder, which it would
+            # clone from GitHub, and git refuses the network here at once
+            if ok:
+                r = subprocess.run(["bash", GET], cwd=clone, capture_output=True, text=True, env=isolated(base))
+                assert r.returncode == 0 and "INSTALL_RAN" in r.stdout, f"{slug} from inside: {r.stderr[-300:]}"
+
+        # 11. Every form an origin of either name takes, HTTPS or SSH, with or without .git, as git keeps
+        #     it: accepted, or refused as another repository. git refuses the network at once, after
+        #     get.sh has said whether it takes the clone ("── Repo:" comes first). The old name keeps the
+        #     pattern it always had, now whatever the case: every box installed before carries it.
+        forms = {"https://github.com/hasso5703/alzeo": True, "https://github.com/hasso5703/alzeo.git": True,
+                 "https://github.com/hasso5703/alzeo/": True, "git@github.com:hasso5703/alzeo.git": True,
+                 "ssh://git@github.com/hasso5703/alzeo.git": True, "https://token@github.com/hasso5703/alzeo": True,
+                 "https://github.com/hasso5703/dgx-spark-qwen38": True,
+                 "git@github.com:hasso5703/dgx-spark-qwen38.git": True,
+                 "https://github.com/hasso5703/alzeo.git/": True, "git@github.com:hasso5703/alzeo": True,
+                 "ssh://git@github.com:22/hasso5703/alzeo": True, "https://user:pass@github.com/hasso5703/alzeo.git": True,
+                 # GitHub's names ignore case: a clone typed with the brand's capital is this repo too
+                 "https://github.com/Hasso5703/Alzeo": True, "https://github.com/hasso5703/ALZEO.git": True,
+                 # a local clone given as its .git folder, as git keeps the path typed
+                 "/srv/hasso5703/alzeo/.git": True, "/srv/hasso5703/alzeo/.git/": True,
+                 # the old name as older boxes may carry it: capitals, a final slash, a .git folder, a port
+                 "https://github.com/Hasso5703/DGX-Spark-Qwen38": True,
+                 "https://github.com/hasso5703/dgx-spark-qwen38.git/": True,
+                 "/srv/hasso5703/dgx-spark-qwen38/.git": True,
+                 "https://token@github.com/hasso5703/dgx-spark-qwen38.git": True,
+                 "ssh://git@github.com:22/hasso5703/dgx-spark-qwen38.git": True,
+                 "https://github.com/hasso5703/alzeo-site": False, "https://github.com/xhasso5703/alzeo": False,
+                 "https://github.com/someone/alzeo": False, "https://github.com/someone/dgx-spark-qwen38": False,
+                 "https://github.com/Hasso5703/Alzeo-Site": False}
+        for url, ok in forms.items():
+            clone = os.path.join(base, "form-%d" % len(os.listdir(base)))
+            git("clone", "-q", work, clone, cwd=base)
+            git("remote", "set-url", "origin", url, cwd=clone)
+            r = run_get(clone)
+            said = r.stdout + r.stderr
+            assert r.returncode != 0, f"{url}: the network was refused, so get.sh cannot have gone through"
+            if ok:
+                assert "── Repo: " in said and "not a clone of this repo" not in said, f"{url} refused: {said[-300:]}"
+            else:
+                assert "not a clone of this repo" in said and "── Repo: " not in said, f"{url} taken: {said[-300:]}"
+        # a refusal shows the origin without the user name, password or token a URL can carry, which an
+        # error pasted into an issue would publish: a password holding an @ or a / of its own, the user
+        # of an scp-like address and a remote helper's URL included (the part after the first @, or the
+        # whole address, was shown)
+        for url, secret, shown in (
+                ("https://someone:ghp_SECRET123@github.com/someone/fork.git", "ghp_SECRET123", "https://github.com/someone/fork.git"),
+                ("https://someone:p@ss@github.com/someone/fork.git", "ss@", "https://github.com/someone/fork.git"),
+                ("https://someone:pa/ss@github.com/someone/fork.git", "pa/ss", "https://github.com/someone/fork.git"),
+                ("ghp_TOKEN9@github.com:someone/fork.git", "ghp_TOKEN9", "github.com:someone/fork.git"),
+                ("gcrypt::https://someone:ghp_LEAK1@github.com/someone/private.git", "ghp_LEAK1",
+                 "gcrypt::https://github.com/someone/private.git")):
+            clone = os.path.join(base, "form-%d" % len(os.listdir(base)))
+            git("clone", "-q", work, clone, cwd=base)
+            git("remote", "set-url", "origin", url, cwd=clone)
+            r = run_get(clone)
+            assert secret not in r.stdout + r.stderr, f"{secret} was printed: {r.stderr[-300:]}"
+            assert f"(origin: {shown})" in r.stderr, r.stderr[-300:]
+        # and a password holding a byte that is not UTF-8, under a UTF-8 locale, where sed's . does not
+        # match it: the mask runs in the C locale
+        clone = os.path.join(base, "form-%d" % len(os.listdir(base)))
+        git("clone", "-q", work, clone, cwd=base)
+        subprocess.run(["git", "remote", "set-url", "origin", b"https://someone:p\xe4ss@github.com/someone/fork.git"],
+                       cwd=clone, check=True)
+        r = subprocess.run(["bash", GET], capture_output=True,
+                           env=isolated(base, {"LC_ALL": "C.UTF-8"}) | {"DIR": clone})
+        assert b"p\xe4ss" not in r.stdout + r.stderr, r.stderr[-300:]
+        assert b"(origin: https://github.com/someone/fork.git)" in r.stderr, r.stderr[-300:]
+
+        # 12. The same rule from inside a clone, with no DIR (the one-liner run from the clone's folder): a
+        #     clone of this repo under either name is the one used, any other repository is left alone and
+        #     the default folder taken instead (cloned from REPO_URL, which git refuses here at once, and
+        #     removes what it began: only get.sh's own words can tell, code review, 2026-11-01).
+        for url, ok in forms.items():
+            clone = os.path.join(base, "inside-%d" % len(os.listdir(base)))
+            git("clone", "-q", work, clone, cwd=base)
+            git("remote", "set-url", "origin", url, cwd=clone)
+            r = subprocess.run(["bash", GET], cwd=clone, capture_output=True, text=True, env=isolated(base))
+            said = r.stdout + r.stderr
+            assert r.returncode != 0, f"{url}: the network was refused, so get.sh cannot have gone through"
+            # get.sh names the clone as git rev-parse resolves it (a TMPDIR behind a symlink, as on macOS)
+            here = os.path.realpath(clone)
+            if ok:
+                assert f"── Repo: {here}" in said and "── Cloning" not in said, f"{url} from inside: not used: {said[-300:]}"
+            else:
+                assert f"── Repo: {here}" not in said and "── Cloning" in said, f"{url} from inside: {said[-300:]}"
+
+        # 13. get.sh stays within bash 3.2, macOS's /bin/bash: there a ${x,,} is a bad substitution that
+        #     stops the script, after it may have cloned the default folder (code review, 2026-11-01).
+        code = "\n".join(l for l in open(GET, encoding="utf-8").read().splitlines() if not l.lstrip().startswith("#"))
+        for construct in (",,}", "^^}", "declare -A", "mapfile", "readarray", "coproc", "|&", ";;&"):
+            assert construct not in code, f"get.sh uses {construct!r}, which bash 3.2 does not have"
+        assert not re.search(r"\$\{[A-Za-z_0-9]+[,^]\}", code), "get.sh uses a ${x,} or ${x^}, which bash 3.2 does not have"
 
         print("test_get_sh: OK")
     finally:

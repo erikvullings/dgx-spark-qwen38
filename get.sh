@@ -27,7 +27,7 @@ main() {
   if [ "$(id -u)" = "0" ]; then
     if [ -n "${SUDO_USER:-}" ]; then
       printf '\n\033[1;31mERROR:\033[0m do not pipe this into "sudo bash" (your login is %s).\n\n' "$SUDO_USER" >&2
-      printf '  run : curl -fsSL %s/raw/main/get.sh | bash\n' "https://github.com/hasso5703/dgx-spark-qwen38" >&2
+      printf '  run : curl -fsSL https://raw.githubusercontent.com/hasso5703/dgx-spark-qwen38/main/get.sh | bash\n' >&2
       printf '        (no sudo in front: the installer calls sudo itself, for the steps that need it)\n\n' >&2
       printf 'Under sudo, HOME is /root: the clone and the API key land there, the units point\n' >&2
       printf 'at them, and every client reading ~/.config/qwen38/api-key gets 401 from an engine\n' >&2
@@ -44,15 +44,30 @@ main() {
 
   REPO_URL="https://github.com/hasso5703/dgx-spark-qwen38"
   DEFAULT_DIR="$HOME/dgx-spark-qwen38"
+  # Is this origin a clone of THIS repo? The repository is renamed hasso5703/alzeo (planned before
+  # 2026-11-02): every box installed before keeps the old name in its origin, which GitHub
+  # redirects, and a clone made from the new address carries the new one. Both are this repo, for
+  # good. The old name keeps the pattern it always had, now whatever the case, which only takes more,
+  # so that no box installed before is refused.
+  # The new name is matched as the last two parts of the path, HTTPS or SSH, with or without .git,
+  # on any host as the old name always was (a mirror of this repository counts): hasso5703/alzeo-site,
+  # or xhasso5703/alzeo, is another repository, which this script must not update or install from.
+  # GitHub's names ignore case, and so does this: a clone of https://github.com/Hasso5703/Alzeo is
+  # this repo too. Lowered by tr in the C locale, where every capital lowers as in English: bash 3.2
+  # (macOS) takes ${1,,} for a bad substitution (code review, 2026-11-01).
+  this_repo() {
+    case "$(printf '%s' "$1" | LC_ALL=C tr '[:upper:]' '[:lower:]')" in
+      *hasso5703/dgx-spark-qwen38*|*[/:]hasso5703/alzeo|*[/:]hasso5703/alzeo.git|*[/:]hasso5703/alzeo/|*[/:]hasso5703/alzeo.git/|*[/:]hasso5703/alzeo/.git|*[/:]hasso5703/alzeo/.git/) return 0 ;;
+    esac
+    return 1
+  }
   command -v git >/dev/null || { echo "ERROR: git is required (stock on DGX OS)." >&2; exit 1; }
 
   # Case 1: running from inside an existing clone of this repo (any path) -> use it.
   DIR="${DIR:-}"
   if [ -z "$DIR" ] && TOP=$(git rev-parse --show-toplevel 2>/dev/null); then
     ORIGIN=$(git -C "$TOP" remote get-url origin 2>/dev/null || true)
-    case "$ORIGIN" in
-      *hasso5703/dgx-spark-qwen38*) DIR="$TOP" ;;
-    esac
+    if this_repo "$ORIGIN"; then DIR="$TOP"; fi
   fi
 
   # Case 2: default location -> reuse the clone or create it.
@@ -69,12 +84,19 @@ main() {
     fi
   fi
 
-  # Whatever resolved DIR: it must be a clone of THIS repo before we touch it.
+  # Whatever resolved DIR: it must be a clone of THIS repo before we touch it (this_repo above).
   DIR_ORIGIN=$(git -C "$DIR" remote get-url origin 2>/dev/null || true)
-  case "$DIR_ORIGIN" in
-    *hasso5703/dgx-spark-qwen38*) : ;;
-    *) echo "ERROR: $DIR is not a clone of this repo (origin: ${DIR_ORIGIN:-none}). Refusing to touch it." >&2; exit 1 ;;
-  esac
+  if ! this_repo "$DIR_ORIGIN"; then
+    # the origin as git keeps it, but for a user name and password or token in it, which a refusal
+    # pasted into an issue would publish (code review, 2026-10-31). Everything up to the last @ goes,
+    # after a remote helper's prefix if there is one (gcrypt::https://...), and the user of an
+    # scp-like address: a password holding an @ or a / of its own goes too, and in the C locale one
+    # holding a byte that is not UTF-8 (code review, 2026-11-01). An @ in a repository's own path,
+    # which GitHub's names never hold, shows cut.
+    SHOWN=$(printf '%s' "$DIR_ORIGIN" | LC_ALL=C sed -E -e 's#^(([A-Za-z0-9+.-]+::)?[A-Za-z][A-Za-z0-9+.-]*://).*@#\1#' \
+                                                     -e 's#^[^/:@]+@([^/:]+:)#\1#')
+    echo "ERROR: $DIR is not a clone of this repo (origin: ${SHOWN:-none}). Refusing to touch it." >&2; exit 1
+  fi
 
   echo "── Repo: $DIR"
   git -C "$DIR" fetch -q origin main
