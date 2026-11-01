@@ -7,8 +7,8 @@ Requires=docker.service
 # directions (Conflicts= alone orders nothing; measured with throwaway units on the
 # reference box's systemd 255, 2026-09-24). Until v1.18.7 only the image lane said so,
 # and two text lanes could run side by side, or both start at boot if both were enabled.
-Conflicts=qwen38-flash.service qwen38-image.service qwen38-video.service qwen38-kolibri.service qwen38-nemotron.service qwen38-nemotron-super.service qwen38-flash-local.service qwen38-ornith-122b.service
-After=network-online.target docker.service qwen38-flash.service qwen38-image.service qwen38-video.service qwen38-kolibri.service qwen38-nemotron.service qwen38-nemotron-super.service qwen38-flash-local.service qwen38-ornith-122b.service
+Conflicts=qwen38-flash.service qwen38-image.service qwen38-video.service qwen38-kolibri.service qwen38-nemotron.service qwen38-nemotron-super.service qwen38-flash-local.service qwen38-ornith-122b.service qwen38-nanbeige.service
+After=network-online.target docker.service qwen38-flash.service qwen38-image.service qwen38-video.service qwen38-kolibri.service qwen38-nemotron.service qwen38-nemotron-super.service qwen38-flash-local.service qwen38-ornith-122b.service qwen38-nanbeige.service
 
 [Service]
 # The memory settings of a 64 GB DGX Spark, measured on a 64 GB budget (2026-10-24: on the reference
@@ -33,6 +33,12 @@ ExecStartPre=/bin/bash __HOME__/.config/qwen38/engine-secrets.sh
 # while it starts and 200 once it serves, instead of generating a token whenever the engine is
 # idle. /health takes no key, and the proxy relayed it from the network (D02 of the 2026-10-24
 # security review); /health_generate still generates, and the proxy asks the key for it.
+# SGLANG_DISTRIBUTED_INIT_METHOD_OVERRIDE: the rendezvous of the engine's one process goes through a file
+# in the container, which --rm makes new at each start. torch's TCPStore, the default, listened on every
+# interface whatever address it was given (*:23906 on the reference box, 2026-10-30, no key, no firewall),
+# and with the file no port opens for it. GLOO_SOCKET_IFNAME and NCCL_SOCKET_IFNAME keep gloo's and NCCL's
+# bootstrap on lo: under the real clients, the lane listened on four ports of the box's LAN address without
+# them, though the box's name resolves to 127.0.0.1 (2026-10-30).
 # --enable-cache-report: each answer says how much of its prompt the prefix cache served
 # (usage.prompt_tokens_details.cached_tokens, and cache_read_input_tokens beside input_tokens on
 # /v1/messages), which the engine counts anyway. Asked in discussion #49, measured on this lane
@@ -42,6 +48,8 @@ ExecStart=/bin/bash -c 'exec /usr/bin/docker run --rm --name qwen38-sglang --gpu
   -e TORCHINDUCTOR_CACHE_DIR=/cache/inductor \
   -e SGLANG_ENABLE_REQUEST_HEADER_OVERRIDES=1 \
   -e SGLANG_ENABLE_HEALTH_ENDPOINT_GENERATION=0 \
+  -e SGLANG_DISTRIBUTED_INIT_METHOD_OVERRIDE=file:///tmp/sglang-rdv \
+  -e GLOO_SOCKET_IFNAME=lo -e NCCL_SOCKET_IFNAME=lo \
   -e HF_HUB_OFFLINE=1 \
   -v __HOME__/.config/qwen38/sglang-cache:/cache \
   -v __HF_CACHE__:/root/.cache/huggingface \

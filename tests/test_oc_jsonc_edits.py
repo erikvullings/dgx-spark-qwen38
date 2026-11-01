@@ -339,7 +339,10 @@ class TheGeneratedConfigIsWrittenOnce(unittest.TestCase):
         env = dict(os.environ, OC_LANE="27b", OC_27B="1", OC_FLASH="1", OC_PORT="30001", OC_CTX="700000",
                    OC_OUT="200000", OC_LABEL="local, 1M", OC_CONTEXT_MODE="1m", OC_27B_CTX="700000",
                    OC_27B_OUT="200000", OC_FLASH_CTX="205000", OC_FLASH_OUT="32000", OC_KEEP="170000",
-                   OC_PIN="1", OC_CONFIG_DIR=str(d), OC_SERVED_NAME=name)
+                   OC_PIN="1", OC_CONFIG_DIR=str(d), OC_SERVED_NAME=name,
+                   # the shell rules install.sh hands the generator (v1.40.4): a fixed point with them too
+                   OC_DENY=subprocess.run([sys.executable, str(MERGE), "--deny-permission"], capture_output=True,
+                                          text=True, check=True).stdout.strip())
         for turn in (1, 2):
             r = subprocess.run([sys.executable, "-c", body], capture_output=True, text=True, env=env, timeout=30)
             self.assertEqual(r.returncode, 0, r.stderr)

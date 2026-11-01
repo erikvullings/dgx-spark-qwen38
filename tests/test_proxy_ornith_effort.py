@@ -55,6 +55,14 @@ class TheTranslation(unittest.TestCase):
                     self.assertEqual(sent["chat_template_kwargs"], {"enable_thinking": on})
                     self.assertNotIn("reasoning_effort", sent)
 
+    def test_nanbeige_uses_the_same_boolean_translation_without_losing_agent_kwargs(self):
+        self.mod._SERVED.update(names=("nanbeige4.3-33b",), engine="vllm")
+        sent, got = self.go({"model": "nanbeige4.3-33b", "reasoning_effort": "none", "messages": [],
+                             "chat_template_kwargs": {"preserve_thinking": True}})
+        self.assertEqual(got, "none")
+        self.assertEqual(sent["chat_template_kwargs"], {"enable_thinking": False, "preserve_thinking": True})
+        self.assertNotIn("reasoning_effort", sent)
+
     def test_the_kwargs_level_wins_over_the_top_level_one_and_both_go(self):
         sent, got = self.go({"model": ORNITH, "reasoning_effort": "high", "messages": [],
                              "chat_template_kwargs": {"reasoning_effort": "none", "keep": 1}})

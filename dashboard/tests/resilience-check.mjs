@@ -18,7 +18,7 @@ import { randomBytes } from 'node:crypto';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import net from 'node:net';
+import { portOf } from './localports.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const COCKPIT = join(HERE, '..', 'cockpit.py');
@@ -28,7 +28,6 @@ const checks = [];
 const ok = (name, cond, detail = '') => { checks.push({ name, ok: !!cond, detail: String(detail).slice(0, 180) }); };
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 
-const freePort = () => new Promise(res => { const srv = net.createServer(); srv.listen(0, '127.0.0.1', () => { const p = srv.address().port; srv.close(() => res(p)); }); });
 
 const root = mkdtempSync(join(tmpdir(), 'cockpit-resilience-'));
 let server = null, chrome = null;
@@ -52,9 +51,11 @@ writeFileSync(join(cfgDir, 'api-key'), key + '\n', { mode: 0o600 });
 for (const cmd of ['docker', 'systemctl', 'journalctl', 'nvidia-smi', 'sudo', 'git', 'curl', 'tailscale', 'opencode']) {
   writeFileSync(join(fence, cmd), '#!/bin/sh\nexit 1\n'); chmodSync(join(fence, cmd), 0o755);
 }
-const PORT = await freePort();
-const BASE = `http://127.0.0.1:${PORT}`;
 const CLOSED = 'http://127.0.0.1:1';
+// the first start takes port 0, the kernel's own free port, read back once the cockpit listens (localports.mjs);
+// the restart takes that number again, since the page must find its server at the same origin: a program that
+// took it in between makes the restart fail and the check say so, never pass
+let PORT = 0, BASE = '';
 
 function startServer() {
   server = spawn('python3', [COCKPIT], {
@@ -83,6 +84,8 @@ function stopServer() {
 
 try {
   startServer();
+  try { PORT = await portOf(server); } catch (e) { console.error(`the spawned cockpit never listened: ${e.message}`); process.exit(2); }
+  BASE = `http://127.0.0.1:${PORT}`;
   if (!await waitHealth(true)) { console.error('the spawned cockpit never became healthy'); process.exit(2); }
 
   const login = await fetch(`${BASE}/api/login`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ key }) });

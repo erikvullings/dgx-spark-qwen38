@@ -2,6 +2,8 @@ __pycache__/
 *.pyc
 bench-matrix-*.json
 .venv-test/
+.venv/
+.venv-mirror/
 .hypothesis/
 .coverage
 .coverage.*

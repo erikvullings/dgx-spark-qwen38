@@ -1,5 +1,535 @@
 # Changelog
 
+## v1.40.8 (2026-11-01): get.sh takes a clone of hasso5703/alzeo for this repo, before the repository is renamed, and an update no longer stops in silence on a clone with thousands of untracked files
+
+**Why.** The repository is to be renamed hasso5703/alzeo. GitHub then sends the old address on to the new one, for
+git, for the raw files the one-liner fetches and for its API, as long as no other repository takes the old name. But
+get.sh takes a clone for this repo only if its origin names hasso5703/dgx-spark-qwen38. Once the repository has its
+new name, a clone made from the new address would have been refused in ~/dgx-spark-qwen38 at its first update ("not a
+clone of this repo"), and, run from inside it anywhere else, passed over for ~/dgx-spark-qwen38, cloned under the old
+name when missing, onto which the box moved.
+
+**get.sh.** A clone whose origin names hasso5703/dgx-spark-qwen38 or hasso5703/alzeo is this repo, for good: every box
+installed before keeps the old name in its origin, matched by the pattern it always had, any origin that contains
+hasso5703/dgx-spark-qwen38. The new name is matched as the last two parts of the path, by HTTPS or SSH, with or
+without .git, on any host as the old name always was (a mirror of this repository counts): hasso5703/alzeo-site,
+xhasso5703/alzeo or someone/alzeo is another repository, which get.sh neither updates nor installs from. Both are now
+matched whatever the case, as GitHub's names are (a clone of https://github.com/Hasso5703/Alzeo is this repo), which
+for the old name only takes more, and the rule is written once, for the two checks that read it. A refusal shows the
+origin without the user name, password or token an address can carry: a password holding an @, a /, a line break or a
+byte that is not UTF-8, the user of an scp-like address, a remote helper's address and a token in the query string
+included, and any form still holding an @ shows only what follows its last @. An ext:: address, a command that can
+carry a password, is not shown at all. And under sudo get.sh names the one-liner as the README gives it, on
+raw.githubusercontent.com, which serves a renamed repository's files under its old name too, as long as no other
+repository takes that name (measured on 2026-11-01 on three repositories renamed before). Where get.sh looks for the
+clone does not change: DIR when given, else the clone it is run from, else ~/dgx-spark-qwen38, so a clone of the new
+name kept elsewhere, ~/alzeo for one, is updated by running the command from inside it, as the cockpit's update
+command does. The folder ~/dgx-spark-qwen38 and the qwen38 names on the box stay as they are.
+
+**Updates that stopped in silence.** With thousands of untracked files in the clone (a .venv-mirror/, which MIRROR.md
+creates there and .gitignore did not list, holds that many), get.sh stopped after listing five of them, with code 141
+and no error, before the update, and the box stayed on its release: the list closed its pipe early, and under pipefail
+the writer's SIGPIPE ended the script. With hundreds of modified tracked files, its refusal ended the same way before
+giving the way out. Both lists are now read to their end and print what they printed before. A folder that is
+untracked whole is now named once in that list, and .gitignore leaves .venv-mirror/ out, beside .venv/. Found in
+review of this release, in lines older than it.
+
+**Tests.** Two tests fail on v1.40.7 and pass on this release. get.sh run against a bare repository named
+hasso5703/alzeo, given as DIR and from inside the clone, goes through to the installer, and ones named someone/alzeo,
+hasso5703/alzeo-site and xhasso5703/alzeo are refused. Twenty-six origins as git keeps them, HTTPS or SSH, with
+credentials, .git, a final slash, a port, capitals or a .git folder, seven of them the old name as older boxes may
+carry it, are each taken or refused as they should be, given as DIR and from inside the clone, and a refused clone,
+given a local edit and an untracked file first, keeps its origin, its commit and every file as it was. A refusal shows
+no secret in any of the forms above, a byte that is not UTF-8 included (under a UTF-8 locale, where the machine has
+one). A clone holding 3,000 untracked files is updated and lists exactly the first five, a folder of 2,000 untracked
+files is listed as one line, and a clone with 1,500 modified tracked files is refused with its first ten listed and
+the whole advice: each list outgrows the 64 KiB pipe of a 4 KiB-page kernel more than twice, so a head put back fails
+every run. get.sh is checked for the bash 4 and 5 constructs a script reaches for first, which bash 3.2, macOS's
+/bin/bash, lacks (${x,,}, ${x@L}, [[ -v, declare -l and the like). Nineteen changes that each put one defect back fail
+the tests: v1.40.7's get.sh, a head back in either list, sed's p flag dropped, the list without --directory, a refusal
+that touches or empties the clone it refuses, the mask without its last-@ step, its line join, its query cut or its
+ext:: rule, and, that step removed too, without its C locale, its remote helper's prefix or its last-@ rule in sed,
+${1,,}, ${1@L} or [[ -v back in, and the old name matched with its case. Every run of get.sh gets PATH and nothing
+else of the shell's environment, a throwaway home, no network protocol but local paths, and no repository looked for
+above its folder, and the fixture's own git inherits none of the variables that point git at a repository, so no test
+reaches the network, a real clone of this repo or a real installer. And the refusal under sudo names the one-liner the
+README gives.
+
+**What an update does.** get.sh, .gitignore and this changelog change, and the tests. The cockpit restarts once, to
+name the new release, which drops its open pages and the Agent tab's connection. Nothing else restarts, and get.sh
+updates the clone it updated before.
+
+**After the push.** The reference box updated with the public one-liner at f528ef5 on 2026-11-01, through the get.sh
+of this release, which took ~/dgx-spark-qwen38 as before, and the run ended whole in 91 s. The cockpit restarted once
+and names v1.40.8, the proxy and Flash FP4-Local, the lane that served, kept running, and no unit file changed. The 8
+real clients (Claude Code, opencode, Hermes, pi, the OpenAI and Anthropic SDKs, fetch under Node and Bun, LiteLLM)
+answered through the proxy on Flash FP4-Local, the production checks passed, and the cockpit showed no banner on any
+of its 5 views, with no JavaScript error. GitHub's CI passed its 7 jobs with no step skipped.
+
+## v1.40.7 (2026-10-31): on the Ornith lane a long prompt no longer holds up the other requests, and the cockpit says while a prompt is computed (#61)
+
+**Why.** On 2026-10-30 a user of the Ornith lane on a 128 GB Lenovo box reported that requests stop answering once
+their size in the cockpit's Traffic view nears 1835 KB, in a long chat in a WebUI and in Claude Code near 450,000 to
+500,000 tokens (#61). Reproduced on the reference box the same evening, nothing hangs. A prompt of that size that the
+prefix cache cannot serve is computed whole before its first token, and on Ornith that took 19 min for 494,089 tokens,
+the time growing about with the square of the length. Through all of it the cockpit showed the request "in flight"
+with no time, its last five minutes "quiet", and vLLM's own log printed 0.0 prompt tokens a second, as vLLM counts a
+prompt's tokens once it is done. And Claude Code with its own default timeouts left such a turn after 620 s, twice,
+then sent it without streaming and left after 300 s, twice: each request its client had left was closed, the engine
+kept part of what it had computed only every other time, and the answer came at the fifth attempt, after 35 min. The
+user then wrote that while such a prompt is computed, his other services and his other users' requests stall too,
+small ones of 20 KB taking ages, then timing out and coming again. Measured on 2026-10-31 with 10 clients sending
+requests of about 20 KB in a loop while a cold prompt of 362,694 tokens was computed: their 64 tokens came after 265 s
+at the median and 484 s at worst, where ten such requests at once take 20 s with nothing else running.
+
+**The Ornith lane.** Its engine starts with four of vLLM's scheduler settings. `--max-parallel-prefills auto` lets up
+to four prompts share an engine step, round-robin, a prompt alone keeping the whole budget. `--prefill-policy
+decode-aware` keeps one of those places for the prompt nearest its answer. `--prefill-compute-share 0.25` gives the
+prompts a quarter of the time the engine is shared, and the answers being written the rest. And
+`--max-num-prefill-tokens-per-step 1024` caps a shared step's prompt tokens, a step the prompt has alone keeping its
+4,096. On the same prompt and the same 10 clients, each setting started by the lane's own command: the 64 tokens came
+after 34 s at the median and 62 s at worst instead of 265 and 484, the first token after 30 s instead of 101, and
+16.7 requests were served a minute instead of 2.4. The long prompt took 1,653 s instead of 698, sharing the engine for
+its first 20 min 35 s, until the clients stopped, and alone for the rest. Alone it takes
+the time it took: 418 s for 277,608 tokens, 416 s with v1.40.6's settings, as vLLM schedules a step the prompt has
+alone as before. Answers changed no more than the engine's own noise: two runs of the same ten prompts at temperature
+0 on one engine gave the same text for two to five of them, and these settings against v1.40.6's for three, the
+largest gap of a token's log-probability 0.50 against 0.54 between two runs of v1.40.6's own. A share of "auto"
+served the small requests less well (86 s at the median, 161 s at worst), and steps of 8,192 tokens made a prompt
+alone 5 % faster but kept 8 small requests of 80 waiting 668 to 777 s for their first token, so the lane keeps 4,096
+(docs/ornith-lane.md).
+
+**The cockpit.** A request in flight shows how long it has been so in the Traffic view. On the vLLM lanes, while one
+request computes its prompt alone (no token written for 10 s), the Now view, that request's row in the Traffic view
+and the Traffic view's state say how much of its prompt the engine holds, from the KV cache it fills and the prompt's
+length the prefix cache counted when it was admitted, with a floor of the time left: "computing its prompt: 37 % of
+523,914 tokens after 2 min 29, at least 16 min left", with 18.7 min left. The floor is read off the request's own curve (the time grows as
+the tokens to a power k, held between 1 and 2), with the half second the cockpit reads the engine at and a block of its
+KV cache counted against it, and rounded down, on the page too. The last five minutes say "computing a prompt" instead
+of "quiet". It follows a prompt only from an admission vLLM's counters prove to be one request (one more running, none
+waiting, none finished and none preempted between two reads), says it only while that request runs alone and before its
+first token, and says no floor once another request has shared the engine with it. With small requests coming and
+going beside a long prompt, a page that followed the last admission would have said "99 % of 4,812 tokens, almost
+done" of a prompt of 388,753 that went on (found in review before the release, and replayed in its tests). A read the cockpit could not make changes nothing, and what it
+knew is said no longer than 10 s after its last read.
+
+**The proxy (v6.49).** A client that leaves a request of at least 256 KiB after at least 60 s and before any answer
+(streamed or not, but not while its answer is relayed, nor while a starting lane holds it) has its prompt kept for two
+minutes (its whole body hashed, but for the stream and the answer's length, which Claude Code's retries change),
+and the same prompt sent again within them is written as "RESENT the prompt its client left without an answer after
+631 s (1 time in a row, claude-cli/2.1.314)", with what widens that client's timeout: for Claude Code, claude-local,
+or API_TIMEOUT_MS=3600000 with CLAUDE_STREAM_IDLE_TIMEOUT_MS and CLAUDE_BYTE_STREAM_IDLE_TIMEOUT_MS at 1800000. The
+cockpit shows the lines of the last day as a banner. Nothing relayed changes.
+
+**Proved on the reference box.** On 2026-10-31 at night, the branch's cockpit, served on a port of its own and acting
+on nothing, watched Claude Code with claude-local's timeouts send a cold prompt of 523,914 tokens through the box's
+proxy: one request, its answer after 1289 s. About every 2 min 40 the Now view said, for example, "37 % of 523,914 tokens
+after 2 min 29, at least 16 min left" when 18.7 were left, then 52 % and at least 14 when 16.0 were, down to 99 % and
+at least 35 s, and "almost done": every floor under the time that was left, the Traffic view saying "computing a
+prompt" until the prompt was done, and no JavaScript error. The same afternoon, Claude Code 2.1.314 with its own default timeouts sent a cold
+prompt of 1,762,107 bytes on Ornith through the branch's proxy: it left after 630.8 s and sent the same prompt again at
+once, and the proxy wrote its RESENT line with the advice for Claude Code. The scheduler settings were measured as said
+above. Then the lane's unit as this release writes it, started as is, served the 8 real clients through this
+release's proxy, all OK: Claude Code, opencode, Hermes, pi, the OpenAI and Anthropic SDKs, fetch under Node and Bun,
+and LiteLLM, its engine ready in 155 s.
+
+**Tests.** 47 tests fail on v1.40.6 and pass on this release. The cockpit's reading of a prompt: the real counters of
+the prompt of 494,089 tokens replayed, every floor under the time that was left, the exact edges of each rule, and a
+request admitted beside others, a jump of two prompts at one read, a probe that came and went in the same read, a
+prompt preempted and admitted again, a request waiting beside it, a read that failed, a decode that stalls after the
+first token, and an idle lane that keeps nothing growing. The four counters read off vLLM's page. The page's words, the
+floor rounded down and the banner. The proxy's RESENT line, from a real proxy in front of an engine that answers
+nothing, every way the proxy ends a request on a client that left counted or not on purpose, and the fingerprint. And
+the Ornith unit's four settings. lifecycle.py stays at 100 % of its branches.
+
+**After the push.** The reference box updated with the public one-liner at a291a64 on 2026-10-31: the proxy restarted
+once, on v6.49, and the cockpit once, and nothing else, the Ornith unit rewritten with its four settings while Flash
+FP4-Local, the lane that served, kept serving. The 8 real clients answered through the proxy on Flash FP4-Local, the
+production checks passed, and the cockpit showed no banner on any of its 5 views, with no JavaScript error. Then the 8
+clients ran on the 7 text lanes, each loaded as the cockpit's Load does, on what the one-liner installed: 56 of 56 OK,
+Ornith on its new settings among them. On every lane a tool result in the shape Claude Code sends after a ToolSearch
+got an answer, the proxy wrote its line for a tool call naming an Alibaba Cloud host, and the prefix cache served, to
+the token, the counts the v1.40.3 notes give, and Ornith decoded at 43.0, 42.4 and 42.5 tok/s (42.8, 42.7 and 42.2 in
+v1.40.5's matrix). Last, the installed cockpit watched Ornith compute a cold prompt alone: "52 % of 297,464 tokens after
+88 s, at least 83 s left", then 72 % and at least 71 s, 88 % and at least 38 s, every floor under the time that was
+left (its first token came at 468 s), then "almost done". And a cold prompt of 264,382 tokens with 3 clients sending
+small requests beside it for 5 min: while they ran, the page said only how many requests were running, and once the
+prompt ran alone, "90 % of 264,382 tokens after 6 min 20" with no floor, then "almost done". It never named another
+request's tokens.
+
+**What an update does.** The proxy restarts once (v6.49), which ends a request it relays then, and so does the cockpit,
+which drops its open pages and the Agent tab's connection. On a 128 GB box the Ornith unit is rewritten (a 64 GB box has
+none): a box whose serving lane is Ornith keeps its running engine until its next Load, as the installer's NOTE and the
+cockpit say, and has the new settings from there. Nothing else moves.
+
+## v1.40.6 (2026-10-31): the engines' own coordination ports stay off the network, where SECURITY.md said no setting could keep them
+
+**Why.** SECURITY.md has said since 2026-09-30 that each engine opens its own coordination port on every interface, with
+no key and no setting to narrow it, and advised a firewall: an engine of one process still runs torch.distributed's
+store, which torch binds to every interface whatever address it is given. No model and no data sit behind those ports,
+but a hostile connection can disturb the engine. There are settings after all. Measured again on the reference box on
+2026-10-30, which has no firewall: the installed image and video lanes listened on *:30005 and on four ports of
+192.168.1.71, the box's LAN address, the 27B lane on *:23906, a port drawn at each start, and under the real clients the
+27B and flash lanes on four ports of 192.168.1.71 as well, though the box's name resolves to 127.0.0.1. A connection to
+30005 from the box's LAN address and from its tailnet address went through. The vLLM lanes opened no such port.
+
+**The image and video lanes.** Their units pin gloo and NCCL to lo (GLOO_SOCKET_IFNAME, NCCL_SOCKET_IFNAME) and, with a
+bind on any loopback address (127.* or localhost, 127.0.0.1 by default), set IPAddressDeny=any with
+IPAddressAllow=localhost: the kernel lets the lane's processes talk to loopback alone, so the store, which still listens
+on every interface, is out of reach of any other machine (what one sends it is dropped, unanswered, and ss still lists
+*:30005). A lane no longer fetches an image named by its URL: an edit or a reference sends the image itself, as the
+cockpit always did. A bind past loopback (IMAGE_BIND or VIDEO_BIND) serves others on purpose: its unit's two filter lines
+are written empty, which sets no filter, and the installer now says that port 30005 is then open to the network. The
+rule is written once, in lanes.sh (lane_ip_deny).
+
+**The SGLang text lanes.** The 27B lane, in all three of its units (the default, 1M of context, the 64 GB box), and the
+flash lane pass SGLANG_DISTRIBUTED_INIT_METHOD_OVERRIDE=file:///tmp/sglang-rdv: their rendezvous goes through a file in
+the container, which --rm makes new at each start, and no port opens for it. Both pinned images read it (the 27B's
+v0.5.22 and the flash lane's nightly, srt/distributed/bootstrap.py). They pin gloo and NCCL to lo too: under the real
+clients, both lanes had listened on four ports of the box's LAN address, though its name resolves to 127.0.0.1.
+
+**Proved on the reference box on 2026-10-30.** The installed image lane with the change laid on as a drop-in: nothing
+past loopback but *:30005, a connection to it from the box's LAN address and from its tailnet address dropped (no answer
+in 4 s) where both went through without the change a minute before, one from 127.0.0.1 accepted, and a 512x512 image in
+4 s. The video lane with the change: nothing past loopback but *:30005 either, the same two connections dropped and the
+one from 127.0.0.1 accepted, and the lane answered 724 s after its start, against 691 to 715 s without the change.
+During the v1.40.5 matrix the same day, the 27B lane listened on *:28195 and on four ports of the box's LAN address, the
+flash lane on *:23283 and four more, and the five vLLM lanes on nothing past loopback. The four ports came only once
+clients ran, 60 and 104 s after each lane was ready, so the text lanes were proved under the matrix's eight real clients
+(through a second proxy, the file that serves, in front of a test engine), with what listened past loopback read every 5
+s until 5 min after the engine was ready. The 27B lane started by its unit's own docker run as v1.40.5 has it listened
+on its store and, 70 s after it was ready, on four ports of the LAN address. Started with the file rendezvous and gloo
+and NCCL on lo (ready in 376 s), and the flash lane by the installed launcher with the same three variables (ready in
+832 s), neither listened on any TCP port past loopback, and all eight clients answered on each.
+
+**Tests.** Six tests fail on v1.40.5 and pass on this release: each diffusion unit pins the bootstrap to lo and renders
+its filter for a loopback bind only, as the installer's own lines compute it for 127.0.0.1, localhost, 127.0.0.2 and
+addresses past loopback, and says what a bind past loopback leaves open (image and video). An update restarts a serving
+image lane that runs older files and leaves one that does not alone, tried on the block alone and on the installer's
+lines with files older and newer than the lane, a restart that fails said as a NOTE (test_side_lane_proof.py, whose
+NOTE for the image lane this release replaces). Every SGLang text start passes the file rendezvous and the two variables
+once, in a container --rm makes new, with the reason in its unit (the 27B's three units, the flash lane's launcher and
+run.sh). The conformity tests take the diffusion units' rule from lanes.sh instead of a copy, a rule v1.40.5's lanes.sh
+does not have.
+
+**After the push.** The reference box updated with the public one-liner at efadad7 on 2026-10-31: the cockpit restarted
+once and nothing else, and Flash FP4-Local, the lane that served, kept serving. The 27B's unit, the flash lane's launcher
+and the image and video units were rewritten. The 8 real clients answered through the proxy on Flash FP4-Local, the
+production checks passed, and the cockpit showed no banner on any of its 5 views, with no JavaScript error. Then the 8
+clients ran on the 27B and flash lanes, each loaded as the cockpit's Load does, on what the one-liner installed: 16 of
+16 OK. On both, a tool result in the shape Claude Code sends after a ToolSearch got an answer, the proxy wrote its line
+for a tool call naming an Alibaba Cloud host, and the prefix cache served the 8,192 tokens of a repeated prompt, as the
+OpenAI and the Anthropic usage both said. What listened past loopback, read every 20 s through those 42 min, stayed what
+listened with Flash FP4-Local before them, with no port of either engine, where during the v1.40.5 matrix each had
+listened on its store and on four ports of the box's LAN address.
+
+**What an update does.** A box whose serving lane is the 27B or the flash SGLang lane restarts that engine once, as its
+unit changed (about 7 min for the 27B, 378 and 401 s on the reference box that day, 12 to 15 for the flash). A serving
+image lane restarts too, in about 70 s, and an image being made then is lost (Hasan's choice, 2026-10-30). Every other
+lane takes the change at its next start, a serving video lane included, as the installer says. The vLLM lanes do not
+move. The cockpit restarts once.
+
+## v1.40.5 (2026-10-30): when the box and its clone are one release, the cockpit's update banner names the commits between them, and opencode 1.19.5
+
+**Why.** On 2026-10-29 the box ran v1.40.4 as installed at 90bb772 while its clone had moved to d120eae, the note of
+the same release: the orange banner said "the services run v1.40.4, the clone is v1.40.4", which named no difference
+and left the next step to a guess.
+
+**The banner names the two commits and the ones between.** When the release recorded in installed.json and the
+clone's are the same, the banner says which commit the services run, how many commits the clone is past it and which
+commit it is at, and lists the clone's commits past it, newest first, one a line, at most five and then how many
+more. It says "past it", and lists those commits, only of a clone that descends from the recorded commit, as git's
+merge-base tells: a clone reset to an older commit, or whose history was rewritten, gets the two commits named and no
+list. The cockpit asks git about them only when both sides are one release, at most three short commands at each
+collect.
+
+**A proxy test no longer fails on a loaded runner.** `tests/test_proxy_engine_withholds_headers.py` read the proxy's
+end line as soon as the engine had seen the client go, and on a loaded GitHub runner the handler thread had not
+written it yet (2026-10-29). It now waits for that line, as the client-gone test of the same file already did.
+
+**The CI runs as six jobs side by side, on arm64.** It ran as one job, 4,312 s for v1.40.3, the sum of its steps. It
+now runs as six (static, suite, single, coverage, cockpit and fuzz), each on a runner of its own, on
+`ubuntu-24.04-arm`, the architecture of the boxes this repo serves, and `checks` ends the run under the name it always
+had: 14 min 35 s for the run that merged it. `./ci-local.sh` runs the same jobs side by side, each in a worktree of
+HEAD, so a full run wants a clean tree: about 13 minutes on the reference box, against 64 one step after the other.
+Every step's script is the one it was. On one machine the jobs share its ports: the test files that took a port
+number out of a socket they then closed, so that another job could be handed it in between, now take their ports from
+`tests/localports.py`, and the browser checks start theirs on port 0 and read it back, or below the range the system
+hands out.
+
+**opencode 1.19.5.** It lets a terminal's ticket stand for the password only on the route the server dispatches the
+request to, where 1.19.4 took it on any request whose path matched that route's pattern (anomalyco/opencode#58258).
+It also answers a request of the TUI's worker that fails instead of leaving it waiting, and otherwise removes unused
+code. It was checked against 1.19.4 side by side on 2026-10-30: the overflow phrases and exclusions are the same block
+of the binary byte for byte, `max_tokens` 32,000 and 182,000 on a fake endpoint with the same headers, the same default
+permissions, `--yolo` still read as `--auto`, keys still masked, sessions read both ways, and the Agent tab through a
+copy of the relay with its terminal and its phone layer. A fake endpoint that asked for a shell command naming an
+aliyuncs.com host had it refused, under `--yolo` and under `AGENT_AUTO`'s permission, where a command naming no such
+host ran. On the box's FP4-Local lane both sent the same request shapes, read hello.txt with a tool and answered 7351.
+
+**Tests.** Six tests fail on v1.40.4 and pass on this release: three of the cockpit's (the commits between the two, a
+recorded commit git no longer knows, a clone off the recorded commit's history) and three of the page's (the commits
+one a line, the count past five, both commits named when no list is known). Four more hold what this release got
+wrong on its way and v1.40.4 never did: git asked when the clone names another release, a recorded commit that is no
+string or no hash, and a commit subject git cannot convert to UTF-8. The opencode pin's test fails on the installer
+before it. The page's banner check passes 30 of 30, and the banner was seen on a cockpit served from the branch,
+desktop and phone, with no JavaScript error.
+
+**Proved on the reference box.** After the push, the box updated with the public one-liner: the cockpit restarted
+with its new page and server, then opencode-web on opencode 1.19.5, and nothing else. The 8 real clients answered
+through the proxy on the lane that serves, Flash FP4-Local, the production checks passed, and the cockpit showed no
+banner on any of its 5 views, with no JavaScript error. Then the 8 clients, opencode 1.19.5 among them, ran on the 7
+text lanes, each loaded as the cockpit's Load does, on what the one-liner installed: 56 of 56 OK on 2026-10-30. On
+every lane a tool result in the shape Claude Code sends after a ToolSearch got an answer, the proxy wrote its line for
+a tool call naming an Alibaba Cloud host, and the prefix cache served, to the token, the counts the v1.40.3 notes give.
+
+**What an update does.** opencode 1.19.5 replaces an older one in `~/.opencode/bin` (a newer one is kept). The cockpit
+restarts once, with its new page and server, and then opencode-web once, on the new opencode, which ends a turn the
+Agent tab is in. Nothing else: the lane that serves keeps serving, and the lane chosen for boot stays the one it was.
+
+## v1.40.4 (2026-10-28): opencode on this box refuses a shell command that names an Alibaba Cloud host or a cloud metadata address, AGENT_AUTO included, the cockpit says when a model asks for one, and pair-probe.py reads what a pair of boxes needs (#45)
+
+**Why.** On 2026-10-26 Cohere reported that Qwen3.8-Flash-Next, given a shell in an agent test without a
+network, sent a PUT to an Alibaba Cloud OSS bucket in Beijing, in fewer than 1 in 100,000 calls. The behavior
+behind it, an Alibaba Cloud host the model writes on its own, has turned up in builds from four publishers,
+Alibaba's included. Read in opencode 1.19.4's binary: its permissions start from `"*": "allow"`, so every
+shell command runs unasked in `opencode`, in `oc` (`--yolo`, an alias of `--auto` there) and in the Agent tab.
+On the box, `opencode run` under the Agent tab's permission ran an `echo` naming an aliyuncs.com host.
+
+**The box's opencode configs deny those hosts.** The rules `"*aliyuncs.com*"`, `"*169.254.169.254*"` and
+`"*100.100.100.200*"` (Alibaba Cloud's whole domain, the metadata address of Cohere's report and Alibaba
+Cloud's own) are `deny`, under a key of their own, `"bash*"` (a wildcard that matches the shell tool), as the
+last member of `"permission"`, since opencode's last matching rule wins: a `"*"` after them would allow what
+they deny. They are in the config `install.sh` generates, which `oc` and the Agent tab load over your own, so
+they come after your global config's rules there, but for a key added after the block in a global config that
+holds it too (this repo's copy does), until the next install puts the block last again. They are also put last
+in your global config, the one plain `opencode` reads, when it is this repo's copy or lists this repo's
+providers (`oc-merge-limits.py --deny-bash`): a key you add after them later is overridden at the next
+install, your own `"bash"` stays as you wrote it, and a pattern you set inside the block stays yours. A config
+of your own, in which none of this repo's provider names shows, never gets the rules. Measured on the box with
+opencode 1.19.4 and Flash FP4-Local: the same `echo` is refused under `oc`'s `--yolo` and under the Agent
+tab's permission (`opencode run` with its `OPENCODE_PERMISSION`).
+
+**AGENT_AUTO=1 no longer overrides them.** opencode merges `OPENCODE_PERMISSION` after every rule of its
+config files, so the unit's bare `{"*":"allow"}` beat any `deny` of a config without a `"*"` of its own: the
+`echo` ran under it, and SECURITY.md said your own deny rules held there, which they did not. The unit now
+repeats the rules after its `"*"`, under `"*bash"`, and the `echo` is refused. Under `AGENT_AUTO=1` your own
+rules still give way to its `"*"`, unless your config has a `"*"` of its own before them, which SECURITY.md
+now says. The cockpit still reads that mode as auto.
+
+**The proxy says when a model asks a tool to reach one of them (v6.48, its role 8).** The proxy sees every
+tool call before the client runs it, whatever the client. The arguments of each call, put back together from a
+stream (OpenAI's `tool_calls`, Anthropic's `input_json_delta`, the Responses API) or read from a whole answer
+on the generation routes that names one of them, are matched when the request ends against aliyuncs.com and
+the two metadata addresses. A match is one journal line, the host and the tool's name, never the arguments,
+and the answer is relayed as it came. A tool that reads, searches or writes files, or hands work to a
+sub-agent, is not read, by its exact name: a page that quotes these hosts, or a search for them, is no request
+to them. The cockpit reads a day of those lines every 5 minutes and shows a red banner with the count, the
+host, the tool and the route. It says what the proxy saw, not what the client did with it.
+
+**What it does not cover.** opencode's patterns tell case apart: a host written in capitals is not refused,
+and the proxy, which does not, still says it. Neither stops a model that writes the address another way (a
+variable, an encoding, a script it writes first), and the rules leave opencode's `webfetch` alone. What
+opencode reads after the rules can allow what they deny: a project's own `opencode.json` or `.opencode`
+directory, an agent's own `permission` block, and an "Always" given to a command. The proxy does not read the
+tool arguments of a streamed request past its first MiB, nor a whole answer over 8 MiB.
+[docs/agents-and-network.md](docs/agents-and-network.md) says what runs unasked and how to approve each
+command. In a config of yours the rules stay in place after `uninstall.sh`, as `autoupdate` does, and this
+repo's own copy is moved aside whole, as before.
+
+**The memory pages say which memory the cgroup misses.** It is the engine's own GPU memory, plain `cudaMalloc`
+on GB10, while managed and pinned memory are charged to it, as another owner measured on the NVIDIA forum
+([t/387182](https://forums.developer.nvidia.com/t/387182)). The old text said "unified allocations". A
+host-memory runaway is what the Docker cap stops, not any runaway, and 21.30 is GiB everywhere.
+
+**Found in review before the release.** A named client's lines (`key=<label>`) were never read by the cockpit.
+`--deny-bash` called rules "already there" that a later key overrode. A whole answer of an unexpected shape
+raised where the request ends, before its end line. SGLang writes `"tool_calls":null` in every chunk, so the
+filter meant to skip events without a tool call parsed every token. The bare word "routify" matched the Svelte
+framework of that name, and an agent editing a page that quotes these hosts raised the banner. A second review
+found more, fixed the same way: a key that allows only some commands, put after the block, was not seen.
+`write_stdin`, which types into a shell, was taken for a tool that writes files, by a pattern on part of its
+name, and a search for the hosts raised the banner. A client's text the proxy logs could forge a line the
+cockpit counted. A large file written in a stream filled the budget and hid a shell call after it, calls a
+parser streams without an index merged, a read of the journal that failed kept lines older than a day, and
+every whole answer was parsed. A third review found the file and search tools of Hermes and pi taken for tools
+that act, a host over short reads of a whole answer unseen, a parser that repeats a tool's name on every piece
+splitting one call, spaces around `"tool_calls"` hiding it, and a journal vacuumed after a line keeping the
+banner up a day: `journalctl -g` ends 1 when nothing matches, as a read that failed does, so the day is read
+whole. A fourth review found two calls a parser streams at one index merged under the first one's name. The
+journal line now says how the request ended. Each has its test. Three verifications before the push, read in
+opencode's own code and replayed against it, found what these notes claimed beyond it: patterns that tell case
+apart, a project's own config, an agent's own permission and an "Always" answer that come after the rules, and
+an `uninstall.sh` that kept this repo's copy of the config, now moved aside again. The notes above say each,
+and the uninstall has its test.
+
+**A probe for a pair of boxes (#45).** `pair-probe.py`, run on each box, prints what a lane over two boxes
+needs to know about each one: the DGX OS update it runs, the kernel, the GPU driver, this repo's release and
+lanes, the ConnectX-7 ports, their RDMA side and the mlx5 modules, Docker, the time sync and the free disk,
+and with `--peer` the port the route to the other box takes, its loss and its round trip. It needs no sudo and
+changes nothing. It never prints a MAC or IP address (only its kind), the home directory, the host's or the
+user's name or the serial number, and it opens no file that holds a key. A name every such box prints of
+itself (spark, gx10, nvidia, ubuntu) stays, since it says nothing of whose box it is and masking it erased the
+product and the kernel the two boxes are compared on. On the reference GX10, lspci shows no ConnectX-7
+although the mlx5 modules are loaded, and the probe says both. Three reviews of the probe found what it missed
+before the release, from a peer that does not answer read as not measured to a host's name written in another
+case and a version of five parts read as an address. Each is fixed with its test.
+
+**Proved on the reference box.** This release was installed on the reference box from its branch, and the 8 real
+clients ran on the 7 text lanes there before it went to main. After the push, the box updated with the public
+one-liner, the 8 real clients answered through the final proxy on the lane that serves, Flash FP4-Local, and the
+cockpit showed no banner on any of its views. Then the 8 clients ran again on the 7 text lanes, each loaded as the
+cockpit's Load does, on what the one-liner installed: 55 of 56 OK on 2026-10-29, and on every lane the proxy wrote
+its line for a tool call naming one of those hosts. The one miss is Kolibri in Claude Code, which answered 1, the
+line number in the Read tool's answer, instead of the number on that line. The tool's answer reached the model
+whole, and the same question asked 5 times the night before and 5 times after this run got the right number 4 times,
+then 3: each miss gave the line number, or glued it to the number (17351). Four code reviews read the release and
+three more the probe, and three independent verifiers read the update and a fresh install, the security, and the
+notes with the tests. Each defect they found is fixed with a test that fails on the code before it.
+
+**What an update does.** The proxy (v6.48), the cockpit and the Agent tab's server restart, and nothing else: the
+lane that serves keeps serving, and the lane chosen for boot stays the one it was.
+
+**Tests.** `test_oc_merge_limits.py` (the order, the forms, a key added after the block, a user's own
+pattern), `test_install_opencode_pin.py`, `test_install_oc_artifact.py`, `test_agent_auto_deny.py` (three
+configs, one ending with a `"*"` of its own), `test_uninstall_opencode.py` (this repo's copy with the rules
+goes aside, rules of the user's keep the file), `test_proxy_tool_targets.py` (a real proxy, the host split
+between two pieces of the stream, three dialects, a whole answer, one connection for several requests, an
+answer of no known shape, the false alarms, nothing of the arguments in the journal), `test_lifecycle.py`,
+`test_cockpit_collectors.py`, three checks of `update-banner-check.mjs` in a browser, and `test_pair_probe.py`
+(what it never prints, a peer that does not answer, a unit systemd has unloaded, a record of another shape).
+Each fails on v1.40.3 or on the branch before its fix.
+
+## v1.40.3 (2026-10-26): Claude Code's ToolSearch works on the Qwen lanes, every lane says what its prefix cache served (#49), and a stopped generation never reaches its client as a whole answer
+
+**Claude Code's ToolSearch works on the Qwen lanes.** Claude Code 2.1.304 answers a ToolSearch call with
+`tool_reference` content blocks. The Qwen chat template's `render_content` loop raised "Unexpected item
+type in content.": a 500 before generation on the SGLang lanes (seen live on 2026-10-25 at 01:31, on every
+turn of a `claude-local` session), and a 400 on Flash FP4-Local's, measured on 2026-10-26. The fifth
+`patch-template.py` patch renders each referenced tool as a text marker, so the model sees what the search
+loaded, and the schemas arrive with the next request's tools. The 27B, flash and Flash FP4-Local templates
+take it with their other fixes, and the Ornith lane, whose loop is the same, now asks for it beside its
+system-reminder fix. Kolibri's and the two Nemotron lanes' templates take such a block as they are. The same
+ToolSearch result, replayed through the proxy on each of the seven text lanes of the reference box, was
+answered on all seven (HTTP 200). A next checkpoint whose template raises where the fix cannot reach now
+stops the install instead of serving that error again. A session already carrying such a block needs a
+new session until its lane restarts with this release.
+
+**Every lane says what its prefix cache served (#49).** The flash launcher starts SGLang with
+`--enable-cache-report`, as the 27B's units do since v1.40.2, and the Kolibri, Nemotron Bolt, Super VL,
+Flash FP4-Local and Ornith units pass `--enable-prompt-tokens-details`: each answer carries
+`usage.prompt_tokens_details.cached_tokens`, and `cache_read_input_tokens` beside `input_tokens` on
+`/v1/messages`. The engines counted those tokens all along and said nothing. Measured on each lane through
+the proxy, with two requests sharing an 8,000-token prefix and ending differently, then the same two prompts
+again on `/v1/messages`, the count is what each engine's cache served, and its time says the same:
+
+- the 27B and the flash: 8,192 of the second request's 8,248 tokens (0.5 s, against 4.0 to 4.5 s for the
+  first), and 8,192 again on `/v1/messages`.
+- Ornith: 4,224, one whole block of this hybrid model (3.0 s against 4.5), and 8,128 of 8,150 on
+  `/v1/messages`.
+- Kolibri, Flash FP4-Local and Super VL: 32, 0 and 0 for the request that ends differently, which took as
+  long as the first: these engines reuse a prompt only from the points their cache keeps, and that request
+  passed none. The same prompt again came back from the cache whole but for a few tokens: 10,880 of 10,892,
+  8,192 of 8,192 and 7,168 of 7,256, in 0.5 to 1.0 s. An agent's conversation, which grows at every turn,
+  is what those points serve. On Flash FP4-Local such a conversation got 7,971 and then 8,001 of its 7,996
+  and 8,023 tokens from the cache on `/v1/chat/completions` (0.5 s a turn, against 4.0 s cold), and 7,980
+  of 8,023 and 8,047 on `/v1/messages`, the engine's own counters saying the same. On Super VL, all but
+  76 to 168 tokens from the third turn (docs/nemotron-super-lane.md).
+- Nemotron Bolt: 0 for all four. Its drafter keeps the cache's hits on 4,544-token blocks, one block back,
+  which a prompt of 7,256 tokens does not reach (an agent's 40,000-token conversation got 31,808 from it,
+  docs/nemotron-lane.md).
+
+Decode does not move where a reference exists. `bench.sh` three times on each lane gave 68.2, 67.4 and 68.1
+tok/s on the 27B (67.0 to 69.6 on 2026-10-23, the same engine), 56.8, 54.2 and 54.4 on Flash FP4-Local (55.1
+to 55.4) and 43.8, 43.8 and 43.7 on Ornith (42.2 to 42.4). The other lanes had no `bench.sh` reference, and
+these are theirs now: the flash 50.4, 51.5 and 50.1, Kolibri 48.9, 48.8 and 48.9, Nemotron Bolt 102.2, 100.7
+and 100.5, Super VL 57.8, 56.7 and 55.6.
+
+**A cut answer is never handed over as a whole one.** SGLang ends an aborted generation like a finished
+one: `stop_reason end_turn` on `/v1/messages` (its `STOP_REASON_MAP` has no `abort`) and a last chunk with
+`finish_reason "abort"` on the OpenAI routes, which LiteLLM reads as `stop`. The cockpit's memory floor
+aborted at the engine directly, so each client kept the part generated before the stop as its whole answer:
+on the reference box on 2026-10-25 at 07:42, Claude Code kept a compaction summary cut in the middle of a
+word. The floor and its Abort-all now ask the proxy (`POST /proxy/stop`, loopback only, engine key
+required, fail-closed): each relayed generation is stopped the way its engine has (by rid on SGLang, by
+closing the connection on vLLM) and its client's connection is cut, so Claude Code, opencode, pi and Hermes
+retry and get the whole answer with no duplicate. SGLang's `abort_all` still goes at every floor stop, for
+the generations sent to the engine straight (`bench.sh`, `needle.sh`, an eval), which no relay can cut, and
+the cockpit sends it itself when the proxy's did not go, as it did before. After a floor stop that cut a
+generation, new generations are refused with 529 (503 off `/v1/messages`) and a Retry-After for the floor's
+pause (60 s), then while `MemAvailable` stays under the floor, 5 minutes at most: agents retry within 1 to
+3 s instead of burning whole prefills. Memory alone refuses nothing, so an idle box short of memory for
+other programs is served as in v1.40.2. In the proxy's unit, `PROXY_MEM_FLOOR_GIB=0` keeps the refusal for
+memory off and `PROXY_FLOOR_HOLD_S=0` the pause. The reviews before this release shaped all of this
+(2026-10-26: a certainty review, two independent verifiers, then code reviews of the release and of its
+fixes, each finding fixed with a test that fails on the code before). A floor stop that found nothing to
+cut holds nothing back, a silly body (an infinite `hold_s`, a number of 310 digits, a chunked body) is
+refused or read as the default instead of blacking the box out, each stopped generation is marked before
+the engine hears of it, a vLLM request still in its prefill closes at once, one still on its way to the
+engine is ended once its connection opens, `abort_all` goes first, the aborts by rid only when it did not
+(each in its own thread, the cockpit having its answer without waiting for them), and the floor never
+claims an abort it could not make: on a vLLM lane where no generation ran through the proxy it says the
+abort failed, and its event and banner say how many were cut and whether new requests wait. One thing to
+know: "Abort all" cuts each client too, so an agent retries its request (end an agent's turn in the agent),
+and the cockpit still refuses it while a vLLM lane serves.
+
+**bench.sh names what holds a CPU core before it measures, and says when it could not look.** On a GB10 the
+CPU and the GPU share one power budget, so a stray spinning process lowers what the engine measures and
+shows only as a load average (three abandoned command-line calls each held a core for four to six days on
+another Spark in October 2026). `bench.sh` spends a 3 s window (`HOGS_WINDOW`) while the engine waits for
+its first request and names every process outside the engine at half a core or more. `cpu-hogs.py` does the
+reading from /proc. A `cpu-hogs.py` that dies (missing file, crash, a non-numeric window) no longer reads
+as a quiet box: the report says `cpu-hogs failed (exit N: its reason), the quiet outside the engine is NOT
+proven` instead of claiming nothing held a core. The report names a busy process by its pid and name, never
+by its command line, which can hold a token and gets pasted in public: `python3 cpu-hogs.py` prints the
+command lines, on the box. A process name the kernel cut inside a character no longer makes it fail, and
+its window is 0.5 to 60 s.
+
+**A greyed Qwen4 27B card says coming.** Qwen named a Qwen4 27B at Apsara (22/09) with no date and no
+weights. The cockpit shows a dimmed, dashed card after the 27B it will follow, saying no date and loading
+nothing until the release that serves it.
+
+**The README links the website.** https://hasso5703.github.io/ has every model measured, guides that answer
+what owners ask, and every GB10 machine.
+
+**CI survives the clocks going back.** The logs test waited for "CEST" where the box now says "CET": it
+would have failed every CI until spring. The stamps themselves were right all along. And the offline suite
+touches nothing outside itself again: the class in `tests/test_tools.py` that sets `QWEN38_API_KEY` now
+restores the environment like every other class of the file.
+
+**Proved before the push.** This release was installed on the reference box from its branch and proved
+there before it went to main: the 8 real clients on the 7 text lanes, each loaded as the cockpit's Load
+does (56 of 56 OK on 2026-10-26), the cache report and the ToolSearch result on each lane, and `bench.sh`
+three times on each. A code review and two independent verifiers read it first, one on an existing box's
+update lane by lane, one on a fresh install, a 64 GB box and security, then two more code reviews read the
+fixes. Each defect they found is fixed with a test that fails on the code before it, and what waits is
+below. After the push, the reference box updated with the public one-liner (the proxy and the cockpit
+restarted, nothing else), the 8 real clients answered through the final proxy on the lane that serves,
+Flash FP4-Local, and the cockpit showed no banner on any of its views.
+
+**Known, for the next release.** "Abort all" on the vLLM lanes through the proxy, which can stop their
+generations by closing their connections. A stop when the proxy listens elsewhere than 127.0.0.1:30001, or
+behind its optional TLS: the cockpit falls back to the engine's `abort_all`, and an SGLang client then gets
+the cut answer as a whole one, as in v1.40.2. `/v1/systemone` is neither refused under the floor nor
+reached by a stop, and `/v1/tokenize` is counted as a generation. The floor's line in the Machine view says
+it stops through the proxy even when the proxy cannot take the stop. A non-streamed request whose client
+sends bytes while it waits, stopped before its connection to the engine opens, is cut only when its answer
+comes.
+
+**What an update does.** The proxy (v6.47) and the cockpit restart. The flash launcher and the five vLLM
+lane units take their new flag, and the 27B, flash, Flash FP4-Local and Ornith templates their
+`tool_reference` fix. A vLLM lane that serves keeps its old unit and template until its next Load, and the
+installer says so: Load it again from the cockpit, or restart its unit. A 27B or flash lane that serves
+restarts with its new files. Nothing else restarts.
+
+**Tests.** Each change has tests that fail on the code before it: `tests/test_patch_template.py` renders a
+real `tool_reference` block, reads Ornith's own `TEMPLATE_FIXES` line and refuses a template that raises
+where the fix cannot reach, `tests/test_engine_cache_report.py` reads the six lanes' flags,
+`tests/test_proxy_floor_stop.py` (26 tests) drives the stop and the floor against a fake engine that ends
+as SGLang does, `dashboard/tests/test_cockpit_floor_stop.py` (9) checks what the cockpit sends and says,
+`tests/test_cpu_hogs.py` reads a name cut inside a character, and `tests/test_bench_lane.py` breaks
+`cpu-hogs.py` and rejects the quiet claim. `tests/lane-templates-check.py` renders every lane's pinned
+template with its installer's fixes: 364 renders, 0 refusals.
 ## v1.40.2 (2026-10-24): opencode runs on the Ornith lane again, claude-local asks before each command and keeps a session on the box, and CI renders the real clients' message shapes through every lane's chat template, as each engine hands them
 
 **opencode on the Ornith lane.** opencode 1.19.4 sends two system messages before the user's

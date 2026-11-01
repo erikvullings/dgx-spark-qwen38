@@ -105,10 +105,12 @@ the cap that fragmentation otherwise tips it over), `HF_HUB_OFFLINE=1`, `PYTHONU
 new box does not have elsewhere), `--output-path` naming the lane's own `outputs/` directory, and
 `--input-save-path ""`. No `--api-key` and no `--sleep-on-idle`: the diffusion parser has neither, so
 the loopback bind is the only thing standing in front of the lane's API, and the cockpit is the
-authenticated door. The process's own coordination ports are another matter: PyTorch's store listens on
-`*:30005` and gloo on four ports of the LAN address (measured 2026-09-29 and 2026-09-30), with no
-setting to narrow them, like every engine here; SECURITY.md says what they expose and how to firewall
-them.
+authenticated door. The process's own coordination ports listened on the network too: PyTorch's store on
+`*:30005` and gloo on four ports of the LAN address (measured 2026-09-29, 2026-09-30 and 2026-10-30).
+Since v1.40.6 the unit pins gloo and NCCL to `lo` and, with a loopback bind, lets the lane talk to
+loopback alone (`IPAddressDeny=any`, `IPAddressAllow=localhost`): the store still listens on `*:30005`,
+out of reach of any other machine. The lane fetches no reference image by its URL any more: send the
+image itself, as the cockpit does. SECURITY.md says what these ports exposed.
 
 One deliberate difference from the image lane: the lane's own `outputs/` directory
 instead of an emptied one. Left empty, the server answers into a

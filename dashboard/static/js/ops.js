@@ -17,7 +17,7 @@ on('engine_fast', d => {
 afterApply(() => {
   const none = F.noEngine || !textReady(), n = loadWords(F.load || {});
   cap('tr-cap', none ? (imageServing() ? 'no text engine: the image lane serves' : videoServing() ? 'no text engine: the video lane serves' : 'no text engine')
-      : n || 'idle', none ? '' : n ? 'ok' : '', n && !none ? 'live' : true);
+      : (n && F.prompt ? n + ', computing a prompt' : n) || 'idle', none ? '' : n ? 'ok' : '', n && !none ? 'live' : true);
 });
 on('decode', d => {
   const t = d.decode, u = d.usage || {};
@@ -56,7 +56,7 @@ on('decode', d => {
 // test holds to the lanes whose installer stands on vllm-lane.sh, by its name; their names are the
 // cockpit's: a copy of them said "Nemotron" where every other view says "Nemotron Bolt" (found in
 // review, 2026-10-20).
-const VLLM_UNITS = [KOLIBRI_UNIT, NEMOTRON_UNIT, NEMOTRON_SUPER_UNIT, FLASH_LOCAL_UNIT, ORNITH_UNIT];
+const VLLM_UNITS = [KOLIBRI_UNIT, NEMOTRON_UNIT, NEMOTRON_SUPER_UNIT, FLASH_LOCAL_UNIT, ORNITH_UNIT, NANBEIGE_UNIT];
 const VLLM_LANE_NAME = Object.fromEntries(VLLM_UNITS.map(u => [u, LANE_NAME[u]]));
 on('metrics', d => {
   if (!d.lane){
@@ -88,7 +88,8 @@ on('metrics', d => {
                  d.running_max ? `${fmtN(d.running_max)} request${d.running_max > 1 ? 's' : ''} at once` : null,
                  d.queued_max ? `${fmtN(d.queued_max)} waiting` : null].filter(Boolean);
   setText('wm-note', w > 0 && w < 295 ? `watched ${fmtDur(w)}` : '');
-  cap('wm-cap', d.approximate ? 'approximate' : any ? 'watching' : 'quiet', d.approximate ? 'warn' : any ? 'ok' : '');
+  // "quiet" through a prompt of 19 min that nothing finished in was the page's word for a hang (issue #61)
+  cap('wm-cap', d.approximate ? 'approximate' : any ? 'watching' : F.prompt ? 'computing a prompt' : 'quiet', d.approximate ? 'warn' : any || F.prompt ? 'ok' : '');
   setText('wm-verdict', (d.read === false ? 'The last read of the engine’s counters failed: these numbers come from the one before. ' : '')
       + (d.approximate ? 'A canary ran beside a client request, so it is counted as one while it lies inside the window. ' : '')
       + (vllm ? 'From vLLM’s own counters: its tokens and latencies as it makes them, a request, its wait and its prefill once it finishes.'
@@ -129,12 +130,17 @@ on('feed', d => {
     const c1 = tr.insertCell(); c1.className = 'num'; c1.textContent = r.peer.startsWith('127.0.0.1:') ? ':' + r.peer.split(':').pop() : r.peer; c1.title = r.peer;
     const cp = tr.insertCell(); cp.textContent = r.path; cp.title = r.path;
     const c2 = tr.insertCell(); c2.className = 'r num'; c2.textContent = r.bytes >= 1024 ? (r.bytes / 1024).toFixed(0) + ' KB' : r.bytes + ' B';
-    const c3 = tr.insertCell(); c3.className = 'r num'; c3.textContent = r.secs != null ? r.secs.toFixed(1) + ' s' : '';
+    // a request in flight shows how long it has been so: its cell stayed empty through a prompt of 19 min
+    // that a user took for a hang (issue #61)
+    const c3 = tr.insertCell(); c3.className = 'r num'; c3.textContent = r.secs != null ? r.secs.toFixed(1) + ' s' : r.age != null ? fmtDur(r.age) : '';
     // the kind comes from the server: an ok request wears no colour, nor does the cockpit's
     // own probe; only a client who left (ember) and a failure (clay) light up
     const kind = {ok: '', gone: 'warn', fail: 'err', live: 'gold', unknown: '', probe: ''}[r.kind] ?? 'err';
     const c4 = tr.insertCell(); c4.append(el('span', 'tag ' + kind, r.outcome));
     if (r.detail) c4.append(el('div', 'help', r.detail));
+    // the prompt the engine computes belongs to this row when it is the only one in flight
+    if (r.outcome === 'in flight' && F.prompt && rows.filter(x => x.outcome === 'in flight').length === 1)
+      c4.append(el('div', 'help', promptWords(F.prompt)));
   });
   const inflight = rows.filter(r => r.outcome === 'in flight').length;
   badge('traffic', inflight ? String(inflight) : '', inflight ? 'live' : '');
@@ -142,6 +148,8 @@ on('feed', d => {
 });
 on('reqguard', d => {
   const g = d.guard || {}, z = d.zombies || {};
+  F.toolTargets = d.tool_targets || null;     // the banner of renderBanners (proxy v6.48)
+  F.resent = d.resent || null;                // and the one of a long prompt sent again (proxy v6.49)
   cap('zg-cap', d.state === 'err' ? 'leaking' : d.state === 'warn' ? 'check' : 'holding', d.state === 'err' ? 'err' : d.state === 'warn' ? 'warn' : 'ok');
   setText('zg-verdict', `${cap1(d.verdict || '')} (last ${d.window || '10m'}${d.lane ? ', ' + d.lane : ''}).`);
   setText('zg-ver', g.version ? 'v' + g.version : 'no banner in the journal');
@@ -195,15 +203,18 @@ on('machine', d => {
   setText('dk-home', dk.home ? fmtGiB(dk.home.free) + ' free of ' + fmtGiB(dk.home.total) : 'n/a');
   setText('dk-docker', dk.docker ? fmtGiB(dk.docker.free) + ' free of ' + fmtGiB(dk.docker.total) : 'n/a');
 });
-// On the Kolibri lane neither belt can act: vLLM has no route that aborts a generation or
-// flushes its cache, and they read "armed" there (review, 2026-10-14).
+// On the Kolibri lane the pool guard cannot act: vLLM has no route that flushes its cache, and it
+// read "armed" there (review, 2026-10-14).
 const kolibriHolds = () => (servingEngine() || [])[0] === KOLIBRI_UNIT;
-// the Nemotron lanes and the Flash FP4-Local lane run on vLLM too: neither belt can act there either
+// the Nemotron lanes, the Flash FP4-Local lane and Ornith run on vLLM too
 const nemotronHolds = () => isB12x((servingEngine() || [])[0]);
+// The floor stops generations through the proxy since v1.40.3, on every lane: vLLM has no route that
+// aborts a generation, and the proxy closes its connection, which vLLM stops (it said "cannot act" there).
 on('engine_fast', d => {
-  if (kolibriHolds()){ setText('mm-floor', `cannot act on the Kolibri lane: vLLM has no route to abort a generation (stopping the lane stops them)`); return; }
-  if (nemotronHolds()){ setText('mm-floor', `cannot act on ${b12xName((servingEngine() || [])[0])}: vLLM has no route to abort a generation (stopping the lane stops them)`); return; }
-  if (d.mem_floor){ const f = d.mem_floor; setText('mm-floor', `aborts generations under ${f.gib} GiB` + (f.aborts ? `, fired ${f.aborts} time${f.aborts > 1 ? 's' : ''}` : ', never fired')); }
+  if (!d.mem_floor) return;
+  const f = d.mem_floor, how = kolibriHolds() || nemotronHolds() ? ' (on vLLM, by closing their connections)' : '';
+  setText('mm-floor', `stops generations under ${f.gib} GiB through the proxy${how}`
+    + (f.aborts ? `, fired ${f.aborts} time${f.aborts > 1 ? 's' : ''}` : ', never fired'));
 });
 on('lifecycle', d => {
   const g = d.pool_guard; if (!g) return;
@@ -438,7 +449,7 @@ function defaultLogSource(){
   if (u === IMAGE_UNIT || u === VIDEO_UNIT || u === PROXY_UNIT || e.state === 'failed' || e.restarting) return u;
   return u === UFLASH ? 'qwen38-flash' : u === KOLIBRI_UNIT ? 'qwen38-kolibri' : u === NEMOTRON_UNIT ? 'qwen38-nemotron'
     : u === NEMOTRON_SUPER_UNIT ? 'qwen38-nemotron-super' : u === FLASH_LOCAL_UNIT ? 'qwen38-flash-local'
-    : u === ORNITH_UNIT ? 'qwen38-ornith-122b' : 'qwen38-sglang';
+    : u === NANBEIGE_UNIT ? 'qwen38-nanbeige' : u === ORNITH_UNIT ? 'qwen38-ornith-122b' : 'qwen38-sglang';
 }
 onShow('logs', () => {
   if (LOGS_WANT.src || !logTouched){ $('log-src').value = defaultLogSource(); LOGS_WANT.src = null; }

@@ -41,15 +41,17 @@ and `ruff`, `shellcheck` and the GitHub CLI `gh` on `PATH`: without them
 Run the gates the way GitHub runs them:
 
 ```bash
-./ci-local.sh                # everything, about 45 minutes on the reference box
+./ci-local.sh                # everything, about 12 minutes on the reference box
 ./ci-local.sh Coverage       # one gate by name fragment
 ```
 
-Most of a full run is the test suites: each test file runs together with the
-others and on its own, and the files of `tests/` twice more inside
-`tests/test_suite_isolation.py`, which checks that none leaves the environment
-changed (the mutation gate takes under 3 minutes). Run the fragment you touched
-while working, and the whole thing before pushing.
+A full run takes the jobs of the workflow side by side, each in a worktree of
+HEAD, so commit first: a tree with changes nobody committed is refused, and
+`CI_LOCAL_SERIAL=1 ./ci-local.sh` tests the checkout as it is, one step after the
+other (about an hour). A fragment runs in the checkout as it is. The longest job
+runs every unittest module of `tests/` in one process, and sets the length of the
+run. Run the fragment you touched while working, and the whole thing before
+pushing.
 
 ## What CI holds, so you know where you will be caught
 

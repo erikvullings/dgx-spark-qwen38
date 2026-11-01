@@ -8,8 +8,11 @@ COCKPIT_DRY_RUN=0, pointed HOME and COCKPIT_CONFIG_DIR at directories it then de
 left all of it behind, so every module after it ran with a HOME that did not exist and
 passed or failed on that rather than on the code (found in review, 2026-09-24).
 
-One test of each module is run, which is enough to run all of its fixtures (module, then
-class), and the environment is compared before and after, in a process of its own.
+One test of each class of each module is run, which runs all of its fixtures (module, then
+class), and the environment is compared before and after, in a process of its own. One test of
+each module was run until 2026-10-24, and a module's other classes never ran their fixtures:
+test_cockpit_logs_masked.py's second class left six COCKPIT_ variables behind since 2026-09-28,
+seen by tests/run_suite.py, which compares each test file's environment at its start and its exit.
 """
 import os
 import pathlib
@@ -28,17 +31,17 @@ for path in sorted(pathlib.Path("tests").glob("test_*.py")):
         continue
     name = "tests." + path.stem
     suite = unittest.defaultTestLoader.loadTestsFromName(name)
-    stack, first = [suite], None
-    while stack and first is None:
+    stack, firsts = [suite], {}
+    while stack:
         item = stack.pop(0)
         if isinstance(item, unittest.TestSuite):
             stack[:0] = list(item)
         else:
-            first = item
-    if first is None:
+            firsts.setdefault(type(item), item)     # one test of each class: its fixtures run
+    if not firsts:
         continue
     before = dict(os.environ)
-    unittest.TestSuite([first]).run(unittest.TestResult())
+    unittest.TestSuite(list(firsts.values())).run(unittest.TestResult())
     after = dict(os.environ)
     for var in sorted(set(before) | set(after)):
         if before.get(var) != after.get(var):

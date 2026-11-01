@@ -75,7 +75,9 @@ class Base(unittest.TestCase):
         threading.Thread(target=cls.engine.serve_forever, daemon=True).start()
         os.environ.update(COCKPIT_DRY_RUN="1", COCKPIT_CONFIG_DIR=str(cls.box), COCKPIT_REPO_DIR=str(REPO),
                           COCKPIT_PORT="0", COCKPIT_AGENT_PORT="0", COCKPIT_AUTOHEAL="0",
-                          COCKPIT_ENGINE=f"http://127.0.0.1:{cls.engine.server_port}")
+                          COCKPIT_ENGINE=f"http://127.0.0.1:{cls.engine.server_port}",
+                          # never the box's own proxy: a stop goes there first since v1.40.3
+                          COCKPIT_PROXY="http://127.0.0.1:1")
         (cls.box / "api-key").write_text("test-key\n")
         sys.path.insert(0, str(DASH))
         spec = importlib.util.spec_from_file_location("cockpit_kolibri_under_test", DASH / "cockpit.py")
@@ -111,7 +113,8 @@ class ItsMetrics(Base):
 
     def test_a_page_that_is_not_vllms_reads_as_nothing(self):
         self.assertEqual(self.ck.vllm_metrics_facts("sglang:num_running_reqs 4\n"),
-                         {"running": 0, "waiting": 0, "usage": 0.0, "pool": 0, "spec_accepted": 0.0, "spec_drafts": 0.0})
+                         {"running": 0, "waiting": 0, "usage": 0.0, "pool": 0, "spec_accepted": 0.0, "spec_drafts": 0.0,
+                          "gen": None, "queries": None, "finished": None, "preempted": None})
         self.assertEqual(self.ck.vllm_metrics_facts('vllm:num_requests_running{engine="0"} NaNx\n')["running"], 0)
         # "1e" passes the gauge's pattern and not float(): the case the try is for ("NaNx" never
         # reached it, review of 2026-10-14)
@@ -120,7 +123,25 @@ class ItsMetrics(Base):
     def test_the_load_takes_the_shape_the_page_reads(self):
         rows = self.ck.kolibri_load()
         self.assertEqual(rows, [{"dp_rank": 0, "num_reqs": 0, "num_waiting_reqs": 0, "num_tokens": 1949253,
-                                 "num_used_tokens": 0, "num_pending_tokens": 1949253}])
+                                 "num_used_tokens": 0, "num_pending_tokens": 1949253,
+                                 "gen_tokens": 5075.0, "prefix_queries": 4551.0, "finished": 9.0,
+                                 "preemptions": 0.0}])
+
+    def test_the_two_counters_of_a_prompt_being_computed_are_read(self):
+        # the tokens generated and the tokens of every prompt admitted (lc.prompt_progress, issue #61),
+        # summed over the engine's labels, and None on a page that has neither
+        f = self.ck.vllm_metrics_facts(METRICS)
+        self.assertEqual((f["gen"], f["queries"]), (5075.0, 4551.0))
+        two = ('vllm:generation_tokens_total{engine="0"} 3.0\nvllm:generation_tokens_total{engine="1"} 4.0\n'
+               'vllm:prefix_cache_queries_total{engine="0"} 10.0\n')
+        self.assertEqual((self.ck.vllm_metrics_facts(two)["gen"], self.ck.vllm_metrics_facts(two)["queries"]), (7.0, 10.0))
+        # and the requests finished, every reason summed (an abort is a finish too), and preempted, which
+        # say whether a jump of the prompts admitted is one request's
+        self.assertEqual((f["finished"], f["preempted"]), (9.0, 0.0))
+        ends = ('vllm:request_success_total{engine="0",finished_reason="stop"} 2.0\n'
+                'vllm:request_success_total{engine="0",finished_reason="abort"} 3.0\n'
+                'vllm:num_preemptions_total{engine="0"} 1.0\nvllm:num_preemptions_total{engine="1"} 4.0\n')
+        self.assertEqual((self.ck.vllm_metrics_facts(ends)["finished"], self.ck.vllm_metrics_facts(ends)["preempted"]), (5.0, 5.0))
 
     def test_health_is_vllms_own(self):
         self.assertTrue(self.ck.kolibri_healthy())
@@ -370,7 +391,9 @@ class ItsUnit(Base):
 
     def test_it_is_a_switch_target_and_a_unit_the_page_may_drive(self):
         self.assertIn("qwen38-kolibri.service", self.ck.SERVING_UNITS)
-        self.assertEqual(self.ck.ACTIONS["switch"]["params"]["target"][-5:-3], ["kolibri", "kolibri-nvfp4"])
+        targets = self.ck.ACTIONS["switch"]["params"]["target"]
+        i = targets.index("kolibri")
+        self.assertEqual(targets[i:i + 2], ["kolibri", "kolibri-nvfp4"])
         self.assertIn("qwen38-kolibri", self.ck.CONTAINERS)
         self.assertNotIn("qwen38-kolibri", self.ck.SGL_CONTAINERS)
         self.assertIn("qwen38-kolibri.service", self.ck.JOURNAL_UNITS)

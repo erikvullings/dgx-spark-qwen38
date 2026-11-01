@@ -18,3 +18,5 @@ model's repository (`assets/ornith_logo.png` of https://github.com/ornith-ai/Orn
 it sizes the others. Lobe Icons has no Ornith icon (1.97.0, its latest on 2026-10-22). The mark
 belongs to its owner, and the cockpit shows it only to say which model the Ornith 1.5 122B lane
 runs.
+
+`nanbeige.svg` is an original letter N monogram made for this fork, not an official Nanbeige logo.

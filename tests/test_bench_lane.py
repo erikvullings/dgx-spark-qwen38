@@ -15,6 +15,7 @@ import subprocess
 import sys
 import tempfile
 import threading
+import time
 
 REPO_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 BENCH = os.path.join(REPO_DIR, "bench.sh")
@@ -62,7 +63,7 @@ class Fake(http.server.BaseHTTPRequestHandler):
         self.wfile.flush()
 
 
-def run_bench(model):
+def run_bench(model, window="0.5"):
     Fake.model = model
     SERVED.clear()
     srv = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Fake)
@@ -75,10 +76,18 @@ def run_bench(model):
     os.makedirs(os.path.join(home, ".config", "qwen38"), exist_ok=True)
     with open(os.path.join(home, ".config", "qwen38", "api-key"), "w") as fh:
         fh.write("test-key\n")
+    # cpu-hogs.py asks docker which containers are the engine's: the offline suite asks no docker
+    # (TESTING.md), so a docker that lists none comes first on PATH (code review, 2026-10-26)
+    stub = os.path.join(home, "bin")
+    os.makedirs(stub)
+    with open(os.path.join(stub, "docker"), "w") as fh:
+        fh.write("#!/bin/sh\nexit 0\n")
+    os.chmod(os.path.join(stub, "docker"), 0o755)
     try:
         r = subprocess.run(["bash", BENCH], capture_output=True, text=True, timeout=180,
                            cwd=REPO_DIR,
-                           env={**os.environ, "PORT": str(srv.server_port), "HOME": home})
+                           env={**os.environ, "PORT": str(srv.server_port), "HOME": home, "HOGS_WINDOW": window,
+                                "PATH": stub + os.pathsep + os.environ.get("PATH", "")})
     finally:
         srv.shutdown()
         shutil.rmtree(home, ignore_errors=True)
@@ -106,7 +115,23 @@ def main():
     if set(SERVED) != {"qwen3.8-flash-next"}:
         fails.append(f"the served model name was not used in the request: {set(SERVED)}")
 
+    # A process that holds a core before the run is named with its share, and the median says so
+    # (cpu-hogs.py): on a GB10 the CPU and the GPU share one power budget (2026-10-24)
+    spin = subprocess.Popen([sys.executable, "-c", "while True: pass"])
+    try:
+        time.sleep(0.3)
+        out = run_bench("qwen3.8-27b", window="2.0")     # its share averaged over more turns of a loaded runner's scheduler
+    finally:
+        spin.kill()
+        spin.wait()
+    if f"  {spin.pid} " not in out or "of a core" not in out:
+        fails.append(f"a process spinning a core before the run was not named:\n{out[:700]}")
+    if "held a core before the run" not in out:
+        fails.append("the median does not say that a process held a core before the run")
+
     out = run_bench("qwen3.8-27b")
+    if "busy before the run" not in out:
+        fails.append("bench.sh no longer says what held a core before the run")
     if "Qwen3.8-27B NVFP4+DFlash2" not in out:
         fails.append(f"the 27B header is gone:\n{out[:400]}")
     if "Flash-Next" in out:
@@ -151,6 +176,35 @@ def main():
             fails.append(f"an engine that {what} is not reported as unknown:\n{out[:400]}")
         if "greedy median" not in out:
             fails.append(f"the benchmark did not run when the engine {what}")
+
+    # a cpu-hogs that fails is said as a failure, never as a quiet box (revue 627, 26/10):
+    # an empty window used to read as "nothing outside the engine held half a core" even when
+    # cpu-hogs.py itself died (missing file, crash, a non-numeric window from the caller)
+    out = run_bench("qwen3.8-27b", window="not-a-number")
+    if "cpu-hogs failed" not in out:
+        fails.append(f"a failing cpu-hogs did not say so:\n{out[:400]}")
+    # and why: its error was thrown away with its output (code review, 2026-10-26)
+    if "invalid float value" not in out:
+        fails.append(f"a failing cpu-hogs did not say why:\n{out[:400]}")
+    out = run_bench("qwen3.8-27b", window="0.3")
+    if "must be 0.5 to 60 s" not in out or "cpu-hogs failed (exit 2" not in out:
+        fails.append(f"a window under 0.5 s did not fail with its reason:\n{out[:400]}")
+    if "nothing outside the engine held half a core" in out:
+        fails.append("a failing cpu-hogs still let the quiet-box claim through")
+
+    # a busy process is named by its pid and name, never by its command line: this report gets pasted in
+    # public, and a command line can hold a token (verification, 2026-10-26)
+    spin = subprocess.Popen([sys.executable, "-c", "while True: pass", "--token", "hf_NOT_A_REAL_TOKEN_42"])
+    try:
+        time.sleep(0.3)
+        out = run_bench("qwen3.8-27b", window="2.0")
+    finally:
+        spin.kill()
+        spin.wait()
+    if "hf_NOT_A_REAL_TOKEN_42" in out:
+        fails.append("bench printed a busy process's command line, its token included")
+    if f"{spin.pid} " not in out:
+        fails.append(f"bench did not name the busy process {spin.pid}:\n{out[:400]}")
 
     for f in fails:
         print("FAIL", f)

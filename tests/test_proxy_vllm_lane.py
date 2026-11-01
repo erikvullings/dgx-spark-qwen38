@@ -31,6 +31,9 @@ import urllib.request
 from contextlib import redirect_stderr
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import localports  # noqa: E402
+
 HERE = Path(__file__).resolve()
 KEY = "test-key-vllm-lane"
 METRICS = (
@@ -597,9 +600,8 @@ class ALaneSwitch(unittest.TestCase):
             f'if [ "$1" = show ]; then cat "{self.state}"; exit 0; fi\n'
             "exit 3\n")
         (self.t / "bin/systemctl").chmod(0o755)
-        with socket.socket() as sk:
-            sk.bind(("127.0.0.1", 0))
-            self.engine_port = sk.getsockname()[1]
+        # the engine's port is gone until start_engine, and the test's all along: no one else can take it
+        self.engine_port = localports.held(self)
         saved, saved_argv = dict(os.environ), list(sys.argv)
         self.addCleanup(lambda: (os.environ.clear(), os.environ.update(saved), setattr(sys, "argv", saved_argv)))
         os.environ.update(UPSTREAM=f"http://127.0.0.1:{self.engine_port}", KEEPALIVE_S="0.4",
@@ -619,7 +621,7 @@ class ALaneSwitch(unittest.TestCase):
             FakeVllm.bodies.clear(); FakeVllm.aborts.clear(); FakeVllm.closed_at.clear()
 
     def start_engine(self):
-        self.engine = http.server.ThreadingHTTPServer(("127.0.0.1", self.engine_port), FakeVllm)
+        self.engine = localports.serve(self.engine_port, http.server.ThreadingHTTPServer, FakeVllm)
         self.engine.daemon_threads = True
         threading.Thread(target=self.engine.serve_forever, daemon=True).start()
         self.addCleanup(lambda: (self.engine.shutdown(), self.engine.server_close()))

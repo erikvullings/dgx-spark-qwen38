@@ -63,7 +63,7 @@ HF_UNITS = {("qwen38-flash.service" if t.name == "qwen38-flash-launch.sh.templat
 # switch-model.sh's targets, by the lane each block switches to
 CHOICE_LANE = {"kolibri": "qwen38-kolibri.service", "kolibri-nvfp4": "qwen38-kolibri.service",
                "nemotron": "qwen38-nemotron.service", "nemotron-super": "qwen38-nemotron-super.service",
-               "flash-local": "qwen38-flash-local.service", "ornith-122b": "qwen38-ornith-122b.service",
+               "flash-local": "qwen38-flash-local.service", "ornith-122b": "qwen38-ornith-122b.service", "nanbeige": "qwen38-nanbeige.service",
                "image": "qwen38-image.service",
                "image-turbo": "qwen38-image.service", "video": "qwen38-video.service"}
 
@@ -74,7 +74,8 @@ CHOICE_LANE = {"kolibri": "qwen38-kolibri.service", "kolibri-nvfp4": "qwen38-kol
 # A list named for one of them must be that family whatever its size (a b12x table of three that lost
 # one was two, below the check's threshold), and the b12x family is taken from a list so named only:
 # the cockpit's NEMOTRON_LANES is that family's table, named before FP4-Local joined it.
-NAMED_FAMILIES = (("b12x", "B12X"), ("nemotron_lanes", "B12X"), ("vllm", "VLLM"))
+MANAGED_SIDE = B12X
+NAMED_FAMILIES = (("b12x", "MANAGED_SIDE"), ("nemotron_lanes", "MANAGED_SIDE"), ("vllm", "VLLM"))
 
 
 def family_of(name):
@@ -299,7 +300,7 @@ class TheLanesAreWhatTheTemplatesSay(unittest.TestCase):
         self.assertTrue(DIFFUSION <= ENGINE)
         self.assertEqual(VLLM, {"qwen38-kolibri.service", "qwen38-nemotron.service",
                                 "qwen38-nemotron-super.service", "qwen38-flash-local.service",
-                                "qwen38-ornith-122b.service"})
+                                "qwen38-ornith-122b.service", "qwen38-nanbeige.service"})
         self.assertEqual(B12X, VLLM - {"qwen38-kolibri.service"})
 
     def test_each_lane_conflicts_with_every_other_and_starts_after_them(self):

@@ -25,8 +25,10 @@ Environment=OPENCODE_EXPERIMENTAL_OUTPUT_TOKEN_MAX=__OUTPUT_TOKEN_MAX__
 Environment=OPENCODE_CONFIG=__HOME__/.config/qwen38/opencode.json
 # Tool permissions. opencode's own defaults ask before a tool touches a path outside
 # the session's project and on a repeated identical call; AGENT_AUTO=1 at install
-# approves every tool call instead (explicit deny rules of your opencode config
-# still apply), the same autonomy as the oc launcher's --yolo.
+# approves every tool call instead, the same autonomy as the oc launcher's --yolo.
+# Its "*" comes after the rules of your opencode config, deny included, unless your
+# config has a "*" of its own. This repo's shell rules for Alibaba Cloud's hosts
+# and the cloud metadata addresses come again after it (SECURITY.md).
 __AUTO_LINE__
 # Loopback only: the cockpit relay is the one thing that reaches this server.
 ExecStart=__OPENCODE_BIN__ serve --hostname 127.0.0.1 --port __OPENCODE_PORT__ --print-logs --log-level INFO

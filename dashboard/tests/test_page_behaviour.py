@@ -34,6 +34,7 @@ const UNITS = {units: {'qwen38-sglang.service': {active: 'active', enabled: 'ena
                        'qwen38-nemotron-super.service': {active: 'inactive', enabled: 'disabled'},
                        'qwen38-flash-local.service': {active: 'inactive', enabled: 'disabled'},
                        'qwen38-ornith-122b.service': {active: 'inactive', enabled: 'disabled'},
+                       'qwen38-nanbeige.service': {active: 'inactive', enabled: 'disabled'},
                        'qwen38-keepalive.service': {active: 'active', enabled: 'enabled'}}};
 const life = (engines, extra) => Object.assign({engines, events: [], blocked: {}}, extra || {});
 const eng = (state, extra) => Object.assign({state, target: 'stock', elapsed: 600}, extra || {});
@@ -179,15 +180,43 @@ class TheKolibriLaneIsSaidAsItIs(unittest.TestCase):
         self.assertNotIn("serves on vLLM", r["verdict"])
         self.assertIn("loading", r["verdict"])
 
-    def test_the_belts_say_they_cannot_act_there(self):
+    def test_the_pool_guard_says_it_cannot_act_there_and_the_floor_how_it_does(self):
+        # since v1.40.3 the floor stops vLLM's generations through the proxy, which closes their
+        # connections; the pool guard still has no flush route there
         r = run(self, self.KOLIBRI + r"""
         const L = life({'qwen38-kolibri.service': eng('ready', {target: 'kolibri'})},
                        {pool_guard: {enabled: true, threshold: 0.6, fails: 0, flushes: 0}});
         feed({lifecycle: L, engine_fast: {mem_floor: {gib: 3, aborts: 0}}});
         report({floor: txt('mm-floor'), guard: txt('mm-guard')});
         """)
-        self.assertIn("cannot act on the Kolibri lane", r["floor"])
+        self.assertEqual(r["floor"], "stops generations under 3 GiB through the proxy (on vLLM, by closing "
+                                     "their connections), never fired")
         self.assertIn("not on the Kolibri lane", r["guard"])
+
+    def test_the_floor_banner_says_what_the_stop_did_no_more(self):
+        # it said every generation stopped, clients cut and new requests held whatever the proxy did,
+        # where it had cut none (code review, 2026-10-26): the cockpit's floor_said is what it says
+        r = run(self, r"""
+        const now = Date.now() / 1000;
+        feed({config: CONFIG, units: UNITS, lifecycle: life({'qwen38-flash.service': eng('ready', {target: 'flash'})})});
+        feed({engine_fast: {mem_floor: {gib: 3, aborts: 1, last_abort: now - 30, via: 'proxy',
+              said: "every generation stopped through the proxy (2 cut, their clients retry, the others ended by SGLang's abort_all), and new ones wait for memory"}}});
+        const proxy = txt('banners');
+        feed({engine_fast: {mem_floor: {gib: 3, aborts: 1, last_abort: now - 30, via: 'proxy',
+              said: "no generation ran through the proxy, and SGLang's abort_all ended the others"}}});
+        const none = txt('banners');
+        feed({engine_fast: {mem_floor: {gib: 3, aborts: 1, last_abort: now - 30, via: 'engine'}}});
+        report({proxy, none, engine: txt('banners'), floor: txt('mm-floor')});
+        """)
+        self.assertIn("To keep the box out of a livelock: every generation stopped through the proxy (2 cut, "
+                      "their clients retry", r["proxy"])
+        self.assertIn("new ones wait for memory.", r["proxy"])
+        self.assertIn("no generation ran through the proxy, and SGLang's abort_all ended the others.", r["none"])
+        self.assertNotIn("cut", r["none"])
+        self.assertNotIn("wait", r["none"])
+        self.assertIn("every generation was aborted", r["engine"])
+        self.assertNotIn("cut", r["engine"])
+        self.assertEqual(r["floor"], "stops generations under 3 GiB through the proxy, fired 1 time")
 
     def test_the_floor_belts_line_wraps_like_the_guards(self):
         # its line is longer than the row, and it was cut with an ellipsis on the Machine view
@@ -853,6 +882,85 @@ class ATableCellCarriesItsColumnName(unittest.TestCase):
         self.assertEqual(out["b"], ["Recipe", None])
 
 
+class ALongPromptIsSaidWhileItIsComputed(unittest.TestCase):
+    """Issue #61 (2026-10-30): a prompt of 494,089 tokens the cache could not serve took 19 min before
+    its first token on the Ornith lane, and the page said "1 running", its last five minutes "quiet",
+    and showed the request "in flight" with an empty Took cell: a user took it for a hang."""
+
+    BODY = r"""
+    const U = JSON.parse(JSON.stringify(UNITS));
+    U.units['qwen38-sglang.service'] = {active: 'inactive', enabled: 'disabled'};
+    U.units['qwen38-ornith-122b.service'] = {active: 'active', enabled: 'enabled'};
+    feed({config: CONFIG, units: U, lifecycle: life({'qwen38-ornith-122b.service': eng('ready', {target: 'ornith-122b'})})});
+    feed({engine_fast: {load: [{num_reqs: 1, num_waiting_reqs: 0, num_tokens: 1301680, num_used_tokens: 312000}], prompt: %s}});
+    feed({feed: {rows: [{ts: '2026-10-30T20:17:24', peer: '127.0.0.1:58172', path: '/v1/chat/completions', bytes: 1885967,
+                         secs: null, age: 760.2, kind: 'live', outcome: 'in flight', detail: null}]}});
+    feed({metrics: {lane: 'qwen38-ornith-122b.service', requests: 0, watched_s: 160}});
+    const row = $('feed').tBodies[0].rows[0];
+    report({lede: txt('now-lede'), cap: txt('tr-cap'), took: row.cells[4].textContent,
+            outcome: row.cells[5].textContent, wm: txt('wm-cap')});
+    """
+    PROMPT = "{tokens: 494089, held: 312000, share: 0.631, elapsed: 760, left_min_s: 380}"
+
+    def test_how_far_the_prompt_has_got_and_a_floor_of_the_time_left(self):
+        r = run(self, self.BODY % self.PROMPT)
+        said = "computing its prompt: 63 % of 494,089 tokens after 12 min 40, at least 6 min left"
+        self.assertIn(f"1 request is running, {said}.", r["lede"])
+        self.assertEqual(r["cap"], "1 running, computing a prompt")
+        self.assertEqual(r["took"], "12 min 40", "the request in flight says how long it has been so")
+        self.assertIn(said, r["outcome"])
+        self.assertEqual(r["wm"], "computing a prompt", "not \"quiet\"")
+
+    def test_without_a_prompt_being_computed_the_page_says_what_it_said(self):
+        r = run(self, self.BODY % "null")
+        self.assertIn("1 request is running.", r["lede"])
+        self.assertNotIn("computing", r["lede"] + r["cap"] + r["outcome"])
+        self.assertEqual(r["cap"], "1 running")
+        self.assertEqual(r["took"], "12 min 40")
+        self.assertEqual(r["wm"], "quiet")
+
+    def test_a_floor_is_said_rounded_down(self):
+        # fmtMin rounds to the nearest minute: a floor of 150 s read "at least 3 min" (code review, 2026-10-31)
+        for left, said in ((150, "at least 2 min left"), (89.9, "at least 89 s left"), (3659, "at least 1 h 00 left"),
+                           (90, "at least 1 min left")):
+            with self.subTest(left=left):
+                r = run(self, self.BODY % f"{{tokens: 494089, held: 312000, share: 0.631, elapsed: 760, left_min_s: {left}}}")
+                self.assertIn(said, r["lede"])
+
+    def test_near_its_end_no_floor_is_said(self):
+        r = run(self, self.BODY % "{tokens: 494089, held: 489148, share: 0.99, elapsed: 1121, left_min_s: null}")
+        self.assertIn("computing its prompt: 99 % of 494,089 tokens after 18 min 41, almost done.", r["lede"])
+
+
+class ALongPromptSentAgainIsSaid(unittest.TestCase):
+    """Issue #61 (2026-10-30): Claude Code left a prompt of 500,161 tokens without an answer after 620 s,
+    twice, then 300 s, twice, and the engine kept what it had computed only every other time. The
+    proxy says so (v6.49), and the page with it, with what widens the client's timeout."""
+
+    def test_the_banner_says_who_left_after_how_long_and_what_to_change(self):
+        r = run(self, r"""
+        const now = Date.now() / 1000;
+        feed({config: CONFIG, units: UNITS, reqguard: {guard: {}, zombies: {}, state: 'ok', verdict: 'holding',
+              resent: {count: 2, last: {at: now - 600, secs: 621, n: 2, who: 'claude-cli/2.1.314',
+                                        advice: 'Claude Code gives up on a turn after 10 min, then 5 min without streaming: claude-local lets it wait (docs/clients.md)'}}}});
+        report({banner: txt('banners')});
+        """)
+        self.assertIn("A client gave up on a long prompt and sent it again.", r["banner"])
+        self.assertIn("2 times in the last 24 h, the last 10 min 00 ago: claude-cli/2.1.314 left it without an answer "
+                      "after 10 min 21 (2 times in a row)", r["banner"])
+        self.assertIn("claude-local lets it wait (docs/clients.md).", r["banner"])
+        # what its prefix cache kept, if anything: on 2026-10-30 it kept nothing of the first 10 min
+        self.assertIn("and the engine computed it again, from what its prefix cache had kept of it, if anything.", r["banner"])
+
+    def test_no_banner_without_a_line(self):
+        r = run(self, r"""
+        feed({config: CONFIG, units: UNITS, reqguard: {guard: {}, zombies: {}, state: 'ok', verdict: 'holding',
+              resent: {count: 0, last: null}}});
+        report({banner: txt('banners')});
+        """)
+        self.assertNotIn("sent it again", r["banner"] or "")
+
+
 class TheCockpitsProbeWearsNoAlarmColour(unittest.TestCase):
     """The request log painted the cockpit's own route probe the red of a failure."""
 
@@ -1180,7 +1288,7 @@ class AnEmptyStateIsSaidNotPending(unittest.TestCase):
                 u27: installed('qwen38-sglang.service'), flash: installed('qwen38-flash.service')});
         """)
         self.assertNotIn("…", r["cps"], r)
-        self.assertEqual(sorted(r["cps"]), ["not installed"] * 7 + ["unknown"] * 2, r)
+        self.assertEqual(sorted(r["cps"]), ["not installed"] * 8 + ["unknown"] * 2, r)
         self.assertEqual((r["image"], r["video"], r["kolibri"], r["nemotron"], r["nsuper"], r["flocal"], r["ornith"], r["u27"],
                           r["flash"]), (False, False, False, False, False, False, False, True, True), r)
 
@@ -1221,7 +1329,7 @@ class TheBootLaneIsSaidOnlyWhenOneIs(unittest.TestCase):
     const units = JSON.parse(JSON.stringify(UNITS));
     for (const u of ['qwen38-sglang.service', 'qwen38-flash.service', 'qwen38-image.service', 'qwen38-video.service', 'qwen38-kolibri.service',
                      'qwen38-nemotron.service', 'qwen38-nemotron-super.service', 'qwen38-flash-local.service',
-                     'qwen38-ornith-122b.service'])
+                     'qwen38-ornith-122b.service', 'qwen38-nanbeige.service'])
       if (%s !== null) units.units[u].enabled = %s;
     feed({config: CONFIG, units, lifecycle: life({'qwen38-sglang.service': eng('stopped', {target: 'uncensored'}),
                                                  'qwen38-flash.service': eng('stopped', {target: 'flash'})})});
@@ -1241,7 +1349,7 @@ class TheBootLaneIsSaidOnlyWhenOneIs(unittest.TestCase):
         r = self.page("'disabled'")
         self.assertEqual(r["sub"], "no lane starts at boot; load one from Lanes", r)
         self.assertTrue(r["atBoot"] and all(a == "manual start" for a in r["atBoot"]), r["atBoot"])
-        self.assertEqual(r["notes"], ["manual start"] * 9, r["notes"])
+        self.assertEqual(r["notes"], ["manual start"] * 10, r["notes"])
         self.assertIn("Boot lanenone", r["facts"])
         self.assertEqual(len(r["steps"]), 2, r["steps"])
         self.assertIn("switch-model.sh uncensored", r["steps"][0])
@@ -2095,6 +2203,41 @@ class EveryVersionOfALaneIsInSight(unittest.TestCase):
         self.assertEqual(missing, [], "a version declared halfway reads its long name on its segment and '. .' under it")
 
 
+class ALaneToComeIsGreyedAfterThe27B(unittest.TestCase):
+    """Hasan, 2026-10-25: a greyed card says Qwen4 27B is coming. It sits once after the 27B it
+    will follow however often the rack renders, says no date and no architecture (Qwen published
+    neither), and loads nothing: a click only says it is not out."""
+
+    def test_the_card_follows_the_27b_and_loads_nothing(self):
+        r = run(self, r"""
+        const mem = {MemTotal: 121.6 * GIB, MemAvailable: 16 * GIB, Cached: 12 * GIB, SwapTotal: 0, SwapFree: 0};
+        feed({config: CONFIG, units: UNITS, machine: {mem, cpu_pct: {}, disks: {}}, lifecycle: life({})});
+        feed({lifecycle: life({'qwen38-flash.service': eng('ready', {target: 'flash'})})});
+        feed({lifecycle: life({})});
+        const rack = [...$('rack').children], soon = document.querySelectorAll('#rack .bay.soon'), card = soon[0];
+        const before = __fetches.length;
+        clear($('toasts')); card.click(); await __settle();
+        report({n: soon.length, at: rack.indexOf(card), prev: rack[rack.indexOf(card) - 1].querySelector('h3').textContent,
+                bays: rack.length, title: card.querySelector('h3').textContent, cap: card.querySelector('.cap').textContent,
+                lamp: card.querySelectorAll('.cap .lamp').length, text: card.textContent, toast: toastText(),
+                fetched: __fetches.slice(before).map(x => x.url), aria: card.getAttribute('aria-label'),
+                room: [card.querySelector('.foot .act').style.visibility, card.querySelector('.foot .act').getAttribute('aria-hidden')]});
+        """)
+        self.assertEqual(r["n"], 1)
+        self.assertEqual(r["at"], 1)
+        self.assertTrue(r["prev"].startswith("Qwen3.8 27B"), r["prev"])
+        self.assertEqual(r["bays"], 11)   # ten engine lanes and the preview card
+        self.assertEqual((r["title"], r["cap"], r["lamp"]), ("Qwen4 27B", "coming soon", 0))
+        self.assertIn("not released yet", r["text"])
+        self.assertIn("no date yet", r["text"])
+        self.assertIsNone(re.search(r"\b(dense|MoE|experts|October|November|20\d\d)\b", r["text"]), r["text"])
+        self.assertEqual(r["toast"], "Qwen4 27B is not released yet. It comes in an update.")
+        self.assertEqual(r["fetched"], [])
+        self.assertEqual(r["aria"], "Qwen4 27B: coming soon, not released yet.")
+        # the foot keeps its neighbours' height with an action nobody sees or hears
+        self.assertEqual(r["room"], ["hidden", "true"])
+
+
 class EachLaneWearsItsMakersMark(unittest.TestCase):
     """Four bays that looked alike (2026-10-11): each lane carries its maker's mark on its bay
     and its card in Lanes, the head's capsule shows the mark of what serves, and the lane's
@@ -2112,13 +2255,13 @@ class EachLaneWearsItsMakersMark(unittest.TestCase):
         const flash = now();
         feed({lifecycle: life({'qwen38-video.service': eng('ready', {target: 'video'})})});
         const video = now();
-        report({bays: [...document.querySelectorAll('#rack .bay')].map(b => logo(b.querySelector('.mark img'))),
+        report({bays: [...document.querySelectorAll('#rack .bay')].filter(b => !b.classList.contains('soon')).map(b => logo(b.querySelector('.mark img'))),
                 cards: [...document.querySelectorAll('#lanes-list .lane-panel')].map(c => logo(c.querySelector('.mark img'))),
                 alts: [...document.querySelectorAll('.mark img')].map(i => i.getAttribute('alt')),
                 hidden: [...document.querySelectorAll('#rack .mark, #lanes-list .mark')].map(m => m.getAttribute('aria-hidden')),
                 none, flash, video});
         """)
-        lanes = ["qwen.svg", "qwen.svg", "nvidia.svg", "ornith.svg", "alephalpha.svg", "nvidia.svg", "nvidia.svg", "qwen.svg",
+        lanes = ["qwen.svg", "qwen.svg", "nvidia.svg", "ornith.svg", "nanbeige.svg", "alephalpha.svg", "nvidia.svg", "nvidia.svg", "qwen.svg",
                  "minimax.svg"]   # 27B, flash, Flash FP4-Local, Ornith, Kolibri, the Nemotron lanes, image, video
         self.assertEqual(r["bays"], lanes)
         self.assertEqual(r["cards"], lanes)
@@ -2133,14 +2276,14 @@ class EachLaneWearsItsMakersMark(unittest.TestCase):
         names = set()
         for f in (pagejs.STATIC / "js").glob("*.js"):
             names |= set(re.findall(r"maker: '([a-z]+)'", f.read_text()))
-        self.assertEqual(names, {"qwen", "minimax", "alephalpha", "nvidia", "ornith"})
+        self.assertEqual(names, {"qwen", "minimax", "alephalpha", "nvidia", "ornith", "nanbeige"})
         for n in names:
             self.assertTrue((pagejs.STATIC / "img" / "logos" / f"{n}.svg").is_file(), n)
         css = (pagejs.STATIC / "css" / "cockpit.css").read_text()
         # the lanes whose name holds a dash too: read without it, Super VL's and FP4-Local's hues went
         # unchecked (found when the Ornith lane came, 2026-10-21)
         lanes = set(re.findall(r"lane: '([a-z0-9-]+)'", (pagejs.STATIC / "js" / "base.js").read_text()))
-        self.assertEqual(lanes, {"27b", "flash", "kolibri", "nemotron", "nemotron-super", "flash-local", "ornith-122b",
+        self.assertEqual(lanes, {"27b", "flash", "kolibri", "nemotron", "nemotron-super", "flash-local", "ornith-122b", "nanbeige",
                                  "image", "video"})
         for lane in lanes:
             self.assertRegex(css, r"--lane-%s:#[0-9a-f]{6};" % lane)
@@ -2258,7 +2401,7 @@ class TheBoxItIs(unittest.TestCase):
     BODY = r"""
     const units = JSON.parse(JSON.stringify(UNITS));
     const BIG = ['qwen38-flash.service', 'qwen38-image.service', 'qwen38-video.service', 'qwen38-kolibri.service',
-                 'qwen38-nemotron-super.service', 'qwen38-flash-local.service', 'qwen38-ornith-122b.service'];
+                 'qwen38-nemotron-super.service', 'qwen38-flash-local.service', 'qwen38-ornith-122b.service', 'qwen38-nanbeige.service'];
     for (const u of BIG) units.units[u].enabled = '';
     const fits = %s === '64' ? ['qwen38-nemotron.service', 'qwen38-sglang.service'] : Object.keys(units.units);
     const targets = fits.length === 2 ? ['nemotron', 'stock', 'uncensored'] : Object.keys(TARGET_NAME);
@@ -2289,8 +2432,8 @@ class TheBoxItIs(unittest.TestCase):
 
     def test_a_64_gb_box_says_what_it_cannot_hold_and_which_box_it_is(self):
         r = self.page("64", 57.6)
-        self.assertEqual(r["notes"], ["needs a 128 GB DGX Spark"] * 7, r)
-        self.assertEqual(r["install"], ["needs a 128 GB DGX Spark"] * 7, r)
+        self.assertEqual(r["notes"], ["needs a 128 GB DGX Spark"] * 8, r)
+        self.assertEqual(r["install"], ["needs a 128 GB DGX Spark"] * 8, r)
         self.assertEqual(r["pool"], "Unified memory of this ASUS Ascent GX10, 64 GB, shared by CPU and GPU")
         self.assertEqual(r["box"], "ASUS Ascent GX10, 64 GB: the lanes that fit it, the others say they need 128 GB")
         self.assertIn("is not installed on this box. It needs a 128 GB DGX Spark, and this box is a 64 GB one.", r["toast"])

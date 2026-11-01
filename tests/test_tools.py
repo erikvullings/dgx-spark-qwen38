@@ -404,6 +404,7 @@ class BenchAgentTiming(unittest.TestCase):
 
     @classmethod
     def setUpClass(cls):
+        _keep_env(cls)          # the api_key test sets QWEN38_API_KEY, the guard holds it back
         cls.ba = load("bench-agent.py")
 
     def test_api_key_reads_the_file_and_the_environment_is_the_override(self):

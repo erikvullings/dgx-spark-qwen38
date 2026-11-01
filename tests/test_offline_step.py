@@ -7,14 +7,15 @@ except the files that take a port number out of a socket they close, to start a 
 later or to have a port where nothing listens: a file running beside one of them can be handed
 that port meanwhile, so they run one at a time once the others are over.
 
-The step's own script runs here, as ci.yml writes it, over a tree of files whose tests record
-when they ran: every file still runs and has its count checked, every failure is named with
-the end of its output, and nothing runs beside a file that frees a port."""
+The step's runner, tests/run_suite.py since 2026-10-24 (a script ci.yml wrote before), runs here
+over a tree of files whose tests record when they ran: every file still runs and has its count
+checked, every failure is named with the end of its output, and nothing runs beside a file that
+frees a port."""
 import os
 import pathlib
 import subprocess
+import sys
 import tempfile
-import textwrap
 import unittest
 
 REPO = pathlib.Path(__file__).resolve().parents[1]
@@ -22,7 +23,7 @@ REPO = pathlib.Path(__file__).resolve().parents[1]
 # and takes a file holding the second for one that frees a port
 TEST_DEF = "def " + "test_"
 FREES_A_PORT = "getsockname" + "()[1]"
-LONGEST = ("tests/test_suite_isolation.py", "tests/test_text_lane.py", "tests/test_check_pins.py")
+LONGEST = ("tests/test_x_long.py", "tests/test_text_lane.py", "tests/test_check_pins.py")
 
 FAKE = """import os, sys, time, unittest
 # {mark}
@@ -36,18 +37,6 @@ MAIN = """if __name__ == "__main__":
         f.write(f"{{start}} {{time.time()}} {path}\\n")
     sys.exit(0 if ok else 1)
 """
-
-
-def suite_script():
-    """The script the offline step writes to suite.sh, as ci.yml spells it."""
-    ci = (REPO / ".github/workflows/ci.yml").read_text()
-    body = ci.split("cat > \"$probe/suite.sh\" <<'SH'\n", 1)[1]
-    lines = []
-    for ln in body.splitlines():
-        if ln.strip() == "SH":
-            break
-        lines.append(ln)
-    return textwrap.dedent("\n".join(lines)) + "\n"
 
 
 class TheOfflineStep(unittest.TestCase):
@@ -77,10 +66,9 @@ class TheOfflineStep(unittest.TestCase):
         for path, text in self.files.items():
             (self.root / path).parent.mkdir(parents=True, exist_ok=True)
             (self.root / path).write_text(text)
-        script = pathlib.Path(self.tmp.name) / "suite.sh"
-        script.write_text(suite_script())
-        r = subprocess.run(["bash", "-e", str(script)], cwd=self.root, capture_output=True, text=True,
-                           timeout=120, env={**os.environ, "FAKE_LOG": str(self.log)})
+        r = subprocess.run([sys.executable, str(REPO / "tests" / "run_suite.py"), "--repo", str(self.root),
+                            "--first", ",".join(LONGEST)], capture_output=True, text=True, timeout=120,
+                           env={**os.environ, "FAKE_LOG": str(self.log)})
         ran = {}
         if self.log.exists():
             for ln in self.log.read_text().splitlines():
@@ -92,7 +80,7 @@ class TheOfflineStep(unittest.TestCase):
         rc, out, ran = self.run_step()
         self.assertEqual(rc, 0, out)
         self.assertEqual(set(ran), set(self.files), out)
-        self.assertIn("ran its declared tests on its own: 9 of them", out)
+        self.assertIn("every test file ran on its own: 9 of them", out)
         self.assertIn("then 2 one at a time", out)
         self.assertRegex(out, r"the longest: \S+ \d+ s, \S+ \d+ s, \S+ \d+ s\n")
         alone = {p: ran[p] for p in ("tests/test_port_e.py", "tests/test_port_f.py")}
@@ -130,7 +118,7 @@ class TheOfflineStep(unittest.TestCase):
         del self.files["tests/test_check_pins.py"]
         rc, out, ran = self.run_step()
         self.assertEqual(rc, 1, out)
-        self.assertIn("tests/test_check_pins.py, named as one of the longest, is gone", out)
+        self.assertIn("['tests/test_check_pins.py'], named as the longest, are gone", out)
         self.assertEqual(ran, {}, "the step ran files with a stale list")
 
 

@@ -27,6 +27,9 @@ import unittest
 import urllib.request
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import localports  # noqa: E402
+
 REPO = Path(__file__).resolve().parents[1]
 
 
@@ -61,12 +64,6 @@ def start_engine():
     return srv, srv.server_address[1]
 
 
-def free_port():
-    with socket.socket() as s:
-        s.bind(("127.0.0.1", 0))
-        return s.getsockname()[1]
-
-
 def base_env(upstream_port, extra=None):
     env = {"PATH": "/usr/local/bin:/usr/bin:/bin", "HOME": tempfile.mkdtemp(),
            "UPSTREAM": "http://127.0.0.1:%d" % upstream_port}
@@ -75,21 +72,11 @@ def base_env(upstream_port, extra=None):
     return env
 
 
-def run_proxy(port, env, capture_stderr=False):
-    proc = subprocess.Popen(
-        [sys.executable, str(REPO / "keepalive-proxy.py"), str(port)], env=env,
-        stderr=subprocess.PIPE if capture_stderr else subprocess.DEVNULL)
-    deadline = time.time() + 10
-    while time.time() < deadline:
-        try:
-            with socket.create_connection(("127.0.0.1", port), 0.5):
-                return proc
-        except OSError:
-            if proc.poll() is not None:
-                tail = proc.stderr.read().decode()[-400:] if capture_stderr else ""
-                raise AssertionError(f"proxy exited early rc={proc.returncode} {tail}")
-    proc.terminate()
-    raise AssertionError("proxy never listened")
+def run_proxy(env):
+    """(process, port): a proxy on a port of its own."""
+    return localports.spawn(lambda port: subprocess.Popen(
+        [sys.executable, str(REPO / "keepalive-proxy.py"), str(port)], env=env, stderr=subprocess.DEVNULL),
+        within=10)
 
 
 def https_post(port, path, obj):
@@ -133,8 +120,7 @@ class TlsDoor(unittest.TestCase):
         cls.engine.server_close()
 
     def test_cert_named_speaks_tls_and_nothing_plain_answers_beside_it(self):
-        port = free_port()
-        proc = run_proxy(port, base_env(self.engine_port, {"QWEN38_TLS_CERT": self.cert,
+        proc, port = run_proxy(base_env(self.engine_port, {"QWEN38_TLS_CERT": self.cert,
                                                            "QWEN38_TLS_KEY": self.key}))
         try:
             status, body = https_post(port, "/v1/chat/completions", BODY)
@@ -147,8 +133,7 @@ class TlsDoor(unittest.TestCase):
             proc.wait(timeout=5)
 
     def test_no_cert_named_keeps_the_plain_socket_exactly_as_before(self):
-        port = free_port()
-        proc = run_proxy(port, base_env(self.engine_port))
+        proc, port = run_proxy(base_env(self.engine_port))
         try:
             status, _ = plain_post(port, "/v1/chat/completions", BODY)
             self.assertEqual(status, 200)
@@ -163,8 +148,7 @@ class TlsDoor(unittest.TestCase):
         TCP connection parked every other client until the handshake timed out.
         With the handshake moved into the connection thread, the silent
         client burns only its own thread and live clients are unaffected."""
-        port = free_port()
-        proc = run_proxy(port, base_env(self.engine_port,
+        proc, port = run_proxy(base_env(self.engine_port,
                                         {"QWEN38_TLS_CERT": self.cert,
                                          "QWEN38_TLS_KEY": self.key,
                                          "QWEN38_TLS_HANDSHAKE_S": "2"}))
@@ -184,14 +168,17 @@ class TlsDoor(unittest.TestCase):
             proc.wait(timeout=5)
 
     def test_unusable_cert_refuses_to_start(self):
-        port = free_port()
+        # port 0, the kernel's own free port: the proxy binds it and leaves before anyone connects, so
+        # the refusal is the certificate's, never that of a port someone else took
         proc = subprocess.Popen(
-            [sys.executable, str(REPO / "keepalive-proxy.py"), str(port)],
+            [sys.executable, str(REPO / "keepalive-proxy.py"), "0"],
             env=base_env(self.engine_port, {"QWEN38_TLS_CERT": "/nonexistent/cert.pem"}),
             stderr=subprocess.PIPE)
         rc = proc.wait(timeout=10)
+        err = proc.stderr.read().decode()
         proc.stderr.close()
         self.assertNotEqual(rc, 0)
+        self.assertIn("refusing to start: certificate /nonexistent/cert.pem is not usable", err)
 
 
 if __name__ == "__main__":

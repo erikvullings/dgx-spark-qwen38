@@ -130,16 +130,22 @@ WHEEL="${SGLANG_DIFFUSION_WHEEL:-0.5.21}"
 # VIDEO_BIND overrides it for someone who means to, and is told what it costs.
 VIDEO_BIND="${VIDEO_BIND:-$(unit_flag --host)}"; VIDEO_BIND="${VIDEO_BIND:-127.0.0.1}"
 case "$VIDEO_BIND" in
-  127.0.0.1|localhost) ;;
+  127.*|localhost) ;;
   0.0.0.0) die "VIDEO_BIND=0.0.0.0 puts a keyless video generator on EVERY interface (LAN, tailnet, future NICs). This lane has no --api-key; bind loopback (the cockpit is the door) or name one specific address." ;;
   *) echo "WARNING: binding $VIDEO_BIND. This lane has no API key (the diffusion runtime has"
      echo "         no --api-key), so anyone who can reach that address can generate on your GPU."
      echo "         The scheduler's own channel stays on 127.0.0.1 whatever this bind (scheduler-loopback)."
+     echo "         torch's rendezvous port, 30005, listens on all the box's addresses too, with no key,"
+     echo "         and a bind past loopback leaves it unfiltered (SECURITY.md)."
      echo "         Loopback plus the cockpit is the intended shape." ;;
 esac
 case "$VIDEO_BIND" in
   *[!0-9.]*|""|*..*) [ "$VIDEO_BIND" = localhost ] || die "VIDEO_BIND takes an IPv4 address, got: $VIDEO_BIND" ;;
 esac
+# The runtime listens past its bind: torch's TCPStore on port 30005 of every interface, and gloo's
+# and NCCL's bootstrap on the box's LAN address, none with a key (2026-10-30). The unit keeps that
+# bootstrap on lo, and a loopback bind gets its IP filter (lane_ip_deny, lanes.sh).
+VIDEO_IP_DENY="$(lane_ip_deny "$VIDEO_BIND")"; VIDEO_IP_ALLOW="${VIDEO_IP_DENY:+localhost}"
 WEIGHTS_GB=135; RUNTIME_GB=11   # the fl2va partition plus the shared components and root
 # metadata, measured 2026-09-25: 144.1 GB cached in 88 files, which is 134.2 GiB, and the
 # room check below counts GiB (it said 145, and a box with the whole checkpoint cached was
@@ -163,7 +169,7 @@ if [ "$ACTION" = uninstall ]; then
     # by that switch: removing it left no engine at all (same trap as the image lane).
     # The lane before video comes back.
     TEXT_ENABLED=0
-    for u in qwen38-sglang.service qwen38-flash.service qwen38-image.service qwen38-kolibri.service qwen38-nemotron.service qwen38-nemotron-super.service qwen38-flash-local.service qwen38-ornith-122b.service; do
+    for u in qwen38-sglang.service qwen38-flash.service qwen38-image.service qwen38-kolibri.service qwen38-nemotron.service qwen38-nemotron-super.service qwen38-flash-local.service qwen38-ornith-122b.service qwen38-nanbeige.service; do
       systemctl is-enabled --quiet "$u" 2>/dev/null && TEXT_ENABLED=1
     done
     if [ "$WAS_BOOT" -eq 1 ] && [ "$TEXT_ENABLED" -eq 0 ]; then
@@ -202,7 +208,7 @@ install_service(){
       -e "s|__VIDEO_LANE_DIR__|$LANE_DIR|g" -e "s|__VIDEO_VENV__|$VENV|g" \
       -e "s|__VIDEO_MODEL__|$MODEL|g" -e "s|__VIDEO_VARIANT__|$VARIANT|g" \
       -e "s|__VIDEO_PORT__|$PORT|g" \
-      -e "s|__VIDEO_BIND__|$VIDEO_BIND|g" -e "s|__HF_CACHE__|$HF_CACHE|g" \
+      -e "s|__VIDEO_BIND__|$VIDEO_BIND|g" -e "s|__VIDEO_IP_DENY__|$VIDEO_IP_DENY|g" -e "s|__VIDEO_IP_ALLOW__|$VIDEO_IP_ALLOW|g" -e "s|__HF_CACHE__|$HF_CACHE|g" \
       -e "s|__HOME__|$HOME|g" \
       "$HERE/$UNIT.template" > "$RENDER"
   grep -q '__[A-Z][A-Z0-9_]*__' "$RENDER" && die "the unit template still holds an unsubstituted placeholder: $(grep -o '__[A-Z][A-Z0-9_]*__' "$RENDER" | sort -u | tr '\n' ' ')"
@@ -477,7 +483,7 @@ if [ "$SMOKE" -eq 0 ]; then step "Done (smoke test skipped)"; exit 0; fi
 
 step "6/6 Proving it serves (one short video, then the box goes back to the lane it was serving)"
 WAS_OTHER=""
-for u in qwen38-sglang.service qwen38-flash.service qwen38-image.service qwen38-kolibri.service qwen38-nemotron.service qwen38-nemotron-super.service qwen38-flash-local.service qwen38-ornith-122b.service; do
+for u in qwen38-sglang.service qwen38-flash.service qwen38-image.service qwen38-kolibri.service qwen38-nemotron.service qwen38-nemotron-super.service qwen38-flash-local.service qwen38-ornith-122b.service qwen38-nanbeige.service; do
   systemctl is-active --quiet "$u" 2>/dev/null && WAS_OTHER="$u"
 done
 # If this lane was already serving, the test leaves it serving: stopping it on the way

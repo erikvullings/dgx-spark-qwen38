@@ -19,7 +19,7 @@ import { randomBytes } from 'node:crypto';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import net from 'node:net';
+import { portOf } from './localports.mjs';
 const HERE = dirname(fileURLToPath(import.meta.url));
 const COCKPIT = join(HERE, '..', 'cockpit.py');
 const CHROME = process.env.CHROME || ['/usr/bin/google-chrome', '/usr/bin/chromium', '/usr/bin/chromium-browser',
@@ -27,7 +27,6 @@ const CHROME = process.env.CHROME || ['/usr/bin/google-chrome', '/usr/bin/chromi
 const checks = [];
 const ok = (name, cond, detail = '') => { checks.push({ name, ok: !!cond, detail: String(detail).slice(0, 180) }); };
 const sleep = ms => new Promise(r => setTimeout(r, ms));
-const freePort = () => new Promise(res => { const srv = net.createServer(); srv.listen(0, '127.0.0.1', () => { const p = srv.address().port; srv.close(() => res(p)); }); });
 const root = mkdtempSync(join(tmpdir(), 'cockpit-update-banner-'));
 let server = null, chrome = null;
 // process.exit() skips every finally: an early exit (the cockpit never healthy, the login
@@ -50,19 +49,22 @@ writeFileSync(join(cfgDir, 'api-key'), key + '\n', { mode: 0o600 });
 for (const cmd of ['docker', 'systemctl', 'journalctl', 'nvidia-smi', 'sudo', 'git', 'curl', 'tailscale', 'opencode']) {
   writeFileSync(join(fence, cmd), '#!/bin/sh\nexit 1\n'); chmodSync(join(fence, cmd), 0o755);
 }
-const PORT = await freePort();
-const BASE = `http://127.0.0.1:${PORT}`;
-// the same cockpit by a name that is not this machine's, as a box's LAN or Tailscale address is:
-// plain HTTP there is no secure context, and the browser has no clipboard API
-const FAR_NAME = 'cockpit.test', FAR = `http://${FAR_NAME}:${PORT}`;
 const CLOSED = 'http://127.0.0.1:1';
+// port 0, the kernel's own free port, read back once the cockpit listens: a number read from a socket that is
+// then closed is anyone's until the cockpit binds it (localports.mjs)
 server = spawn('python3', [COCKPIT], {
-  env: { ...process.env, COCKPIT_DRY_RUN: '1', COCKPIT_PORT: String(PORT), COCKPIT_CONFIG_DIR: cfgDir,
+  env: { ...process.env, COCKPIT_DRY_RUN: '1', COCKPIT_PORT: '0', COCKPIT_CONFIG_DIR: cfgDir,
          COCKPIT_BIND: '127.0.0.1', COCKPIT_AGENT_PORT: '0', COCKPIT_AUTOHEAL: '0', COCKPIT_AUTOFIT: '0',
          COCKPIT_UPDATE_CHECK: '0', COCKPIT_ENGINE: CLOSED, COCKPIT_PROXY: CLOSED, COCKPIT_IMAGE: CLOSED,
          HOME: root, PATH: `${fence}:${process.env.PATH}` },
   stdio: ['ignore', 'ignore', 'ignore'], detached: true,
 });
+let PORT;
+try { PORT = await portOf(server); } catch (e) { console.error(`the cockpit did not come up: ${e.message}`); process.exit(2); }
+const BASE = `http://127.0.0.1:${PORT}`;
+// the same cockpit by a name that is not this machine's, as a box's LAN or Tailscale address is:
+// plain HTTP there is no secure context, and the browser has no clipboard API
+const FAR_NAME = 'cockpit.test', FAR = `http://${FAR_NAME}:${PORT}`;
 try {
   const t0 = Date.now();
   for (;;) {
@@ -119,18 +121,17 @@ try {
   const setupLine = upd => evalJs(`(() => { (HANDLERS.update || []).forEach(f => f(${JSON.stringify(upd)}));
     return document.getElementById('rp-upd').textContent; })()`);
 
-  let s = await banners({ installed: 'v1.15.1', latest: 'v1.15.1', behind: false });
+  let s = await banners({ installed: 'v1.40.8', latest: 'v1.40.8', behind: false });
   ok('up to date: no update banner', !/is out; this box runs/.test(s), s);
-  s = await banners({ installed: 'v1.15.0', latest: 'v1.99.0', behind: true });
-  ok('behind: the banner names both versions', /Version v1\.99\.0 is out; this box runs v1\.15\.0/.test(s), s);
-  // the update is the one command, run from this checkout: install.sh alone fetches nothing,
-  // and a git pull skips get.sh's guards (found in review, 2026-10-14)
-  const ONE = 'curl -fsSL https://raw.githubusercontent.com/hasso5703/dgx-spark-qwen38/main/get.sh | bash';
+  s = await banners({ installed: 'v1.40.5', latest: 'v1.40.8', behind: true });
+  ok('behind: the banner names both versions', /Version v1\.40\.8 is out; this box runs v1\.40\.5/.test(s), s);
+  // Keep the fork's update path in this checkout so its choices and installer protections apply.
+  const ONE = 'git pull --ff-only && ./install.sh';
   // the checks below put the state in and draw it in the very evaluation that reads it, b the update
   // banner, and the page's own stream leaves F.update alone until that evaluation ends: it draws the
   // real state, a message a second, and took the banner and its button away in between (found in
   // review, 2026-10-21)
-  const BEHIND = { installed: 'v1.15.0', latest: 'v1.99.0', behind: true };
+  const BEHIND = { installed: 'v1.40.5', latest: 'v1.40.8', behind: true };
   const onBehind = body => evalJs(`(async () => { const keep = HANDLERS.update; HANDLERS.update = [];
     try { F.update = ${JSON.stringify(BEHIND)}; renderBanners(lastState || {}, lastErrors || {});
       const b = [...document.querySelectorAll('#banners .banner')].find(e => /is out; this box runs/.test(e.textContent));
@@ -140,7 +141,7 @@ try {
     return JSON.stringify({ cmd: c ? c.textContent : null, btn: btn ? btn.textContent : null });`);
   const blk = JSON.parse(block);
   ok('and gives the command, apart, with a Copy button', /^cd \S+ && /.test(blk.cmd || '') && (blk.cmd || '').endsWith(` && ${ONE}`)
-     && blk.btn === 'Copy' && !/git pull/.test(s), block);
+     && blk.btn === 'Copy', block);
   // every Copy button of the page, the banner's included, is drawn as a button: a ghost one read as
   // plain text at rest (Hasan, 2026-10-21: "visible partout")
   const looks = await onBehind(`return JSON.stringify([...document.querySelectorAll('button')].filter(x => x.textContent.trim() === 'Copy')
@@ -230,6 +231,21 @@ try {
   await waitFor("document.readyState === 'complete'");
   const held = await evalJs("navigator.clipboard.readText()");
   ok('and the clipboard holds the exact command', held === at.cmd && /^cd \S+ && curl -fsSL /.test(held), held);
+  // the proxy's role 8 (v6.48): a tool call that named a host of Cohere's report in the last 24 h
+  // is a red banner with its count, host, tool and route; none of them, no banner
+  const tool = tt => evalJs(`(() => { F.toolTargets = ${JSON.stringify(tt)}; renderBanners(lastState || {}, lastErrors || {});
+    const b = [...document.querySelectorAll('#banners .banner')].find(e => /asked a tool to reach/.test(e.textContent));
+    return b ? b.className + ' :: ' + b.textContent : ''; })()`);
+  await waitFor("document.getElementById('conn-lbl').textContent === 'live'");
+  ok('no tool call naming the hosts: no banner for it', (await tool({ count: 0, last: null })) === '');
+  s = await tool({ count: 2, last: { at: Date.now() / 1000 - 125, hosts: 'aliyuncs.com', tool: 'bash', path: '/v1/chat/completions' } });
+  ok('two of them: a red banner with the host, the count, the tool and the route',
+     /\berr\b/.test(s) && /reach aliyuncs\.com\./.test(s) && /2 tool calls in the last 24 h/.test(s)
+     && /in a bash call on \/v1\/chat\/completions/.test(s) && /agents-and-network/.test(s), s);
+  // it says what the proxy saw, not what a client did with it: it claimed opencode refused the call,
+  // untrue for a config of the user's own (found in review)
+  ok('and claims nothing a client did', /only reports it/.test(s) && !/refuses/.test(s), s);
+  await tool(null);
   ok('no exception', jsErrors().length === 0, jsErrors().join(' | '));
 } finally {
   const gone = child => (!child || child.exitCode !== null || child.signalCode !== null) ? null

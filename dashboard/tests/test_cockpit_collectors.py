@@ -23,6 +23,7 @@ import os
 import shutil
 import sys
 import tempfile
+import time
 import unittest
 from pathlib import Path
 
@@ -298,6 +299,77 @@ class Parse(Base):
         self.assertEqual(out["guard"]["version"], "6.14")
         self.assertEqual(out["guard"]["aborted"], 1)
         self.assertIn(out["state"], ("ok", "warn", "err", ""))
+
+    def test_the_guard_reads_a_day_of_tool_calls_naming_the_hosts(self):
+        """The proxy's role 8 (v6.48): its TOOL TARGET lines of the last 24 h, read with their time,
+        for the page's banner. The day is read every 5 min, not at each 30 s tick of the guard. A read
+        that failed counts the last good one again over the day, and a day read without a line
+        (a journal vacuumed since) takes the banner down."""
+        line = ("{at} gx10-eff9 python3[4713]: [proxy] 127.0.0.1:5 key=alice TOOL TARGET aliyuncs.com in a "
+                "bash call on /v1/chat/completions, relayed as it came (docs/agents-and-network.md)\n")
+        now = time.time()
+        seen, answer = [], [line.format(at=now - 3600) + "1793200000.0 gx10-eff9 python3[4713]: [proxy] other\n"]
+
+        class Journal(FakeBox):
+            def __call__(self, argv, timeout=5.0, merge_err=False):
+                self.calls.append(list(argv))
+                if argv[0] == "journalctl" and "short-unix" in argv:
+                    seen.append(list(argv))
+                    return answer[0]
+                return ""
+        self.cp.run = Journal()
+        self.cp.TOOL_TARGETS.update(at=0.0, raw="", seen={"count": 0, "last": None})
+        out = self.cp.collect_guard()
+        self.assertEqual(out["tool_targets"]["count"], 1)
+        self.assertEqual(out["tool_targets"]["last"]["tool"], "bash")
+        self.assertEqual(seen[0][seen[0].index("--since") + 1], "-24h")
+        self.assertNotIn("-g", seen[0], "journalctl -g ends 1 on no match, as a failed read does")
+        self.cp.collect_guard()
+        self.assertEqual(len(seen), 1, "read again inside its 5 minutes")
+        failed = self.cp.Ran("")                              # what run() returns for a timeout
+        failed.ok = False
+        answer[0] = failed
+        self.cp.TOOL_TARGETS["at"] = 0.0
+        self.assertEqual(self.cp.collect_guard()["tool_targets"]["count"], 1, "a failed read keeps the day")
+        # the last good read counted again over the day as it stands: a line past the day goes
+        self.cp.TOOL_TARGETS.update(at=0.0, raw=line.format(at=now - 90000) + line.format(at=now - 3600))
+        self.assertEqual(self.cp.collect_guard()["tool_targets"]["count"], 1)
+        answer[0] = ""                                         # the day read, and no line in it
+        self.cp.TOOL_TARGETS["at"] = 0.0
+        self.assertEqual(self.cp.collect_guard()["tool_targets"]["count"], 0)
+
+    def test_the_guard_reads_the_long_prompts_sent_again_from_the_same_day(self):
+        """The proxy's role 9 (v6.49, issue #61): its RESENT lines of the last 24 h, from the same read
+        of the day as role 8's, for the page's banner. A failed read keeps the day."""
+        resent = ("{at} gx10-eff9 python3[4713]: [proxy] 127.0.0.1:57102 RESENT the prompt its client left "
+                  "without an answer after 621 s (2 times in a row, claude-cli/2.1.314): Claude Code gives up "
+                  "on a turn after 10 min, then 5 min without streaming: claude-local, or API_TIMEOUT_MS=3600000 "
+                  "with CLAUDE_STREAM_IDLE_TIMEOUT_MS and CLAUDE_BYTE_STREAM_IDLE_TIMEOUT_MS at 1800000, lets it "
+                  "wait (docs/clients.md)\n")
+        now = time.time()
+        seen, answer = [], [resent.format(at=now - 90000) + resent.format(at=now - 600)
+                            + "1793200000.0 gx10-eff9 python3[4713]: [proxy] other\n"]
+
+        class Journal(FakeBox):
+            def __call__(self, argv, timeout=5.0, merge_err=False):
+                self.calls.append(list(argv))
+                if argv[0] == "journalctl" and "short-unix" in argv:
+                    seen.append(list(argv))
+                    return answer[0]
+                return ""
+        self.cp.run = Journal()
+        self.cp.TOOL_TARGETS.update(at=0.0, raw="", raw_resent="", seen={"count": 0, "last": None},
+                                    resent={"count": 0, "last": None})
+        out = self.cp.collect_guard()
+        self.assertEqual(out["resent"]["count"], 1, "the line of yesterday is past the day")
+        self.assertEqual((out["resent"]["last"]["secs"], out["resent"]["last"]["n"], out["resent"]["last"]["who"]),
+                         (621, 2, "claude-cli/2.1.314"))
+        self.assertEqual(len(seen), 1, "one read of the day for both roles")
+        failed = self.cp.Ran("")
+        failed.ok = False
+        answer[0] = failed
+        self.cp.TOOL_TARGETS["at"] = 0.0
+        self.assertEqual(self.cp.collect_guard()["resent"]["count"], 1, "a failed read keeps the day")
 
     def test_the_zombie_guard_reports_the_proxy_that_runs(self):
         """journalctl -g is given a pattern, and -n 1 answers the newest line matching it:

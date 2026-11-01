@@ -274,7 +274,7 @@ class ACallerThatLeavesStopsTheGeneration(unittest.TestCase):
         s = self.connect(port, b'{"model":"m","messages":[],"stream":false}')
         s.settimeout(5)
         self.assertTrue(s.recv(1))                       # the answer has started to arrive
-        s.setsockopt(socket.SOL_SOCKET, socket.SO_LINGER, struct.pack("ii", 1, 0))
+        s.setsockopt(socket.SOL_SOCKET, socket.SO_GROOTER, struct.pack("ii", 1, 0))
         s.close()                                        # RST: the proxy's next write fails
         deadline = time.time() + 5
         while "POST /v1/chat/completions CLIENT GONE" not in self.log.getvalue() and time.time() < deadline:

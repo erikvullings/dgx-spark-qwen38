@@ -8,13 +8,15 @@ partial loop is not a measurement, which is what exit 3 says elsewhere in this t
 """
 import http.server
 import os
-import socket
 import subprocess
 import sys
 import threading
 import time
 import unittest
 from pathlib import Path
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import localports  # noqa: E402
 
 REPO = Path(__file__).resolve().parents[1]
 TOOL = REPO / "bench-agent.py"
@@ -66,10 +68,7 @@ class TheExits(unittest.TestCase):
         self.assertNotIn("Traceback", r.stderr)
 
     def test_a_lane_that_is_gone(self):
-        s = socket.socket()
-        s.bind(("127.0.0.1", 0))
-        port = s.getsockname()[1]
-        s.close()                           # nothing listens there now
+        port = localports.held(self)     # nothing listens there, and no other program can
         r = self.run_tool(port)
         self.assertEqual(r.returncode, 3, r.stderr)
         self.assertNotIn("Traceback", r.stderr)

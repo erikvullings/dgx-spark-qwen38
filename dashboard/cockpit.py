@@ -124,6 +124,23 @@ def release_state():
            "clone": clone, "behind_clone": bool(lag)}
     if lag:
         out["behind_clone_why"] = lag
+    # the same release on both sides said nothing of what moved ("the services run v1.40.4, the clone
+    # is v1.40.4", Hasan's capture, 2026-10-29): the two commits, and the clone's past the recorded one
+    # when git still knows it. A recorded value that is no hash (or no string) never reaches git's argv. Only
+    # for the same release on both sides, the one case the banner shows them: this runs at each collect, and
+    # the git calls ran for nothing on a box whose clone names another release (review, 2026-10-30).
+    was = (rec or {}).get("commit") or ""
+    if (lag == "commit" and head and rec.get("release") == clone and isinstance(was, str)
+            and re.fullmatch(r"[0-9a-f]{7,40}", was)):
+        out["installed_commit"], out["clone_commit"] = was[:7], head[:7]
+        # "past it" only for a clone that descends from the recorded commit: one reset to an older commit, or
+        # whose history was rewritten, has commits the recorded one lacks without being past it (review, 2026-10-30)
+        if run(["git", "-C", str(REPO_DIR), "merge-base", was, head]).strip().startswith(was):
+            span = f"{was}..{head}"
+            log = run(["git", "-C", str(REPO_DIR), "log", "-n", "5", "--format=%h %s", span], errors="replace").splitlines()
+            count = run(["git", "-C", str(REPO_DIR), "rev-list", "--count", span]).strip()
+            if log and count.isdigit():
+                out["commits"], out["commits_count"] = [ln[:160] for ln in log], int(count)
     return out
 
 
@@ -161,7 +178,7 @@ MASKED_FIELDS = {"api_key", "admin_api_key"}
 
 UNITS = ("qwen38-sglang.service", "qwen38-flash.service", "qwen38-image.service",
          "qwen38-video.service", "qwen38-kolibri.service", "qwen38-nemotron.service",
-         "qwen38-nemotron-super.service", "qwen38-flash-local.service", "qwen38-ornith-122b.service",
+         "qwen38-nemotron-super.service", "qwen38-flash-local.service", "qwen38-ornith-122b.service", "qwen38-nanbeige.service",
          "qwen38-keepalive.service")
 JOURNAL_UNITS = UNITS + (AGENT_UNIT,)   # what the Logs tab may read (UNITS carries the image, video, Kolibri and Nemotron lanes)
 # The SGLang text engines' containers: what their scheduler lines and their abort contract
@@ -169,7 +186,7 @@ JOURNAL_UNITS = UNITS + (AGENT_UNIT,)   # what the Logs tab may read (UNITS carr
 # CONTAINERS, the list the Logs tab, the diagnostics bundle and the container stats read.
 SGL_CONTAINERS = ("qwen38-sglang", "qwen38-flash")
 CONTAINERS = SGL_CONTAINERS + ("qwen38-kolibri", "qwen38-nemotron", "qwen38-nemotron-super", "qwen38-flash-local",
-                               "qwen38-ornith-122b")
+                               "qwen38-ornith-122b", "qwen38-nanbeige")
 
 UNIT2CONT = {"qwen38-sglang.service": "qwen38-sglang",
              "qwen38-flash.service": "qwen38-flash",
@@ -177,7 +194,7 @@ UNIT2CONT = {"qwen38-sglang.service": "qwen38-sglang",
              "qwen38-nemotron.service": "qwen38-nemotron",
              "qwen38-nemotron-super.service": "qwen38-nemotron-super",
              "qwen38-flash-local.service": "qwen38-flash-local",
-             "qwen38-ornith-122b.service": "qwen38-ornith-122b"}
+             "qwen38-nanbeige.service": "qwen38-nanbeige", "qwen38-ornith-122b.service": "qwen38-ornith-122b"}
 HISTORY_FILE_NAME = "cockpit-history.json"
 
 EVENTS: deque = deque(maxlen=200)
@@ -316,21 +333,24 @@ class Ran(str):
     ok = True
 
 
-def run(argv: list[str], timeout: float = 5.0, merge_err: bool = False) -> str:
+def run(argv: list[str], timeout: float = 5.0, merge_err: bool = False, errors: str = "strict") -> str:
     """Fixed-argv runner: never a shell, never client input.
 
     merge_err folds stderr into the result: docker logs streams the
     container's stderr (where SGLang actually speaks) to its own stderr,
     so every docker-logs reader MUST pass merge_err=True (field bug: the
     stage parser and decode telemetry read empty stdout for a night).
+    errors="replace" for text a user wrote that may not be UTF-8: a commit subject that names
+    an encoding it does not hold reaches git log's output as its bytes, and read strictly it
+    took the whole update panel down (review, 2026-10-30).
     """
     try:
         if merge_err:
             out = subprocess.run(argv, stdout=subprocess.PIPE,
-                                 stderr=subprocess.STDOUT, text=True,
+                                 stderr=subprocess.STDOUT, text=True, errors=errors,
                                  timeout=timeout)
         else:
-            out = subprocess.run(argv, capture_output=True, text=True,
+            out = subprocess.run(argv, capture_output=True, text=True, errors=errors,
                                  timeout=timeout)
         ran = Ran(out.stdout)
         ran.ok = out.returncode == 0
@@ -537,7 +557,9 @@ def collect_containers():
 
 
 MEM_FLOOR_GIB = float(os.environ.get("COCKPIT_MEM_FLOOR_GIB", "3.0"))
-MEM_FLOOR = {"last_abort": None, "aborts": 0, "last_reason": "", "last_try": None}
+MEM_FLOOR = {"last_abort": None, "aborts": 0, "last_reason": "", "last_try": None, "last_via": None, "last_said": ""}
+# The floor's pause between two stops; the proxy refuses new generations for as long after one (v1.40.3).
+MEM_FLOOR_COOLDOWN_S = 60.0
 
 
 def mem_available_gib() -> float | None:
@@ -592,8 +614,13 @@ KOLIBRI_CANNOT = {
 
 def vllm_metrics_facts(text: str) -> dict:
     """What the cockpit reads off vLLM's /metrics: requests running and waiting, the share of
-    the KV cache in use, and the cache's size in tokens (cache_config_info's label)."""
-    out = {"running": 0, "waiting": 0, "usage": 0.0, "pool": 0, "spec_accepted": 0.0, "spec_drafts": 0.0}
+    the KV cache in use, and the cache's size in tokens (cache_config_info's label). And four
+    counters for a prompt being computed (lc.prompt_progress): the tokens generated, which stand
+    still while it is, the tokens of every prompt admitted, which the prefix cache counts at its
+    admission, and the requests finished (every reason, an abort included) and preempted, which
+    say whether a jump of the prompts admitted is one request's."""
+    out = {"running": 0, "waiting": 0, "usage": 0.0, "pool": 0, "spec_accepted": 0.0, "spec_drafts": 0.0,
+           "gen": None, "queries": None, "finished": None, "preempted": None}
     for name, labels, value in _VLLM_GAUGE.findall(text or ""):
         try:
             v = float(value)
@@ -613,6 +640,14 @@ def vllm_metrics_facts(text: str) -> dict:
             out["spec_accepted"] += v
         elif name == "vllm:spec_decode_num_drafts_total":
             out["spec_drafts"] += v
+        elif name == "vllm:generation_tokens_total":
+            out["gen"] = (out["gen"] or 0.0) + v
+        elif name == "vllm:prefix_cache_queries_total":
+            out["queries"] = (out["queries"] or 0.0) + v
+        elif name == "vllm:request_success_total":
+            out["finished"] = (out["finished"] or 0.0) + v
+        elif name == "vllm:num_preemptions_total":
+            out["preempted"] = (out["preempted"] or 0.0) + v
     return out
 
 
@@ -622,7 +657,9 @@ def kolibri_load(timeout: float = 3.0):
         f = vllm_metrics_facts(r.read(2_000_000).decode("utf-8", "replace"))
     used = int(f["usage"] * f["pool"])
     return [{"dp_rank": 0, "num_reqs": f["running"] + f["waiting"], "num_waiting_reqs": f["waiting"],
-             "num_tokens": f["pool"], "num_used_tokens": used, "num_pending_tokens": f["pool"] - used}]
+             "num_tokens": f["pool"], "num_used_tokens": used, "num_pending_tokens": f["pool"] - used,
+             "gen_tokens": f["gen"], "prefix_queries": f["queries"], "finished": f["finished"],
+             "preemptions": f["preempted"]}]
 
 
 def kolibri_healthy() -> bool:
@@ -685,8 +722,11 @@ FLASH_LOCAL_UNIT_PATH = Path("/etc/systemd/system/qwen38-flash-local.service")
 # The Ornith 1.5 122B lane (v1.38) runs on the Flash FP4-Local lane's image, read by the same b12x
 # loader, with an MTP head: the family's fourth lane, its boot read as FP4-Local's is (the same
 # loader's lines, measured on the reference box, 2026-10-21), its name in a sentence its own.
+NANBEIGE_UNIT = "qwen38-nanbeige.service"
 ORNITH_UNIT = "qwen38-ornith-122b.service"
+NANBEIGE_UNIT_PATH = Path("/etc/systemd/system/qwen38-nanbeige.service")
 ORNITH_UNIT_PATH = Path("/etc/systemd/system/qwen38-ornith-122b.service")
+# Nanbeige shares the vLLM management routes below; it has no drafter or b12x loader.
 # each lane's container, lane, served model and precision, by unit: the one table of the family
 # (Bolt's experts in IQ2_XXS, its Mamba layers NVFP4, the rest Q8_0; Super VL in NVFP4; FP4-Local's
 # experts and n-gram table in NVFP4, its other layers in MXFP8; Ornith's experts in NVFP4, its
@@ -694,12 +734,13 @@ ORNITH_UNIT_PATH = Path("/etc/systemd/system/qwen38-ornith-122b.service")
 NEMOTRON_LANES = {NEMOTRON_UNIT: ("qwen38-nemotron", "nemotron", "nemotron-3.5-bolt", "iq2_xxs"),
                   NEMOTRON_SUPER_UNIT: ("qwen38-nemotron-super", "nemotron-super", "nemotron-3.5-super-vl", "nvfp4"),
                   FLASH_LOCAL_UNIT: ("qwen38-flash-local", "flash-local", "qwen3.8-flash-next-fp4", "nvfp4"),
+                  NANBEIGE_UNIT: ("qwen38-nanbeige", "nanbeige", "nanbeige4.3-33b", "nvfp4/fp8"),
                   ORNITH_UNIT: ("qwen38-ornith-122b", "ornith-122b", "ornith-1.5-122b", "nvfp4")}
 # the lane in a sentence, and what its engine drafts with
 B12X_LANE_NAME = {NEMOTRON_UNIT: "the Nemotron lane", NEMOTRON_SUPER_UNIT: "the Nemotron lane",
-                  FLASH_LOCAL_UNIT: "the Flash FP4-Local lane", ORNITH_UNIT: "the Ornith lane"}
+                  FLASH_LOCAL_UNIT: "the Flash FP4-Local lane", NANBEIGE_UNIT: "the Nanbeige lane", ORNITH_UNIT: "the Ornith lane"}
 B12X_SPEC = {NEMOTRON_UNIT: "LiLiCorr (DFlash)", NEMOTRON_SUPER_UNIT: "LiLiCorr (DFlash)", FLASH_LOCAL_UNIT: "MTP",
-             ORNITH_UNIT: "MTP"}
+             NANBEIGE_UNIT: None, ORNITH_UNIT: "MTP"}
 NEMOTRON_READY_ENTER: dict = {}
 
 
@@ -707,6 +748,8 @@ def nemotron_unit_path(unit: str) -> Path:
     """A lane of the family's unit file, read where the module says it is now (tests move it)."""
     if unit == FLASH_LOCAL_UNIT:
         return FLASH_LOCAL_UNIT_PATH
+    if unit == NANBEIGE_UNIT:
+        return NANBEIGE_UNIT_PATH
     if unit == ORNITH_UNIT:
         return ORNITH_UNIT_PATH
     return NEMOTRON_SUPER_UNIT_PATH if unit == NEMOTRON_SUPER_UNIT else NEMOTRON_UNIT_PATH
@@ -748,7 +791,8 @@ def b12x_cannot(name: str) -> str | None:
     unit = b12x_serving_unit()
     if unit is None:
         return None
-    return {FLASH_LOCAL_UNIT: FLASH_LOCAL_CANNOT, ORNITH_UNIT: ORNITH_CANNOT}.get(unit, NEMOTRON_CANNOT).get(name)
+    reason = {FLASH_LOCAL_UNIT: FLASH_LOCAL_CANNOT, ORNITH_UNIT: ORNITH_CANNOT}.get(unit, NEMOTRON_CANNOT).get(name)
+    return reason.replace("Nemotron", "Nanbeige") if reason and unit == NANBEIGE_UNIT else reason
 # (time, accepted draft tokens, drafts) of the last minute's reads: the acceptance over a window
 # long enough to hold a few hundred drafts, and idle when no draft came in it
 _SPEC_READS: deque = deque(maxlen=240)
@@ -780,7 +824,9 @@ def nemotron_load(timeout: float = 3.0):
     used = int(f["usage"] * f["pool"])
     return [{"dp_rank": 0, "num_reqs": f["running"] + f["waiting"], "num_waiting_reqs": f["waiting"],
              "num_tokens": f["pool"], "num_used_tokens": used, "num_pending_tokens": f["pool"] - used,
-             "accept_len": spec_accept_len(f["spec_accepted"], f["spec_drafts"], time.time())}]
+             "accept_len": spec_accept_len(f["spec_accepted"], f["spec_drafts"], time.time()),
+             "gen_tokens": f["gen"], "prefix_queries": f["queries"], "finished": f["finished"],
+             "preemptions": f["preempted"]}]
 
 
 def _nemotron_log(container: str = "qwen38-nemotron") -> list[str]:
@@ -802,7 +848,10 @@ def nemotron_engine_state(unit: str, *, active: str, sub: str, prev_state: str |
             boot = {"stage": "warming-up", "fired_up": True, "done": list(lc.NEMOTRON_STAGES)}
             healthy = UNHEALTHY_TICKS[unit] < 3
         else:
-            parse = lc.parse_flash_local_boot_log if unit in (FLASH_LOCAL_UNIT, ORNITH_UNIT) else lc.parse_nemotron_boot_log
+            if unit == NANBEIGE_UNIT:
+                parse = lc.parse_kolibri_boot_log
+            else:
+                parse = lc.parse_flash_local_boot_log if unit in (FLASH_LOCAL_UNIT, ORNITH_UNIT) else lc.parse_nemotron_boot_log
             boot = parse(_nemotron_log(container))
     st = lc.derive_state(unit_active=active, unit_sub=sub, container_running=running,
                          healthy=healthy, boot=boot)
@@ -813,13 +862,8 @@ def nemotron_engine_state(unit: str, *, active: str, sub: str, prev_state: str |
     return st, boot, running
 
 
-def engine_abort_all(timeout: float = 8.0):
-    if kolibri_serving():
-        raise RuntimeError("the Kolibri lane's vLLM has no route that aborts its generations "
-                           "(stopping the lane stops them)")
-    if nemotron_serving():
-        raise RuntimeError(f"{b12x_lane_name()}'s vLLM has no route that aborts its generations "
-                           "(stopping the lane stops them)")
+def sglang_abort_all(timeout: float) -> None:
+    """SGLang's abort_all, straight to the engine: raises when it does not answer 2xx."""
     req = urllib.request.Request(ENGINE_BASE + "/abort_request", method="POST",
                                  data=json.dumps({"abort_all": True}).encode(),
                                  headers={"Content-Type": "application/json",
@@ -827,8 +871,80 @@ def engine_abort_all(timeout: float = 8.0):
     urllib.request.urlopen(req, timeout=timeout).read()
 
 
+def engine_abort_all(timeout: float = 8.0, why: str = "", floor: bool = True) -> dict:
+    """Stop every generation in flight: through the keepalive proxy first (v1.40.3, proxy v6.47),
+    which cuts each client's connection instead of letting it end, and stops each generation the
+    way its engine has, vLLM's too. SGLang ends an aborted generation as a finished one (end_turn on
+    /v1/messages), so a stop sent to it straight handed every client the part generated so far as
+    its whole answer: Claude Code kept a compaction summary cut in the middle of a word (the
+    reference box, 2026-10-25). After the memory floor's stop the proxy also refuses new generations
+    for the floor's pause, and while memory stays under the floor; an operator's Abort all holds
+    nothing back. A proxy that does not take the stop (older, down, not on this machine's loopback)
+    leaves the way of before: SGLang's abort_all, straight to the engine. A proxy that took it but
+    whose abort_all did not go on an SGLang lane (the engine slow to answer it) has the cockpit send
+    its own, as before v1.40.3: a generation sent to the engine straight (bench.sh, needle.sh, an eval)
+    is no relay's to cut (code review, 2026-10-26). A stop that stopped nothing raises, so the floor
+    never claims an abort it could not make (review, 2026-10-14). Returns what was done."""
+    body = {"why": why or ("memory floor" if floor else "Abort all, from the cockpit"),
+            "kind": "floor" if floor else "operator"}
+    if floor:
+        body.update(floor_gib=MEM_FLOOR_GIB, hold_s=MEM_FLOOR_COOLDOWN_S)
+    req = urllib.request.Request(PROXY_BASE + "/proxy/stop", method="POST", data=json.dumps(body).encode(),
+                                 headers={"Content-Type": "application/json",
+                                          "Authorization": f"Bearer {api_key()}"})
+    t0 = time.monotonic()
+    try:
+        out = json.loads(urllib.request.urlopen(req, timeout=timeout).read() or b"{}")
+        done = {"via": "proxy", "stopped": int(out.get("stopped") or 0), "abort_all": bool(out.get("abort_all"))}
+    except Exception as e:  # noqa: BLE001 (the way of before follows, and says why)
+        done, missed = None, f"the proxy did not take the stop ({type(e).__name__}: {str(e)[:80]})"
+    if done is not None:
+        if done["abort_all"]:
+            return done
+        if kolibri_serving() or nemotron_serving():
+            if done["stopped"]:
+                return done
+            lane = "the Kolibri lane" if kolibri_serving() else b12x_lane_name()
+            raise RuntimeError(f"no generation ran through the proxy, and {lane}'s vLLM has no route that "
+                               "aborts one sent to it straight (stopping the lane stops them)")
+        try:
+            sglang_abort_all(max(2.0, timeout - (time.monotonic() - t0)))
+            return {**done, "abort_all": True, "abort_all_by": "cockpit"}
+        except Exception as e:  # noqa: BLE001 (said, and raised when nothing at all was stopped)
+            missed = f"SGLang's abort_all failed ({type(e).__name__}: {str(e)[:80]})"
+        if not done["stopped"]:
+            raise RuntimeError(f"no generation ran through the proxy, and {missed}")
+        return {**done, "missed": missed}
+    if kolibri_serving():
+        raise RuntimeError("the Kolibri lane's vLLM has no route that aborts its generations "
+                           f"(stopping the lane stops them), and {missed}")
+    if nemotron_serving():
+        raise RuntimeError(f"{b12x_lane_name()}'s vLLM has no route that aborts its generations "
+                           f"(stopping the lane stops them), and {missed}")
+    sglang_abort_all(timeout)
+    return {"via": "engine", "stopped": None, "missed": missed}
+
+
+def floor_said(done: dict) -> str:
+    """What the memory floor's stop through the proxy did, as its event says it: no more than that.
+    The proxy holds new generations back only after a stop that cut one."""
+    n, by = done.get("stopped") or 0, " (sent by the cockpit, the proxy's did not go)" if done.get("abort_all_by") else ""
+    if n and done.get("abort_all"):
+        said = (f"every generation stopped through the proxy ({n} cut, their clients retry, the others "
+                f"ended by SGLang's abort_all{by}), and new ones wait for memory")
+    elif n:
+        said = (f"{n} generation(s) stopped through the proxy (cut, their clients retry), and new ones wait "
+                "for memory")
+    else:
+        said = f"no generation ran through the proxy, and SGLang's abort_all ended the others{by}"
+    return said + (f" ({done['missed']})" if done.get("missed") else "")
+
+
 HEALTH = {"ts": 0.0, "ok": False}
 HEALTH_RECHECK_S = float(os.environ.get("COCKPIT_HEALTH_RECHECK_S", "30"))
+
+
+PROMPT_STATE: dict = {}       # the reads lc.prompt_progress needs, between two ticks
 
 
 @guard
@@ -879,7 +995,8 @@ def collect_engine_fast():
     healthy = HEALTH["ok"]
     avail = mem_available_gib()
     abort, reason = lc.decide_mem_floor(avail_gib=avail, floor_gib=MEM_FLOOR_GIB, num_reqs=num_reqs,
-                                        last_abort_ts=MEM_FLOOR["last_try"], now=time.time())
+                                        last_abort_ts=MEM_FLOOR["last_try"], now=time.time(),
+                                        cooldown_s=MEM_FLOOR_COOLDOWN_S)
     if abort:
         # The cooldown runs from the attempt; the count and the time the page shows ("every
         # generation was aborted N ago") from an abort that was made. On the Kolibri lane, which
@@ -891,20 +1008,31 @@ def collect_engine_fast():
         # It raised instead, and the floor's decision was a failed audit line with no event
         # (found in review, 2026-09-24).
         try:
-            if not DRY_RUN:
-                engine_abort_all()
+            done = None if DRY_RUN else engine_abort_all(why=reason)
             MEM_FLOOR["last_abort"] = MEM_FLOOR["last_try"]
             MEM_FLOOR["aborts"] += 1
+            MEM_FLOOR["last_via"] = (done or {}).get("via")
             audit({"kind": "mem_floor", "avail_gib": avail, "num_reqs": num_reqs, "ok": True,
-                   **({"dry_run": True} if DRY_RUN else {})})
-            add_event("mem_floor", f"memory floor: {reason}; "
-                      + ("dry run: no abort sent" if DRY_RUN else "every generation aborted"))
+                   **({"dry_run": True} if DRY_RUN else {"via": done.get("via"), "stopped": done.get("stopped")})})
+            if DRY_RUN:
+                said = "dry run: no abort sent"
+            elif done.get("via") == "proxy":
+                said = floor_said(done)
+            else:
+                said = f"every generation aborted at the engine ({done.get('missed')})"
+            MEM_FLOOR["last_said"] = said           # the banner says what was done, no more
+            add_event("mem_floor", f"memory floor: {reason}; {said}")
         except Exception as e:  # noqa: BLE001
-            audit({"kind": "mem_floor", "avail_gib": avail, "num_reqs": num_reqs, "ok": False, "err": str(e)[:120]})
-            add_event("mem_floor", f"memory floor: {reason}; abort failed: {str(e)[:80]}")
+            # the whole cause: the proxy's or the lane's reason came past the 80 characters it was cut at
+            audit({"kind": "mem_floor", "avail_gib": avail, "num_reqs": num_reqs, "ok": False, "err": str(e)[:240]})
+            add_event("mem_floor", f"memory floor: {reason}; abort failed: {str(e)[:240]}")
+    # a prompt being computed: how far it has got, and a floor of the time left (issue #61)
+    lc.prompt_read(PROMPT_STATE, now, (load or [None])[0])
     return {"node_id": "local", "load": load, "healthy": healthy,
+            "prompt": lc.prompt_progress(PROMPT_STATE, now),
             "mem_floor": {"gib": MEM_FLOOR_GIB, "avail_gib": avail, "aborts": MEM_FLOOR["aborts"],
-                          "last_abort": MEM_FLOOR["last_abort"]}}
+                          "last_abort": MEM_FLOOR["last_abort"], "via": MEM_FLOOR["last_via"],
+                          "said": MEM_FLOOR["last_said"]}}
 
 
 KERNEL_LAST = {"count": None}
@@ -1321,7 +1449,7 @@ def collect_feed():
             timeout = 15
     raw = run(argv, timeout=timeout)
     FEED_BOOTED[0] = FEED_BOOTED[0] or answered(raw)      # a read that timed out is tried again
-    rows = lc.parse_feed(raw, carry=FEED_CARRY)
+    rows = lc.feed_ages(lc.parse_feed(raw, carry=FEED_CARRY), time.time())
     FEED_CARRY[:] = [dict(r) for r in rows if r["outcome"] == "in flight"]
     return {"node_id": "local", "rows": lc.mark_probes(rows, "/v1/systemone", len(SYSTEMONE_PROBE_BODY))}
 
@@ -1372,7 +1500,36 @@ def collect_guard():
     state, verdict = lc.guard_verdict(zombies, g, override)
     return {"node_id": "local", "lane": active, "window": ZOMBIE_WINDOW,
             "zombies": zombies, "guard": g, "override": override,
-            "state": state, "verdict": verdict}
+            "state": state, "verdict": verdict, "tool_targets": tool_targets_seen(),
+            "resent": TOOL_TARGETS["resent"]}
+
+
+# The proxy's role 8 (v6.48): the tool calls that named a host of Cohere's report over the last
+# day, for the banner that says so (docs/agents-and-network.md). Read every TOOL_TARGETS_EVERY
+# seconds rather than at each tick of the guard: a week of the reference box's proxy journal,
+# 22,656 lines, took 0.47 s to scan (2026-10-28).
+TOOL_TARGETS_EVERY = 300.0
+TOOL_TARGETS = {"at": 0.0, "raw": "", "seen": {"count": 0, "last": None},
+                "raw_resent": "", "resent": {"count": 0, "last": None}}
+
+
+def tool_targets_seen() -> dict:
+    now = time.time()
+    if now - TOOL_TARGETS["at"] < TOOL_TARGETS_EVERY:
+        return TOOL_TARGETS["seen"]
+    # the whole day, not -g: journalctl -g ends 1 when nothing matches, as a read that failed does,
+    # and without it 0 says the day was read, lines or none (a journal vacuumed after a line kept a
+    # banner up a day, found in review). A read that failed (a timeout) counts the last good one
+    # again, over the day as it stands now.
+    raw = run(["journalctl", "-u", "qwen38-keepalive.service", "--since", "-24h", "--no-pager",
+               "-o", "short-unix"], timeout=6)
+    if answered(raw):
+        TOOL_TARGETS["raw"] = "\n".join(ln for ln in raw.splitlines() if " TOOL TARGET " in ln)
+        # the proxy's role 9 (v6.49, issue #61) from the same read of the day
+        TOOL_TARGETS["raw_resent"] = "\n".join(ln for ln in raw.splitlines() if " RESENT the prompt " in ln)
+    seen = lc.parse_tool_targets(TOOL_TARGETS["raw"], since=now - 86400)
+    TOOL_TARGETS.update(at=now, seen=seen, resent=lc.parse_resent(TOOL_TARGETS["raw_resent"], since=now - 86400))
+    return seen
 
 
 def fit_verdict(ctx: int, outp: int, usable: int, prompt_cap: int, window: int = 0) -> dict:
@@ -1557,7 +1714,7 @@ def collect_opencode():
         out[key]["default"] = cfg.get("model")
         if key == "real":
             for prov, pv in (cfg.get("provider") or {}).items():
-                if prov not in ("qwen38", "flashnext", "kolibri", "nemotron", "nemotron-super", "flash-local", "ornith-122b"):
+                if prov not in ("qwen38", "flashnext", "kolibri", "nemotron", "nemotron-super", "flash-local", "ornith-122b", "nanbeige"):
                     continue
                 for mid, mv in (pv.get("models") or {}).items():
                     lim = mv.get("limit") or {}
@@ -1578,7 +1735,7 @@ def collect_opencode():
     if pool and served:
         prov = {"qwen3.8-27b": "qwen38", "qwen3.8-flash-next": "flashnext", "kolibri-1": "kolibri",
                 "nemotron-3.5-bolt": "nemotron", "nemotron-3.5-super-vl": "nemotron-super",
-                "qwen3.8-flash-next-fp4": "flash-local", "ornith-1.5-122b": "ornith-122b"}.get(served)
+                "qwen3.8-flash-next-fp4": "flash-local", "nanbeige4.3-33b": "nanbeige", "ornith-1.5-122b": "ornith-122b"}.get(served)
         lim = (out["real"]["limits"] or {}).get(f"{prov}/{served}") if prov else None
         if lim and lim.get("context"):
             ctx, outp = int(lim["context"]), int(lim.get("output") or 0)
@@ -1766,7 +1923,7 @@ _ENGINE_INPUTS: dict = {}
 # that list too and stays out here, as engine-inputs.py has it: it runs before the engine and is
 # no input of it, so a new guard restarts nothing (docs/engine-restarts.md).
 VLLM_UNITS = ("qwen38-kolibri.service", "qwen38-nemotron.service", "qwen38-nemotron-super.service",
-              "qwen38-flash-local.service", "qwen38-ornith-122b.service")
+              "qwen38-flash-local.service", "qwen38-ornith-122b.service", "qwen38-nanbeige.service")
 VLLM_LANE_FILES = ("vllm-auth/vllm_engine_auth.py",)
 # Each systemctl or docker call engine-inputs.py makes for this collector: a docker that no
 # longer answers held the whole 30 s tier with it, every panel of that tier frozen exactly
@@ -2578,7 +2735,7 @@ def lane_prepared(lane: str):
     needs. None when the lane is not installed (no unit, no launcher)."""
     unit = {"image": IMAGE_UNIT_PATH, "video": VIDEO_UNIT_PATH, "kolibri": KOLIBRI_UNIT_PATH,
             "nemotron": NEMOTRON_UNIT_PATH, "nemotron-super": NEMOTRON_SUPER_UNIT_PATH,
-            "flash-local": FLASH_LOCAL_UNIT_PATH, "ornith-122b": ORNITH_UNIT_PATH,
+            "flash-local": FLASH_LOCAL_UNIT_PATH, "nanbeige": NANBEIGE_UNIT_PATH, "ornith-122b": ORNITH_UNIT_PATH,
             "flash": UNIT_PATHS["qwen38-flash.service"], "27b": UNIT_PATHS["qwen38-sglang.service"]}[lane]
     try:
         text = unit.read_text(errors="replace")
@@ -2598,7 +2755,7 @@ def lane_prepared(lane: str):
             return Path(waits.group(1)).stat().st_size > 0     # [ -s ]: an empty one is skipped
         except OSError:
             return False
-    if lane in ("flash-local", "ornith-122b"):
+    if lane in ("flash-local", "ornith-122b", "nanbeige"):
         # its image is pulled as published, by digest: the one digest its unit names (the two lanes' one)
         m = re.search(r"\S+@sha256:[0-9a-f]{64}", text)
         return bool(m) and run(["docker", "image", "inspect", "--format", "{{.Id}}", m.group(0)],
@@ -2620,12 +2777,12 @@ def lane_prepared(lane: str):
 def collect_lanes_ready():
     """30 s tier: which side lanes are prepared, for the Load journey (it builds a lane's
     runtime first when it is not)."""
-    return {lane: lane_prepared(lane) for lane in ("image", "video", "kolibri", "nemotron", "nemotron-super", "flash-local", "ornith-122b", "flash", "27b")}
+    return {lane: lane_prepared(lane) for lane in ("image", "video", "kolibri", "nemotron", "nemotron-super", "flash-local", "ornith-122b", "nanbeige", "flash", "27b")}
 
 
 UNIT_OF_LANE = {"image": "qwen38-image.service", "video": "qwen38-video.service", "kolibri": KOLIBRI_UNIT,
                 "nemotron": NEMOTRON_UNIT, "nemotron-super": NEMOTRON_SUPER_UNIT, "flash-local": FLASH_LOCAL_UNIT,
-                "ornith-122b": ORNITH_UNIT, "flash": "qwen38-flash.service", "27b": "qwen38-sglang.service"}
+                "nanbeige": NANBEIGE_UNIT, "ornith-122b": ORNITH_UNIT, "flash": "qwen38-flash.service", "27b": "qwen38-sglang.service"}
 
 
 def served_snapshot(text: str, model: str, allow=None, rev: str | None = None):
@@ -2672,7 +2829,7 @@ def lane_startable(lane: str):
     unit = UNIT_OF_LANE[lane]
     path = {"image": IMAGE_UNIT_PATH, "video": VIDEO_UNIT_PATH, "kolibri": KOLIBRI_UNIT_PATH,
             "nemotron": NEMOTRON_UNIT_PATH, "nemotron-super": NEMOTRON_SUPER_UNIT_PATH,
-            "flash-local": FLASH_LOCAL_UNIT_PATH, "ornith-122b": ORNITH_UNIT_PATH}.get(lane) or UNIT_PATHS[unit]
+            "flash-local": FLASH_LOCAL_UNIT_PATH, "nanbeige": NANBEIGE_UNIT_PATH, "ornith-122b": ORNITH_UNIT_PATH}.get(lane) or UNIT_PATHS[unit]
     try:
         text = path.read_text(errors="replace")
     except OSError:
@@ -2745,7 +2902,7 @@ def lane_startable(lane: str):
 @guard
 def collect_lanes_startable():
     """30 s tier: which side lanes can start as installed (their Start), lane_startable."""
-    return {lane: lane_startable(lane) for lane in ("image", "video", "kolibri", "nemotron", "nemotron-super", "flash-local", "ornith-122b", "flash", "27b")}
+    return {lane: lane_startable(lane) for lane in ("image", "video", "kolibri", "nemotron", "nemotron-super", "flash-local", "ornith-122b", "nanbeige", "flash", "27b")}
 
 TIERS = [
     (1.0, {"machine": collect_machine, "engine_fast": collect_engine_fast, "job": collect_jobs}),
@@ -2820,7 +2977,7 @@ AUDIT_LOG = CONFIG_DIR / "cockpit-audit.log"
 SERVING_UNITS = {"qwen38-sglang.service", "qwen38-flash.service",
                  "qwen38-keepalive.service", "qwen38-image.service",
                  "qwen38-video.service", "qwen38-kolibri.service", "qwen38-nemotron.service",
-                 "qwen38-nemotron-super.service", "qwen38-flash-local.service", "qwen38-ornith-122b.service", AGENT_UNIT}
+                 "qwen38-nemotron-super.service", "qwen38-flash-local.service", "qwen38-ornith-122b.service", "qwen38-nanbeige.service", AGENT_UNIT}
 UNIT_VERBS = {"start", "stop", "restart"}
 
 def _lane_unit_texts() -> list[str]:
@@ -2829,7 +2986,7 @@ def _lane_unit_texts() -> list[str]:
     texts = []
     for path in (UNIT_PATHS["qwen38-sglang.service"], UNIT_PATHS["qwen38-flash.service"],
                  KOLIBRI_UNIT_PATH, NEMOTRON_UNIT_PATH, NEMOTRON_SUPER_UNIT_PATH, FLASH_LOCAL_UNIT_PATH,
-                 ORNITH_UNIT_PATH, IMAGE_UNIT_PATH, VIDEO_UNIT_PATH):
+                 ORNITH_UNIT_PATH, NANBEIGE_UNIT_PATH, IMAGE_UNIT_PATH, VIDEO_UNIT_PATH):
         try:
             texts.append(path.read_text(errors="replace"))
         except OSError:
@@ -2851,7 +3008,7 @@ ACTIONS = {
         "danger": "medium",
         "params": {"target": ["stock", "uncensored", "fp8", "uncensored-fp8",
                               "flash", "flash-nvda", "flash-uncensored", "flash-local", "image", "image-turbo",
-                              "video", "kolibri", "kolibri-nvfp4", "nemotron", "nemotron-super", "ornith-122b"]},
+                              "video", "kolibri", "kolibri-nvfp4", "nemotron", "nemotron-super", "ornith-122b", "nanbeige"]},
         "argv": lambda p: ["bash", str(REPO_DIR / "switch-model.sh"), p["target"]],
         # A switch can download a whole checkpoint: 124 GB for flash take about 23 min at
         # the 89 MB/s the reference box gets, so 30 min failed it on any slower link, and
@@ -2939,6 +3096,8 @@ def target_lane(target: str) -> str:
     # a lane of its own, before the flash lane's prefix takes it for one of its targets
     if target == "flash-local":
         return "flash-local"
+    if target == "nanbeige":
+        return "nanbeige"
     if target == "ornith-122b":
         return "ornith-122b"
     if target.startswith("flash"):
@@ -2965,7 +3124,7 @@ TARGET_PIN = {"stock": "STOCK_REV", "uncensored": "UNC_REV", "fp8": "FP8_REV", "
               "image": "IMAGE_MODEL_PIN_REV", "image-turbo": "IMAGE_TURBO_PIN_REV",
               "video": "VIDEO_MODEL_PIN_REV", "kolibri": "KOLIBRI_FP8_REV", "kolibri-nvfp4": "KOLIBRI_NVFP4_REV",
               "nemotron": "NEMOTRON_BOLT_REV", "nemotron-super": "NEMOTRON_SUPER_REV",
-              "flash-local": "FLASH_LOCAL_REV", "ornith-122b": "ORNITH_122B_REV"}
+              "flash-local": "FLASH_LOCAL_REV", "nanbeige": "NANBEIGE_REV", "ornith-122b": "ORNITH_122B_REV"}
 # The Nemotron lanes load a drafter with the checkpoint, and their Download (the switch's --fetch)
 # fetches both: Library's state of such a target counts its drafter too. Bolt's read whole with its
 # drafter missing, which its Load then fetched (found on the reference box, 2026-10-15). The 27B's
@@ -2987,6 +3146,8 @@ def target_unit(target: str) -> Path:
         return NEMOTRON_UNIT_PATH
     if target == "flash-local":
         return FLASH_LOCAL_UNIT_PATH
+    if target == "nanbeige":
+        return NANBEIGE_UNIT_PATH
     if target == "ornith-122b":
         return ORNITH_UNIT_PATH
     if target.startswith("flash"):
@@ -3242,6 +3403,9 @@ def systemone_available(max_age: float = 60.0) -> dict:
         return {"available": False, "lane": "", "status": None,
                 "reason": f"the Flash FP4-Local lane is serving: System One is answered by {who}, "
                           f"on SGLang, so load {one}"}
+    if text is None and states.get(NANBEIGE_UNIT) in lc.BUSY_STATES:
+        return {"available": False, "lane": "", "status": None,
+                "reason": f"the Nanbeige lane is serving: System One is answered by {who} on SGLang, so load {one}"}
     if text is None and states.get(ORNITH_UNIT) in lc.BUSY_STATES:
         # the same refusal (v6.43), before the family's rule below names it a Nemotron lane
         return {"available": False, "lane": "", "status": None,
@@ -3554,7 +3718,7 @@ def image_status() -> dict:
     # and saying so beats guessing "stopped" at a lane that may be serving
     out["state"] = states.get(IMAGE_UNIT) or "unknown"
     out["available"] = out["state"] in ("ready", "degraded")
-    out["llm_lane"] = next((u for u in lc.TEXT_UNITS + (KOLIBRI_UNIT, NEMOTRON_UNIT, NEMOTRON_SUPER_UNIT, FLASH_LOCAL_UNIT, ORNITH_UNIT) if states.get(u) in lc.BUSY_STATES), "")
+    out["llm_lane"] = next((u for u in lc.TEXT_UNITS + (KOLIBRI_UNIT, NEMOTRON_UNIT, NEMOTRON_SUPER_UNIT, FLASH_LOCAL_UNIT, ORNITH_UNIT, NANBEIGE_UNIT) if states.get(u) in lc.BUSY_STATES), "")
     if out["available"]:
         out["progress"] = image_progress(serving=True)
     return out
@@ -4119,7 +4283,7 @@ def video_status() -> dict:
     # yet, and saying so beats guessing "stopped" at a lane that may be serving
     out["state"] = states.get(VIDEO_UNIT) or "unknown"
     out["available"] = out["state"] in ("ready", "degraded")
-    out["llm_lane"] = next((u for u in lc.TEXT_UNITS + (KOLIBRI_UNIT, NEMOTRON_UNIT, NEMOTRON_SUPER_UNIT, FLASH_LOCAL_UNIT, ORNITH_UNIT) if states.get(u) in lc.BUSY_STATES), "")
+    out["llm_lane"] = next((u for u in lc.TEXT_UNITS + (KOLIBRI_UNIT, NEMOTRON_UNIT, NEMOTRON_SUPER_UNIT, FLASH_LOCAL_UNIT, ORNITH_UNIT, NANBEIGE_UNIT) if states.get(u) in lc.BUSY_STATES), "")
     if out["available"]:
         out["progress"] = dict(VIDEO_LAST) if VIDEO_LAST.get("status") not in ("completed", "failed", "") else {}
         out["run"] = video_run_now()
@@ -4773,8 +4937,14 @@ def job_flush_cache(job: Job):
 
 
 def job_abort_all(job: Job):
-    engine_abort_all()
-    return True, ["every in-flight generation aborted (clients see their stream end)"], {"ok": True}
+    done = engine_abort_all(floor=False)
+    if done.get("via") == "proxy":
+        return True, [f"every in-flight generation stopped through the proxy: {done['stopped']} client(s) cut, "
+                      "who see their connection end and retry"
+                      + (", the others ended by SGLang's abort_all" if done.get("abort_all") else "")
+                      + (f" ({done['missed']})" if done.get("missed") else "")], {"ok": True, **done}
+    return True, ["every in-flight generation aborted at the engine (clients see their stream end); "
+                  + done.get("missed", "")], {"ok": True, **done}
 
 
 def job_smoke(job: Job):

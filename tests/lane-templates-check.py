@@ -44,7 +44,7 @@ SHAPES = REPO / "tests" / "fixtures" / "client-shapes.json"
 # the NVFP4's while the FP8 is the lane's default (found in review, 2026-10-24).
 VLLM_LANES = {
     "flash-local": ("install-flash-local.sh", "FLASH_LOCAL", {"LEAN_DEFAULT": "0"}),
-    "ornith-122b": ("install-ornith-122b.sh", "ORNITH_122B", {"patches": "system-reminder"}),
+    "ornith-122b": ("install-ornith-122b.sh", "ORNITH_122B", {"patches": "system-reminder,tool-reference"}),
     "kolibri": ("install-kolibri.sh", "KOLIBRI_FP8", None),
     "kolibri-nvfp4": ("install-kolibri.sh", "KOLIBRI_NVFP4", None),
     "nemotron": ("install-nemotron.sh", "NEMOTRON_BOLT", None),
@@ -99,20 +99,20 @@ def fixes_of(installer_text, name="the installer"):
 
 def lane_specs(repo_dir=REPO):
     """Every text target: (name, repo, revision, patch environment or None). The 27B and flash targets
-    are install.sh's (its case of MODEL_REPO lines), patched with the four fixes at every install and
+    are install.sh's (its case of MODEL_REPO lines), patched with the five fixes at every install and
     switch; the vLLM targets are VLLM_LANES, checked against what each installer does. Together they
     are every target of switch-model.sh but NOT_TEXT, or this stops."""
     install = (repo_dir / "install.sh").read_text()
     targets = re.findall(r'^\s+([a-z0-9-]+)\)\s+MODEL_REPO="\$([A-Z0-9_]+)_REPO"', install, re.M)
     if not targets:
         raise SystemExit("install.sh no longer maps its targets the way this check reads them")
-    # the four fixes there: install.sh and switch-model.sh run patch-template.py with no --patches and no
+    # the five fixes there: install.sh and switch-model.sh run patch-template.py with no --patches and no
     # environment of their own, or this check would render a template they do not write (code review)
     for script in ("install.sh", "switch-model.sh"):
         calls = [ln.strip() for ln in re.sub(r"\\\n", " ", (repo_dir / script).read_text()).splitlines()
                  if "patch-template.py" in re.sub(r"(^|\s)#.*$", "", ln)]
         if not calls or any("--patches" in c or not c.startswith('python3 "$REPO_DIR/patch-template.py"') for c in calls):
-            raise SystemExit(f"{script} runs patch-template.py otherwise than with its four fixes: {calls}")
+            raise SystemExit(f"{script} runs patch-template.py otherwise than with its five fixes: {calls}")
     specs = [(t, *pin(install, p), {}) for t, p in targets]
     installers = sorted(f.name for f in repo_dir.glob("install-*.sh") if "vlane_put_unit" in f.read_text())
     known = sorted({f for f, _, _ in VLLM_LANES.values()})
@@ -482,7 +482,7 @@ def main():
     failed = renders = 0
     for name, repo, rev, patch in lane_specs():
         template = served(repo, rev, fetch(repo, rev), patch)
-        how = "as published" if patch is None else f"patched ({patch.get('patches', 'all four fixes')})"
+        how = "as published" if patch is None else f"patched ({patch.get('patches', 'all five fixes')})"
         reads = {tools is not None: engine_reads(name, pick(template, tools), env) for tools in (None, TOOLS)}
         engine = reads[False][0]
         said = {("vllm", True): "lists of parts", ("sglang", True): "what the client sends"}

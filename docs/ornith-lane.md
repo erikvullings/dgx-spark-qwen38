@@ -21,13 +21,15 @@ The lane pins the authors' own build at its revision of 2026-10-21 08:31 UTC. It
 of the revision measured here (dde0b1af, 2026-10-20 17:37 UTC) but its model card, whose introduction
 was rewritten four times since: checked file by file against Hugging Face's own sha256 of each. Its
 chat template is served as published but for one line: reasoning between `<think>` tags, on by default
-and turned off by `enable_thinking: false`, tool calls in Qwen's XML form, and no reasoning effort. The
-one line: a system message past the first one made the published template raise "System message must
-be at the beginning", and opencode 1.19.4 sends two system messages before the user's, so every
-opencode request on this lane got a 400 until v1.40.2. `patch-template.py` renders such a message as a
-`<system-reminder>` block, as on the 27B and the two flash lanes (`patch-template.py --patches=system-reminder`,
-the template having no effort of its own); a conversation with one system message renders byte for
-byte as before. Its sampling
+and turned off by `enable_thinking: false`, tool calls in Qwen's XML form, and no reasoning effort. It
+takes two fixes. A system message past the first one made the published template raise "System message
+must be at the beginning", and opencode 1.19.4 sends two system messages before the user's, so every
+opencode request on this lane got a 400 until v1.40.2: `patch-template.py` renders such a message as a
+`<system-reminder>` block, as on the 27B and the two flash lanes. And its `render_content` loop raised
+"Unexpected item type in content." on the `tool_reference` blocks of a Claude Code ToolSearch result until
+v1.40.3: each now names its tool, as on the Qwen lanes (`patch-template.py
+--patches=system-reminder,tool-reference`, the template having no effort of its own). A conversation with
+one system message renders byte for byte as before. Its sampling
 defaults, which vLLM applies to a request that sets none, are its `generation_config.json`'s:
 temperature 0.6, top_k 20, top_p 0.95. Its tokenizer counts text as Qwen3.8's does (the same
 vocabulary, merges and pre-tokenizer, seven audio tokens fewer), so the limits measured for the Qwen
@@ -193,6 +195,60 @@ The correctness of those turns was checked, not only their speed: the fixes vLLM
 prefix cache of hybrid models (vllm#46384, #51113) are in this image, and the misread prefill that gave
 NaN after a turn from the cache on other builds (vllm#49918, #55766) does not reach the model runner
 this lane uses (its second version, which never takes a batch with a prompt in it for a decode).
+
+## A prompt the cache cannot serve
+
+A turn whose prompt the prefix cache serves comes back in seconds, whatever its length: the next turn of
+a chat of 494,120 tokens gave its first token in 1.8 s, all but 56 of its tokens from the cache, and
+Claude Code's next turn of 500,266 tokens took 4.3 s (2026-10-30). A prompt the cache cannot serve is
+computed whole before its first token, and each of its tokens attends to all those before it, so the
+time grows about with the square of its length: on the reference box, about 3 min for the first 200,000
+tokens, 6 for 300,000, 11 for 400,000 and 19 for 494,089, at 2,900 tokens a second at its start and 270
+at its end. A turn is computed whole after the lane starts or restarts, when an earlier message is
+edited or regenerated, when a client changes something near the start of its prompt (a date or a time in
+a system prompt, a resumed session whose first lines changed), or when other long requests have pushed
+it out of the cache, which holds 1,301,680 tokens.
+
+The client has to wait that long. Claude Code with its own default timeouts left such a turn after 10 min,
+twice, then sent it without streaming and left after 5 min, twice, and the engine kept what it had
+computed only every other time: its answer came after 35 min (issue #61). docs/clients.md
+says what widens each client's timeout. Since v1.40.7 the cockpit says while it lasts how long the
+request has been in flight and how much of its prompt the engine has computed, with a floor of the time
+left, and the proxy says when a client sends a long prompt again after leaving it.
+
+## Other requests while a long prompt is computed
+
+Each engine step carries up to 4,096 tokens of a prompt, and once a prompt is long those take seconds. With
+vLLM's default scheduler the other requests waited (issue #61): while a cold prompt of 362,694 tokens was
+computed, 10 clients each sending requests of about 20 KB in a loop got their first token after 101 s at the
+median and their 64 tokens after 265 s, 484 s at worst, where ten such requests at once take 11.5 and 20 s
+on an engine with nothing else to do. A client whose timeout is shorter gives up and sends its request
+again, as the user who reported it saw.
+
+Since v1.40.7 the lane starts with four of vLLM's scheduler settings (vllm/config/scheduler.py says what each
+does). `--max-parallel-prefills auto` lets up to four prompts share a step, round-robin, a prompt alone
+keeping the whole budget. `--prefill-policy decode-aware` keeps one of those places for the prompt nearest its
+answer. `--prefill-compute-share 0.25` gives the prompts a quarter of the time the engine is shared, and the
+answers being written the rest. `--max-num-prefill-tokens-per-step 1024` caps a shared step's prompt tokens,
+a step the prompt has alone keeping its 4,096. Measured on the reference box on 2026-10-31, each setting
+started by the lane's own command, the same long prompt and the same 10 clients:
+
+| Settings | 64 tokens, median | worst | first token, median | requests served a minute | the long prompt | a prompt alone, 277,608 tokens |
+|---|---|---|---|---|---|---|
+| vLLM's defaults (v1.40.6) | 265 s | 484 s | 101 s | 2.4 | 698 s | 416 s |
+| the four, a share of "auto" | 86 s | 161 s | 40 s | 7.1 | 1,113 s | 415 s |
+| the four, a share of 0.25 (v1.40.7) | 34 s | 62 s | 30 s | 16.7 | 1,653 s, its last 388 s alone | 418 s |
+| the four with "auto", steps of 8,192 | 22 s | 780 s | 21 s | 6.2 | 791 s | 393 s |
+
+The clients stop after 20 min: on v1.40.7's settings the long prompt outlived them and ran its last 388 s alone,
+the others ended while they still sent.
+
+The long prompt takes longer while it shares the engine, and the time it takes alone does not change: a step
+it has alone is scheduled as before. Steps of 8,192 tokens made a prompt alone 5 % faster, but 8 small
+requests of 80 waited 668 to 777 s for their first token, so the lane keeps 4,096. Answers changed no more than the engine's
+own noise: two runs of the same ten prompts at temperature 0 on one engine gave the same text for two to five
+of them, and v1.40.7's settings against v1.40.6's for three, the largest gap of a token's log-probability 0.50
+against 0.54 between two runs of v1.40.6's own.
 
 ## Memory
 

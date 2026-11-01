@@ -24,7 +24,7 @@ class TheLanesItKnows(unittest.TestCase):
         self.assertEqual(sorted(specs), sorted(["stock", "uncensored", "fp8", "uncensored-fp8", "flash", "flash-nvda",
                                                 "flash-uncensored", "flash-local", "ornith-122b", "kolibri",
                                                 "kolibri-nvfp4", "nemotron", "nemotron-super"]))
-        self.assertEqual(specs["ornith-122b"], {"patches": "system-reminder"})
+        self.assertEqual(specs["ornith-122b"], {"patches": "system-reminder,tool-reference"})
         self.assertEqual(specs["stock"], {})
         self.assertIsNone(specs["kolibri"])
 
@@ -57,7 +57,7 @@ class TheLanesItKnows(unittest.TestCase):
     def test_an_installer_that_serves_its_template_otherwise_stops_it(self):
         d = self.copy()
         f = d / "install-ornith-122b.sh"
-        f.write_text(f.read_text().replace("TEMPLATE_FIXES=(--patches=system-reminder)", "TEMPLATE_FIXES=()"))
+        f.write_text(f.read_text().replace("TEMPLATE_FIXES=(--patches=system-reminder,tool-reference)", "TEMPLATE_FIXES=()"))
         with self.assertRaisesRegex(SystemExit, "install-ornith-122b.sh serves its template otherwise"):
             ltc.lane_specs(d)
 
@@ -80,18 +80,18 @@ class TheLanesItKnows(unittest.TestCase):
                  'python3 \\\n  "$HERE/patch-template.py" "$HF_CACHE" "$TEMPLATE"']
         for call in calls:
             with self.subTest(call=call):
-                d = self.edit('TEMPLATE_FIXES=(--patches=system-reminder)\n', call + "\n")
+                d = self.edit('TEMPLATE_FIXES=(--patches=system-reminder,tool-reference)\n', call + "\n")
                 with self.assertRaisesRegex(SystemExit, "runs patch-template.py itself"):
                     ltc.lane_specs(d)
 
     def test_fixes_set_twice_stop_it(self):
-        d = self.edit("TEMPLATE_FIXES=(--patches=system-reminder)\n",
-                      "TEMPLATE_FIXES=(--patches=system-reminder)\nTEMPLATE_FIXES+=(LEAN_DEFAULT=0)\n")
+        d = self.edit("TEMPLATE_FIXES=(--patches=system-reminder,tool-reference)\n",
+                      "TEMPLATE_FIXES=(--patches=system-reminder,tool-reference)\nTEMPLATE_FIXES+=(LEAN_DEFAULT=0)\n")
         with self.assertRaisesRegex(SystemExit, "sets TEMPLATE_FIXES more than once"):
             ltc.lane_specs(d)
 
     def test_the_27b_and_flash_patcher_calls_are_read_too(self):
-        # the check gives their targets the four fixes: a call of install.sh or switch-model.sh with fixes
+        # the check gives their targets the five fixes: a call of install.sh or switch-model.sh with fixes
         # of its own would pass it unseen, as the first push of this release did (code review, 2026-10-24)
         for script in ("install.sh", "switch-model.sh"):
             with self.subTest(script=script):
@@ -113,7 +113,7 @@ class TheLanesItKnows(unittest.TestCase):
             ltc.lane_specs(d)
 
     def test_an_option_it_cannot_pass_on_stops_it(self):
-        d = self.edit("TEMPLATE_FIXES=(--patches=system-reminder)", "TEMPLATE_FIXES=(--patches=system-reminder --keep=x)")
+        d = self.edit("TEMPLATE_FIXES=(--patches=system-reminder,tool-reference)", "TEMPLATE_FIXES=(--patches=system-reminder,tool-reference --keep=x)")
         with self.assertRaisesRegex(SystemExit, "holds --keep=x"):
             ltc.lane_specs(d)
 

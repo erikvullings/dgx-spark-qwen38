@@ -77,11 +77,17 @@ class Box:
         for f in self.bin.iterdir():
             f.chmod(0o755)
 
-    def run(self, body):
+    def run(self, body, timeout=30):
         script = (f'set -euo pipefail\nCONFIG_DIR="{self.cfg}"; LANES_UNIT_DIR="{self.units}"\n'
                   f'. "{LANES}"\n' + body)
-        r = subprocess.run(["bash", "-c", script], capture_output=True, text=True, timeout=30,
-                           env={"PATH": f"{self.bin}:/usr/bin:/bin", "HOME": str(self.d)})
+        # from a file: a script of many sequences is past what one argument of bash -c may hold
+        with tempfile.NamedTemporaryFile("w", dir=self.d, suffix=".sh", delete=False) as f:
+            f.write(script)
+        try:
+            r = subprocess.run(["bash", f.name], capture_output=True, text=True, timeout=timeout,
+                               env={"PATH": f"{self.bin}:/usr/bin:/bin", "HOME": str(self.d)})
+        finally:
+            os.unlink(f.name)
         assert r.returncode == 0, r.stdout + r.stderr
         return r.stdout.strip()
 
@@ -335,12 +341,9 @@ class EverySequenceOfSwitches(unittest.TestCase):
     install does), switched through switch-model.sh's own notes: install.sh resolves the last
     text lane served, and the uninstall of the side lane at boot gives the boot back to it."""
 
-    BOX = None
-
-    def replay(self, seq):
-        """One shell per sequence: each switch's own lines, then the box boots the next lane."""
-        b = self.BOX = self.BOX or Box()
-        (b.cfg / "text-lane").unlink(missing_ok=True)   # a fresh box for each sequence
+    @staticmethod
+    def steps(b, seq):
+        """One sequence's lines: each switch's own, then the box boots the next lane."""
         boot = lambda lane: f'printf "%s\\n" {UNIT[lane]} > "{b.d}/enabled"\n'
         steps = [boot(seq[0]), f'text_lane_note "{UNIT[seq[0]]}"\n']   # the first install notes its lane
         for nxt in seq[1:]:
@@ -352,24 +355,46 @@ class EverySequenceOfSwitches(unittest.TestCase):
         steps.append(RESOLVE + 'echo "R=$TEXT_LANE_LAST"\n')
         if seq[-1] in SIDES:
             steps.append(f'echo "B=$(text_lane_back {seq[-1]})"\n')
-        out = dict(ln.split("=", 1) for ln in b.run("".join(steps)).splitlines() if "=" in ln)
-        return out["R"], out.get("B")
+        return "".join(steps)
+
+    def replay(self, seqs):
+        """Many sequences in one shell, each in a subshell of its own that starts on a fresh box (no
+        text lane noted): the same lines, a fork each where it was a bash each, which took 450 s of
+        the offline step on the reference box (2026-10-24). A failing line fails the shell, as it
+        failed the one-sequence shell before."""
+        b = Box()
+        body = "".join(f'echo "SEQ={i}"\n(\nrm -f "{b.cfg}/text-lane"\n{self.steps(b, seq)})\n'
+                       for i, seq in enumerate(seqs))
+        out, cur = {}, None
+        for ln in b.run(body, timeout=600).splitlines():
+            if ln.startswith("SEQ="):
+                cur = int(ln[4:])
+                out[cur] = {}
+            elif "=" in ln and cur is not None:
+                k, v = ln.split("=", 1)
+                out[cur][k] = v
+        return [(out[i]["R"], out[i].get("B")) for i in range(len(seqs))]
 
     def test_every_sequence(self):
-        n, bad = 0, []
+        seqs = []
         for length in range(2, 7):
             for tail in itertools.product(("27b", "flash", "image", "video", "kolibri", "nemotron", "nemotron-super"),
                                           repeat=length - 1):
                 seq = (("flash", "27b")[length % 2],) + tail
-                if any(a == b for a, b in zip(seq, seq[1:])):
-                    continue
+                if not any(a == b for a, b in zip(seq, seq[1:])):
+                    seqs.append(seq)
+        chunks = [seqs[i::4] for i in range(4)]       # four shells, each its own box
+        from concurrent.futures import ThreadPoolExecutor
+        with ThreadPoolExecutor(max_workers=4) as pool:
+            results = list(pool.map(self.replay, chunks))
+        bad = []
+        for chunk, res in zip(chunks, results):
+            for seq, (resolved, back) in zip(chunk, res):
                 truth = UNIT[[lane for lane in seq if lane not in SIDES][-1]]
-                n += 1
-                resolved, back = self.replay(seq)
                 if resolved != truth or back not in (None, truth):
                     bad.append((seq, resolved, back, truth))
-        self.assertGreater(n, 1000)
-        self.assertEqual(bad[:5], [], f"{len(bad)} of {n} sequences")
+        self.assertEqual(len(seqs), 9330)
+        self.assertEqual(bad[:5], [], f"{len(bad)} of {len(seqs)} sequences")
 
 
 if __name__ == "__main__":

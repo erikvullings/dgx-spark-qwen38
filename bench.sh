@@ -11,7 +11,22 @@ for i in 1 2 3; do
   sleep 5
 done
 
-KEY="$(cat "$KEY_FILE")" PORT="$PORT" python3 - <<'PYEOF'
+# Who holds a CPU core outside the engine before the run, from one window (3 s) while the engine
+# waits for its first request: on a GB10 the CPU and the GPU share one power budget, and three
+# command-line calls left behind by old sessions held a core each for days on another DGX Spark
+# (October 2026), seen only in the load average (cpu-hogs.py).
+HOGS_WINDOW="${HOGS_WINDOW:-3}"
+# A cpu-hogs that died must never read as a quiet box (revue 627, 2026-10-26): the
+# "2>/dev/null || true" used to swallow every failure (missing file, crash, a non-numeric
+# window from the caller) and the report then claimed nothing outside the engine held a core.
+# Its last line says why it failed (a window out of 0.5 to 60 s, a crash), which the report gives.
+if HOGS="$(python3 "$(dirname "$0")/cpu-hogs.py" --window "$HOGS_WINDOW" 2>&1)"; then
+  HOGS_FAILED=0; HOGS_ERR=""
+else
+  HOGS_FAILED=$?; HOGS_ERR="$(printf '%s\n' "$HOGS" | tail -n 1)"; HOGS=""
+fi
+
+KEY="$(cat "$KEY_FILE")" PORT="$PORT" HOGS="$HOGS" HOGS_FAILED="$HOGS_FAILED" HOGS_ERR="$HOGS_ERR" HOGS_WINDOW="$HOGS_WINDOW" python3 - <<'PYEOF'
 import json, os, statistics, time, urllib.request
 
 KEY, PORT = os.environ["KEY"], os.environ["PORT"]
@@ -51,8 +66,10 @@ MODEL = served_model()
 # SGLang flash lane, its header, reference and warm-up note above its own numbers, and any other
 # name the 27B lane, whose 71.4 headed Kolibri's and the Nemotron lanes' (found in review, 2026-10-20).
 LANE = {"qwen3.8-27b": "27b", "qwen3.8-flash-next": "flash",
-        "qwen3.8-flash-next-fp4": "flash-local", "ornith-1.5-122b": "ornith-122b"}.get(MODEL, "other")
+        "qwen3.8-flash-next-fp4": "flash-local", "nanbeige4.3-33b": "nanbeige", "ornith-1.5-122b": "ornith-122b"}.get(MODEL, "other")
 HEADERS = {
+    "nanbeige": ("Nanbeige4.3-33B mixed NVFP4/FP8 (experimental) benchmark",
+                  "No Spark reference measurement yet. Discard warmup; repeat three times."),
     # The median is the v1.14 campaign on the official release image (README, CHANGELOG
     # v1.14.0); the per-probe figures are the last ones published, v1.9's, whose median was
     # ~65. This line said ~65 after the README moved to 71.4 (found in review, 2026-09-24).
@@ -124,6 +141,21 @@ title, reference = HEADERS.get(LANE) or (f"{MODEL or 'unknown model'} benchmark 
 print(title)
 print(f"served model: {MODEL or 'unknown (the engine did not name it)'}")
 print(f"{reference}\n")
+# pid, share of a core, name and command line, tab-separated, from cpu-hogs.py
+HOGS = [line.split("\t") for line in os.environ.get("HOGS", "").splitlines() if line.count("\t") == 3]
+if os.environ.get("HOGS_FAILED", "0") != "0":
+    why = "".join(c if c.isprintable() else " " for c in os.environ.get("HOGS_ERR", ""))[:200]
+    print(f"busy before the run: cpu-hogs failed (exit {os.environ['HOGS_FAILED']}{': ' + why if why else ''}), the quiet outside the engine is NOT proven, do not publish these numbers as clean\n")
+elif HOGS:
+    print(f"busy before the run, outside the engine (half a core or more over {os.environ['HOGS_WINDOW']} s):")
+    # its pid and name, never its command line: this report gets pasted in public, and a command line can
+    # hold a token (verification, 2026-10-26). cpu-hogs.py prints them, on this box, for its operator.
+    for pid, share, name, cmd in HOGS:
+        print(f"  {pid} {name}: {float(share):.0%} of a core")
+    print("  their command lines: python3 cpu-hogs.py, on this box. The CPU and the GPU share one power budget:")
+    print("  the numbers below can come out lower\n")
+else:
+    print("busy before the run: nothing outside the engine held half a core\n")
 all_greedy = []
 untimed = 0
 for name, temp, prompt, mt in PROBES:
@@ -142,7 +174,8 @@ if not all_greedy:
     print("\n  greedy median: none, no greedy run could be timed")
     raise SystemExit(1)
 print(f"\n  greedy median: {statistics.median(all_greedy):.1f} tok/s"
-      + (f" ({untimed} run(s) could not be timed and are left out)" if untimed else ""))
+      + (f" ({untimed} run(s) could not be timed and are left out)" if untimed else "")
+      + (f" ({len(HOGS)} process(es) held a core before the run, see above)" if HOGS else ""))
 print("  (numbers vary with content: acceptance length drives everything;")
 if LANE == "27b":
     print("   math/code accept ~3.3-5.6 tokens/step, free prose ~1.5-2.2 in any")

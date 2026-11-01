@@ -8,11 +8,14 @@ review, 2026-09-24). Run against a port nothing listens on, with a HOME of its o
 """
 import os
 import shutil
-import socket
 import subprocess
+import sys
 import tempfile
 import unittest
 from pathlib import Path
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import localports  # noqa: E402
 
 NEEDLE = Path(__file__).resolve().parents[1] / "needle.sh"
 
@@ -24,10 +27,7 @@ class AnEngineThatIsDown(unittest.TestCase):
         os.makedirs(os.path.join(self.home, ".config", "qwen38"))
         with open(os.path.join(self.home, ".config", "qwen38", "api-key"), "w") as f:
             f.write("test-key\n")
-        s = socket.socket()
-        s.bind(("127.0.0.1", 0))
-        self.port = s.getsockname()[1]
-        s.close()                           # nothing listens there now
+        self.port = localports.held(self)    # nothing listens there, and no other program can
 
     def run_needle(self, *args):
         r = subprocess.run(["bash", str(NEEDLE), *args, "--trials", "1", "--depths", "1000", "--no-flush"],

@@ -758,6 +758,21 @@ class FeedOutcomes(unittest.TestCase):
         "CLIENT GONE before the engine answered": "gone",   # v6.31: a stream's caller left while it was queued
         "502 systemone upstream": "fail",
         "529 systemone overloaded": "fail",   # admission: the caller past SYSTEMONE_MAX_CALLS got no answer
+        # v6.47, the cockpit's stop (POST /proxy/stop): the generation was stopped and its client cut, for
+        # the memory floor or the operator's Abort all; a new one refused while the box is short of memory;
+        # an OpenAI stream the engine ended as aborted, cut instead of relayed; the stop's own answer
+        "STOPPED memory floor": "fail",
+        "STOPPED by the cockpit": "fail",
+        "529 memory floor": "fail",
+        "503 memory floor": "fail",
+        "UPSTREAM ABORTED": "fail",
+        "ok stop": "ok",
+        "400 stop refused": "fail",
+        "401 stop refused": "fail",
+        "403 stop refused": "fail",
+        "405 stop refused": "fail",
+        "411 stop refused": "fail",
+        "413 stop refused": "fail",
     }
 
     @classmethod
@@ -1474,6 +1489,56 @@ class TheLastFourBranches(unittest.TestCase):
         state, msg = lc.guard_verdict(lc.parse_zombies(""), g, True)
         self.assertEqual(state, "ok")
         self.assertEqual(msg, "4 drained, no flood")
+
+
+class ToolTargets(unittest.TestCase):
+    """The proxy's role 8 (v6.48), read back the way the cockpit reads its journal: journalctl -o
+    short-unix, so each line starts with its time. The line is rendered from the proxy's own log
+    call, so the two cannot drift apart."""
+
+    @staticmethod
+    def proxy_line(at, hosts, tool, path):
+        import re
+        src = (REPO / "keepalive-proxy.py").read_text()
+        tpl = re.search(r'log\(f"(\{getattr\(self, \'_peer\', \'\?\'\)\} TOOL TARGET [^"]*)"\s*f"([^"]*)"\)', src)
+        msg = (tpl.group(1) + tpl.group(2)).replace("{getattr(self, '_peer', '?')}", "127.0.0.1:51234")
+        msg = msg.replace("{', '.join(hosts)}", hosts).replace("{tool}", tool).replace("{self.path.split('?')[0]}", path)
+        return f"{at} gx10-eff9 python3[4713]: [proxy] {msg}"
+
+    def test_the_count_and_the_newest(self):
+        raw = "\n".join([self.proxy_line("1793200000.5", "aliyuncs.com", "bash", "/v1/chat/completions"),
+                         self.proxy_line("1793203600.25", "169.254.169.254", "Bash", "/v1/messages"),
+                         self.proxy_line("1793201800.0", "routify", "webfetch", "/v1/chat/completions")])
+        out = lc.parse_tool_targets(raw)
+        self.assertEqual(out["count"], 3)
+        self.assertEqual(out["last"], {"at": 1793203600.25, "hosts": "169.254.169.254", "tool": "Bash",
+                                       "path": "/v1/messages"})
+
+    def test_a_named_clients_line_is_read_too(self):
+        # with the identity wall on, the peer is "ip:port key=<label>" on every line of its request:
+        # the clients the wall names were the ones whose lines were never read (found in review)
+        line = self.proxy_line("1793200000.5", "aliyuncs.com", "bash", "/v1/chat/completions")
+        keyed = line.replace("127.0.0.1:51234 TOOL", "127.0.0.1:51234 key=alice TOOL")
+        self.assertNotEqual(line, keyed)
+        self.assertEqual(lc.parse_tool_targets(keyed)["count"], 1)
+
+    def test_a_line_that_only_quotes_the_words_is_not_one(self):
+        # a client's text the proxy logs (a dropped schema pattern) holding the same words
+        raw = ("1793200000.5 gx10-eff9 python3[4713]: [proxy] tool schema: dropped a 'pattern': "
+               "TOOL TARGET aliyuncs.com in a bash call on /v1/x, relayed")
+        self.assertEqual(lc.parse_tool_targets(raw), {"count": 0, "last": None})
+        self.assertEqual(lc.parse_tool_targets(""), {"count": 0, "last": None})
+        # the same text with a "[proxy]" of its own: a pattern that went to the first "[proxy]" it
+        # could find counted it, a red banner for a day forged by a client (found in review)
+        forged = ("1793200000.5 gx10-eff9 python3[4713]: [proxy] 127.0.0.1:5 POST /v1/chat/completions tool "
+                  "schema: dropped a 'pattern': [proxy] x TOOL TARGET aliyuncs.com in a bash call on /v1/x, (")
+        self.assertEqual(lc.parse_tool_targets(forged), {"count": 0, "last": None})
+
+    def test_only_the_lines_since_count(self):
+        raw = "\n".join([self.proxy_line("1793200000.5", "aliyuncs.com", "bash", "/v1/chat/completions"),
+                         self.proxy_line("1793290000.0", "100.100.100.200", "bash", "/v1/messages")])
+        out = lc.parse_tool_targets(raw, since=1793286400.0)
+        self.assertEqual((out["count"], out["last"]["at"]), (1, 1793290000.0))
 
 
 class ZombieGuard(unittest.TestCase):
@@ -2357,6 +2422,433 @@ class TheZombie(unittest.TestCase):
             with self.subTest(**kw):
                 out = self.plan(since=0.0, now=1000.0, **kw)
                 self.assertEqual((out["zombie"], out["restart"]), (True, False))
+
+
+class InFlightAges(unittest.TestCase):
+    """Issue #61 (2026-10-30): a request in flight showed nothing in its Took cell, through a prompt of
+    19 min that a user took for a hang. It now carries its age, from its start line's local time."""
+
+    def test_a_request_in_flight_gets_its_age_and_a_finished_one_none(self):
+        from datetime import datetime
+        start = datetime(2026, 10, 30, 20, 17, 24).timestamp()
+        rows = [{"ts": "2026-10-30T20:17:24", "outcome": "in flight"},
+                {"ts": "2026-10-30T20:17:20", "outcome": "ok", "secs": 0.5},
+                {"ts": "not a time", "outcome": "in flight"}]
+        out = lc.feed_ages(rows, start + 760.25)
+        self.assertEqual(out[0]["age"], 760.2)
+        self.assertNotIn("age", out[1])
+        self.assertNotIn("age", out[2], "a start it cannot read gets no age, and no exception")
+        self.assertEqual(lc.feed_ages([{"ts": "2026-10-30T20:17:24", "outcome": "in flight"}], start - 5)[0]["age"], 0.0)
+
+
+def _row(running, used, gen, queries, waiting=0, finished=None, preempted=None):
+    row = {"num_reqs": running + waiting, "num_waiting_reqs": waiting, "num_used_tokens": used,
+           "gen_tokens": gen, "prefix_queries": queries}
+    if finished is not None:
+        row["finished"] = finished
+    if preempted is not None:
+        row["preemptions"] = preempted
+    return row
+
+
+class APromptBeingComputed(unittest.TestCase):
+    """Issue #61 (2026-10-30): on the Ornith lane a prompt of 494,089 tokens the cache could not serve
+    took 19 min before its first token, and the page said "1 running" and "quiet". lc.prompt_progress
+    says how far it has got and a floor of the time left, from vLLM's counters."""
+    POOL = 1301680
+
+    def replay(self):
+        import csv
+        lines = (HERE.parent / "fixtures" / "ornith-prompt-494k.csv").read_text().splitlines()
+        state, seen = {}, []
+        for r in csv.DictReader(ln for ln in lines if not ln.startswith("#")):
+            t = float(r["t"])
+            lc.prompt_read(state, t, _row(int(r["running"]), int(float(r["kv_usage"]) * self.POOL),
+                                          float(r["gen_tokens"]), float(r["prefix_queries"]), int(r["waiting"])))
+            seen.append((t, lc.prompt_progress(state, t)))
+        return seen
+
+    def test_the_real_prompt_is_counted_whole_and_its_floor_never_passes_the_time_left(self):
+        first_token = 1141.5
+        seen = [(t, p) for t, p in self.replay() if p]
+        self.assertGreater(len(seen), 200)
+        self.assertEqual({p["tokens"] for _, p in seen}, {494089}, "the prompt the prefix cache counted at its admission")
+        shares = [p["share"] for _, p in seen]
+        self.assertEqual(shares, sorted(shares), "the share only grows")
+        self.assertLessEqual(max(shares), 0.99, "held under 100 % until its first token")
+        floors = [(t, p["left_min_s"]) for t, p in seen if p["left_min_s"] is not None]
+        self.assertGreater(len(floors), 150)
+        for t, left in floors:
+            self.assertLessEqual(left, first_token - t, f"at {t} s it said at least {left} s")
+        # and it says something worth reading: more than half of the time left, two minutes in
+        t, left = next((t, left) for t, left in floors if t >= 120)
+        self.assertGreater(left, 0.5 * (first_token - t))
+
+    def test_nothing_is_said_once_its_first_token_is_written(self):
+        state = {}
+        lc.prompt_read(state, 0.0, _row(0, 0, 1, 11))
+        lc.prompt_read(state, 1.0, _row(1, 4224, 1, 494100))
+        lc.prompt_read(state, 30.0, _row(1, 100000, 1, 494100))
+        self.assertIsNotNone(lc.prompt_progress(state, 30.0))
+        lc.prompt_read(state, 31.0, _row(1, 494500, 5, 494100))
+        self.assertIsNone(lc.prompt_progress(state, 31.0), "it writes: the prompt is done")
+
+    def test_once_its_first_token_is_written_a_stall_is_no_prompt(self):
+        # the request computing alone wrote its first token, then the engine stood still for 10 s and more:
+        # a decode that hung was said "computing its prompt: 99 %, almost done" (code review, 2026-10-31)
+        state = {}
+        lc.prompt_read(state, 0.0, _row(0, 0, 1, 11))
+        lc.prompt_read(state, 1.0, _row(1, 4224, 1, 494100))
+        lc.prompt_read(state, 1100.0, _row(1, 519000, 1, 494100))
+        self.assertIsNotNone(lc.prompt_progress(state, 1100.0))
+        lc.prompt_read(state, 1101.0, _row(1, 519900, 2, 494100))          # its first token
+        for t in (1112.0, 1200.0):
+            lc.prompt_read(state, t, _row(1, 519900, 2, 494100))           # then nothing
+            self.assertIsNone(lc.prompt_progress(state, t), t)
+
+    def test_an_engine_seen_empty_drops_the_prompt_and_an_idle_lane_keeps_nothing_growing(self):
+        # the prompt followed stayed in the state after it was done, and a point was added every 5 s for as
+        # long as the lane served: 17,280 a day in the cockpit's memory (code review, 2026-10-31)
+        state = {}
+        lc.prompt_read(state, 0.0, _row(0, 0, 1, 11))
+        lc.prompt_read(state, 1.0, _row(1, 4224, 1, 494100))
+        lc.prompt_read(state, 60.0, _row(1, 100000, 1, 494100))
+        lc.prompt_read(state, 1200.0, _row(0, 0, 400, 494100, finished=1))
+        for i in range(2000):
+            lc.prompt_read(state, 1200.5 + 0.5 * i, _row(0, 0, 400, 494100, finished=1))
+        self.assertNotIn("admit", state)
+        self.assertEqual(state["points"], [])
+
+    def test_nothing_is_said_without_an_admission_one_request_or_quiet_counters(self):
+        state = {}
+        lc.prompt_read(state, 0.0, _row(1, 100000, 1, 50))
+        lc.prompt_read(state, 30.0, _row(1, 150000, 1, 50))
+        self.assertIsNone(lc.prompt_progress(state, 30.0), "a cockpit started mid-prompt saw no admission")
+        state = {}
+        lc.prompt_read(state, 0.0, _row(0, 0, 1, 50))
+        lc.prompt_read(state, 1.0, _row(2, 8448, 1, 800050))
+        lc.prompt_read(state, 30.0, _row(2, 200000, 1, 800050))
+        self.assertIsNone(lc.prompt_progress(state, 30.0), "two running: whose prompt is it")
+        state = {}
+        lc.prompt_read(state, 0.0, _row(1, 0, 10, 50))
+        lc.prompt_read(state, 1.0, _row(1, 4224, 12, 100050))
+        lc.prompt_read(state, 5.0, _row(1, 30000, 12, 100050))
+        self.assertIsNone(lc.prompt_progress(state, 5.0), "a token written 4 s ago")
+
+    def test_a_lane_without_vllms_counters_or_a_restarted_engine_forgets(self):
+        state = {}
+        lc.prompt_read(state, 0.0, _row(0, 0, 1, 11))
+        lc.prompt_read(state, 1.0, _row(1, 4224, 1, 494100))
+        lc.prompt_read(state, 2.0, {"num_reqs": 1, "num_waiting_reqs": 0, "num_used_tokens": 9000})
+        self.assertEqual(state, {}, "an SGLang lane's load has no such counters")
+        lc.prompt_read(state, 0.0, _row(0, 0, 100, 900000))
+        lc.prompt_read(state, 1.0, _row(1, 4224, 100, 1394100))
+        lc.prompt_read(state, 2.0, _row(1, 4224, 0, 494100))
+        self.assertNotIn("admit", state, "counters back to zero: an engine that restarted")
+        self.assertIsNone(lc.prompt_progress(state, 20.0))
+
+    def test_a_read_that_failed_changes_nothing_and_a_long_silence_says_nothing(self):
+        # one read that timed out, or that the engine wrote badly, under a prompt of 19 min had wiped the
+        # state, and the next read took the running request for one admitted unseen: nothing was said for
+        # the rest of the prompt (code review, 2026-10-31)
+        state = {}
+        lc.prompt_read(state, 0.0, _row(0, 0, 1, 11))
+        lc.prompt_read(state, 1.0, _row(1, 4224, 1, 494100))
+        lc.prompt_read(state, 30.0, _row(1, 100000, 1, 494100))
+        kept = json.dumps(state, sort_keys=True)
+        for bad in (None, dict(_row(1, 4224, 1, 494100), gen_tokens="n/a"), dict(_row(1, 4224, 1, 494100), num_reqs=None)):
+            lc.prompt_read(state, 30.5, bad)
+            self.assertEqual(json.dumps(state, sort_keys=True), kept, bad)
+        lc.prompt_read(state, 31.0, _row(1, 102000, 1, 494100))
+        self.assertEqual(lc.prompt_progress(state, 31.0)["held"], 102000, "the next read goes on")
+        # and reads that keep failing: what was known is said no longer than PROMPT_STALE_S
+        self.assertIsNotNone(lc.prompt_progress(state, 41.0))
+        self.assertIsNone(lc.prompt_progress(state, 41.5))
+
+    def test_on_a_lane_whose_prompt_time_grows_as_n_its_floor_still_holds(self):
+        # 1,000 tokens a second whatever the length: the time left is (total - done) / 1000, and a
+        # floor read as N^2 would say more than that. The KV cache is read in whole blocks, rounded
+        # up as vLLM allocates them, and the admission is seen up to half a second late.
+        total, block = 300000, 1056
+        for late in (0.0, 0.25, 0.5):
+            state, said = {}, 0
+            lc.prompt_read(state, -0.5, _row(0, 0, 1, 11))
+            lc.prompt_read(state, late, _row(1, -(-int(1000 * late) // block) * block, 1, 11 + total))
+            for i in range(1, 600):
+                t = late + 0.5 * i
+                done = min(total, 1000 * t)
+                lc.prompt_read(state, t, _row(1, -(-int(done) // block) * block, 1, 11 + total))
+                p = lc.prompt_progress(state, t)
+                if p and p["left_min_s"] is not None:
+                    said += 1
+                    self.assertLessEqual(p["left_min_s"], (total - done) / 1000, (late, t))
+            self.assertGreater(said, 300, late)
+
+
+class AnotherRequestDuringALongPrompt(unittest.TestCase):
+    """Issue #61 again (2026-10-31): the user's other services send small requests while a long prompt
+    is computed, ten clients at a time. The page followed the request admitted last: once a small one
+    had come and gone, it would have said "99 % of 4,812 tokens, almost done" of a prompt of 388,753 that went on.
+    A prompt is followed from an admission that is certainly one request, the others are kept apart,
+    and once they have shared the engine its time is no longer the prompt's own: no floor."""
+    LONG, SMALL = 388753, 4812
+
+    def row(self, t, state, running, used, gen, q, waiting=0, finished=3, preempted=0):
+        lc.prompt_read(state, t, _row(running, used, gen, q, waiting, finished, preempted))
+
+    def long_alone(self, state):
+        self.row(0.0, state, 0, 0, 1, 11)
+        self.row(1.0, state, 1, 2112, 1, 11 + self.LONG)
+        self.row(61.0, state, 1, 100000, 1, 11 + self.LONG)
+
+    def test_a_small_request_beside_it_leaves_it_its_share_and_takes_its_floor(self):
+        state = {}
+        self.long_alone(state)
+        p = lc.prompt_progress(state, 61.0)
+        self.assertEqual(p["tokens"], self.LONG)
+        self.assertEqual(p["left_min_s"], 173, "alone, its own curve: 60 s for 100,000 of 388,753 tokens")
+        q = 11 + self.LONG + self.SMALL
+        self.row(62.0, state, 2, 106000, 1, q)                       # a small one admitted beside it
+        self.assertIsNone(lc.prompt_progress(state, 62.0), "two running")
+        self.row(70.0, state, 2, 120000, 40, q)                      # it writes
+        self.row(75.0, state, 1, 125000, 64, q, finished=4)          # and is done
+        self.assertIsNone(lc.prompt_progress(state, 80.0), "a token written 5 s ago")
+        self.row(91.0, state, 1, 140000, 64, q, finished=4)
+        p = lc.prompt_progress(state, 91.0)
+        self.assertEqual((p["tokens"], p["held"], p["elapsed"]), (self.LONG, 140000, 90), "the long one, not the small one")
+        self.assertIsNone(p["left_min_s"], "it shared the engine: its curve is not its own")
+
+    def test_a_jump_of_two_prompts_while_another_runs_is_never_said_to_be_one(self):
+        state = {}
+        self.row(0.0, state, 0, 0, 1, 11)
+        self.row(1.0, state, 1, 6336, 1, 11 + self.SMALL)            # a small one alone: followed
+        self.row(3.0, state, 1, 6336, 20, 11 + self.SMALL)           # it writes
+        q = 11 + 2 * self.SMALL + self.LONG
+        self.row(4.0, state, 3, 20000, 30, q)                        # the long one and another small one
+        self.row(9.0, state, 1, 30000, 64, q, finished=5)            # both small ones done
+        for t in (30.0, 300.0):
+            self.row(t, state, 1, int(t * 900), 64, q, finished=5)
+            self.assertIsNone(lc.prompt_progress(state, t), f"at {t} s the jump was {self.LONG + self.SMALL} tokens of two prompts")
+
+    def test_a_prompt_admitted_beside_a_request_that_ends_in_the_same_read_is_not_followed(self):
+        state = {}
+        self.row(0.0, state, 0, 0, 1, 11)
+        self.row(1.0, state, 1, 2112, 2, 11 + 10 + self.LONG, finished=4)   # a probe of 10 tokens came and went
+        self.row(61.0, state, 1, 100000, 2, 11 + 10 + self.LONG, finished=4)
+        self.assertIsNone(lc.prompt_progress(state, 61.0), "the jump holds the probe's 10 tokens too")
+
+    def test_a_prompt_preempted_and_admitted_again_is_no_new_prompt(self):
+        state = {}
+        self.long_alone(state)
+        self.row(100.0, state, 0, 0, 1, 11 + self.LONG, waiting=1, preempted=1)
+        self.row(110.0, state, 1, 2112, 1, 11 + 2 * self.LONG, preempted=1)
+        self.row(200.0, state, 1, 90000, 1, 11 + 2 * self.LONG, preempted=1)
+        self.assertIsNone(lc.prompt_progress(state, 200.0), "its time since the first admission or the second?")
+
+    def test_a_request_waiting_beside_it_says_nothing_then_no_floor(self):
+        state = {}
+        self.long_alone(state)
+        self.row(70.0, state, 1, 110000, 1, 11 + self.LONG, waiting=1)
+        self.assertIsNone(lc.prompt_progress(state, 70.0), "one waiting")
+        self.row(80.0, state, 1, 120000, 1, 11 + self.LONG, finished=4)  # it left without running
+        p = lc.prompt_progress(state, 80.0)
+        self.assertEqual(p["tokens"], self.LONG)
+        self.assertIsNone(p["left_min_s"])
+
+    def test_the_request_left_is_said_to_be_the_prompt_only_past_what_any_other_could_hold(self):
+        for others, line in ((self.SMALL, self.SMALL + 8192), (100000, 200000)):
+            with self.subTest(others=others):
+                state = {}
+                self.long_alone(state)
+                q = 11 + self.LONG + others
+                self.row(62.0, state, 2, 150000, 1, q)
+                self.row(70.0, state, 1, line, 1, q, finished=4)
+                self.assertIsNone(lc.prompt_progress(state, 70.0))
+                self.row(71.0, state, 1, line + 1, 1, q, finished=4)
+                self.assertEqual(lc.prompt_progress(state, 71.0)["held"], line + 1)
+
+    def test_a_long_prompt_admitted_while_a_small_one_writes_is_followed_and_said_alone(self):
+        # the user's services never leave the engine empty: a prompt admitted beside them is followed
+        # when its read proves it one request, and said once it runs alone, with no floor
+        state = {}
+        self.row(0.0, state, 0, 0, 1, 11)
+        self.row(1.0, state, 1, 6336, 1, 11 + self.SMALL)            # a small one alone
+        self.row(3.0, state, 1, 6336, 20, 11 + self.SMALL)           # it writes
+        q = 11 + self.SMALL + self.LONG
+        self.row(4.0, state, 2, 10000, 30, q)                        # the long one beside it: one more running
+        self.row(9.0, state, 1, 20000, 64, q, finished=4)            # the small one done
+        self.row(30.0, state, 1, 27000, 64, q, finished=4)
+        p = lc.prompt_progress(state, 30.0)
+        self.assertEqual((p["tokens"], p["held"], p["elapsed"]), (self.LONG, 27000, 26))
+        self.assertIsNone(p["left_min_s"], "the small one wrote beside it")
+        # and two more running at one read: the jump may be two prompts, none of them followed
+        state = {}
+        self.row(0.0, state, 1, 6336, 20, 11 + self.SMALL)
+        self.row(1.0, state, 0, 0, 64, 11 + self.SMALL, finished=4)
+        self.row(2.0, state, 2, 9000, 64, q + self.SMALL)
+        self.row(9.0, state, 1, 20000, 64, q + self.SMALL, finished=5)
+        self.assertIsNone(lc.prompt_progress(state, 30.0))
+
+    def test_a_cockpit_started_while_the_engine_runs_says_nothing_until_it_is_seen_empty(self):
+        state = {}
+        self.row(0.0, state, 1, 200000, 1, 11 + self.LONG)          # a prompt admitted before the cockpit read
+        q = 11 + self.LONG + self.SMALL
+        self.row(1.0, state, 2, 206000, 1, q)                       # a small one admitted: one request, followed
+        self.row(5.0, state, 1, 210000, 64, q, finished=4)          # and done
+        self.row(30.0, state, 1, 300000, 64, q, finished=4)
+        self.assertIsNone(lc.prompt_progress(state, 30.0), "the request left was admitted unseen")
+        self.row(40.0, state, 0, 0, 65, q, finished=5)              # empty: the engine is seen whole again
+        self.row(41.0, state, 1, 2112, 65, q + self.LONG, finished=5)
+        self.row(101.0, state, 1, 100000, 65, q + self.LONG, finished=5)
+        self.assertEqual(lc.prompt_progress(state, 101.0)["tokens"], self.LONG)
+
+    def test_its_counters_going_back_are_an_engine_that_restarted(self):
+        for key, before, after in (("finished", 5, 2), ("preempted", 3, 0)):
+            with self.subTest(key=key):
+                state = {}
+                self.long_alone(state)
+                kw = {key: before}
+                self.row(70.0, state, 1, 110000, 1, 11 + self.LONG, **kw)
+                kw = {key: after}
+                self.row(71.0, state, 1, 110000, 1, 11 + self.LONG, **kw)
+                self.assertNotIn("admit", state)
+
+
+class ThePromptFloorAtItsBounds(unittest.TestCase):
+    """The prompt's progress at the exact edges of each rule, and the floor to the second, on small
+    numbers where one token moves it: what a looser test let a wrong operator through (mutation run
+    of 2026-10-31, lifecycle.py at 85.3 % against its floor of 91)."""
+
+    def state(self, used, points, now, quantum=None, admit_t=2.0, tokens=100):
+        st = {"last": {"t": now, "running": 1, "waiting": 0, "used": used, "gen": 1.0, "q": 111.0},
+              "admit": {"t": admit_t, "tokens": tokens}, "points": points}
+        if quantum is not None:
+            st["quantum"] = quantum
+        return st
+
+    def test_a_full_journal_timestamp_is_read_to_the_second(self):
+        from datetime import datetime
+        start = datetime(2026, 10, 30, 20, 17, 24).timestamp()
+        row = lc.feed_ages([{"ts": "2026-10-30T20:17:24+01:00", "outcome": "in flight"}], start + 5)[0]
+        self.assertEqual(row["age"], 5.0)
+
+    def test_the_wait_for_a_token_is_ten_seconds_to_the_read(self):
+        st = {}
+        lc.prompt_read(st, 0.0, _row(0, 0, 1, 11))
+        lc.prompt_read(st, 1.0, _row(1, 500, 1, 1011))
+        lc.prompt_read(st, 11.0, _row(1, 600, 1, 1011))
+        self.assertIsNone(lc.prompt_progress(st, 10.99))
+        self.assertIsNotNone(lc.prompt_progress(st, 11.0))
+
+    def test_a_point_every_five_seconds_once_admitted_and_none_before_or_past_a_tenth(self):
+        st = {}
+        lc.prompt_read(st, 0.0, _row(0, 0, 1, 11))
+        self.assertEqual(st["points"], [], "no admission yet")
+        lc.prompt_read(st, 1.0, _row(1, 100, 1, 10011))
+        for i in range(1, 31):
+            lc.prompt_read(st, 1.0 + 0.5 * i, _row(1, 100 + 10 * i, 1, 10011))
+        self.assertEqual([t for t, _ in st["points"]], [1.0, 6.0, 11.0, 16.0])
+        # the floor reads the first point past a tenth of the prompt and no other: none is kept past it,
+        # where a list growing every 5 s while the admission stood grew for as long as the lane served
+        for i in range(31, 400):
+            lc.prompt_read(st, 1.0 + 0.5 * i, _row(1, 100 + 10 * i, 1, 10011))
+        self.assertEqual(st["points"][-1], (46.0, 1000))
+        self.assertEqual(len(st["points"]), 10)
+
+    def test_running_is_the_engines_running_requests_only(self):
+        for row, running in (({"num_reqs": 1, "num_used_tokens": 600, "gen_tokens": 1, "prefix_queries": 1011}, 1),
+                             (_row(1, 600, 1, 1011, waiting=1), 1),
+                             ({"num_waiting_reqs": 0, "num_used_tokens": 600, "gen_tokens": 1, "prefix_queries": 1011}, 0)):
+            with self.subTest(row=row):
+                st = {}
+                lc.prompt_read(st, 0.0, _row(0, 0, 1, 11))
+                lc.prompt_read(st, 1.0, row)
+                self.assertEqual(st["last"]["running"], running)
+        st = {}
+        lc.prompt_read(st, 0.0, _row(0, 0, 1, 11))
+        lc.prompt_read(st, 1.0, {"num_reqs": 1, "gen_tokens": 1, "prefix_queries": 1011})
+        lc.prompt_read(st, 20.0, {"num_reqs": 1, "gen_tokens": 1, "prefix_queries": 1011})
+        self.assertEqual(lc.prompt_progress(st, 20.0)["held"], 0, "no tokens held said, none counted")
+
+    def test_either_counter_going_back_is_an_engine_that_restarted(self):
+        for after in (_row(1, 500, 0, 1011), _row(1, 500, 1, 900)):
+            with self.subTest(after=after):
+                st = {}
+                lc.prompt_read(st, 0.0, _row(0, 0, 1, 11))
+                lc.prompt_read(st, 1.0, _row(1, 400, 1, 1011))
+                lc.prompt_read(st, 2.0, after)
+                self.assertNotIn("admit", st)
+
+    def test_an_admission_of_one_token_counts_and_none_is_no_prompt(self):
+        st = {}
+        lc.prompt_read(st, 0.0, _row(0, 0, 1, 11))
+        lc.prompt_read(st, 1.0, _row(1, 0, 1, 12))
+        lc.prompt_read(st, 20.0, _row(1, 0, 1, 12))
+        self.assertEqual(lc.prompt_progress(st, 20.0)["tokens"], 1)
+        self.assertIsNone(lc.prompt_progress(self.state(10, [], 20.0, tokens=0), 20.0))
+
+    def test_a_tenth_held_says_a_floor_and_ninety_nine_hundredths_none(self):
+        self.assertIsNotNone(lc.prompt_progress(self.state(10, [(2.0, 0)], 20.0), 20.0)["left_min_s"])
+        self.assertIsNone(lc.prompt_progress(self.state(99, [(2.0, 0)], 20.0), 20.0)["left_min_s"])
+
+    def test_the_floor_to_the_second(self):
+        # first point past a tenth: 20 tokens 10 s after the admission; now 80 held 83.5 s after it:
+        # k = ln(84 / 10.5) / ln(80 / 20) = 1.5, floor(83.5 * (1.25 ** 1.5 - 1)) = 33
+        pts = [(2.0, 0), (7.0, 5), (12.0, 20), (85.5, 80)]
+        self.assertEqual(lc.prompt_progress(self.state(80, pts, 85.5), 85.5)["left_min_s"], 33)
+        # a quantum of 10 tokens counted against the first point: k = ln(8) / ln(8) = 1, floor(83.5 * 0.25)
+        self.assertEqual(lc.prompt_progress(self.state(80, pts, 85.5, quantum=10), 85.5)["left_min_s"], 20)
+        # a quantum that leaves nothing of the first point: no curve read, k = 1
+        self.assertEqual(lc.prompt_progress(self.state(80, pts, 85.5, quantum=20), 85.5)["left_min_s"], 20)
+
+    def test_the_curve_is_read_only_past_a_fifth_more_than_its_first_point(self):
+        # held exactly 1.2 times the first point: read, k = 1.5
+        pts = [(2.0, 0), (12.0, 20)]
+        now = 2.0 + 10.5 * 1.2 ** 1.5 - 0.5
+        self.assertEqual(lc.prompt_progress(self.state(24, pts, now), now)["left_min_s"],
+                         int((now - 2.0) * ((100 / 24) ** 1.5 - 1)))
+        # under it (22): no curve, k = 1
+        self.assertEqual(lc.prompt_progress(self.state(22, pts, 22.0), 22.0)["left_min_s"], int(20.0 * (100 / 22 - 1)))
+
+    def test_a_first_point_at_the_admission_itself_reads_no_curve(self):
+        # served warm: half the prompt held at the admission
+        self.assertEqual(lc.prompt_progress(self.state(60, [(2.0, 50)], 12.0), 12.0)["left_min_s"], int(10.0 * (100 / 60 - 1)))
+
+    def test_the_share_is_rounded_to_three_places(self):
+        self.assertEqual(lc.prompt_progress(self.state(1, [], 20.0, tokens=3), 20.0)["share"], 0.333)
+
+
+class TheResentLinesAsTheBannerReadsThem(unittest.TestCase):
+    LINE = ("{at} gx10-eff9 python3[5003]: [proxy] 127.0.0.1:57102 RESENT the prompt its client left without an "
+            "answer after {secs} s ({n} time{s} in a row, claude-cli/2.1.314): Claude Code gives up on a turn")
+
+    def line(self, at, secs=621, n=2):
+        return self.LINE.format(at=at, secs=secs, n=n, s="s" if n > 1 else "")
+
+    def test_every_field_is_read(self):
+        out = lc.parse_resent(self.line("1730310000.5", 621, 3))
+        self.assertEqual(out, {"count": 1, "last": {"at": 1730310000.5, "secs": 621, "n": 3, "who": "claude-cli/2.1.314",
+                                                     "advice": "Claude Code gives up on a turn"}})
+        self.assertEqual(lc.parse_resent(self.line("1730310000", 300, 1))["last"]["n"], 1)
+
+    def test_the_day_counts_from_its_first_second_and_the_newest_wins_a_tie(self):
+        raw = "\n".join((self.line("100", 600), self.line("200", 610), self.line("200", 620)))
+        out = lc.parse_resent(raw, since=100.0)
+        self.assertEqual(out["count"], 3, "a line at the window's first second is in it")
+        self.assertEqual(out["last"]["secs"], 620, "of two lines of the same second, the later")
+        self.assertEqual(lc.parse_resent(raw, since=100.5)["count"], 2)
+        # journalctl can hand back an older line after a newer one: the newest still wins
+        out = lc.parse_resent("\n".join((self.line("300", 640), self.line("150", 605))))
+        self.assertEqual((out["count"], out["last"]["at"], out["last"]["secs"]), (2, 300.0, 640))
+
+    def test_the_same_rules_for_role_8(self):
+        line = ("{at} gx10-eff9 python3[4713]: [proxy] 127.0.0.1:5 TOOL TARGET {host} in a bash call on "
+                "/v1/chat/completions, relayed as it came")
+        raw = "\n".join((line.format(at="100", host="aliyuncs.com"), line.format(at="200", host="169.254.169.254"),
+                         line.format(at="200", host="100.100.100.200")))
+        out = lc.parse_tool_targets(raw, since=100.0)
+        self.assertEqual(out["count"], 3)
+        self.assertEqual(out["last"]["hosts"], "100.100.100.200")
 
 if __name__ == '__main__':
     unittest.main()

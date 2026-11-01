@@ -123,6 +123,27 @@ class TheUnit(unittest.TestCase):
         self.assertIn("__VIDEO_BIND__", text)
         self.assertIn("127.0.0.1", INSTALLER.read_text())
 
+    def test_the_runtime_keeps_its_own_sockets_off_the_network(self):
+        """Whatever the bind, the installed lane listened on *:30005 (torch's TCPStore) and on four
+        ports of the box's LAN address (gloo's and NCCL's bootstrap), none with a key (the reference
+        box, 2026-10-30, its firewall off). The bootstrap goes on lo, and a bind on any loopback
+        address lets the lane's processes talk to loopback alone; a named address serves others on
+        purpose, is told what that leaves open, and its unit's two filter lines are written empty,
+        which sets no filter."""
+        service = UNIT_TPL.read_text().split("\n[Service]\n", 1)[1].split("\n[", 1)[0]
+        for line in ("Environment=GLOO_SOCKET_IFNAME=lo", "Environment=NCCL_SOCKET_IFNAME=lo",
+                     "IPAddressAllow=__VIDEO_IP_ALLOW__", "IPAddressDeny=__VIDEO_IP_DENY__"):
+            self.assertRegex(service, rf"(?m)^{re.escape(line)}$")
+        t = INSTALLER.read_text()
+        block = t[t.index('VIDEO_BIND="${VIDEO_BIND:-$(unit_flag --host)}"'):t.index("WEIGHTS_GB=")]
+        for bind, deny, allow, told in (("127.0.0.1", "any", "localhost", False), ("localhost", "any", "localhost", False),
+                                        ("127.0.0.2", "any", "localhost", False), ("192.168.1.20", "", "", True)):
+            r = subprocess.run(["bash", "-c", 'set -euo pipefail\ndie(){ echo "DIE: $*"; exit 1; }\n'
+                                f'. "{REPO}/lanes.sh"\n' + block + 'echo "deny=$VIDEO_IP_DENY allow=$VIDEO_IP_ALLOW"'],
+                               capture_output=True, text=True, timeout=30, env={"PATH": "/usr/bin:/bin", "VIDEO_BIND": bind})
+            self.assertEqual((r.returncode, r.stdout.splitlines()[-1]), (0, f"deny={deny} allow={allow}"), bind)
+            self.assertEqual("30005" in r.stdout, told, bind)
+
     def test_a_stop_is_a_ceiling_not_a_wait(self):
         """A stop cancels the generation in under a second (measured on all seven
         logged stops), so TimeoutStopSec only needs to stand above any wedged
@@ -611,19 +632,19 @@ class TheBootLaneConvergence(unittest.TestCase):
         self.assertIn("systemctl is-enabled --quiet qwen38-video.service", self.text)
 
     def test_the_text_unit_is_not_enabled_on_that_path(self):
-        i = self.text.index('if [ -z "$ATS_CANNOT" ] && [ "$IMAGE_BOOT" -eq 0 ] && [ "$VIDEO_BOOT" -eq 0 ] && [ "$KOLIBRI_BOOT" -eq 0 ] && [ "$NEMOTRON_BOOT" -eq 0 ] && [ "$NEMOTRON_SUPER_BOOT" -eq 0 ] && [ "$FLASH_LOCAL_BOOT" -eq 0 ] && [ "$ORNITH_122B_BOOT" -eq 0 ]; then')
+        i = self.text.index('if [ -z "$ATS_CANNOT" ] && [ "$IMAGE_BOOT" -eq 0 ] && [ "$VIDEO_BOOT" -eq 0 ] && [ "$KOLIBRI_BOOT" -eq 0 ] && [ "$NEMOTRON_BOOT" -eq 0 ] && [ "$NEMOTRON_SUPER_BOOT" -eq 0 ] && [ "$FLASH_LOCAL_BOOT" -eq 0 ] && [ "$ORNITH_122B_BOOT" -eq 0 ] && [ "$NANBEIGE_BOOT" -eq 0 ]; then')
         # the condition's line and the one after it, however many lanes the condition names
         self.assertIn('sudo systemctl enable "$UNIT_NAME"', self.text[i:self.text.index("\n", self.text.index("\n", i) + 1)])
         self.assertEqual(self.text.count('sudo systemctl enable "$UNIT_NAME"'), 1)
 
     def test_that_path_updates_without_starting_anything(self):
-        i = self.text.index('if [ -z "$ATS_CANNOT" ] && [ "$IMAGE_BOOT" -eq 0 ] && [ "$VIDEO_BOOT" -eq 0 ] && [ "$KOLIBRI_BOOT" -eq 0 ] && [ "$NEMOTRON_BOOT" -eq 0 ] && [ "$NEMOTRON_SUPER_BOOT" -eq 0 ] && [ "$FLASH_LOCAL_BOOT" -eq 0 ] && [ "$ORNITH_122B_BOOT" -eq 0 ]; then')
+        i = self.text.index('if [ -z "$ATS_CANNOT" ] && [ "$IMAGE_BOOT" -eq 0 ] && [ "$VIDEO_BOOT" -eq 0 ] && [ "$KOLIBRI_BOOT" -eq 0 ] && [ "$NEMOTRON_BOOT" -eq 0 ] && [ "$NEMOTRON_SUPER_BOOT" -eq 0 ] && [ "$FLASH_LOCAL_BOOT" -eq 0 ] && [ "$ORNITH_122B_BOOT" -eq 0 ] && [ "$NANBEIGE_BOOT" -eq 0 ]; then')
         early = self.text[i:self.text.index("exit 0", i)]
         self.assertNotIn("systemctl start", early)
         self.assertIn("--no-smoke", early)
 
     def test_that_path_respects_a_left_out_video_lane(self):
-        i = self.text.index('if [ -z "$ATS_CANNOT" ] && [ "$IMAGE_BOOT" -eq 0 ] && [ "$VIDEO_BOOT" -eq 0 ] && [ "$KOLIBRI_BOOT" -eq 0 ] && [ "$NEMOTRON_BOOT" -eq 0 ] && [ "$NEMOTRON_SUPER_BOOT" -eq 0 ] && [ "$FLASH_LOCAL_BOOT" -eq 0 ] && [ "$ORNITH_122B_BOOT" -eq 0 ]; then')
+        i = self.text.index('if [ -z "$ATS_CANNOT" ] && [ "$IMAGE_BOOT" -eq 0 ] && [ "$VIDEO_BOOT" -eq 0 ] && [ "$KOLIBRI_BOOT" -eq 0 ] && [ "$NEMOTRON_BOOT" -eq 0 ] && [ "$NEMOTRON_SUPER_BOOT" -eq 0 ] && [ "$FLASH_LOCAL_BOOT" -eq 0 ] && [ "$ORNITH_122B_BOOT" -eq 0 ] && [ "$NANBEIGE_BOOT" -eq 0 ]; then')
         early = self.text[i:self.text.index("exit 0", i)]
         call = early.index('"$REPO_DIR/install-video.sh" "$(side_mode video')
         self.assertIn('if [ "$WANT_VIDEO" -eq 1 ]', early[:call])

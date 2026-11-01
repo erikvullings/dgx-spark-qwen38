@@ -1,5 +1,7 @@
 #!/usr/bin/env python3
-"""The 27B's units and run.sh start SGLang with --enable-cache-report (discussion #49, 2026-10-24).
+"""Every text lane asks its engine to say what the prefix cache served (discussion #49): the 27B's units,
+run.sh and the flash launcher start SGLang with --enable-cache-report, and the five vLLM lanes pass
+--enable-prompt-tokens-details (2026-10-25).
 
 With it, each answer says how much of its prompt the prefix cache served:
 usage.prompt_tokens_details.cached_tokens on the OpenAI routes, cache_read_input_tokens beside
@@ -17,8 +19,12 @@ import unittest
 
 REPO = pathlib.Path(__file__).resolve().parents[1]
 LAUNCHES = ("qwen38-sglang.service.template", "qwen38-sglang-1m.service.template",
-            "qwen38-sglang-64.service.template", "run.sh")
+            "qwen38-sglang-64.service.template", "run.sh", "qwen38-flash-launch.sh.template")
 FLAG = re.compile(r"(?<![\w-])--enable-cache-report(?![\w-])")
+VLLM_UNITS = ("qwen38-kolibri.service.template", "qwen38-nemotron.service.template",
+              "qwen38-nemotron-super.service.template", "qwen38-flash-local.service.template",
+              "qwen38-ornith-122b.service.template")
+VLLM_FLAG = re.compile(r"(?<![\w-])--enable-prompt-tokens-details(?![\w-])")
 
 
 def code(name):
@@ -27,10 +33,20 @@ def code(name):
 
 
 class TheFlagIsPassed(unittest.TestCase):
-    def test_each_27b_launch_passes_it_once(self):
+    def test_each_sglang_launch_passes_it_once(self):
         for name in LAUNCHES:
             with self.subTest(name=name):
                 self.assertEqual(len(FLAG.findall(code(name))), 1)
+
+    def test_each_vllm_unit_passes_its_own_once(self):
+        """vLLM counts the cached tokens too and says nothing of them without the flag; every vLLM lane's
+        unit is here, so a sixth one added without the flag fails the second assertion."""
+        units = sorted(p.name for p in REPO.glob("qwen38-*.service.template") if "vllm serve" in code(p.name)
+                       or "vllm/vllm-openai" in code(p.name) or "--enable-auto-tool-choice" in code(p.name))
+        self.assertEqual(units, sorted(VLLM_UNITS))
+        for name in VLLM_UNITS:
+            with self.subTest(name=name):
+                self.assertEqual(len(VLLM_FLAG.findall(code(name))), 1)
 
     def test_the_recipes_see_a_unit_without_it(self):
         sys.path.insert(0, str(REPO / "dashboard"))

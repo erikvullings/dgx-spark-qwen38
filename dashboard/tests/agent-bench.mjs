@@ -18,10 +18,10 @@
 // PATH whose docker, systemctl, journalctl, nvidia-smi, sudo, git, curl, tailscale and opencode answer
 // nothing for the cockpit, and a browser that resolves no name. It takes the browser from CHROME and an
 // already downloaded release from AGENT_BENCH_TARBALL (checked against the same sha256).
-import { spawn, spawnSync } from 'node:child_process';
+import { execFileSync, spawn, spawnSync } from 'node:child_process';
 import { createHash, randomBytes } from 'node:crypto';
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, openSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
-import net from 'node:net';
+import { portOf, portsOf } from './localports.mjs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -33,8 +33,9 @@ const CHROME = process.env.CHROME || ['/usr/bin/google-chrome', '/usr/bin/chromi
   '/snap/bin/chromium'].find(existsSync);
 // install.sh pins the linux-arm64 asset, the one a DGX Spark runs; the CI runner is x86_64, so the bench
 // carries that asset's digest for the same release (GitHub's digest, checked against the download on
-// 2026-10-23). A new pin in install.sh fails here until its x64 digest is added: two pins, one release.
-const X64_SHA256 = { '1.19.4': '849bd6b3d959a1d2ef200ed1634a51c79a45ca236aa26665d75debd694805cce' };
+// 2026-10-23, and 1.19.5's on 2026-10-30). A new pin in install.sh fails here until its x64 digest is added:
+// two pins, one release.
+const X64_SHA256 = { '1.19.5': '588310a336fa3b9df36b3f0225b26f679d453efaad0cf3d66c3651ef3ec1647a' };
 const checks = [];
 const ok = (name, cond, detail = '') => { checks.push({ name, ok: !!cond, detail: String(detail).slice(0, 220) }); };
 const sleep = ms => new Promise(r => setTimeout(r, ms));
@@ -43,14 +44,15 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
 // so on 127.0.0.1 the relay's Origin rewrite would go untested. 127.0.0.2 is loopback all the same: nothing
 // outside the machine reaches it.
 const HOST = '127.0.0.2';
-const freePort = (host = '127.0.0.1') => new Promise(res => { const srv = net.createServer(); srv.listen(0, host, () => { const p = srv.address().port; srv.close(() => res(p)); }); });
-// two ports held open together, then released: asked one after the other, the second could be the first again
-const freePorts = async (host, n) => {
-  const servers = await Promise.all(Array.from({ length: n }, () => new Promise(res => { const srv = net.createServer(); srv.listen(0, host, () => res(srv)); })));
-  const ports = servers.map(srv => srv.address().port);
-  await Promise.all(servers.map(srv => new Promise(res => srv.close(res))));
-  return ports;
-};
+// Ports (review of PR #60, 2026-10-29): a number read from a socket that is then closed is anyone's until the
+// server binds it, and ci-local.sh runs the workflow's jobs side by side. opencode starts on port 0, the kernel's
+// own free port, read back once it listens (localports.mjs). The cockpit's port and its relay's have to be known
+// before the cockpit starts: the relay names the cockpit's in the frame-ancestors of the page it frames (a cockpit on
+// port 0 wrote ":0" there and the frame was refused), and the cockpit's pages name the relay's. Both are taken below
+// the range the kernel hands out for port 0 (ip_local_port_range), where no program given port 0 can land, and
+// taken again if a program asked for one of those very numbers.
+const EPHEMERAL_LOW = Number(readFileSync('/proc/sys/net/ipv4/ip_local_port_range', 'utf8').trim().split(/\s+/)[0]) || 32768;
+const belowEphemeral = () => EPHEMERAL_LOW - 1 - Math.floor(Math.random() * 12000);
 
 const root = mkdtempSync(join(tmpdir(), 'agent-bench-'));
 let ocServer = null, cockpit = null, chrome = null;
@@ -140,11 +142,14 @@ writeFileSync(ocConfig, JSON.stringify({
     options: { baseURL: 'http://127.0.0.1:1/v1', apiKey: 'not-a-key' }, models: { 'bench-model': { name: 'bench model' } } } },
 }, null, 1));
 const password = randomBytes(18).toString('hex');
-const OC_PORT = await freePort();
+let OC_PORT = 0;   // the port given to opencode: 0, then the one it listens on
 // the unit install-agent.sh would write for this server, AGENT_AUTO=1's permission line in it: the cockpit
 // reads the binary it runs and the permission mode from it (COCKPIT_AGENT_UNIT_PATH, never the box's own)
 const unitPath = join(root, 'opencode-web.service');
-const AUTO_LINE = `Environment='OPENCODE_PERMISSION={"*":"allow"}'`;
+// as install-agent.sh builds it since v1.40.4: the shell rules after its "*" (oc-merge-limits.py)
+const AUTO_PERMISSION = execFileSync('python3', [join(HERE, '..', '..', 'oc-merge-limits.py'), '--agent-auto-permission'],
+  { encoding: 'utf8' }).trim();
+const AUTO_LINE = `Environment='OPENCODE_PERMISSION=${AUTO_PERMISSION}'`;
 const unitText = readFileSync(join(HERE, '..', 'opencode-web.service.template'), 'utf8')
   .replaceAll('__OPENCODE_BIN__', OC).replaceAll('__AUTO_LINE__', AUTO_LINE).replaceAll('__HOME__', home)
   .replaceAll('__PATH__', process.env.PATH).replaceAll('__OUTPUT_TOKEN_MAX__', '32000').replaceAll('__USER__', 'bench')
@@ -156,16 +161,18 @@ ok('the unit template renders with no placeholder left', !/__[A-Z_]+__/.test(uni
 const execLine = unitText.split('\n').find(l => l.startsWith('ExecStart=')) || '';
 const [exe, ...ocArgs] = execLine.slice('ExecStart='.length).trim().split(/\s+/);
 ok('the unit runs this opencode, on the port given to it', exe === OC && ocArgs.join(' ').includes(`--port ${OC_PORT}`), execLine);
+// stays 0 in the unit (port 0) until opencode listens: read back below
 const ocLog = openSync(join(root, 'opencode.log'), 'a');
 ocServer = spawn(exe, ocArgs, {
   cwd: work, detached: true, stdio: ['ignore', ocLog, ocLog],
   // the unit's environment (dashboard/opencode-web.service.template), every path under the bench's root,
   // and AGENT_AUTO=1's permission line, which our boxes run with
   env: { PATH: process.env.PATH, HOME: home, TMPDIR: scratch, ...xdg, OPENCODE_SERVER_USERNAME: 'opencode', OPENCODE_SERVER_PASSWORD: password,
-         OPENCODE_CONFIG: ocConfig, OPENCODE_PERMISSION: '{"*":"allow"}', OPENCODE_EXPERIMENTAL_OUTPUT_TOKEN_MAX: '32000',
+         OPENCODE_CONFIG: ocConfig, OPENCODE_PERMISSION: AUTO_PERMISSION, OPENCODE_EXPERIMENTAL_OUTPUT_TOKEN_MAX: '32000',
          OPENCODE_DISABLE_AUTOUPDATE: '1', OPENCODE_DISABLE_MODELS_FETCH: '1', OPENCODE_DISABLE_PROJECT_CONFIG: '1',
          OPENCODE_DISABLE_CLAUDE_CODE: '1', OPENCODE_DISABLE_LSP_DOWNLOAD: '1' },
 });
+try { OC_PORT = await portOf(ocServer, { within: 90000 }); } catch (e) { stop(1, `opencode never listened: ${e.message}\n` + readFileSync(join(root, 'opencode.log'), 'utf8').slice(-1500)); }
 const basic = 'Basic ' + Buffer.from(`opencode:${password}`).toString('base64');
 // 1.x answers its health as JSON on /global/health; a 2.x sends its page there and its version on /api/info
 const json = async path => {
@@ -195,16 +202,32 @@ writeFileSync(join(cfgDir, 'opencode-web.env'), `OPENCODE_SERVER_USERNAME=openco
 for (const cmd of ['docker', 'systemctl', 'journalctl', 'nvidia-smi', 'sudo', 'git', 'curl', 'tailscale', 'opencode']) {
   writeFileSync(join(fence, cmd), '#!/bin/sh\nexit 1\n'); chmodSync(join(fence, cmd), 0o755);
 }
-const [PORT, RELAY_PORT] = await freePorts(HOST, 2);
-const BASE = `http://${HOST}:${PORT}`, RELAY = `http://${HOST}:${RELAY_PORT}`, CLOSED = 'http://127.0.0.1:1';
-cockpit = spawn('python3', [COCKPIT], {
-  env: { ...process.env, COCKPIT_DRY_RUN: '1', COCKPIT_PORT: String(PORT), COCKPIT_CONFIG_DIR: cfgDir, COCKPIT_BIND: HOST,
-         COCKPIT_AGENT_PORT: String(RELAY_PORT), COCKPIT_AGENT_BIND: HOST, COCKPIT_AGENT_UPSTREAM: `http://127.0.0.1:${OC_PORT}`,
-         COCKPIT_AGENT_UNIT_PATH: unitPath,
-         COCKPIT_AUTOHEAL: '0', COCKPIT_AUTOFIT: '0', COCKPIT_UPDATE_CHECK: '0',
-         COCKPIT_ENGINE: CLOSED, COCKPIT_PROXY: CLOSED, COCKPIT_IMAGE: CLOSED, HOME: root, TMPDIR: scratch, PATH: `${fence}:${process.env.PATH}` },
-  stdio: ['ignore', 'ignore', 'ignore'], detached: true,
-});
+const CLOSED = 'http://127.0.0.1:1';
+let PORT = 0, RELAY_PORT = 0;
+for (let attempt = 1; ; attempt++) {
+  PORT = belowEphemeral();
+  do { RELAY_PORT = belowEphemeral(); } while (RELAY_PORT === PORT);
+  cockpit = spawn('python3', [COCKPIT], {
+    env: { ...process.env, COCKPIT_DRY_RUN: '1', COCKPIT_PORT: String(PORT), COCKPIT_CONFIG_DIR: cfgDir, COCKPIT_BIND: HOST,
+           COCKPIT_AGENT_PORT: String(RELAY_PORT), COCKPIT_AGENT_BIND: HOST, COCKPIT_AGENT_UPSTREAM: `http://127.0.0.1:${OC_PORT}`,
+           COCKPIT_AGENT_UNIT_PATH: unitPath,
+           COCKPIT_AUTOHEAL: '0', COCKPIT_AUTOFIT: '0', COCKPIT_UPDATE_CHECK: '0',
+           COCKPIT_ENGINE: CLOSED, COCKPIT_PROXY: CLOSED, COCKPIT_IMAGE: CLOSED, HOME: root, TMPDIR: scratch, PATH: `${fence}:${process.env.PATH}` },
+    stdio: ['ignore', 'ignore', 'ignore'], detached: true,
+  });
+  // both listening, or another try: a cockpit whose port was taken ends, one whose relay's was taken goes on without it
+  let both = false;
+  for (const t0 = Date.now(); Date.now() - t0 < 30000 && !both; await sleep(200)) {
+    const ports = portsOf(cockpit.pid);
+    both = ports.includes(PORT) && ports.includes(RELAY_PORT);
+    if (!both && (cockpit.exitCode !== null || cockpit.signalCode !== null)) break;
+  }
+  if (both) break;
+  try { process.kill(-cockpit.pid, 'SIGTERM'); } catch { /* gone */ }
+  await Promise.race([new Promise(r => cockpit.once('exit', r)), sleep(5000)]);
+  if (attempt === 3) stop(1, `the cockpit and its relay never bound ports below ${EPHEMERAL_LOW} in 3 tries`);
+}
+const BASE = `http://${HOST}:${PORT}`, RELAY = `http://${HOST}:${RELAY_PORT}`;
 let up = false;
 for (const t0 = Date.now(); Date.now() - t0 < 30000 && !up; await sleep(400)) {
   try { up = (await fetch(`${BASE}/api/health`, { signal: AbortSignal.timeout(1500) })).ok; } catch { /* starting */ }

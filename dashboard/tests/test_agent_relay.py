@@ -22,6 +22,9 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import agent_relay as ar  # noqa: E402
 
+sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "tests"))
+import localports  # noqa: E402
+
 GOOD_AUTH = "Basic " + base64.b64encode(b"cockpit:secret").decode()
 SPA_DOC = b"<!doctype html><html><head><title>Oc</title></head><body><div id=root></div></body></html>"
 
@@ -376,9 +379,7 @@ class RelayTests(unittest.TestCase):
         self.assertIn("credentials", json.loads(body)["error"])
 
     def test_upstream_down_is_502(self):
-        with socket.socket() as dead:
-            dead.bind(("127.0.0.1", 0))
-            port = dead.getsockname()[1]
+        port = localports.held(self)     # nothing listens there, and no other program can
         cfg = ar.RelayConfig(upstream=("127.0.0.1", port), credentials=lambda: ("a", "b"),
                              is_authed=lambda c: True, cockpit_port=30090)
         srv = ar.serve(cfg, "127.0.0.1", 0)

@@ -97,17 +97,18 @@ const ALL_STAGES = Object.keys(STAGE_LABEL);
 const U27 = 'qwen38-sglang.service', UFLASH = 'qwen38-flash.service', IMAGE_UNIT = 'qwen38-image.service',
       VIDEO_UNIT = 'qwen38-video.service', KOLIBRI_UNIT = 'qwen38-kolibri.service', NEMOTRON_UNIT = 'qwen38-nemotron.service',
       NEMOTRON_SUPER_UNIT = 'qwen38-nemotron-super.service', FLASH_LOCAL_UNIT = 'qwen38-flash-local.service',
-      ORNITH_UNIT = 'qwen38-ornith-122b.service', PROXY_UNIT = 'qwen38-keepalive.service', AGENT_UNIT = 'opencode-web.service';
+      NANBEIGE_UNIT = 'qwen38-nanbeige.service', ORNITH_UNIT = 'qwen38-ornith-122b.service', PROXY_UNIT = 'qwen38-keepalive.service', AGENT_UNIT = 'opencode-web.service';
 // the order of the Now view's rack and the Lanes view's cards: Ornith before Kolibri and the Nemotron lanes (Hasan, 2026-10-22)
-const LANE_UNITS = [U27, UFLASH, FLASH_LOCAL_UNIT, ORNITH_UNIT, KOLIBRI_UNIT, NEMOTRON_UNIT, NEMOTRON_SUPER_UNIT, IMAGE_UNIT, VIDEO_UNIT];
+const LANE_UNITS = [U27, UFLASH, FLASH_LOCAL_UNIT, ORNITH_UNIT, NANBEIGE_UNIT, KOLIBRI_UNIT, NEMOTRON_UNIT, NEMOTRON_SUPER_UNIT, IMAGE_UNIT, VIDEO_UNIT];
 // the two Nemotron lanes, Bolt and Super VL: one vLLM image, the same routes and the same limits
 const isNemotron = u => u === NEMOTRON_UNIT || u === NEMOTRON_SUPER_UNIT;
 // the vLLM lanes on b12x, the two Nemotron lanes, the Flash FP4-Local lane and the Ornith lane: the
-// same routes, the same counters, the same belts that cannot act; each says its own name
-const isB12x = u => isNemotron(u) || u === FLASH_LOCAL_UNIT || u === ORNITH_UNIT;
-const b12xName = u => u === FLASH_LOCAL_UNIT ? 'the Flash FP4-Local lane' : u === ORNITH_UNIT ? 'the Ornith lane' : 'the Nemotron lane';
+// same routes, the same counters, the same belts that cannot act; each says its own name.
+// Nanbeige shares this management family, but uses compressed-tensors rather than the b12x loader.
+const isB12x = u => isNemotron(u) || u === FLASH_LOCAL_UNIT || u === ORNITH_UNIT || u === NANBEIGE_UNIT;
+const b12xName = u => u === FLASH_LOCAL_UNIT ? 'the Flash FP4-Local lane' : u === NANBEIGE_UNIT ? 'the Nanbeige lane' : u === ORNITH_UNIT ? 'the Ornith lane' : 'the Nemotron lane';
 const LANE_NAME = {[U27]: '27B', [UFLASH]: 'flash 176B', [FLASH_LOCAL_UNIT]: 'Flash FP4-Local', [KOLIBRI_UNIT]: 'Kolibri-1',
-                   [NEMOTRON_UNIT]: 'Nemotron Bolt', [NEMOTRON_SUPER_UNIT]: 'Nemotron Super VL', [ORNITH_UNIT]: 'Ornith 1.5 122B',
+                   [NEMOTRON_UNIT]: 'Nemotron Bolt', [NEMOTRON_SUPER_UNIT]: 'Nemotron Super VL', [NANBEIGE_UNIT]: 'Nanbeige4.3 33B', [ORNITH_UNIT]: 'Ornith 1.5 122B',
                    [IMAGE_UNIT]: 'Qwen-Image',
                    [VIDEO_UNIT]: 'MiniMax-H3'};
 // What each lane is, for people: the kind of work it does and the one line that says so.
@@ -119,6 +120,7 @@ const LANE_META = {
   [KOLIBRI_UNIT]: {title: 'Kolibri-1', kind: 'Text, 262K tokens, German and English', desc: 'Aleph Alpha’s mixture of experts, 78B with 3.5B active, served by vLLM. Reasoning and tool calls.', view: 'agent', lane: 'kolibri', maker: 'alephalpha'},
   [NEMOTRON_UNIT]: {title: 'Nemotron 3.5 Bolt', kind: 'Text, images and video, 262K tokens', desc: 'NVIDIA’s mixture of experts, 74B with 9B active in 2 bits, served by vLLM with its drafter. Reasoning, tool calls and vision.', view: 'agent', lane: 'nemotron', maker: 'nvidia'},
   [NEMOTRON_SUPER_UNIT]: {title: 'Nemotron 3.5 Super VL', kind: 'Text, images and video, 1M tokens', desc: 'NVIDIA’s mixture of experts, 120B with 12B active in NVFP4, served by vLLM with its drafter. Reasoning, tool calls and vision over a 1M window.', view: 'agent', lane: 'nemotron-super', maker: 'nvidia'},
+  [NANBEIGE_UNIT]: {title: 'Nanbeige4.3 33B (experimental)', kind: 'Text, 32K tokens of context', desc: 'Mixed NVFP4/FP8 weights, reasoning and tool calls. Hardware validation pending. 128 GB Spark only.', view: 'agent', lane: 'nanbeige', maker: 'nanbeige'},
   [ORNITH_UNIT]: {title: 'Ornith 1.5 122B', kind: 'Text, images and video, 1M tokens', desc: 'Ornith AI’s mixture of experts, 122B with 8 of its 256 experts active, in its authors’ NVFP4 build, served by vLLM with b12x and its MTP head. Reasoning, tool calls and vision.', view: 'agent', lane: 'ornith-122b', maker: 'ornith'},
   [IMAGE_UNIT]: {title: 'Qwen-Image 2.1', kind: 'Images', desc: 'Create, edit with up to ten references, cut out with a real alpha channel.', view: 'image', lane: 'image', maker: 'qwen'},
   [VIDEO_UNIT]: {title: 'MiniMax-H3', kind: 'Video with sound', desc: 'Video and audio made together, from a prompt or from keyframes.', view: 'video', lane: 'video', maker: 'minimax'}};
@@ -131,30 +133,30 @@ function makerMark(unit, cls = 'mark'){
 // How long each lane takes to answer after a start, before the box has seen one of its
 // boots (measured on the reference box). Once a lane booted in front of the cockpit, the
 // median of its own boots replaces these.
-const READY_DEFAULT = {[U27]: 540, [UFLASH]: 780, [FLASH_LOCAL_UNIT]: 1020, [KOLIBRI_UNIT]: 600, [NEMOTRON_UNIT]: 450, [NEMOTRON_SUPER_UNIT]: 660, [ORNITH_UNIT]: 420, [IMAGE_UNIT]: 70, [VIDEO_UNIT]: 720};
+const READY_DEFAULT = {[U27]: 540, [UFLASH]: 780, [FLASH_LOCAL_UNIT]: 1020, [KOLIBRI_UNIT]: 600, [NEMOTRON_UNIT]: 450, [NEMOTRON_SUPER_UNIT]: 660, [NANBEIGE_UNIT]: 900, [ORNITH_UNIT]: 420, [IMAGE_UNIT]: 70, [VIDEO_UNIT]: 720};
 const TARGET_SHORT = {stock: 'stock', uncensored: 'uncensored', fp8: 'FP8', 'uncensored-fp8': 'FP8 uncensored',
                       flash: '', 'flash-uncensored': 'uncensored', 'flash-nvda': 'NVIDIA export', image: '2.1', 'image-turbo': 'Turbo', video: 'H3',
                       kolibri: 'FP8', 'kolibri-nvfp4': 'NVFP4', nemotron: 'Bolt', 'nemotron-super': 'Super VL',
-                      'flash-local': 'FP4-Local', 'ornith-122b': '122B'};
+                      'flash-local': 'FP4-Local', 'nanbeige': 'NVFP4/FP8', 'ornith-122b': '122B'};
 const TARGET_UNIT = t => t === 'image' || t === 'image-turbo' ? IMAGE_UNIT : t === 'video' ? VIDEO_UNIT
   : String(t).startsWith('kolibri') ? KOLIBRI_UNIT : t === 'nemotron-super' ? NEMOTRON_SUPER_UNIT : String(t).startsWith('nemotron') ? NEMOTRON_UNIT
-  : t === 'flash-local' ? FLASH_LOCAL_UNIT : t === 'ornith-122b' ? ORNITH_UNIT : String(t).startsWith('flash') ? UFLASH : U27;
+  : t === 'flash-local' ? FLASH_LOCAL_UNIT : t === 'nanbeige' ? NANBEIGE_UNIT : t === 'ornith-122b' ? ORNITH_UNIT : String(t).startsWith('flash') ? UFLASH : U27;
 const LANE_TARGETS = {[U27]: ['stock', 'uncensored', 'fp8', 'uncensored-fp8'], [UFLASH]: ['flash', 'flash-uncensored', 'flash-nvda'],
                       [FLASH_LOCAL_UNIT]: ['flash-local'],
                       [KOLIBRI_UNIT]: ['kolibri', 'kolibri-nvfp4'], [NEMOTRON_UNIT]: ['nemotron'], [NEMOTRON_SUPER_UNIT]: ['nemotron-super'],
-                      [ORNITH_UNIT]: ['ornith-122b'], [IMAGE_UNIT]: ['image', 'image-turbo'], [VIDEO_UNIT]: ['video']};
+                      [NANBEIGE_UNIT]: ['nanbeige'], [ORNITH_UNIT]: ['ornith-122b'], [IMAGE_UNIT]: ['image', 'image-turbo'], [VIDEO_UNIT]: ['video']};
 const TARGET_NAME = {stock: '27B stock, NVFP4', uncensored: '27B uncensored, NVFP4', fp8: '27B FP8, Qwen official',
                      'uncensored-fp8': '27B FP8 uncensored', flash: 'flash 176B, NVFP4', 'flash-uncensored': 'flash 176B uncensored',
                      'flash-nvda': 'flash 176B, NVIDIA export', image: 'Qwen-Image 2.1', 'image-turbo': 'Qwen-Image 2.1 Turbo', video: 'MiniMax-H3',
                      kolibri: 'Kolibri-1, Aleph Alpha FP8', 'kolibri-nvfp4': 'Kolibri-1, NVFP4 experts', nemotron: 'Nemotron 3.5 Bolt, 24 GB',
                      'nemotron-super': 'Nemotron 3.5 Super VL, NVFP4', 'flash-local': 'Flash FP4-Local, NVIDIA',
-                     'ornith-122b': 'Ornith 1.5 122B, NVFP4'};
+                     'nanbeige': 'Nanbeige4.3-33B, mixed NVFP4/FP8 (experimental)', 'ornith-122b': 'Ornith 1.5 122B, NVFP4'};
 // A version's name on its button in Lanes, and the line that tells it apart once chosen. A
 // target is declared in the tables of this block: a page test fails when one lacks a name or a line.
 const TARGET_SHORT_NAME = {stock: 'Stock', uncensored: 'Uncensored', fp8: 'FP8', 'uncensored-fp8': 'FP8 uncensored',
   flash: 'Standard', 'flash-uncensored': 'Uncensored', 'flash-nvda': 'NVIDIA export', image: 'Base', 'image-turbo': 'Turbo', video: 'H3',
   kolibri: 'FP8', 'kolibri-nvfp4': 'NVFP4', nemotron: 'Bolt', 'nemotron-super': 'Super VL', 'flash-local': 'FP4-Local',
-  'ornith-122b': '122B'};
+  'nanbeige': 'NVFP4/FP8', 'ornith-122b': '122B'};
 const TARGET_LINE = {
   stock: 'The default: smallest and fastest', uncensored: 'Refusals removed, same size and speed',
   fp8: "Qwen's own weights: the most faithful, and heavier", 'uncensored-fp8': 'Refusals removed, and heavier',
@@ -164,6 +166,7 @@ const TARGET_LINE = {
   nemotron: 'The one version: 2-bit experts and their drafter',
   'nemotron-super': 'The one version: NVFP4 and its drafter, a 1M window',
   'flash-local': 'The one version: NVIDIA’s FP4 build and its MTP head',
+  'nanbeige': 'Mixed NVFP4/FP8 weights; experimental 32K context limit',
   'ornith-122b': 'The one version: its authors’ NVFP4 build and its MTP head'};
 const TARGET_NOTE = {
   stock: 'The NVFP4 quantization this repo pins by default: smallest and fastest of the 27B targets.',
@@ -181,6 +184,7 @@ const TARGET_NOTE = {
   nemotron: 'NVIDIA’s Nemotron 3.5 Bolt, its experts in 2 bits, served as its model card says: vLLM nightly with b12x, its LiLiCorr drafter, 262,144 tokens of context, temperature 1.0, top_p 0.95, reasoning on (off, efficient or full per request). It reads images and video. Measured on this box: 140 tokens/s alone on code, 50 on prose, 201 in all at 16 requests, 24 requests at the full window. The first switch downloads about 26 GB.',
   'nemotron-super': 'NVIDIA’s Nemotron 3.5 Super VL in NVFP4, served as its model card says for a DGX Spark: its LiLiCorr drafter, a window of 1,048,576 tokens, the Mamba state in float16 with stochastic rounding, temperature 1.0, top_p 0.95, reasoning on (off, efficient or full per request), in the Nemotron Bolt lane’s vLLM image. It reads images and video. Measured on this box: 70 tokens/s alone on code, 31 on prose, its whole window 1.1 to 1.3 times over in its cache. The first switch downloads about 77 GB.',
   'flash-local': 'NVIDIA’s own FP4 build of the flash model, served as its model card says for a DGX Spark: vLLM with b12x, its experts and its n-gram table in NVFP4 after a quantization-aware distillation from the full precision (GPQA Diamond 91.5 % against 92.2 % on NVIDIA’s card), an MTP head drafting 4 tokens, 262,144 tokens of context and a KV cache of about 920,000 tokens, reasoning on at xhigh unless a request asks less. Its table is read at every token: with the HF cache on another disk, its first Load copies the table’s files (32 GB) beside your home directory. The first boot tunes b12x’s kernels for this GPU, about 17 min; the next ones take about 6. The first switch downloads about 102 GB.',
+  'nanbeige': 'Experimental Nanbeige4.3-33B mixed NVFP4/FP8 text lane. 32,768 tokens of context and two concurrent sequences are initial settings awaiting GB10 testing. Reasoning and tool-call parsers follow the model card. No vision or speculative decoding. About 27 GB of checkpoint download budget.',
   'ornith-122b': 'Ornith AI’s Ornith 1.5 122B (MIT) in its authors’ NVFP4 build, served by vLLM with b12x in the Flash FP4-Local lane’s image: its experts and output head in NVFP4, its projections in FP8, an MTP head drafting 2 tokens, 1,048,576 tokens of context (its own 262,144 stretched four times with YaRN), temperature 0.6, top_p 0.95, top_k 20, reasoning on (off with effort none or minimal). It reads images and video. The first switch downloads about 78 GB.'};
 // What installs a lane this box does not have. Since v1.20 a plain ./install.sh installs
 // every lane, so one missing here was left out (a --no-<lane> on the last run) or did not fit:
@@ -189,7 +193,7 @@ const TARGET_NOTE = {
 const LANE_INSTALL = {[U27]: './install.sh --with-27b', [UFLASH]: './install.sh --with-flash', [IMAGE_UNIT]: './install.sh --with-image',
                       [VIDEO_UNIT]: './install.sh --with-video', [KOLIBRI_UNIT]: './install.sh --with-kolibri',
                       [NEMOTRON_UNIT]: './install.sh --with-nemotron', [NEMOTRON_SUPER_UNIT]: './install.sh --with-nemotron-super',
-                      [FLASH_LOCAL_UNIT]: './install.sh --with-flash-local', [ORNITH_UNIT]: './install.sh --with-ornith-122b'};
+                      [FLASH_LOCAL_UNIT]: './install.sh --with-flash-local', [NANBEIGE_UNIT]: './install.sh --with-nanbeige', [ORNITH_UNIT]: './install.sh --with-ornith-122b'};
 // A lane a 64 GB DGX Spark cannot hold (boxmem.py, which the machine panel carries): where another
 // lane names the command that installs it, it says it needs a 128 GB box. Unknown is no refusal.
 const laneFits = unit => {
@@ -210,7 +214,7 @@ const boxName = (box = (F.machine || {}).box || {}) => box.cls ? `${box.name || 
 
 // ── the facts every view shares (each guarded against missing data) ──────────
 const F = {life: null, units: {}, config: {}, job: null, load: {}, pool: null, window: 262144, ceiling: 0, usable: 0.92,
-           maxRun: null, target: null, containers: {}, proxy: null, agent: null, update: null, memFloor: null, machine: null,
+           maxRun: null, target: null, containers: {}, proxy: null, agent: null, update: null, memFloor: null, toolTargets: null, resent: null, machine: null,
            gpu: null, ocfit: null};
 const engines = () => (F.life && F.life.engines) || {};
 function servingEngine(){ return Object.entries(engines()).find(([, e]) => !UNIT_DOWN.has(e.state) || e.restarting) || null; }
@@ -501,7 +505,7 @@ const ORNITH_CANNOT = {
 function cannotWhy(name){
   const s = servingEngine();
   return !s ? '' : s[0] === KOLIBRI_UNIT ? (KOLIBRI_CANNOT[name] || '') : s[0] === FLASH_LOCAL_UNIT ? (FLASH_LOCAL_CANNOT[name] || '')
-    : s[0] === ORNITH_UNIT ? (ORNITH_CANNOT[name] || '') : isNemotron(s[0]) ? (NEMOTRON_CANNOT[name] || '') : '';
+    : s[0] === NANBEIGE_UNIT ? ((ORNITH_CANNOT[name] || '').replaceAll('Ornith', 'Nanbeige')) : s[0] === ORNITH_UNIT ? (ORNITH_CANNOT[name] || '') : isNemotron(s[0]) ? (NEMOTRON_CANNOT[name] || '') : '';
 }
 function noEngineWhy(){
   if (textReady()) return '';
@@ -536,7 +540,7 @@ const EXPLAIN = {
       : isNemotron(TARGET_UNIT(p.target)) ? `points its unit at this checkpoint and its memory share, and makes ${LANE_NAME[TARGET_UNIT(p.target)]} opencode's default model, with its compaction`
       : 'rewrites its unit, the proxy ceiling and the opencode default model'}. It never restarts anything.`,
   flush_cache: () => 'Empties the radix cache. Harmless; the engine refuses it while requests run.',
-  abort_all: () => 'Every running or queued generation ends now; the clients see their stream end.',
+  abort_all: () => 'Every running or queued generation stops now, and each client is cut: an agent retries its request (end its turn in the agent).',
   smoke: () => 'One real 200-token generation through the proxy, the way a client uses it.',
   diag_bundle: () => 'Collects logs, state and versions into a tarball in your home; the API key is masked everywhere.',
   fit_opencode: () => 'Reads the KV pool of the engine serving now and rewrites only opencode’s context and output limits, so a conversation can never outgrow it. A dated backup is written first. If the Agent server runs, it restarts to read them: a reply it is writing then is cut short.'};
@@ -710,9 +714,10 @@ const LANE_RUNTIME = {flash: 'its SGLang image (about 16 GB to download), its ch
   nemotron: 'its vLLM image, about 11 GB to download (25 GB on disk), pulled and built here',
   'nemotron-super': 'the Nemotron lanes’ vLLM image (the Bolt lane’s), about 11 GB to download (25 GB on disk), pulled and built here once for the two',
   'flash-local': 'its vLLM image with b12x, about 10 GB to download (18 GB on disk), pulled as its model card names it',
+  'nanbeige': 'the shared GB10-compatible vLLM image, about 18 GB on disk; reused when already installed',
   'ornith-122b': 'the Flash FP4-Local lane’s vLLM image with b12x, about 10 GB to download (18 GB on disk), pulled once for the two'};
 const SIDE_LANE = {[IMAGE_UNIT]: 'image', [VIDEO_UNIT]: 'video', [KOLIBRI_UNIT]: 'kolibri', [NEMOTRON_UNIT]: 'nemotron',
-                   [NEMOTRON_SUPER_UNIT]: 'nemotron-super', [FLASH_LOCAL_UNIT]: 'flash-local', [ORNITH_UNIT]: 'ornith-122b',
+                   [NEMOTRON_SUPER_UNIT]: 'nemotron-super', [FLASH_LOCAL_UNIT]: 'flash-local', [NANBEIGE_UNIT]: 'nanbeige', [ORNITH_UNIT]: 'ornith-122b',
                    [UFLASH]: 'flash', [U27]: '27b'};
 function laneJourneySteps(target){
   const unit = TARGET_UNIT(target);
@@ -1011,7 +1016,8 @@ function renderBanners(state, errors){
   const want = [];
   // cmd: a command the banner asks to run, shown apart with a Copy button (Hasan, 2026-10-21:
   // selecting it by hand out of a sentence was the only way)
-  const add = (kind, strong, text, cmd) => want.push([kind, strong, text, cmd]);
+  // list: lines a banner shows one under the other, between its title and its sentence (the commits of the clone)
+  const add = (kind, strong, text, cmd, list) => want.push([kind, strong, text, cmd, list]);
   const otherUp = n => Object.entries(engines()).some(([m, x]) => m !== n && (!UNIT_DOWN.has(x.state) || x.restarting));
   if (offline) add('err', 'Connection lost.', `No data from the cockpit for ${fmtDur((Date.now() - lastMsgAt) / 1000)}: what is on screen is frozen and actions wait.`);
   if (F.config && F.config.dry_run) add('info', 'Dry run.', 'Every action is confirmed, logged and audited as usual, but nothing is executed. This instance exists for tests.');
@@ -1054,8 +1060,31 @@ function renderBanners(state, errors){
   const upd0 = sv && updateOwed(sv[0]);
   if (upd0) add('warn', `${laneLabel(sv[0])} runs what it started with, not what the update installed.`,
     `${upd0}. It applies at its next start: Restart ${LANE_NAME[sv[0]]} to apply the update, on its card in Lanes (it answers again in ${readyIn(sv[0])}).`);
-  if (F.memFloor && F.memFloor.aborts && F.memFloor.last_abort && Date.now() / 1000 - F.memFloor.last_abort < 600)
-    add('warn', 'The memory floor fired.', `Memory fell under ${F.memFloor.gib} GiB with requests running: every generation was aborted ${fmtDur(Date.now() / 1000 - F.memFloor.last_abort)} ago to keep the box out of a livelock.`);
+  // since v1.40.3 the stop goes through the proxy, which cuts each client instead of letting its
+  // stream end as if the answer were whole, and holds new generations back while memory is short.
+  // What it did is the cockpit's to say (mem_floor.said): it claimed every generation stopped and
+  // new requests held where the proxy had cut none (code review, 2026-10-26)
+  if (F.memFloor && F.memFloor.aborts && F.memFloor.last_abort && Date.now() / 1000 - F.memFloor.last_abort < 600){
+    const ago = fmtDur(Date.now() / 1000 - F.memFloor.last_abort);
+    add('warn', 'The memory floor fired.', F.memFloor.via === 'proxy' && F.memFloor.said
+      ? `Memory fell under ${F.memFloor.gib} GiB with requests running, ${ago} ago. To keep the box out of a livelock: ${F.memFloor.said}.`
+      : `Memory fell under ${F.memFloor.gib} GiB with requests running: every generation was aborted ${ago} ago to keep the box out of a livelock.`);
+  }
+  // Cohere's report (2026-10-26): the proxy writes down a tool call whose arguments name an Alibaba
+  // Cloud host or a cloud metadata address, whatever the client, and relays it as it came (v6.48)
+  const tt = F.toolTargets;
+  if (tt && tt.count && tt.last)
+    add('err', `A model asked a tool to reach ${tt.last.hosts}.`,
+      `${tt.count === 1 ? 'One tool call' : `${tt.count} tool calls`} in the last 24 h named an Alibaba Cloud host or a cloud metadata address (Cohere's report on Qwen3.8-Flash-Next), the last ${fmtDur(Math.max(0, Date.now() / 1000 - tt.last.at))} ago in a ${tt.last.tool} call on ${tt.last.path}. The proxy only reports it: whether the call ran depends on the client and its rules (docs/agents-and-network.md).`);
+  // A long prompt sent again after its client left it without an answer (proxy v6.49, issue #61): on
+  // the Ornith lane Claude Code left a prompt of 500,161 tokens after 620 s, twice, then 300 s, twice,
+  // and the engine kept what it had computed only every other time, so its answer came after 35 min
+  const rs = F.resent;
+  if (rs && rs.count && rs.last)
+    add('warn', 'A client gave up on a long prompt and sent it again.',
+      `${rs.count === 1 ? 'Once' : `${rs.count} times`} in the last 24 h, the last ${fmtDur(Math.max(0, Date.now() / 1000 - rs.last.at))} ago: `
+      + `${rs.last.who} left it without an answer after ${fmtDur(rs.last.secs)} (${rs.last.n} time${rs.last.n > 1 ? 's' : ''} in a row), `
+      + `and the engine computed it again, from what its prefix cache had kept of it, if anything. ${rs.last.advice}.`);
   const upd = F.update || {};
   // An update that runs now (install.sh keeps a file while it lasts, the cockpit checks its process):
   // the banners that ask for one wait, since one runs (an ASUS Ascent GX10, 2026-10-21: an update of
@@ -1071,8 +1100,18 @@ function renderBanners(state, errors){
   // nor the proxy, nor the cockpit; a box no run of v1.36.0 or later recorded is said once.
   if (upd.behind_clone && !run){
     const why = upd.behind_clone_why;
-    if (why === 'commit') add('orange', `The clone moved on since the last install: the services run ${upd.installed}, the clone is ${upd.clone || 'newer'}.`,
-      'A git pull changes the files, not what runs. Run the installer so the services follow it:', updateCmd(F.config));
+    // the same release on both sides names the commits (Hasan's capture, 2026-10-29: "the services run
+    // v1.40.4, the clone is v1.40.4" said nothing of what moved); "past it" only with the commits the server found
+    // past the recorded one, which it looks for only in a clone that descends from it (review, 2026-10-30). The
+    // server names the two commits only for the same release on both sides: it alone decides that case here.
+    const same = !!upd.installed_commit, n = upd.commits_count, cs = upd.commits || [];
+    const past = n ? `${n === 1 ? 'one commit' : n + ' commits'} past it, at` : 'at';
+    if (why === 'commit') add('orange', same
+        ? `The clone moved on since the last install: the services run ${upd.installed} at ${upd.installed_commit}, the clone is ${past} ${upd.clone_commit}.`
+        : `The clone moved on since the last install: the services run ${upd.installed}, the clone is ${upd.clone || 'newer'}.`,
+      'A git pull changes the files, not what runs. Run the installer so the services follow it:', updateCmd(F.config),
+      // one commit a line: joined by commas, subjects that hold commas themselves ran into each other (review)
+      same && cs.length ? cs.concat(n > cs.length ? [`and ${n - cs.length} more`] : []) : null);
     else if (why === 'no-start') add('orange', 'The last install stopped at --no-start.',
       'The side lanes, the proxy and the cockpit were not updated with it. Run it again without --no-start:', updateCmd(F.config));
     else add('orange', `No install of v1.36.0 or later recorded what this box runs.`,
@@ -1104,7 +1143,7 @@ function renderBanners(state, errors){
     `The container ${o.container} serves, but its unit is not running, so no other engine may start and a reboot will not bring it back. Start it from Lanes to replace it, or remove it:`, `docker rm -f ${o.container}`));
   if (errors.lifecycle) add('warn', 'Engine state unknown.', 'The lifecycle collector failed: ' + String(errors.lifecycle).slice(0, 120));
   // drawn only when it changed: a live region re-read twice a second is noise
-  const sig = JSON.stringify(want.map(w => [w[0], w[1], !!w[3]]));
+  const sig = JSON.stringify(want.map(w => [w[0], w[1], !!w[3], w[4] || null]));
   if (box.dataset.sig === sig){
     [...box.children].forEach((b, i) => {
       const t = b.querySelector('.t'); if (t) setText(t, want[i][2]);
@@ -1113,10 +1152,12 @@ function renderBanners(state, errors){
     return;
   }
   box.dataset.sig = sig; clear(box);
-  want.forEach(([kind, strong, text, cmd]) => {
+  want.forEach(([kind, strong, text, cmd, list]) => {
     const b = el('div', 'banner ' + kind);
     b.append(el('span', 'lamp ' + (kind === 'err' ? 'err' : kind === 'warn' ? 'warn' : kind === 'orange' ? 'orange' : '')));
-    const p = el('div'); p.append(el('b', null, strong + ' '), el('span', 't', text));
+    const p = el('div'); p.append(el('b', null, strong + ' '));
+    if (list && list.length){ const ul = el('ul', 'blist'); list.forEach(x => ul.append(el('li', null, x))); p.append(ul); }
+    p.append(el('span', 't', text));
     if (cmd){
       const pre = el('pre', 'cmd', cmd), btn = el('button', 'btn sm', 'Copy'), row = el('div', 'btn-row'), c = el('div', 'bcmd');
       btn.type = 'button'; btn.addEventListener('click', () => copyText(pre.textContent));
@@ -1178,7 +1219,7 @@ on('engine_info', d => {
   if (i.context_length) F.window = i.context_length;
   if (i.max_running_requests) F.maxRun = i.max_running_requests;
 });
-on('engine_fast', d => { F.load = (d.load || [])[0] || {}; F.noEngine = !d.load; F.memFloor = d.mem_floor || F.memFloor; });
+on('engine_fast', d => { F.load = (d.load || [])[0] || {}; F.noEngine = !d.load; F.memFloor = d.mem_floor || F.memFloor; F.prompt = d.prompt || null; });
 on('machine', d => { F.machine = d; });
 on('gpu', d => { F.gpu = d; });
 on('opencode', d => { F.ocfit = d.fit || null; });
@@ -1205,6 +1246,18 @@ const physTokens = l => (l.num_used_tokens != null ? l.num_used_tokens : l.num_t
 const runningReqs = l => Math.max(0, (l.num_reqs || 0) - (l.num_waiting_reqs || 0));
 const waitingReqs = l => l.num_waiting_reqs || 0;
 const loadWords = l => [runningReqs(l) ? `${runningReqs(l)} running` : '', waitingReqs(l) ? `${waitingReqs(l)} waiting` : ''].filter(Boolean).join(', ');
+// The one running request's prompt, while vLLM computes it (lc.prompt_progress): a prompt the cache
+// cannot serve takes minutes, 19 for 494,089 tokens on the Ornith lane, and the page said only
+// "1 running" and "quiet" through all of it (issue #61, 2026-10-30). The time left is a floor.
+// a floor stays a floor once written: rounded down, where fmtMin rounds to the nearest minute and said
+// "at least 3 min" of 150 s (code review, 2026-10-31)
+const fmtAtLeast = s => {
+  if (s < 90) return Math.floor(s) + ' s';
+  const m = Math.floor(s / 60);
+  return m < 60 ? m + ' min' : Math.floor(m / 60) + ' h ' + String(m % 60).padStart(2, '0');
+};
+const promptWords = p => !p ? '' : `computing its prompt: ${Math.round(100 * p.share)} % of ${fmtN(p.tokens)} tokens after ${fmtDur(p.elapsed)}`
+  + (p.left_min_s != null ? `, at least ${fmtAtLeast(p.left_min_s)} left` : p.share >= 0.99 ? ', almost done' : '');
 
 // ── wiring the shell ──────────────────────────────────────────────────────────
 function wireShell(){

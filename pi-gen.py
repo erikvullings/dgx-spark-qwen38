@@ -50,7 +50,7 @@ import re
 import shlex
 import sys
 
-OURS = ("qwen38", "flashnext", "kolibri", "nemotron", "nemotron-super", "flash-local", "ornith-122b")
+OURS = ("qwen38", "flashnext", "kolibri", "nemotron", "nemotron-super", "flash-local", "ornith-122b", "nanbeige")
 RESIZE = {"maxWidth": 1568, "maxHeight": 1568, "maxBytes": 524288, "jpegQuality": 75}
 
 
@@ -162,7 +162,9 @@ PI_COMPAT = {"supportsDeveloperRole": False}
 EFFORT_FIELD = {"kolibri": ({"off": "none", "minimal": "low", "xhigh": "high"}, "high"),
                 "nemotron": ({"off": "none", "minimal": "low", "xhigh": "high"}, "high"),
                 "nemotron-super": ({"off": "none", "minimal": "low", "xhigh": "high"}, "high"),
-                "ornith-122b": ({"off": "none"}, "high")}
+                "ornith-122b": ({"off": "none"}, "high"),
+                "nanbeige": ({"off": "none"}, "high"),
+                }
 
 
 def model_meta(mid, m):

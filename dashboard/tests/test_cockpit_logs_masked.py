@@ -18,6 +18,21 @@ from pathlib import Path
 HERE = Path(__file__).resolve()
 DASH = HERE.parents[1]
 KEY = "k-" + "Z" * 40
+# every module hands the next one the environment it found (test_env_isolation.py): TheLogs set six
+# COCKPIT_ variables for every module after it until 2026-10-24. Found when its tests start, as in
+# the modules beside it: at import, before any test of the process, it was not what it found
+# (code review, 2026-10-28).
+ENV_BEFORE = {}
+
+
+def setUpModule():
+    ENV_BEFORE.update(os.environ)
+
+
+def tearDownModule():
+    for name in set(os.environ) - set(ENV_BEFORE):
+        del os.environ[name]
+    os.environ.update(ENV_BEFORE)
 
 
 class TheLogs(unittest.TestCase):

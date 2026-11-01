@@ -12,7 +12,7 @@
 # draft, its config set for the window the unit serves. Each download is refused before its
 # first byte when its room is not there.
 #
-#   ./prepare-lane.sh image|video|kolibri|nemotron|nemotron-super|flash-local|ornith-122b
+#   ./prepare-lane.sh image|video|kolibri|nemotron|nemotron-super|flash-local|ornith-122b|nanbeige
 #   ./prepare-lane.sh flash|27b [<target>]
 #
 # The target is the one the Load loads, for the two lanes whose preparation fetches a
@@ -27,11 +27,11 @@ set -euo pipefail
 # exact-argv sudoers is rendered from it and has to match the cockpit's own calls (2026-10-22).
 while [ -n "${HOME:-}" ] && [ "$HOME" != / ] && [ "${HOME%/}" != "$HOME" ]; do HOME="${HOME%/}"; done; export HOME
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-usage(){ echo "usage: ./prepare-lane.sh <image|video|kolibri|nemotron|nemotron-super|flash-local|ornith-122b> | <flash|27b> [<target>]" >&2; exit 2; }
+usage(){ echo "usage: ./prepare-lane.sh <image|video|kolibri|nemotron|nemotron-super|flash-local|ornith-122b|nanbeige> | <flash|27b> [<target>]" >&2; exit 2; }
 die(){ printf '\n\033[1;31mERROR:\033[0m %s\n' "$*" >&2; exit 1; }
 section(){ printf '\n\033[1;36m── %s\033[0m\n' "$*"; }
 case "${1:-}" in
-  image|video|kolibri|nemotron|nemotron-super|flash-local|ornith-122b) [ "$#" -eq 1 ] || usage ;;
+  image|video|kolibri|nemotron|nemotron-super|flash-local|ornith-122b|nanbeige) [ "$#" -eq 1 ] || usage ;;
   flash|27b) [ "$#" -le 2 ] || usage ;;
   *) usage ;;
 esac
@@ -179,7 +179,7 @@ prepare_27b(){
 }
 
 case "$1" in
-  image|video|kolibri|nemotron|nemotron-super|flash-local|ornith-122b)
+  image|video|kolibri|nemotron|nemotron-super|flash-local|ornith-122b|nanbeige)
     # its checkpoint comes with its switch, as for any Load: no target here
     CONFIG_DIR="$HOME/.config/qwen38"; REPO_DIR="$HERE"
     # shellcheck source=lanes.sh

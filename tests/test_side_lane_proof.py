@@ -11,6 +11,9 @@ installer said a restart was needed, and only for its own run's change (found in
 middleware, and the scripts every start runs first (the reviews of the fix, the same day). The installers' own lines run here, with a systemctl that answers when the lane started
 and files older or newer than that. The three vLLM lanes' installers (Kolibri, Nemotron Bolt and
 Super VL) run these lines from what they share, vllm-lane.sh, which is read here in their stead.
+An update that runs no proof restarts a serving image lane (about 70 s) since v1.40.6, as its filter
+of its own sockets came in with a unit a lane that kept serving never read: the video lane, 12 to
+15 min to boot, and the vLLM lanes keep the NOTE that says a restart is owed.
 """
 import os
 import pathlib
@@ -37,7 +40,7 @@ def blocks(script):
     # its lines are indented there, and read the same
     files = re.search(r'\n *LANE_FILES=\([^\n]*\)\n', text)
     note = re.search(r'\n( *)if \[ "\$SMOKE" -eq 0 \] && lane_serves_older "\$UNIT" "\$\{LANE_FILES\[@\]\}"; then\n'
-                     r'\1  echo "NOTE: [^\n]*\n\1fi\n', text)
+                     r'.*?\n\1fi\n', text, re.S)
     proof = re.search(r'\n( *)if \[ "\$%s" -eq 1 \] && lane_serves_older "\$UNIT" "\$\{LANE_FILES\[@\]\}"; then\n.*?\n\1fi\n'
                       % LANES_OF[script], text, re.S)
     assert files and note and proof, f"{script}: its files, its note or its proof's start moved"
@@ -45,7 +48,7 @@ def blocks(script):
     return files.group(0), note.group(0), proof.group(0)
 
 
-def run(script, block, serving, newer=(), was=1, smoke=1, restarts=None):
+def run(script, block, serving, newer=(), was=1, smoke=1, restarts=None, sudo_fails=False):
     """`newer`: the files (FILES_OF's names, or "unit") changed after the lane started."""
     d = pathlib.Path(tempfile.mkdtemp(prefix="side-proof-"))
     started = int(time.time()) - 600
@@ -68,7 +71,8 @@ def run(script, block, serving, newer=(), was=1, smoke=1, restarts=None):
         f'case "$*" in *ActiveState*) echo {"active" if serving else "inactive"};; '
         f'*ExecMainStartTimestamp*) echo "@{started}";; *NRestarts*) cat "{count}";; esac\n')
     # a start or a restart resets the count of automatic restarts, as systemd does
-    (d / "sudo").write_text(f'#!/bin/bash\necho "sudo $*" >> "{log}"\necho 0 > "{count}"\n')
+    (d / "sudo").write_text(f'#!/bin/bash\necho "sudo $*" >> "{log}"\n'
+                            + ('exit 1\n' if sudo_fails else f'echo 0 > "{count}"\n'))
     for f in ("systemctl", "sudo"):
         (d / f).chmod(0o755)
     head = (f'set -euo pipefail\n. "{LANES}"\nUNIT=x.service; INSTALLED="{unit}"; '
@@ -156,19 +160,38 @@ class TheVllmLanesCrashCountIsReadAfterItsStart(unittest.TestCase):
 
 class AnUpdateSaysTheServingLaneNeedsARestart(unittest.TestCase):
     def test_said_when_no_proof_follows_and_something_is_newer_than_the_lane(self):
-        for script in LANES_OF:
+        for script in ("install-video.sh", "vllm-lane.sh"):
             note = blocks(script)[1]
             with self.subTest(script=script):
-                out, _, _ = run(script, note, serving=True, newer=("unit",), smoke=0)
+                out, calls, _ = run(script, note, serving=True, newer=("unit",), smoke=0)
                 self.assertIn("runs older files than the ones installed now", out)
+                self.assertEqual(calls, [], "said, not done")
                 out, _, _ = run(script, note, serving=True, newer=(FILES_OF[script][0],), smoke=0)
                 self.assertIn("runs older files than the ones installed now", out)
-                out, _, _ = run(script, note, serving=True, smoke=0)
-                self.assertEqual(out, "")
-                out, _, _ = run(script, note, serving=False, newer=("unit",), was=0, smoke=0)
-                self.assertEqual(out, "", "a lane that does not serve needs no restart")
-                out, _, _ = run(script, note, serving=True, newer=("unit",), smoke=1)
-                self.assertEqual(out, "", "the proof that follows restarts it")
+
+    def test_a_serving_image_lane_is_restarted_instead(self):
+        script = "install-image.sh"
+        update = blocks(script)[1]
+        for newer in (("unit",), (FILES_OF[script][0],)):
+            with self.subTest(newer=newer):
+                out, calls, _ = run(script, update, serving=True, newer=newer, smoke=0)
+                self.assertEqual(calls, ["sudo systemctl restart x.service"])
+                self.assertIn("restarting it (about 70 s)", out)
+                self.assertNotIn("NOTE", out)
+        out, calls, _ = run(script, update, serving=True, newer=("unit",), smoke=0, sudo_fails=True)
+        self.assertEqual(calls, ["sudo systemctl restart x.service"])
+        self.assertIn("NOTE: the image lane did not restart", out, "a restart that failed is said")
+
+    def test_nothing_when_nothing_is_newer_the_lane_is_stopped_or_a_proof_follows(self):
+        for script in LANES_OF:
+            update = blocks(script)[1]
+            with self.subTest(script=script):
+                out, calls, _ = run(script, update, serving=True, smoke=0)
+                self.assertEqual((out, calls), ("", []))
+                out, calls, _ = run(script, update, serving=False, newer=("unit",), was=0, smoke=0)
+                self.assertEqual((out, calls), ("", []), "a lane that does not serve needs no restart")
+                out, calls, _ = run(script, update, serving=True, newer=("unit",), smoke=1)
+                self.assertEqual((out, calls), ("", []), "the proof that follows restarts it")
 
 
 if __name__ == "__main__":

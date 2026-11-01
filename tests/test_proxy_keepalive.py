@@ -99,7 +99,7 @@ class Engine(http.server.BaseHTTPRequestHandler):
             # the proxy read an exception rather than end of stream
             self._sse_head()
             self._event("one")
-            self.connection.setsockopt(socket.SOL_SOCKET, socket.SO_LINGER,
+            self.connection.setsockopt(socket.SOL_SOCKET, socket.SO_GROOTER,
                                        struct.pack("ii", 1, 0))
             self.connection.close()
             return

@@ -22,7 +22,7 @@ import unittest
 
 REPO = pathlib.Path(__file__).resolve().parents[1]
 INSTALL = REPO / "install.sh"
-PINNED = "1.19.4"
+PINNED = "1.19.5"
 
 FAKE_OC = """#!/bin/sh
 here="$(cd "$(dirname "$0")" && pwd)"
@@ -502,8 +502,34 @@ class AFreshBoxGetsAConfigOpencodeCanUse(unittest.TestCase):
         mine = '{\n  // mine\n  "provider": {"qwen38": {"x": 1}, "other": {}}\n}\n'
         rc, out, user = self.run_it(existing=mine)
         self.assertEqual(rc, 0, out)
-        self.assertEqual(user.read_text(), mine)
+        text = user.read_text()
+        self.assertIn("// mine", text)
+        self.assertEqual(json.loads(text.replace("// mine", ""))["provider"], {"qwen38": {"x": 1}, "other": {}})
         self.assertIn("already lists this box's providers: unchanged", out)
+
+    def test_the_config_opencode_oc_and_the_agent_tab_read_gets_the_shell_rules(self):
+        # Cohere's report (2026-10-26): Qwen3.8-Flash-Next PUT a file to an Alibaba Cloud bucket
+        # from a shell it was given. opencode runs every shell command unasked by default, so
+        # this box's config denies the hosts of the report: the copy carries the rules of the
+        # generated config, and an existing config of this box gets them last.
+        rules = {"bash*": {"*aliyuncs.com*": "deny", "*169.254.169.254*": "deny", "*100.100.100.200*": "deny"}}
+        generated = json.dumps({"provider": {"qwen38": {}}, "model": "qwen38/qwen3.8-27b", "permission": rules})
+        rc, out, user = self.run_it(generated=generated)
+        self.assertEqual(rc, 0, out)
+        self.assertEqual(json.loads(user.read_text())["permission"], rules)
+        self.assertNotIn("hold already", out, "the copy needs no second pass")
+        rc, out, user = self.run_it(existing='{\n  // mine\n  "provider": {"qwen38": {"x": 1}}\n}\n',
+                                    generated=generated)
+        self.assertEqual(rc, 0, out)
+        self.assertEqual(json.loads(user.read_text().replace("// mine", ""))["permission"], rules)
+        self.assertIn("put last in its permission", out)
+
+    def test_a_users_own_config_is_told_the_shell_rules_and_not_rewritten(self):
+        mine = '{"provider": {"anthropic": {}}, "permission": {"bash": "ask"}}\n'
+        rc, out, user = self.run_it(existing=mine)
+        self.assertEqual(rc, 0, out)
+        self.assertEqual(user.read_text(), mine)
+        self.assertIn("docs/agents-and-network.md", out)
 
     def test_a_lane_installed_later_brings_its_provider_into_that_config(self):
         # The 27B first: the copy lists qwen38 only. Then MODEL_CHOICE=flash ./install.sh,

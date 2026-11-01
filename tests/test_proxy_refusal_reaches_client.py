@@ -18,8 +18,10 @@ import socket
 import subprocess
 import sys
 import tempfile
-import time
 import unittest
+
+sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
+import localports  # noqa: E402
 
 REPO = pathlib.Path(__file__).resolve().parents[1]
 CAP = 1024 * 1024
@@ -32,20 +34,11 @@ class TheRefusalArrives(unittest.TestCase):
         cls.home = pathlib.Path(tempfile.mkdtemp(prefix="kp-413-"))
         (cls.home / ".config" / "qwen38").mkdir(parents=True)
         (cls.home / ".config" / "qwen38" / "api-key").write_text(KEY + "\n")
-        with socket.socket() as s:
-            s.bind(("127.0.0.1", 0))
-            cls.port = s.getsockname()[1]
         env = {"PATH": os.environ["PATH"], "HOME": str(cls.home), "PROXY_BIND": "127.0.0.1",
                "UPSTREAM": "http://127.0.0.1:9", "MAX_BODY_BYTES": str(CAP)}
-        cls.proxy = subprocess.Popen([sys.executable, str(REPO / "keepalive-proxy.py"), str(cls.port)], env=env,
-                                     stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-        end = time.time() + 20
-        while time.time() < end:
-            try:
-                socket.create_connection(("127.0.0.1", cls.port), timeout=0.5).close()
-                break
-            except OSError:
-                time.sleep(0.1)
+        cls.proxy, cls.port = localports.spawn(lambda port: subprocess.Popen(
+            [sys.executable, str(REPO / "keepalive-proxy.py"), str(port)], env=env,
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL))
 
     @classmethod
     def tearDownClass(cls):

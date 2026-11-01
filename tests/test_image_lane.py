@@ -461,7 +461,8 @@ class TheLocalPatches(unittest.TestCase):
         """The installer's own lines for the bind, run as they are written."""
         t = INSTALLER.read_text()
         block = t[t.index('IMAGE_BIND="${IMAGE_BIND:-$(unit_flag --host)}"'):t.index("WEIGHTS_GB=")]
-        r = subprocess.run(["bash", "-c", 'set -euo pipefail\ndie(){ echo "DIE: $*"; exit 1; }\n' + block],
+        r = subprocess.run(["bash", "-c", 'set -euo pipefail\ndie(){ echo "DIE: $*"; exit 1; }\n'
+                            f'. "{REPO}/lanes.sh"\n' + block],
                            capture_output=True, text=True, timeout=30, env={"PATH": "/usr/bin:/bin", "IMAGE_BIND": value})
         return r.returncode, r.stdout + r.stderr
 
@@ -480,6 +481,45 @@ class TheLocalPatches(unittest.TestCase):
         self.assertNotIn("every interface", out)
         rc, out = self._bind("127.0.0.1")
         self.assertEqual((rc, out), (0, ""))
+
+    def test_the_runtime_keeps_its_own_sockets_off_the_network(self):
+        """Whatever the bind, the runtime listened on *:30005 (torch's TCPStore) and on four ports
+        of the box's LAN address (gloo's and NCCL's bootstrap), none with a key (the reference box,
+        2026-10-30, its firewall off). The bootstrap goes on lo, and a bind on any loopback address
+        lets the lane's processes talk to loopback alone; a bind past loopback serves others on
+        purpose, and its unit's two filter lines are written empty, which sets no filter."""
+        service = UNIT_TPL.read_text().split("\n[Service]\n", 1)[1].split("\n[", 1)[0]
+        for line in ("Environment=GLOO_SOCKET_IFNAME=lo", "Environment=NCCL_SOCKET_IFNAME=lo",
+                     "IPAddressAllow=__IMAGE_IP_ALLOW__", "IPAddressDeny=__IMAGE_IP_DENY__"):
+            self.assertRegex(service, rf"(?m)^{re.escape(line)}$")
+        t = INSTALLER.read_text()
+        block = t[t.index('IMAGE_BIND="${IMAGE_BIND:-$(unit_flag --host)}"'):t.index("WEIGHTS_GB=")]
+        for bind, deny, allow in (("127.0.0.1", "any", "localhost"), ("localhost", "any", "localhost"),
+                                  ("127.0.0.2", "any", "localhost"), ("192.168.1.20", "", ""), ("0.0.0.0", "", "")):
+            r = subprocess.run(["bash", "-c", 'set -euo pipefail\ndie(){ echo "DIE: $*"; exit 1; }\n'
+                                f'. "{REPO}/lanes.sh"\n' + block + 'echo "deny=$IMAGE_IP_DENY allow=$IMAGE_IP_ALLOW"'],
+                               capture_output=True, text=True, timeout=30, env={"PATH": "/usr/bin:/bin", "IMAGE_BIND": bind})
+            self.assertEqual((r.returncode, r.stdout.splitlines()[-1]), (0, f"deny={deny} allow={allow}"), bind)
+        # a bind past loopback is told what it leaves open
+        rc, out = self._bind("192.168.1.20")
+        self.assertIn("30005", out)
+
+    def test_an_update_restarts_a_serving_image_lane_that_runs_older_files(self):
+        """Hasan, 2026-10-30 (v1.40.6): its own sockets' filter comes in with a unit, which a lane that
+        kept serving never read. About 70 s; the video lane, 12 to 15 min to boot, keeps its NOTE."""
+        t = INSTALLER.read_text()
+        start = t.index('  if [ "$SMOKE" -eq 0 ] && lane_serves_older "$UNIT" "${LANE_FILES[@]}"; then')
+        block = t[start:t.index("  fi\n", start) + len("  fi\n")]
+        for serves, want in ((0, "SUDO systemctl restart qwen38-image.service"), (1, None)):
+            r = subprocess.run(["bash", "-c", 'set -euo pipefail\nSMOKE=0; UNIT=qwen38-image.service; LANE_FILES=(a b)\n'
+                                f'lane_serves_older(){{ return {serves}; }}\nsudo(){{ echo "SUDO $*"; }}\n' + block],
+                               capture_output=True, text=True, timeout=30, env={"PATH": "/usr/bin:/bin"})
+            self.assertEqual(r.returncode, 0, r.stderr)
+            if want:
+                self.assertIn(want, r.stdout)
+                self.assertNotIn("NOTE:", r.stdout)
+            else:
+                self.assertEqual(r.stdout, "")
 
     def test_the_installer_applies_exactly_the_patches_in_the_repo(self):
         listed = re.search(r"^PATCHES=\((.*)\)$", INSTALLER.read_text(), re.M).group(1).split()
@@ -654,14 +694,14 @@ class AnUpdateKeepsTheImageLaneAsTheBootLane(unittest.TestCase):
         self.assertIn('[ "$SGL_ENABLED" -eq 0 ] && [ "$FLASH_ENABLED" -eq 0 ]', self.text)
 
     def test_the_text_unit_is_not_enabled_on_that_path(self):
-        i = self.text.index('if [ -z "$ATS_CANNOT" ] && [ "$IMAGE_BOOT" -eq 0 ] && [ "$VIDEO_BOOT" -eq 0 ] && [ "$KOLIBRI_BOOT" -eq 0 ] && [ "$NEMOTRON_BOOT" -eq 0 ] && [ "$NEMOTRON_SUPER_BOOT" -eq 0 ] && [ "$FLASH_LOCAL_BOOT" -eq 0 ] && [ "$ORNITH_122B_BOOT" -eq 0 ]; then')
+        i = self.text.index('if [ -z "$ATS_CANNOT" ] && [ "$IMAGE_BOOT" -eq 0 ] && [ "$VIDEO_BOOT" -eq 0 ] && [ "$KOLIBRI_BOOT" -eq 0 ] && [ "$NEMOTRON_BOOT" -eq 0 ] && [ "$NEMOTRON_SUPER_BOOT" -eq 0 ] && [ "$FLASH_LOCAL_BOOT" -eq 0 ] && [ "$ORNITH_122B_BOOT" -eq 0 ] && [ "$NANBEIGE_BOOT" -eq 0 ]; then')
         # the condition's line and the one after it, however many lanes the condition names
         self.assertIn('sudo systemctl enable "$UNIT_NAME"', self.text[i:self.text.index("\n", self.text.index("\n", i) + 1)])
         # and that is the ONLY enable of the serving unit: an unguarded one would undo it
         self.assertEqual(self.text.count('sudo systemctl enable "$UNIT_NAME"'), 1)
 
     def test_that_path_ends_before_any_text_engine_is_started(self):
-        i = self.text.index('if [ -z "$ATS_CANNOT" ] && [ "$IMAGE_BOOT" -eq 0 ] && [ "$VIDEO_BOOT" -eq 0 ] && [ "$KOLIBRI_BOOT" -eq 0 ] && [ "$NEMOTRON_BOOT" -eq 0 ] && [ "$NEMOTRON_SUPER_BOOT" -eq 0 ] && [ "$FLASH_LOCAL_BOOT" -eq 0 ] && [ "$ORNITH_122B_BOOT" -eq 0 ]; then')
+        i = self.text.index('if [ -z "$ATS_CANNOT" ] && [ "$IMAGE_BOOT" -eq 0 ] && [ "$VIDEO_BOOT" -eq 0 ] && [ "$KOLIBRI_BOOT" -eq 0 ] && [ "$NEMOTRON_BOOT" -eq 0 ] && [ "$NEMOTRON_SUPER_BOOT" -eq 0 ] && [ "$FLASH_LOCAL_BOOT" -eq 0 ] && [ "$ORNITH_122B_BOOT" -eq 0 ] && [ "$NANBEIGE_BOOT" -eq 0 ]; then')
         early = self.text[i:self.text.index("exit 0", i)]
         self.assertNotIn("systemctl start", early)
         self.assertIn("--no-smoke", early, "the smoke test stops and starts the serving lane")
@@ -689,12 +729,12 @@ class TheBootLaneConvergenceHoldsEveryWay(unittest.TestCase):
         self.assertIn("sudo systemctl disable qwen38-image.service", self.text)
 
     def test_the_image_boot_path_restarts_the_proxy_it_rewrote(self):
-        i = self.text.index('if [ -z "$ATS_CANNOT" ] && [ "$IMAGE_BOOT" -eq 0 ] && [ "$VIDEO_BOOT" -eq 0 ] && [ "$KOLIBRI_BOOT" -eq 0 ] && [ "$NEMOTRON_BOOT" -eq 0 ] && [ "$NEMOTRON_SUPER_BOOT" -eq 0 ] && [ "$FLASH_LOCAL_BOOT" -eq 0 ] && [ "$ORNITH_122B_BOOT" -eq 0 ]; then')
+        i = self.text.index('if [ -z "$ATS_CANNOT" ] && [ "$IMAGE_BOOT" -eq 0 ] && [ "$VIDEO_BOOT" -eq 0 ] && [ "$KOLIBRI_BOOT" -eq 0 ] && [ "$NEMOTRON_BOOT" -eq 0 ] && [ "$NEMOTRON_SUPER_BOOT" -eq 0 ] && [ "$FLASH_LOCAL_BOOT" -eq 0 ] && [ "$ORNITH_122B_BOOT" -eq 0 ] && [ "$NANBEIGE_BOOT" -eq 0 ]; then')
         early = self.text[i:self.text.index("exit 0", i)]
         self.assertIn('sudo systemctl restart "$KEEPALIVE_UNIT"', early)
 
     def test_the_image_boot_path_respects_a_left_out_image_lane(self):
-        i = self.text.index('if [ -z "$ATS_CANNOT" ] && [ "$IMAGE_BOOT" -eq 0 ] && [ "$VIDEO_BOOT" -eq 0 ] && [ "$KOLIBRI_BOOT" -eq 0 ] && [ "$NEMOTRON_BOOT" -eq 0 ] && [ "$NEMOTRON_SUPER_BOOT" -eq 0 ] && [ "$FLASH_LOCAL_BOOT" -eq 0 ] && [ "$ORNITH_122B_BOOT" -eq 0 ]; then')
+        i = self.text.index('if [ -z "$ATS_CANNOT" ] && [ "$IMAGE_BOOT" -eq 0 ] && [ "$VIDEO_BOOT" -eq 0 ] && [ "$KOLIBRI_BOOT" -eq 0 ] && [ "$NEMOTRON_BOOT" -eq 0 ] && [ "$NEMOTRON_SUPER_BOOT" -eq 0 ] && [ "$FLASH_LOCAL_BOOT" -eq 0 ] && [ "$ORNITH_122B_BOOT" -eq 0 ] && [ "$NANBEIGE_BOOT" -eq 0 ]; then')
         early = self.text[i:self.text.index("exit 0", i)]
         call = early.index('"$REPO_DIR/install-image.sh" "$(side_mode image')
         self.assertIn('if [ "$WANT_IMAGE" -eq 1 ]', early[:call])
@@ -711,7 +751,7 @@ class TheBootLaneConvergenceHoldsEveryWay(unittest.TestCase):
 
     def test_it_never_points_at_a_switch_target_that_does_not_exist(self):
         """A kept custom model is MODEL_CHOICE=custom, which switch-model.sh rejects."""
-        i = self.text.index('if [ -z "$ATS_CANNOT" ] && [ "$IMAGE_BOOT" -eq 0 ] && [ "$VIDEO_BOOT" -eq 0 ] && [ "$KOLIBRI_BOOT" -eq 0 ] && [ "$NEMOTRON_BOOT" -eq 0 ] && [ "$NEMOTRON_SUPER_BOOT" -eq 0 ] && [ "$FLASH_LOCAL_BOOT" -eq 0 ] && [ "$ORNITH_122B_BOOT" -eq 0 ]; then')
+        i = self.text.index('if [ -z "$ATS_CANNOT" ] && [ "$IMAGE_BOOT" -eq 0 ] && [ "$VIDEO_BOOT" -eq 0 ] && [ "$KOLIBRI_BOOT" -eq 0 ] && [ "$NEMOTRON_BOOT" -eq 0 ] && [ "$NEMOTRON_SUPER_BOOT" -eq 0 ] && [ "$FLASH_LOCAL_BOOT" -eq 0 ] && [ "$ORNITH_122B_BOOT" -eq 0 ] && [ "$NANBEIGE_BOOT" -eq 0 ]; then')
         early = self.text[i:self.text.index("exit 0", i)]
         # the case names custom before the line that names ./switch-model.sh $MODEL_CHOICE
         case = early.index('case "$MODEL_CHOICE" in')

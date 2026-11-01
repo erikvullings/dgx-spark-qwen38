@@ -149,8 +149,14 @@ if [ -z "${AGENT_AUTO:-}" ] && grep -q "^Environment='OPENCODE_PERMISSION=" "/et
   AGENT_AUTO=1      # remembered from the installed unit
 fi
 case "${AGENT_AUTO:-0}" in
-  1) AUTO_LINE="Environment='OPENCODE_PERMISSION={\"*\":\"allow\"}'"
-     note "AGENT_AUTO=1: the web server approves every tool call (opencode's deny rules still apply)." ;;
+  # opencode merges OPENCODE_PERMISSION after every rule of the config files and its last
+  # matching rule wins, so a bare {"*":"allow"} overrode their deny rules too: an echo naming
+  # an aliyuncs.com host ran under it (2026-10-28). The value repeats the rules for the hosts
+  # of Cohere's report after its "*" (docs/agents-and-network.md).
+  1) PERM="$(python3 "$HERE/../oc-merge-limits.py" --agent-auto-permission)" \
+       || die "could not build AGENT_AUTO's permission (oc-merge-limits.py --agent-auto-permission)"
+     AUTO_LINE="Environment='OPENCODE_PERMISSION=$PERM'"
+     note "AGENT_AUTO=1: the web server approves every tool call but a shell command naming an Alibaba Cloud host or a cloud metadata address. Its \"*\" overrides your own deny rules unless your config has a \"*\" of its own (docs/agents-and-network.md)." ;;
   0|"") AUTO_LINE="# (opencode's own permission defaults; re-run with AGENT_AUTO=1 to approve every tool call)" ;;
   *) die "AGENT_AUTO must be 1 or 0" ;;
 esac
