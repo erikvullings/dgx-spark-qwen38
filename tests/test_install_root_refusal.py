@@ -129,7 +129,7 @@ class GetShRefusesRootBeforeTheClone(unittest.TestCase):
         self.assertIn("alice", out)
         # the one-liner as the README gives it: raw.githubusercontent.com, which a renamed repository's
         # old name still serves directly, where the github.com/.../raw/ form takes two redirects
-        self.assertIn("run : curl -fsSL https://raw.githubusercontent.com/hasso5703/dgx-spark-qwen38/main/get.sh | bash", out)
+        self.assertIn(f"run : curl -fsSL {ONELINER} | bash", out)
 
     def test_plain_root_is_refused_with_the_way_out(self):
         rc, out, _ = run("get.sh")

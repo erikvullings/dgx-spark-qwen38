@@ -95,6 +95,10 @@ main() {
     # which GitHub's names never hold, shows cut.
     SHOWN=$(printf '%s' "$DIR_ORIGIN" | LC_ALL=C sed -E -e 's#^(([A-Za-z0-9+.-]+::)?[A-Za-z][A-Za-z0-9+.-]*://).*@#\1#' \
                                                      -e 's#^[^/:@]+@([^/:]+:)#\1#')
+    # and any form left with an @ in it (a remote helper around an scp-like address, two helpers, a space before
+    # the scheme, a line break in a password, which sed reads line by line): only what follows its last @
+    # (code review, 2026-11-01)
+    case "$SHOWN" in *@*) SHOWN="${SHOWN##*@}" ;; esac
     echo "ERROR: $DIR is not a clone of this repo (origin: ${SHOWN:-none}). Refusing to touch it." >&2; exit 1
   fi
 
@@ -126,7 +130,9 @@ main() {
       git -C "$DIR" stash push -m "get.sh auto-stash before update"
     else
       echo "ERROR: $DIR has modified tracked files, refusing to install a stale or altered version." >&2
-      git -C "$DIR" status --short --untracked-files=no | head -10 >&2
+      # sed -n reads to the end where head would close the pipe early: under pipefail, git's SIGPIPE ended the
+      # script with 141 before the advice below (code review, 2026-11-01)
+      git -C "$DIR" status --short --untracked-files=no | sed -n '1,10p' >&2
       echo "Fix with ONE of:" >&2
       echo "  keep your changes aside :  FORCE_UPDATE=1  then rerun this command (recover later: git -C $DIR stash pop)" >&2
       # not `git clean -fd` as well: it deletes the untracked files this script keeps
@@ -165,7 +171,9 @@ main() {
   UNTRACKED=$(git -C "$DIR" ls-files --others --exclude-standard)
   if [ -n "$UNTRACKED" ]; then
     echo "── Untracked files kept in place (not part of the update):"
-    printf '%s\n' "$UNTRACKED" | head -5 | sed 's/^/     /'
+    # the first five, read to the end: with head, a long list (thousands of files, a .venv-mirror/ in the clone)
+    # took SIGPIPE under pipefail and get.sh ended with 141, silently, before the update (code review, 2026-11-01)
+    printf '%s\n' "$UNTRACKED" | sed -n '1,5s/^/     /p'
   fi
   # Tree verified clean and no local commits (or backed up): hard sync is lossless
   # and, unlike ff-only, immune to shallow-clone ancestry gaps.
