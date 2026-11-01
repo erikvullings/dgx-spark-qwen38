@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
-"""Keepalive proxy in front of SGLang or vLLM (v6.48). No content logging, and the only
+"""Keepalive proxy in front of SGLang or vLLM (v6.49). No content logging, and the only
 rewriting is the tool-schema guard (role 4); two routes, POST /v1/systemone (role 5) and the
 operator's POST /proxy/stop (role 7), are answered here instead of relayed.
 
-Eight roles, nothing else:
+Nine roles, nothing else:
 1. fill the silences of the SSE stream (SGLang's tool-call parser buffers the
    arguments: 127 s of measured silence for a 400-line file write) by injecting
    the OFFICIAL Anthropic "ping" event every KEEPALIVE_S seconds on the
@@ -47,7 +47,23 @@ Eight roles, nothing else:
    Alibaba Cloud's OSS domain, under which its Routify relay sits, and the cloud metadata
    addresses), whatever the client, but in a tool that reads, searches or writes files (QUIET_TOOLS):
    the host family and the tool's name, never the arguments, and the answer relayed as it came.
-   The cockpit turns the line into a banner (docs/agents-and-network.md).
+   The cockpit turns the line into a banner (docs/agents-and-network.md);
+9. say in the journal when a client sends again a long prompt it left without an answer (RESENT):
+   how long it had waited, how many times in a row, and what widens the client's timeout. The
+   cockpit turns the line into a banner (docs/clients.md).
+
+v6.49: a long prompt sent again after its client gave up on it is said in the journal (role 9).
+On the Ornith lane a prompt of 494,089 tokens the prefix cache could not serve took 19 min
+before its first token, and Claude Code with its own default timeouts left it after 620 s, twice,
+then sent it without streaming and left after 300 s, twice: each time, the request was closed
+(nobody waited for it) and the engine lost part of the prompt it had computed, so the answer came
+at the fifth attempt, after 35 min (the reference box, 2026-10-30, issue #61). The journal said
+CLIENT GONE, then the same body again, and nothing else. Now a client that leaves a request of at
+least RESEND_MIN_BYTES after RESEND_MIN_S without an answer has its prompt (the system, messages
+and tools, hashed, whatever it asks of the answer: Claude Code's retries move from a stream to none)
+kept for RESEND_WINDOW_S, and the same prompt arriving within it is written as "RESENT the prompt
+its client left without an answer after N s", with the client's name from its User-Agent and what
+widens its timeout. Nothing relayed changes.
 
 v6.48: a tool call that names a host of Cohere's report is said in the journal (role 8). Cohere
 reported on 2026-10-26 that Qwen3.8-Flash-Next, given a shell in an agent test, sent a PUT to an
@@ -731,6 +747,56 @@ TOOL_WATCH_MAX = 1 << 20
 # What an event carrying a piece of a tool call holds, in one of the three dialects, whatever the
 # spaces an engine writes around "tool_calls" (only two spellings were known, found in review).
 TOOL_EVENT_RE = re.compile(rb'"tool_calls"\s*:\s*\[\s*\{|tool_use|input_json|function_call')
+# Role 9 (v6.49, issue #61): a long prompt its client left without an answer, then sent again. A body
+# under RESEND_MIN_BYTES computes in seconds, and a client that left before RESEND_MIN_S left for
+# another reason than a timeout; RESEND_WINDOW_S is how soon the same prompt counts as sent again.
+RESEND_MIN_BYTES = int(os.environ.get("RESEND_MIN_BYTES", str(256 * 1024)) or 0)
+RESEND_MIN_S = float(os.environ.get("RESEND_MIN_S", "60"))
+RESEND_WINDOW_S = float(os.environ.get("RESEND_WINDOW_S", "120"))
+_GAVE_UP: dict = {}             # prompt fingerprint -> {"t": when its client left, "secs": waited, "n": in a row}
+_GAVE_UP_LOCK = threading.Lock()
+# The ends of a client that left while the engine computed its request, before any answer: streamed (the
+# proxy sending keepalives, or waiting for the engine's first byte) and not (Claude Code's fallback after
+# 10 min). Not "on write": the engine had answered, the client left while the answer was relayed. Not
+# "during hold": the lane was starting, and the engine never had the request (code review, 2026-10-31).
+GAVE_UP_OUTCOMES = ("CLIENT GONE during keepalive", "CLIENT GONE before the engine answered",
+                    "CLIENT GONE during non-sse wait")
+
+
+# What a retry changes in a body and the prompt does not: Claude Code sent the same prompt with "stream":
+# true, then false (1,833,479 bytes, then 1,833,480). Matched on the raw bytes, wherever they are: a prompt
+# that quotes one is read the same way at each attempt.
+RESEND_SKIP_RE = re.compile(rb'"(stream|stream_options|max_tokens)"\s*:\s*(?:true|false|null|-?[0-9]+|\{[^{}]*\})')
+
+
+def prompt_fingerprint(body, route):
+    """The prompt a body asks about, hashed from its raw bytes, but for what it asks of the answer
+    (stream, stream_options, max_tokens), which Claude Code's retries change. Nothing is parsed or
+    copied: the guards already read every body several times, and parsing it once more raised what a
+    body costs this proxy past its unit's MemoryMax at the body budget (8 times its bytes for one of
+    emoji, found by tests/test_proxy_memory_ceiling.py). None for a body too small to take long, or a
+    route that generates nothing."""
+    if not body or RESEND_MIN_BYTES <= 0 or len(body) < RESEND_MIN_BYTES or route not in TOOL_ROUTES:
+        return None
+    h = hashlib.sha256(route.encode())
+    view, pos = memoryview(body), 0
+    for m in RESEND_SKIP_RE.finditer(body):
+        h.update(view[pos:m.start()])
+        h.update(m.group(1))                # the key stays, its value and the spaces around it do not
+        pos = m.end()
+    h.update(view[pos:])
+    return h.hexdigest()[:16]
+
+
+def resend_advice(user_agent):
+    """(the client's name, what widens its timeout) from a User-Agent, printable and short."""
+    ua = "".join(c for c in (user_agent or "")[:60] if 32 <= ord(c) < 127).strip()
+    if ua.lower().startswith("claude-cli/"):
+        return (ua.split(" ")[0], "Claude Code gives up on a turn after 10 min, then 5 min without "
+                "streaming: claude-local, or API_TIMEOUT_MS=3600000 with CLAUDE_STREAM_IDLE_TIMEOUT_MS "
+                "and CLAUDE_BYTE_STREAM_IDLE_TIMEOUT_MS at 1800000, lets it wait (docs/clients.md)")
+    return (ua.split(" ")[0] or "a client without a User-Agent",
+            "its client's timeout is shorter than this prompt takes to compute: widen it (docs/clients.md)")
 
 # Optional TLS: name the operator's own certificate (tailnet CA, LAN-trusted) and
 # the socket speaks it. The proxy invents no trust, it speaks the one you point at.
@@ -4181,12 +4247,40 @@ class H(BaseHTTPRequestHandler):
         self._ended = True
         _gen_discard(self)
         self._say_tool_targets(outcome)
+        self._note_gave_up(outcome)
         st = ""
         if getattr(self, "_bytes", 0) or getattr(self, "_first", None) is not None:
             f = f"{self._first:.1f}s" if self._first is not None else "never"
             l = f"{self._last:.1f}s" if getattr(self, "_last", None) is not None else "never"
             st = f" [{self._bytes}b relayed, first event at {f}, last at {l}]"
         log(f"{getattr(self, '_peer', '?')} {self.command} {self.path.split('?')[0]} {outcome} in {time.time()-self._t0:.1f}s{st}")
+
+    def _note_gave_up(self, outcome: str) -> None:
+        """Role 9: a client that left a long prompt without an answer, kept for RESEND_WINDOW_S."""
+        fp = getattr(self, "_prompt_fp", None)
+        if not fp or outcome not in GAVE_UP_OUTCOMES or getattr(self, "_first", None) is not None:
+            return
+        now = time.time()
+        waited = now - self._t0
+        if waited < RESEND_MIN_S:
+            return
+        with _GAVE_UP_LOCK:
+            for k in [k for k, v in _GAVE_UP.items() if now - v["t"] > RESEND_WINDOW_S]:
+                del _GAVE_UP[k]
+            prev = _GAVE_UP.get(fp)
+            _GAVE_UP[fp] = {"t": now, "secs": waited, "n": prev["n"] + 1 if prev and prev.get("resent") else 1}
+
+    def _say_resent(self) -> None:
+        """Role 9: the same long prompt again, soon after its client left it without an answer."""
+        with _GAVE_UP_LOCK:
+            g = _GAVE_UP.get(self._prompt_fp)
+            if not g or time.time() - g["t"] > RESEND_WINDOW_S or g.get("resent"):
+                return
+            g["resent"] = True
+            secs, n = g["secs"], g["n"]
+        who, advice = resend_advice(self.headers.get("User-Agent"))
+        log(f"{self._peer} RESENT the prompt its client left without an answer after {secs:.0f} s "
+            f"({n} time{'s' if n > 1 else ''} in a row, {who}): {advice}")
 
     def _note_rid(self, rec: bytes):
         """First SSE event carries the request id in both dialects. On the OpenAI dialect
@@ -5044,6 +5138,7 @@ class H(BaseHTTPRequestHandler):
         self._peer = f"{self.client_address[0]}:{self.client_address[1]}"
         self._bytes = 0; self._first = None; self._last = None
         self._tool_calls = {}; self._tool_bytes = 0; self._answer_body = bytearray()   # role 8
+        self._prompt_fp = None                                                         # role 9
         self._answer_hit = False; self._answer_tail = b""; self._tool_last = {}; self._tool_seq = 0
         n0 = self.headers.get("Content-Length") or "0"
         self.path, suspect = canonical_path(self.path)
@@ -5128,6 +5223,9 @@ class H(BaseHTTPRequestHandler):
             log(f"{self._peer} the caller left before its body arrived whole ({len(body)} of {n} bytes)")
             self.close_connection = True
             self._done("CLIENT GONE before its body"); return
+        self._prompt_fp = prompt_fingerprint(body, route)       # role 9
+        if self._prompt_fp:
+            self._say_resent()
         over = top_logprobs_over_ceiling(body, self.path)
         if over is not None:
             field, asked = over
@@ -5676,6 +5774,7 @@ class H(BaseHTTPRequestHandler):
         self._peer = f"{self.client_address[0]}:{self.client_address[1]}"
         self._bytes = 0; self._first = None; self._last = None
         self._tool_calls = {}; self._tool_bytes = 0; self._answer_body = bytearray()   # role 8
+        self._prompt_fp = None                                                         # role 9
         self._answer_hit = False; self._answer_tail = b""; self._tool_last = {}; self._tool_seq = 0
         self.path, suspect = canonical_path(self.path)
         if suspect:
@@ -5801,7 +5900,7 @@ if __name__ == "__main__":
     holds = (f"holds requests up to {HOLD_MAX_S:.0f}s while {' or '.join(HOLD_UNITS)} comes back"
              if HOLD_UNITS and HOLD_MAX_S > 0 else "holds nothing")
     # one f-string: the cockpit's tests render this line from the source
-    log(f"v6.48 on {BIND}:{port} -> {UPSTREAM} (keepalive {KEEPALIVE_S:.0f}s, max silence {MAX_SILENCE_S:.0f}s, {holds})")
+    log(f"v6.49 on {BIND}:{port} -> {UPSTREAM} (keepalive {KEEPALIVE_S:.0f}s, max silence {MAX_SILENCE_S:.0f}s, {holds})")
     # v6.47: what the memory floor's refusal reads, read once here, so the journal shows it works where
     # the unit runs this proxy (its sandbox leaves /proc/meminfo readable)
     avail = mem_available_gib()

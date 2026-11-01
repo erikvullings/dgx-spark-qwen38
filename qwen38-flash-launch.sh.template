@@ -87,6 +87,13 @@ __SPEC_TOKEN_MAP_LINE__
 # idle. /health takes no key, and the proxy relayed it from the network (D02 of the 2026-10-24
 # security review); /health_generate still generates, and the proxy asks the key for it.
 #
+# SGLANG_DISTRIBUTED_INIT_METHOD_OVERRIDE: the rendezvous of the engine's one process goes through a file
+# in the container, which --rm makes new at each start. torch's TCPStore, the default, listened on every
+# interface whatever address it was given (*:23906 on the reference box, 2026-10-30, no key, no firewall),
+# and with the file no port opens for it. GLOO_SOCKET_IFNAME and NCCL_SOCKET_IFNAME keep gloo's and NCCL's
+# bootstrap on lo: under the real clients, the lane listened on four ports of the box's LAN address without
+# them, though the box's name resolves to 127.0.0.1 (2026-10-30).
+#
 # --enable-cache-report: each answer says how much of its prompt the prefix cache served
 # (usage.prompt_tokens_details.cached_tokens, and cache_read_input_tokens beside input_tokens on
 # /v1/messages, input_tokens then counting the rest), which the engine counts anyway: discussion #49.
@@ -102,6 +109,8 @@ exec /usr/bin/docker run --rm --name qwen38-flash --gpus all \
   -e SGLANG_OPT_MAMBA_SKIP_DECODE_LOCK=1 \
   -e SGLANG_ENABLE_REQUEST_HEADER_OVERRIDES=1 \
   -e SGLANG_ENABLE_HEALTH_ENDPOINT_GENERATION=0 \
+  -e SGLANG_DISTRIBUTED_INIT_METHOD_OVERRIDE=file:///tmp/sglang-rdv \
+  -e GLOO_SOCKET_IFNAME=lo -e NCCL_SOCKET_IFNAME=lo \
   -e SGLANG_QWEN4_PLE_FILE_RSS_BUDGET_GB=__PLE_RSS_BUDGET_GB__ \
   -e PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True \
   -e HF_HUB_OFFLINE=1 \

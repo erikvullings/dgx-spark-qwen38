@@ -160,6 +160,23 @@ class TheStagedUnit(unittest.TestCase):
         self.assertEqual(args[args.index("--mamba-cache-mode") + 1], "align")
         self.assertEqual(args[args.index("--speculative-config.method") + 1], "mtp")
 
+    def test_a_long_prompt_leaves_the_engine_to_the_other_requests(self):
+        # Issue #61 (2026-10-31): while a cold prompt of 362,694 tokens was computed, 20 KB requests sent by
+        # 10 clients took 265 s at the median for 64 tokens (484 s at worst) with vLLM's defaults, and 34 s
+        # (62 s) with these four settings, a prompt alone taking the time it took. A step the prompt has alone
+        # keeps its 4,096 tokens: steps of 8,192 kept 8 requests of 80 waiting 668 to 777 s for their first token.
+        rc, out = self.stage()
+        self.assertEqual(rc, 0, out)
+        args = shlex.split(exec_command(self.out.read_text()))
+        args = args[args.index("serve") + 1:]
+        got = {k: args[args.index(k) + 1] for k in ("--max-parallel-prefills", "--prefill-policy",
+                                                     "--prefill-compute-share", "--max-num-prefill-tokens-per-step")}
+        self.assertEqual(got, {"--max-parallel-prefills": "auto", "--prefill-policy": "decode-aware",
+                               "--prefill-compute-share": "0.25", "--max-num-prefill-tokens-per-step": "1024"})
+        self.assertEqual(args[args.index("--max-num-batched-tokens") + 1], "4096")
+        for flag in got:
+            self.assertEqual(args.count(flag), 1, flag)
+
     def test_the_engine_sees_its_key_and_its_template_alone_and_runs_no_code_of_the_checkpoint(self):
         # the image is a community build: of the config directory, the key and the chat template,
         # each read-only, and nothing else; no remote code. The template is the checkpoint's with

@@ -96,6 +96,18 @@ marks and scripts are all served by the box: the page fetches nothing from elsew
   reaches the memory edge, and a counter of the kernel's `NVRM` allocation
   refusals, which is how the memory-edge behaviour in the flash section was
   found in the first place.
+- **A long prompt, said while it is computed.** A prompt the prefix cache
+  cannot serve is computed whole before its first token, 19 min for 494,089
+  tokens on the Ornith lane, and vLLM counts no prompt token until it is done.
+  Since v1.40.7 a request in flight shows how long it has been so in the
+  Traffic view, and on the vLLM lanes the Now and Traffic views say how much
+  of its prompt is computed, from the KV cache it fills, with a floor of the
+  time left ("at least", never a promise: docs/ornith-lane.md). It follows a
+  prompt only from an admission vLLM's counters prove to be one request, says
+  it only while it runs alone, and says no floor once another request has
+  shared the engine with it. A banner
+  says when a client sent a long prompt again after leaving it without an
+  answer, with what widens that client's timeout (docs/clients.md).
 - **Actions, one at a time.** Unit start/stop/restart, lane switch (the same
   `switch-model.sh` you would run), cache flush, abort-all, smoke probe. Every
   action is audited to `~/.config/qwen38/cockpit-audit.log` with its exact argv.

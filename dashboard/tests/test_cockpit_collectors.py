@@ -338,6 +338,39 @@ class Parse(Base):
         self.cp.TOOL_TARGETS["at"] = 0.0
         self.assertEqual(self.cp.collect_guard()["tool_targets"]["count"], 0)
 
+    def test_the_guard_reads_the_long_prompts_sent_again_from_the_same_day(self):
+        """The proxy's role 9 (v6.49, issue #61): its RESENT lines of the last 24 h, from the same read
+        of the day as role 8's, for the page's banner. A failed read keeps the day."""
+        resent = ("{at} gx10-eff9 python3[4713]: [proxy] 127.0.0.1:57102 RESENT the prompt its client left "
+                  "without an answer after 621 s (2 times in a row, claude-cli/2.1.314): Claude Code gives up "
+                  "on a turn after 10 min, then 5 min without streaming: claude-local, or API_TIMEOUT_MS=3600000 "
+                  "with CLAUDE_STREAM_IDLE_TIMEOUT_MS and CLAUDE_BYTE_STREAM_IDLE_TIMEOUT_MS at 1800000, lets it "
+                  "wait (docs/clients.md)\n")
+        now = time.time()
+        seen, answer = [], [resent.format(at=now - 90000) + resent.format(at=now - 600)
+                            + "1793200000.0 gx10-eff9 python3[4713]: [proxy] other\n"]
+
+        class Journal(FakeBox):
+            def __call__(self, argv, timeout=5.0, merge_err=False):
+                self.calls.append(list(argv))
+                if argv[0] == "journalctl" and "short-unix" in argv:
+                    seen.append(list(argv))
+                    return answer[0]
+                return ""
+        self.cp.run = Journal()
+        self.cp.TOOL_TARGETS.update(at=0.0, raw="", raw_resent="", seen={"count": 0, "last": None},
+                                    resent={"count": 0, "last": None})
+        out = self.cp.collect_guard()
+        self.assertEqual(out["resent"]["count"], 1, "the line of yesterday is past the day")
+        self.assertEqual((out["resent"]["last"]["secs"], out["resent"]["last"]["n"], out["resent"]["last"]["who"]),
+                         (621, 2, "claude-cli/2.1.314"))
+        self.assertEqual(len(seen), 1, "one read of the day for both roles")
+        failed = self.cp.Ran("")
+        failed.ok = False
+        answer[0] = failed
+        self.cp.TOOL_TARGETS["at"] = 0.0
+        self.assertEqual(self.cp.collect_guard()["resent"]["count"], 1, "a failed read keeps the day")
+
     def test_the_zombie_guard_reports_the_proxy_that_runs(self):
         """journalctl -g is given a pattern, and -n 1 answers the newest line matching it:
         the fake applies the collector's own pattern to a journal holding a banner of the

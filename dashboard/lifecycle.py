@@ -15,6 +15,7 @@ more than twice the ETA).
 """
 from __future__ import annotations
 
+import math
 import re
 from datetime import datetime
 import statistics
@@ -920,6 +921,179 @@ def parse_feed(raw: str, last: int = 25, carry: list[dict] | None = None) -> lis
     return [reqs[p][i] for p, i in older_live + order[-last:]]
 
 
+def feed_ages(rows: list[dict], now: float) -> list[dict]:
+    """Each request still in flight gets "age", the seconds since its start line (the box's local
+    time, as journalctl writes it). Its Took cell stayed empty for as long as it ran: a prompt of
+    494,089 tokens the cache could not serve took 19 min before its first token on the Ornith
+    lane, and nothing on the page told that from a hang (issue #61, 2026-10-30)."""
+    for r in rows:
+        if r.get("outcome") != "in flight":
+            continue
+        try:
+            start = datetime.strptime(str(r.get("ts", ""))[:19], "%Y-%m-%dT%H:%M:%S").timestamp()
+        except ValueError:
+            continue
+        r["age"] = round(max(0.0, now - start), 1)
+    return rows
+
+
+# ── a prompt being computed, on the vLLM lanes (pure) ────────────────────────
+# A prompt the prefix cache cannot serve is computed whole before its first token. On the Ornith
+# lane one of 494,089 tokens took 19 min, 2.8 of them for its first 200,000 tokens and 11.3 for
+# 400,000: each token attends to all those before it. All that time the page said "1 running",
+# its last five minutes "quiet", and vLLM's log 0.0 prompt tokens a second, as its counters of
+# prompt tokens move only once a prompt is done: a user took it for a hang (issue #61). What does
+# move while vLLM computes a prompt: its KV cache fills, chunk after chunk, while its count of
+# generated tokens stands still, and its prefix cache counted every token of the prompt when the
+# request was admitted. The KV cache runs ahead of the work by a few blocks (up to 519,866 tokens
+# held for that prompt before its first token, 5 % over), so the share is held under 100 %.
+# The time left is a floor, never a promise. The time a prompt takes grows as N^k, k from 2.1 to
+# 2.5 on that run, and nearer 1 on a lane whose layers mostly do not attend: k is read off the
+# request's own curve (the time and the tokens held since its admission, at a tenth of it and
+# now), held between 1 and 2, and elapsed * ((total / held)^k - 1) said only as "at least".
+# Replayed on that run's counters (every 5 s), it said 13.7 min when 17.0 were left and 7.0 when
+# 9.0 were, and never more than 85 % of the time that was left.
+PROMPT_IDLE_S = 10         # no token written for this long: the request is still on its prompt
+PROMPT_MIN_SHARE = 0.10    # under a tenth of the prompt held, no floor is said
+PROMPT_POINT_S = 5         # one point of the request's curve every 5 s at most
+# The cockpit reads the engine twice a second, so an admission is seen up to half a second late:
+# its curve starts that much earlier than the time read, which read alone puts k too high (a
+# floor of 266 s where 260 were left, on a lane whose prompt time grows as N). k is read with
+# that half second put back, and the floor without it. The KV cache is read in whole blocks
+# (1,056 tokens of the Ornith lane's pool), rounded up as vLLM allocates them: the first point
+# counts a block less in k (the smallest step seen between two reads of this request), which a
+# lane whose prompt time grows as N otherwise read as 1.03 and a floor of 277 s where 263 were left.
+PROMPT_READ_S = 0.5
+# A prompt is followed only from an admission that is certainly one request: one more request running
+# at the next read, none waiting at either, and none finished and none preempted between the two (vLLM
+# counts every finish, an abort included). Then the jump of the prompts admitted is that prompt, to the
+# token. Any other admission is another request's, kept as the largest jump since the engine was last
+# seen empty, as are the requests running when the prompt came. Once another has run beside it, the time
+# the prompt took is not its own any more (no floor), and the one request left is said to be the prompt
+# only if it holds more than any other could, twice its prompt and 8,192 tokens past it (a request holds
+# up to 5 % more than its prompt, and the reads round to whole blocks). A cockpit that starts while the
+# engine runs says nothing until it has seen it empty. With 10 clients sending small requests during a
+# long prompt (issue #61), the one admitted last would have been taken for the prompt being computed:
+# "99 % of 4,812 tokens, almost done" while one of 388,753 went on (found in review, 2026-10-31).
+PROMPT_OTHER_MARGIN = 8192
+# A read the cockpit could not make (a timeout, an engine that answered badly) is no read: what was known
+# stays, and is said no longer once the last read is this old. One failed read under a long prompt had
+# wiped everything, and the next read, a request running, took it for one admitted unseen: nothing was
+# said for the rest of a prompt of 19 min (code review, 2026-10-31).
+PROMPT_STALE_S = 10
+
+
+def _grew(before: dict, after: dict, key: str) -> bool:
+    """A counter of the engine went up between two reads (False when either read lacks it)."""
+    return before.get(key) is not None and after.get(key) is not None and after[key] > before[key]
+
+
+def prompt_read(state: dict, now: float, row: dict | None) -> None:
+    """Fold one read of the engine's load into `state`, which the cockpit keeps between reads. A read
+    the cockpit could not make changes nothing; a row without vLLM's counters (an SGLang lane) forgets
+    everything."""
+    if not row:
+        return
+    if row.get("gen_tokens") is None or row.get("prefix_queries") is None:
+        state.clear()
+        return
+    try:
+        waiting = int(row.get("num_waiting_reqs", 0))
+        cur = {"t": now, "running": int(row.get("num_reqs", 0)) - waiting, "waiting": waiting,
+               "used": int(row.get("num_used_tokens", 0)), "gen": float(row["gen_tokens"]),
+               "q": float(row["prefix_queries"])}
+        for key, name in (("done", "finished"), ("preempted", "preemptions")):
+            cur[key] = None if row.get(name) is None else float(row[name])
+    except (TypeError, ValueError):
+        return
+    prev = state.get("last")
+    if prev is not None and (cur["q"] < prev["q"] or cur["gen"] < prev["gen"]
+                             or _grew(cur, prev, "done") or _grew(cur, prev, "preempted")):
+        state.clear()                       # counters back to zero: the engine restarted
+        prev = None
+    if prev is None:
+        # what runs now was admitted unseen: nothing is said until the engine is seen empty
+        state["blind"] = cur["running"] + cur["waiting"] > 0
+    else:
+        if cur["q"] > prev["q"]:
+            tokens = int(cur["q"] - prev["q"])
+            admit = state.get("admit")
+            one = (cur["running"] - prev["running"] == 1 and prev["waiting"] == 0 and cur["waiting"] == 0
+                   and not _grew(prev, cur, "done") and not _grew(prev, cur, "preempted"))
+            if one and (admit is None or prev["running"] == 0 or tokens >= admit["tokens"]):
+                # one request admitted between the two reads: its whole prompt, to the token
+                if admit is not None and prev["running"] > 0:
+                    state["others"] = max(state.get("others", 0), admit["tokens"])
+                state.update(admit={"t": now, "tokens": tokens}, points=[], shared=prev["running"] > 0)
+                state.pop("quantum", None)
+            else:
+                state["others"] = max(state.get("others", 0), tokens)
+                state["shared"] = True
+        elif cur["used"] > prev["used"] and "admit" in state:
+            step = cur["used"] - prev["used"]
+            state["quantum"] = min(step, state.get("quantum", step))
+        if cur["running"] > 1 or cur["waiting"] > 0 or _grew(prev, cur, "preempted"):
+            state["shared"] = True
+        if cur["gen"] > prev["gen"]:
+            state["wrote"] = now
+            if (cur["running"] == 1 and prev["running"] <= 1 and cur["waiting"] == 0 and prev["waiting"] == 0
+                    and not _grew(prev, cur, "done") and not _grew(prev, cur, "preempted")):
+                # one request in the engine across the two reads, and it wrote: its prompt is done
+                state["solo_wrote"] = now
+    if cur["running"] == 0 and cur["waiting"] == 0:
+        # an empty engine: nothing unseen, no other request, and the prompt followed is over
+        for key in ("admit", "points", "quantum", "shared", "solo_wrote"):
+            state.pop(key, None)
+        state["blind"] = False
+        state["others"] = 0
+    points = state.setdefault("points", [])
+    admit = state.get("admit")
+    # the floor reads one point of the curve, the first past a tenth of the prompt: none is kept past it
+    if admit and (not points or (points[-1][1] < PROMPT_MIN_SHARE * admit["tokens"]
+                                 and now - points[-1][0] >= PROMPT_POINT_S)):
+        points.append((now, cur["used"]))
+    state["last"] = cur
+
+
+def prompt_progress(state: dict, now: float) -> dict | None:
+    """What the one running request's prompt has got to: {"tokens", "share", "elapsed", "left_min_s"},
+    or None when no prompt is being computed that this can say anything true about (none running,
+    more than one, one waiting, a token written in the last PROMPT_IDLE_S, no admission seen, its
+    first token already written, no read for PROMPT_STALE_S, or another request that may be the one
+    left). No floor once the engine was shared."""
+    last, admit = state.get("last"), state.get("admit")
+    if (not last or last["running"] != 1 or last["waiting"] or state.get("blind") or not admit
+            or admit["tokens"] <= 0 or now - last["t"] > PROMPT_STALE_S):
+        return None
+    if now - max(state.get("wrote", 0.0), admit["t"]) < PROMPT_IDLE_S:
+        return None
+    if state.get("solo_wrote", float("-inf")) >= admit["t"]:
+        return None                     # it wrote its first token: what stalls now is no prompt
+    others = state.get("others", 0)
+    if others and last["used"] <= max(2 * others, others + PROMPT_OTHER_MARGIN):
+        return None                     # the one request left may be one of the others
+    total = admit["tokens"]
+    held = min(last["used"], int(total * 0.99))
+    share = held / total
+    elapsed = now - admit["t"]          # at least PROMPT_IDLE_S, by the test above
+    left = None
+    # held past 99 %, the share stands still at its cap and a floor read off it would not shrink:
+    # it said 23 s through the last 20 s of that run
+    if not state.get("shared") and share >= PROMPT_MIN_SHARE and last["used"] < total * 0.99:
+        # the request's own curve: its first point past a tenth of the prompt, and now
+        first = next(((t, u) for t, u in state.get("points", ()) if u >= PROMPT_MIN_SHARE * total), None)
+        k = 1.0
+        if first is not None and first[0] > admit["t"] and held >= 1.2 * first[1]:
+            low = first[1] - state.get("quantum", 0)
+            if low > 0:
+                k = (math.log((elapsed + PROMPT_READ_S) / (first[0] - admit["t"] + PROMPT_READ_S))
+                     / math.log(held / low))
+                k = min(2.0, max(1.0, k))
+        left = math.floor(elapsed * ((total / held) ** k - 1))     # a floor rounds down
+    return {"tokens": total, "held": held, "share": round(share, 3), "elapsed": round(elapsed),
+            "left_min_s": left}
+
+
 # ── zombie guard: what a client that gave up cost the engine (pure) ─────────
 # The engine's own line, one per output batch of a request whose client is gone
 # (tokenizer_manager.py, "Received output for {rid=} but the state was deleted").
@@ -976,6 +1150,31 @@ def parse_tool_targets(raw: str, since: float = 0.0) -> dict:
         at = float(m.group(1))
         if out["last"] is None or at >= out["last"]["at"]:
             out["last"] = {"at": at, "hosts": m.group(2), "tool": m.group(3), "path": m.group(4)}
+    return out
+
+
+# Role 9 of the proxy (v6.49, issue #61): a long prompt its client left without an answer, sent
+# again. Its line says after how long, how many times in a row, the client's name from its
+# User-Agent, and what widens that client's timeout (docs/clients.md). Anchored as TOOL_TARGET_RE.
+RESENT_RE = re.compile(r"^(\d+(?:\.\d+)?) \S+ [^\s:]+: \[proxy\] \S+" + _KEY
+                       + r" RESENT the prompt its client left without an answer after (\d+) s "
+                       + r"\((\d+) times? in a row, ([^)]{1,80})\): (.{1,400})$")
+
+
+def parse_resent(raw: str, since: float = 0.0) -> dict:
+    """journalctl -o short-unix lines -> how many long prompts were sent again after their client
+    left them, from `since` on, and the newest: its time, the wait, the count in a row, the client
+    and the proxy's advice."""
+    out = {"count": 0, "last": None}
+    for ln in raw.splitlines():
+        m = RESENT_RE.search(ln)
+        if not m or float(m.group(1)) < since:
+            continue
+        out["count"] += 1
+        at = float(m.group(1))
+        if out["last"] is None or at >= out["last"]["at"]:
+            out["last"] = {"at": at, "secs": int(m.group(2)), "n": int(m.group(3)), "who": m.group(4),
+                           "advice": m.group(5)}
     return out
 
 

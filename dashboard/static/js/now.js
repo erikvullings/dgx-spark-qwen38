@@ -219,6 +219,7 @@ function renderServing(){
   else if (st === 'ready' || st === 'degraded') lede = `${laneLabel(unit)} holds the box` + (e.elapsed ? ` and has served for ${fmtDur(e.elapsed)}` : '') + '. ' +
     (unit === VIDEO_UNIT ? (VID_NOW.label ? `It is ${VID_NOW.label}.` : 'It is idle.') : unit === IMAGE_UNIT ? (IMG_NOW.label ? `It is ${IMG_NOW.label}.` : 'It is idle.')
       : (runningReqs(l) ? `${runningReqs(l)} request${runningReqs(l) > 1 ? 's are' : ' is'} running` : 'No request is running')
+        + (F.prompt && runningReqs(l) === 1 ? `, ${promptWords(F.prompt)}` : '')
         + (waitingReqs(l) ? `, ${waitingReqs(l)} waiting.` : '.'));
   else if (TRANSITIONAL.has(st)) lede = `${laneLabel(unit)} is booting: ${STATE_LABEL[st]}.`;
   else if (st === 'stopping') lede = `${laneLabel(unit)} is stopping.`;
