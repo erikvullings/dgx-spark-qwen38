@@ -73,8 +73,6 @@ oline="$(grep -E '^ORNITH_122B_(REPO|REV)=' "$REPO_DIR/install-ornith-122b.sh")"
 eval "$oline"
 nbline="$(grep -E '^NANBEIGE_(REPO|REV)=' "$REPO_DIR/install-nanbeige.sh")"
 eval "$nbline"
-lgline="$(grep -E '^GROOT_(REPO|REV)=' "$REPO_DIR/install-groot.sh")"
-eval "$lgline"
 # The speech lane's: llama.cpp's commit, each recognizer's two GGUF at its revision with the
 # sha256 the install checks, and Kokoro's two files, which nothing checked either (found in the
 # audit of 2026-10-16). Each recognizer size is a branch of install-speech.sh's case on
@@ -424,8 +422,6 @@ echo "Ornith 1.5 122B lane"
 check_model  ornith-122b    "$ORNITH_122B_REPO" "$ORNITH_122B_REV"
 echo "Experimental Nanbeige lane"
 check_model nanbeige "$NANBEIGE_REPO" "$NANBEIGE_REV"
-echo "Groot lane"
-check_model groot "$GROOT_REPO" "$GROOT_REV"
 echo "Speech lane"
 check_commit speech-llama-cpp ggml-org/llama.cpp "$LLAMA_CPP_PIN"
 for size in $ASR_SIZES; do

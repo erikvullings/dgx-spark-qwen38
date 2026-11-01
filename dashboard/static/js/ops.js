@@ -56,7 +56,7 @@ on('decode', d => {
 // test holds to the lanes whose installer stands on vllm-lane.sh, by its name; their names are the
 // cockpit's: a copy of them said "Nemotron" where every other view says "Nemotron Bolt" (found in
 // review, 2026-10-20).
-const VLLM_UNITS = [KOLIBRI_UNIT, NEMOTRON_UNIT, NEMOTRON_SUPER_UNIT, FLASH_LOCAL_UNIT, ORNITH_UNIT, NANBEIGE_UNIT, GROOT_UNIT];
+const VLLM_UNITS = [KOLIBRI_UNIT, NEMOTRON_UNIT, NEMOTRON_SUPER_UNIT, FLASH_LOCAL_UNIT, ORNITH_UNIT, NANBEIGE_UNIT];
 const VLLM_LANE_NAME = Object.fromEntries(VLLM_UNITS.map(u => [u, LANE_NAME[u]]));
 on('metrics', d => {
   if (!d.lane){
@@ -449,7 +449,7 @@ function defaultLogSource(){
   if (u === IMAGE_UNIT || u === VIDEO_UNIT || u === PROXY_UNIT || e.state === 'failed' || e.restarting) return u;
   return u === UFLASH ? 'qwen38-flash' : u === KOLIBRI_UNIT ? 'qwen38-kolibri' : u === NEMOTRON_UNIT ? 'qwen38-nemotron'
     : u === NEMOTRON_SUPER_UNIT ? 'qwen38-nemotron-super' : u === FLASH_LOCAL_UNIT ? 'qwen38-flash-local'
-    : u === GROOT_UNIT ? 'qwen38-groot' : u === NANBEIGE_UNIT ? 'qwen38-nanbeige' : u === ORNITH_UNIT ? 'qwen38-ornith-122b' : 'qwen38-sglang';
+    : u === NANBEIGE_UNIT ? 'qwen38-nanbeige' : u === ORNITH_UNIT ? 'qwen38-ornith-122b' : 'qwen38-sglang';
 }
 onShow('logs', () => {
   if (LOGS_WANT.src || !logTouched){ $('log-src').value = defaultLogSource(); LOGS_WANT.src = null; }

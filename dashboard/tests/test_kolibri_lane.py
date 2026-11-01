@@ -391,7 +391,9 @@ class ItsUnit(Base):
 
     def test_it_is_a_switch_target_and_a_unit_the_page_may_drive(self):
         self.assertIn("qwen38-kolibri.service", self.ck.SERVING_UNITS)
-        self.assertEqual(self.ck.ACTIONS["switch"]["params"]["target"][-7:-5], ["kolibri", "kolibri-nvfp4"])
+        targets = self.ck.ACTIONS["switch"]["params"]["target"]
+        i = targets.index("kolibri")
+        self.assertEqual(targets[i:i + 2], ["kolibri", "kolibri-nvfp4"])
         self.assertIn("qwen38-kolibri", self.ck.CONTAINERS)
         self.assertNotIn("qwen38-kolibri", self.ck.SGL_CONTAINERS)
         self.assertIn("qwen38-kolibri.service", self.ck.JOURNAL_UNITS)

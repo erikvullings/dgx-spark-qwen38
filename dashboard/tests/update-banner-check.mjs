@@ -121,18 +121,17 @@ try {
   const setupLine = upd => evalJs(`(() => { (HANDLERS.update || []).forEach(f => f(${JSON.stringify(upd)}));
     return document.getElementById('rp-upd').textContent; })()`);
 
-  let s = await banners({ installed: 'v1.15.1', latest: 'v1.15.1', behind: false });
+  let s = await banners({ installed: 'v1.40.8', latest: 'v1.40.8', behind: false });
   ok('up to date: no update banner', !/is out; this box runs/.test(s), s);
-  s = await banners({ installed: 'v1.15.0', latest: 'v1.99.0', behind: true });
-  ok('behind: the banner names both versions', /Version v1\.99\.0 is out; this box runs v1\.15\.0/.test(s), s);
-  // the update is the one command, run from this checkout: install.sh alone fetches nothing,
-  // and a git pull skips get.sh's guards (found in review, 2026-10-14)
-  const ONE = 'curl -fsSL https://raw.githubusercontent.com/hasso5703/dgx-spark-qwen38/main/get.sh | bash';
+  s = await banners({ installed: 'v1.40.5', latest: 'v1.40.8', behind: true });
+  ok('behind: the banner names both versions', /Version v1\.40\.8 is out; this box runs v1\.40\.5/.test(s), s);
+  // Keep the fork's update path in this checkout so its choices and installer protections apply.
+  const ONE = 'git pull --ff-only && ./install.sh';
   // the checks below put the state in and draw it in the very evaluation that reads it, b the update
   // banner, and the page's own stream leaves F.update alone until that evaluation ends: it draws the
   // real state, a message a second, and took the banner and its button away in between (found in
   // review, 2026-10-21)
-  const BEHIND = { installed: 'v1.15.0', latest: 'v1.99.0', behind: true };
+  const BEHIND = { installed: 'v1.40.5', latest: 'v1.40.8', behind: true };
   const onBehind = body => evalJs(`(async () => { const keep = HANDLERS.update; HANDLERS.update = [];
     try { F.update = ${JSON.stringify(BEHIND)}; renderBanners(lastState || {}, lastErrors || {});
       const b = [...document.querySelectorAll('#banners .banner')].find(e => /is out; this box runs/.test(e.textContent));
@@ -142,7 +141,7 @@ try {
     return JSON.stringify({ cmd: c ? c.textContent : null, btn: btn ? btn.textContent : null });`);
   const blk = JSON.parse(block);
   ok('and gives the command, apart, with a Copy button', /^cd \S+ && /.test(blk.cmd || '') && (blk.cmd || '').endsWith(` && ${ONE}`)
-     && blk.btn === 'Copy' && !/git pull/.test(s), block);
+     && blk.btn === 'Copy', block);
   // every Copy button of the page, the banner's included, is drawn as a button: a ghost one read as
   // plain text at rest (Hasan, 2026-10-21: "visible partout")
   const looks = await onBehind(`return JSON.stringify([...document.querySelectorAll('button')].filter(x => x.textContent.trim() === 'Copy')

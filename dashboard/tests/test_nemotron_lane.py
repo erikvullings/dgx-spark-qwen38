@@ -331,7 +331,9 @@ class ItsUnit(Base):
 
     def test_it_is_a_switch_target_a_unit_the_page_may_drive_and_a_lane_it_prepares(self):
         self.assertIn(U, self.ck.SERVING_UNITS)
-        self.assertEqual(self.ck.ACTIONS["switch"]["params"]["target"][-5:-3], ["nemotron", "nemotron-super"])
+        targets = self.ck.ACTIONS["switch"]["params"]["target"]
+        i = targets.index("nemotron")
+        self.assertEqual(targets[i:i + 2], ["nemotron", "nemotron-super"])
         self.assertEqual(self.ck.target_lane("nemotron"), "nemotron")
         self.assertEqual(self.ck.TARGET_PIN["nemotron"], "NEMOTRON_BOLT_REV")
         self.assertIn("NEMOTRON_BOLT_REV", self.ck.rg.PIN_MODELS)

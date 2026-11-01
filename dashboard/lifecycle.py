@@ -491,14 +491,13 @@ TRANSITIONAL = BUSY_STATES - {"ready", "degraded", "orphan", "wedged"}
 ENGINE_UNITS = ("qwen38-sglang.service", "qwen38-flash.service",
                 "qwen38-image.service", "qwen38-video.service", "qwen38-kolibri.service",
                 "qwen38-nemotron.service", "qwen38-nemotron-super.service", "qwen38-flash-local.service",
-                "qwen38-ornith-122b.service", "qwen38-nanbeige.service", "qwen38-groot.service")
+                "qwen38-ornith-122b.service", "qwen38-nanbeige.service")
 IMAGE_UNIT = "qwen38-image.service"
 VIDEO_UNIT = "qwen38-video.service"
 KOLIBRI_UNIT = "qwen38-kolibri.service"
 NEMOTRON_UNIT = "qwen38-nemotron.service"
 NEMOTRON_SUPER_UNIT = "qwen38-nemotron-super.service"
 FLASH_LOCAL_UNIT = "qwen38-flash-local.service"
-GROOT_UNIT = "qwen38-groot.service"
 NANBEIGE_UNIT = "qwen38-nanbeige.service"
 ORNITH_UNIT = "qwen38-ornith-122b.service"
 # The SGLang engines that serve text on ENGINE_BASE. Every probe, guard and belt that talks
@@ -511,7 +510,7 @@ ORNITH_UNIT = "qwen38-ornith-122b.service"
 # FP4-Local lane and the Ornith lane, vLLM too.
 TEXT_UNITS = tuple(u for u in ENGINE_UNITS
                    if u not in (IMAGE_UNIT, VIDEO_UNIT, KOLIBRI_UNIT, NEMOTRON_UNIT, NEMOTRON_SUPER_UNIT, FLASH_LOCAL_UNIT,
-                                ORNITH_UNIT, NANBEIGE_UNIT, GROOT_UNIT))
+                                ORNITH_UNIT, NANBEIGE_UNIT))
 
 
 def blocked_reasons(action: str, params: dict, states: dict) -> list[str]:
@@ -1269,7 +1268,7 @@ def guard_verdict(zombies: dict, guard: dict, override_env: bool | None) -> tupl
 LANE_PROVIDER = {"qwen38-sglang.service": "qwen38", "qwen38-flash.service": "flashnext",
                  "qwen38-kolibri.service": "kolibri", "qwen38-nemotron.service": "nemotron",
                  "qwen38-nemotron-super.service": "nemotron-super",
-                 "qwen38-flash-local.service": "flash-local", "qwen38-ornith-122b.service": "ornith-122b", "qwen38-nanbeige.service": "nanbeige", "qwen38-groot.service": "groot"}
+                 "qwen38-flash-local.service": "flash-local", "qwen38-ornith-122b.service": "ornith-122b", "qwen38-nanbeige.service": "nanbeige"}
 
 
 def opencode_default_follows(default_model, states: dict) -> tuple:

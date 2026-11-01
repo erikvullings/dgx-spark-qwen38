@@ -322,7 +322,7 @@ def vllm_lane_disabled(case, lane, secondary, lane_boot):
     boots = {"kolibri": 0, "nemotron": 0, "nemotron-super": 0, "flash-local": 0, "ornith-122b": 0, "nanbeige": 0, lane: lane_boot}
     r = subprocess.run(["bash", "-c", f'set -euo pipefail\nRECOMMENDED=0\nSECONDARY="{secondary}"; KOLIBRI_BOOT={boots["kolibri"]}; '
                         f'NEMOTRON_BOOT={boots["nemotron"]}; NEMOTRON_SUPER_BOOT={boots["nemotron-super"]}; '
-                        f'FLASH_LOCAL_BOOT={boots["flash-local"]}; ORNITH_122B_BOOT={boots["ornith-122b"]}; NANBEIGE_BOOT={boots["nanbeige"]}; GROOT_BOOT=0\n' + block],
+                        f'FLASH_LOCAL_BOOT={boots["flash-local"]}; ORNITH_122B_BOOT={boots["ornith-122b"]}; NANBEIGE_BOOT={boots["nanbeige"]}\n' + block],
                        capture_output=True, text=True, timeout=30,
                        env={"PATH": f"{d}:/usr/bin:/bin"})
     case.assertEqual(r.returncode, 0, r.stderr)
@@ -878,7 +878,6 @@ class TheOtherLanesAndTheirProofs(unittest.TestCase):
                   f'FLASH_LOCAL_UNIT_PATH="{unit_dir}/qwen38-flash-local.service"\n'
                   f'ORNITH_122B_UNIT_PATH="{unit_dir}/qwen38-ornith-122b.service"\n'
                   f'NANBEIGE_UNIT_PATH="{unit_dir}/qwen38-nanbeige.service"\n'
-                  f'GROOT_UNIT_PATH="{unit_dir}/qwen38-groot.service"\n'
                   'KEEPALIVE_UNIT=qwen38-keepalive.service; PORT=30000; PROXY_PORT=30001; CONTEXT_MODE=1m; OPENCODE=1; KA_CHANGED=0\n'
                   f"WANT_IMAGE={want_image}; WANT_VIDEO={want_video}; WITH_IMAGE={with_image}; WITH_VIDEO={with_video}\n"
                   f"WITH_FLASH={with_flash}; WITH_27B=0; WANT_KOLIBRI={want_kolibri}; WITH_KOLIBRI={with_kolibri}\n"
@@ -886,7 +885,7 @@ class TheOtherLanesAndTheirProofs(unittest.TestCase):
                   f"WANT_NEMOTRON_SUPER={want_super}; WITH_NEMOTRON_SUPER={with_super}\n"
                   f"WANT_FLASH_LOCAL={want_flocal}; WITH_FLASH_LOCAL={with_flocal}\n"
                   f"WANT_ORNITH_122B={want_ornith}; WITH_ORNITH_122B={with_ornith}\n"
-                  f"WANT_NANBEIGE={want_nanbeige}; WITH_NANBEIGE={with_nanbeige}; WANT_GROOT=0; WITH_GROOT=0\n"
+                  f"WANT_NANBEIGE={want_nanbeige}; WITH_NANBEIGE={with_nanbeige}\n"
                   f"SECOND_LANE=flash; SECOND_UNIT=qwen38-flash.service; SECOND_STATE={second_state}; SECOND_FRESH={second_fresh}; SECOND_NEW={second_fresh if second_new is None else second_new}\n"
                   + block + '\necho "STATES second=$SECOND_STATE image=$IMAGE_STATE video=$VIDEO_STATE kolibri=$KOLIBRI_STATE'
                   ' nemotron=$NEMOTRON_STATE super=$NEMOTRON_SUPER_STATE flocal=$FLASH_LOCAL_STATE ornith=$ORNITH_122B_STATE"\n')

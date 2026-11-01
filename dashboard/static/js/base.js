@@ -97,18 +97,18 @@ const ALL_STAGES = Object.keys(STAGE_LABEL);
 const U27 = 'qwen38-sglang.service', UFLASH = 'qwen38-flash.service', IMAGE_UNIT = 'qwen38-image.service',
       VIDEO_UNIT = 'qwen38-video.service', KOLIBRI_UNIT = 'qwen38-kolibri.service', NEMOTRON_UNIT = 'qwen38-nemotron.service',
       NEMOTRON_SUPER_UNIT = 'qwen38-nemotron-super.service', FLASH_LOCAL_UNIT = 'qwen38-flash-local.service',
-      GROOT_UNIT = 'qwen38-groot.service', NANBEIGE_UNIT = 'qwen38-nanbeige.service', ORNITH_UNIT = 'qwen38-ornith-122b.service', PROXY_UNIT = 'qwen38-keepalive.service', AGENT_UNIT = 'opencode-web.service';
+      NANBEIGE_UNIT = 'qwen38-nanbeige.service', ORNITH_UNIT = 'qwen38-ornith-122b.service', PROXY_UNIT = 'qwen38-keepalive.service', AGENT_UNIT = 'opencode-web.service';
 // the order of the Now view's rack and the Lanes view's cards: Ornith before Kolibri and the Nemotron lanes (Hasan, 2026-10-22)
-const LANE_UNITS = [U27, UFLASH, FLASH_LOCAL_UNIT, ORNITH_UNIT, NANBEIGE_UNIT, GROOT_UNIT, KOLIBRI_UNIT, NEMOTRON_UNIT, NEMOTRON_SUPER_UNIT, IMAGE_UNIT, VIDEO_UNIT];
+const LANE_UNITS = [U27, UFLASH, FLASH_LOCAL_UNIT, ORNITH_UNIT, NANBEIGE_UNIT, KOLIBRI_UNIT, NEMOTRON_UNIT, NEMOTRON_SUPER_UNIT, IMAGE_UNIT, VIDEO_UNIT];
 // the two Nemotron lanes, Bolt and Super VL: one vLLM image, the same routes and the same limits
 const isNemotron = u => u === NEMOTRON_UNIT || u === NEMOTRON_SUPER_UNIT;
 // the vLLM lanes on b12x, the two Nemotron lanes, the Flash FP4-Local lane and the Ornith lane: the
 // same routes, the same counters, the same belts that cannot act; each says its own name.
 // Nanbeige shares this management family, but uses compressed-tensors rather than the b12x loader.
-const isB12x = u => isNemotron(u) || u === FLASH_LOCAL_UNIT || u === ORNITH_UNIT || u === NANBEIGE_UNIT || u === GROOT_UNIT;
-const b12xName = u => u === FLASH_LOCAL_UNIT ? 'the Flash FP4-Local lane' : u === GROOT_UNIT ? 'the Groot lane' : u === NANBEIGE_UNIT ? 'the Nanbeige lane' : u === ORNITH_UNIT ? 'the Ornith lane' : 'the Nemotron lane';
+const isB12x = u => isNemotron(u) || u === FLASH_LOCAL_UNIT || u === ORNITH_UNIT || u === NANBEIGE_UNIT;
+const b12xName = u => u === FLASH_LOCAL_UNIT ? 'the Flash FP4-Local lane' : u === NANBEIGE_UNIT ? 'the Nanbeige lane' : u === ORNITH_UNIT ? 'the Ornith lane' : 'the Nemotron lane';
 const LANE_NAME = {[U27]: '27B', [UFLASH]: 'flash 176B', [FLASH_LOCAL_UNIT]: 'Flash FP4-Local', [KOLIBRI_UNIT]: 'Kolibri-1',
-                   [NEMOTRON_UNIT]: 'Nemotron Bolt', [NEMOTRON_SUPER_UNIT]: 'Nemotron Super VL', [NANBEIGE_UNIT]: 'Nanbeige4.3 33B', [GROOT_UNIT]: 'Groot 65B A6B', [ORNITH_UNIT]: 'Ornith 1.5 122B',
+                   [NEMOTRON_UNIT]: 'Nemotron Bolt', [NEMOTRON_SUPER_UNIT]: 'Nemotron Super VL', [NANBEIGE_UNIT]: 'Nanbeige4.3 33B', [ORNITH_UNIT]: 'Ornith 1.5 122B',
                    [IMAGE_UNIT]: 'Qwen-Image',
                    [VIDEO_UNIT]: 'MiniMax-H3'};
 // What each lane is, for people: the kind of work it does and the one line that says so.
@@ -120,7 +120,7 @@ const LANE_META = {
   [KOLIBRI_UNIT]: {title: 'Kolibri-1', kind: 'Text, 262K tokens, German and English', desc: 'Aleph Alpha’s mixture of experts, 78B with 3.5B active, served by vLLM. Reasoning and tool calls.', view: 'agent', lane: 'kolibri', maker: 'alephalpha'},
   [NEMOTRON_UNIT]: {title: 'Nemotron 3.5 Bolt', kind: 'Text, images and video, 262K tokens', desc: 'NVIDIA’s mixture of experts, 74B with 9B active in 2 bits, served by vLLM with its drafter. Reasoning, tool calls and vision.', view: 'agent', lane: 'nemotron', maker: 'nvidia'},
   [NEMOTRON_SUPER_UNIT]: {title: 'Nemotron 3.5 Super VL', kind: 'Text, images and video, 1M tokens', desc: 'NVIDIA’s mixture of experts, 120B with 12B active in NVFP4, served by vLLM with its drafter. Reasoning, tool calls and vision over a 1M window.', view: 'agent', lane: 'nemotron-super', maker: 'nvidia'},
-  [NANBEIGE_UNIT]: {title: 'Nanbeige4.3 33B (experimental)', kind: 'Text, 32K tokens of context', desc: 'Mixed NVFP4/FP8 weights, reasoning and tool calls. Hardware validation pending. 128 GB Spark only.', view: 'agent', lane: 'nanbeige', maker: 'nanbeige'}, [GROOT_UNIT]: {title: 'Groot 65B A6B (experimental)', kind: 'Text, 128K context (experimental)', desc: 'NVFP4 experts, FP8 n-gram table, prefix caching and chunked prefill. Hardware validation pending.', view: 'agent', lane: 'groot', maker: 'groot'},
+  [NANBEIGE_UNIT]: {title: 'Nanbeige4.3 33B (experimental)', kind: 'Text, 32K tokens of context', desc: 'Mixed NVFP4/FP8 weights, reasoning and tool calls. Hardware validation pending. 128 GB Spark only.', view: 'agent', lane: 'nanbeige', maker: 'nanbeige'},
   [ORNITH_UNIT]: {title: 'Ornith 1.5 122B', kind: 'Text, images and video, 1M tokens', desc: 'Ornith AI’s mixture of experts, 122B with 8 of its 256 experts active, in its authors’ NVFP4 build, served by vLLM with b12x and its MTP head. Reasoning, tool calls and vision.', view: 'agent', lane: 'ornith-122b', maker: 'ornith'},
   [IMAGE_UNIT]: {title: 'Qwen-Image 2.1', kind: 'Images', desc: 'Create, edit with up to ten references, cut out with a real alpha channel.', view: 'image', lane: 'image', maker: 'qwen'},
   [VIDEO_UNIT]: {title: 'MiniMax-H3', kind: 'Video with sound', desc: 'Video and audio made together, from a prompt or from keyframes.', view: 'video', lane: 'video', maker: 'minimax'}};
@@ -133,30 +133,30 @@ function makerMark(unit, cls = 'mark'){
 // How long each lane takes to answer after a start, before the box has seen one of its
 // boots (measured on the reference box). Once a lane booted in front of the cockpit, the
 // median of its own boots replaces these.
-const READY_DEFAULT = {[U27]: 540, [UFLASH]: 780, [FLASH_LOCAL_UNIT]: 1020, [KOLIBRI_UNIT]: 600, [NEMOTRON_UNIT]: 450, [NEMOTRON_SUPER_UNIT]: 660, [NANBEIGE_UNIT]: 900, [GROOT_UNIT]: 900, [ORNITH_UNIT]: 420, [IMAGE_UNIT]: 70, [VIDEO_UNIT]: 720};
+const READY_DEFAULT = {[U27]: 540, [UFLASH]: 780, [FLASH_LOCAL_UNIT]: 1020, [KOLIBRI_UNIT]: 600, [NEMOTRON_UNIT]: 450, [NEMOTRON_SUPER_UNIT]: 660, [NANBEIGE_UNIT]: 900, [ORNITH_UNIT]: 420, [IMAGE_UNIT]: 70, [VIDEO_UNIT]: 720};
 const TARGET_SHORT = {stock: 'stock', uncensored: 'uncensored', fp8: 'FP8', 'uncensored-fp8': 'FP8 uncensored',
                       flash: '', 'flash-uncensored': 'uncensored', 'flash-nvda': 'NVIDIA export', image: '2.1', 'image-turbo': 'Turbo', video: 'H3',
                       kolibri: 'FP8', 'kolibri-nvfp4': 'NVFP4', nemotron: 'Bolt', 'nemotron-super': 'Super VL',
-                      'flash-local': 'FP4-Local', 'nanbeige': 'NVFP4/FP8', 'groot': 'NVFP4', 'ornith-122b': '122B'};
+                      'flash-local': 'FP4-Local', 'nanbeige': 'NVFP4/FP8', 'ornith-122b': '122B'};
 const TARGET_UNIT = t => t === 'image' || t === 'image-turbo' ? IMAGE_UNIT : t === 'video' ? VIDEO_UNIT
   : String(t).startsWith('kolibri') ? KOLIBRI_UNIT : t === 'nemotron-super' ? NEMOTRON_SUPER_UNIT : String(t).startsWith('nemotron') ? NEMOTRON_UNIT
-  : t === 'flash-local' ? FLASH_LOCAL_UNIT : t === 'groot' ? GROOT_UNIT : t === 'nanbeige' ? NANBEIGE_UNIT : t === 'ornith-122b' ? ORNITH_UNIT : String(t).startsWith('flash') ? UFLASH : U27;
+  : t === 'flash-local' ? FLASH_LOCAL_UNIT : t === 'nanbeige' ? NANBEIGE_UNIT : t === 'ornith-122b' ? ORNITH_UNIT : String(t).startsWith('flash') ? UFLASH : U27;
 const LANE_TARGETS = {[U27]: ['stock', 'uncensored', 'fp8', 'uncensored-fp8'], [UFLASH]: ['flash', 'flash-uncensored', 'flash-nvda'],
                       [FLASH_LOCAL_UNIT]: ['flash-local'],
                       [KOLIBRI_UNIT]: ['kolibri', 'kolibri-nvfp4'], [NEMOTRON_UNIT]: ['nemotron'], [NEMOTRON_SUPER_UNIT]: ['nemotron-super'],
-                      [NANBEIGE_UNIT]: ['nanbeige'], [GROOT_UNIT]: ['groot'], [ORNITH_UNIT]: ['ornith-122b'], [IMAGE_UNIT]: ['image', 'image-turbo'], [VIDEO_UNIT]: ['video']};
+                      [NANBEIGE_UNIT]: ['nanbeige'], [ORNITH_UNIT]: ['ornith-122b'], [IMAGE_UNIT]: ['image', 'image-turbo'], [VIDEO_UNIT]: ['video']};
 const TARGET_NAME = {stock: '27B stock, NVFP4', uncensored: '27B uncensored, NVFP4', fp8: '27B FP8, Qwen official',
                      'uncensored-fp8': '27B FP8 uncensored', flash: 'flash 176B, NVFP4', 'flash-uncensored': 'flash 176B uncensored',
                      'flash-nvda': 'flash 176B, NVIDIA export', image: 'Qwen-Image 2.1', 'image-turbo': 'Qwen-Image 2.1 Turbo', video: 'MiniMax-H3',
                      kolibri: 'Kolibri-1, Aleph Alpha FP8', 'kolibri-nvfp4': 'Kolibri-1, NVFP4 experts', nemotron: 'Nemotron 3.5 Bolt, 24 GB',
                      'nemotron-super': 'Nemotron 3.5 Super VL, NVFP4', 'flash-local': 'Flash FP4-Local, NVIDIA',
-                     'nanbeige': 'Nanbeige4.3-33B, mixed NVFP4/FP8 (experimental)', 'groot': 'Groot-65B-A6B, NVFP4/FP8 (experimental)', 'ornith-122b': 'Ornith 1.5 122B, NVFP4'};
+                     'nanbeige': 'Nanbeige4.3-33B, mixed NVFP4/FP8 (experimental)', 'ornith-122b': 'Ornith 1.5 122B, NVFP4'};
 // A version's name on its button in Lanes, and the line that tells it apart once chosen. A
 // target is declared in the tables of this block: a page test fails when one lacks a name or a line.
 const TARGET_SHORT_NAME = {stock: 'Stock', uncensored: 'Uncensored', fp8: 'FP8', 'uncensored-fp8': 'FP8 uncensored',
   flash: 'Standard', 'flash-uncensored': 'Uncensored', 'flash-nvda': 'NVIDIA export', image: 'Base', 'image-turbo': 'Turbo', video: 'H3',
   kolibri: 'FP8', 'kolibri-nvfp4': 'NVFP4', nemotron: 'Bolt', 'nemotron-super': 'Super VL', 'flash-local': 'FP4-Local',
-  'nanbeige': 'NVFP4/FP8', 'groot': 'NVFP4', 'ornith-122b': '122B'};
+  'nanbeige': 'NVFP4/FP8', 'ornith-122b': '122B'};
 const TARGET_LINE = {
   stock: 'The default: smallest and fastest', uncensored: 'Refusals removed, same size and speed',
   fp8: "Qwen's own weights: the most faithful, and heavier", 'uncensored-fp8': 'Refusals removed, and heavier',
@@ -166,7 +166,7 @@ const TARGET_LINE = {
   nemotron: 'The one version: 2-bit experts and their drafter',
   'nemotron-super': 'The one version: NVFP4 and its drafter, a 1M window',
   'flash-local': 'The one version: NVIDIA’s FP4 build and its MTP head',
-  'nanbeige': 'Mixed NVFP4/FP8 weights; experimental 32K context limit', 'groot': 'NVFP4/FP8 with a 128K initial window and one request at a time',
+  'nanbeige': 'Mixed NVFP4/FP8 weights; experimental 32K context limit',
   'ornith-122b': 'The one version: its authors’ NVFP4 build and its MTP head'};
 const TARGET_NOTE = {
   stock: 'The NVFP4 quantization this repo pins by default: smallest and fastest of the 27B targets.',
@@ -184,7 +184,7 @@ const TARGET_NOTE = {
   nemotron: 'NVIDIA’s Nemotron 3.5 Bolt, its experts in 2 bits, served as its model card says: vLLM nightly with b12x, its LiLiCorr drafter, 262,144 tokens of context, temperature 1.0, top_p 0.95, reasoning on (off, efficient or full per request). It reads images and video. Measured on this box: 140 tokens/s alone on code, 50 on prose, 201 in all at 16 requests, 24 requests at the full window. The first switch downloads about 26 GB.',
   'nemotron-super': 'NVIDIA’s Nemotron 3.5 Super VL in NVFP4, served as its model card says for a DGX Spark: its LiLiCorr drafter, a window of 1,048,576 tokens, the Mamba state in float16 with stochastic rounding, temperature 1.0, top_p 0.95, reasoning on (off, efficient or full per request), in the Nemotron Bolt lane’s vLLM image. It reads images and video. Measured on this box: 70 tokens/s alone on code, 31 on prose, its whole window 1.1 to 1.3 times over in its cache. The first switch downloads about 77 GB.',
   'flash-local': 'NVIDIA’s own FP4 build of the flash model, served as its model card says for a DGX Spark: vLLM with b12x, its experts and its n-gram table in NVFP4 after a quantization-aware distillation from the full precision (GPQA Diamond 91.5 % against 92.2 % on NVIDIA’s card), an MTP head drafting 4 tokens, 262,144 tokens of context and a KV cache of about 920,000 tokens, reasoning on at xhigh unless a request asks less. Its table is read at every token: with the HF cache on another disk, its first Load copies the table’s files (32 GB) beside your home directory. The first boot tunes b12x’s kernels for this GPU, about 17 min; the next ones take about 6. The first switch downloads about 102 GB.',
-  'nanbeige': 'Experimental Nanbeige4.3-33B mixed NVFP4/FP8 text lane. 32,768 tokens of context and two concurrent sequences are initial settings awaiting GB10 testing. Reasoning and tool-call parsers follow the model card. No vision or speculative decoding. About 27 GB of checkpoint download budget.', 'groot': 'Official Groot NVFP4 checkpoint on the shared GB10 vLLM image. Prefix caching, chunked prefill, one request and native 128K context without YaRN. Hardware verification pending; about 100 GB checkpoint download budget.',
+  'nanbeige': 'Experimental Nanbeige4.3-33B mixed NVFP4/FP8 text lane. 32,768 tokens of context and two concurrent sequences are initial settings awaiting GB10 testing. Reasoning and tool-call parsers follow the model card. No vision or speculative decoding. About 27 GB of checkpoint download budget.',
   'ornith-122b': 'Ornith AI’s Ornith 1.5 122B (MIT) in its authors’ NVFP4 build, served by vLLM with b12x in the Flash FP4-Local lane’s image: its experts and output head in NVFP4, its projections in FP8, an MTP head drafting 2 tokens, 1,048,576 tokens of context (its own 262,144 stretched four times with YaRN), temperature 0.6, top_p 0.95, top_k 20, reasoning on (off with effort none or minimal). It reads images and video. The first switch downloads about 78 GB.'};
 // What installs a lane this box does not have. Since v1.20 a plain ./install.sh installs
 // every lane, so one missing here was left out (a --no-<lane> on the last run) or did not fit:
@@ -193,7 +193,7 @@ const TARGET_NOTE = {
 const LANE_INSTALL = {[U27]: './install.sh --with-27b', [UFLASH]: './install.sh --with-flash', [IMAGE_UNIT]: './install.sh --with-image',
                       [VIDEO_UNIT]: './install.sh --with-video', [KOLIBRI_UNIT]: './install.sh --with-kolibri',
                       [NEMOTRON_UNIT]: './install.sh --with-nemotron', [NEMOTRON_SUPER_UNIT]: './install.sh --with-nemotron-super',
-                      [FLASH_LOCAL_UNIT]: './install.sh --with-flash-local', [NANBEIGE_UNIT]: './install.sh --with-nanbeige', [GROOT_UNIT]: './install.sh --with-groot', [ORNITH_UNIT]: './install.sh --with-ornith-122b'};
+                      [FLASH_LOCAL_UNIT]: './install.sh --with-flash-local', [NANBEIGE_UNIT]: './install.sh --with-nanbeige', [ORNITH_UNIT]: './install.sh --with-ornith-122b'};
 // A lane a 64 GB DGX Spark cannot hold (boxmem.py, which the machine panel carries): where another
 // lane names the command that installs it, it says it needs a 128 GB box. Unknown is no refusal.
 const laneFits = unit => {
@@ -714,10 +714,10 @@ const LANE_RUNTIME = {flash: 'its SGLang image (about 16 GB to download), its ch
   nemotron: 'its vLLM image, about 11 GB to download (25 GB on disk), pulled and built here',
   'nemotron-super': 'the Nemotron lanes’ vLLM image (the Bolt lane’s), about 11 GB to download (25 GB on disk), pulled and built here once for the two',
   'flash-local': 'its vLLM image with b12x, about 10 GB to download (18 GB on disk), pulled as its model card names it',
-  'nanbeige': 'the shared GB10-compatible vLLM image, about 18 GB on disk; reused when already installed', 'groot': 'the shared GB10-compatible vLLM image, reused when already installed',
+  'nanbeige': 'the shared GB10-compatible vLLM image, about 18 GB on disk; reused when already installed',
   'ornith-122b': 'the Flash FP4-Local lane’s vLLM image with b12x, about 10 GB to download (18 GB on disk), pulled once for the two'};
 const SIDE_LANE = {[IMAGE_UNIT]: 'image', [VIDEO_UNIT]: 'video', [KOLIBRI_UNIT]: 'kolibri', [NEMOTRON_UNIT]: 'nemotron',
-                   [NEMOTRON_SUPER_UNIT]: 'nemotron-super', [FLASH_LOCAL_UNIT]: 'flash-local', [NANBEIGE_UNIT]: 'nanbeige', [GROOT_UNIT]: 'groot', [ORNITH_UNIT]: 'ornith-122b',
+                   [NEMOTRON_SUPER_UNIT]: 'nemotron-super', [FLASH_LOCAL_UNIT]: 'flash-local', [NANBEIGE_UNIT]: 'nanbeige', [ORNITH_UNIT]: 'ornith-122b',
                    [UFLASH]: 'flash', [U27]: '27b'};
 function laneJourneySteps(target){
   const unit = TARGET_UNIT(target);

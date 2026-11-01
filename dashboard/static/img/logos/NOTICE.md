@@ -20,5 +20,3 @@ belongs to its owner, and the cockpit shows it only to say which model the Ornit
 runs.
 
 `nanbeige.svg` is an original letter N monogram made for this fork, not an official Nanbeige logo.
-
-`groot.svg` is an original letter G monogram for this fork, not an official GrootTeam logo.

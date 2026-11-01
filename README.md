@@ -958,16 +958,9 @@ See [the setup and validation guide](docs/nanbeige-lane.md) before installing.
 The installer tests a reply and tool call, then restores the previous serving lane.
 Load Nanbeige from the cockpit to keep using it. Model name: `nanbeige4.3-33b`.
 
-## Groot 65B A6B lane (fork)
-
-Groot NVFP4 is integrated into the cockpit on 128 GB Spark: a normal install adds its
-on-demand lane; choose **Load** to prepare it. Use `./install.sh --with-groot` to download
-and smoke-test it during installation. See [Groot setup and validation](docs/groot-lane.md).
-Hardware inference and performance remain unverified by this change.
-
 ### Retired: Ling 3.0 Flash
 
 We tried Ling with the `pi` harness. Although it was fast, it constantly stopped during
-inference, making it non-workable for our setup. Ling has been removed from the cockpit
-and replaced with Groot. Updating with `./install.sh` retires the old Ling service and
-client entries while preserving downloaded weights, caches and API keys.
+inference, making it non-workable for our setup. Ling has been removed from the cockpit.
+Updating with `./install.sh` retires the old Ling service and client entries while
+preserving downloaded weights, caches and API keys.

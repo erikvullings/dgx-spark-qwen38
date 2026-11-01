@@ -6,12 +6,12 @@ Wants=network-online.target
 # components) does not fit beside any serving lane, while
 # any other lane holds its own pool for the life of its process. Starting this stops
 # the other lanes; starting another lane stops this.
-Conflicts=qwen38-sglang.service qwen38-flash.service qwen38-image.service qwen38-kolibri.service qwen38-nemotron.service qwen38-nemotron-super.service qwen38-flash-local.service qwen38-ornith-122b.service qwen38-nanbeige.service qwen38-groot.service
+Conflicts=qwen38-sglang.service qwen38-flash.service qwen38-image.service qwen38-kolibri.service qwen38-nemotron.service qwen38-nemotron-super.service qwen38-flash-local.service qwen38-ornith-122b.service qwen38-nanbeige.service
 # Conflicts= alone orders nothing: the old lane's stop and the new lane's start ran
 # side by side on the reference box (measured on its systemd 255: 3.0 s of overlap
 # without After=, 0.02 s after the stop with, 2026-09-24). With the same units named
 # in After=, systemd finishes the stop before the start, in both directions.
-After=network-online.target qwen38-sglang.service qwen38-flash.service qwen38-image.service qwen38-kolibri.service qwen38-nemotron.service qwen38-nemotron-super.service qwen38-flash-local.service qwen38-ornith-122b.service qwen38-nanbeige.service qwen38-groot.service
+After=network-online.target qwen38-sglang.service qwen38-flash.service qwen38-image.service qwen38-kolibri.service qwen38-nemotron.service qwen38-nemotron-super.service qwen38-flash-local.service qwen38-ornith-122b.service qwen38-nanbeige.service
 
 [Service]
 Type=simple

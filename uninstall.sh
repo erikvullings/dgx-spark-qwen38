@@ -22,7 +22,7 @@ PYSPY_WRAPPER=/usr/local/bin/qwen38-pyspy-scheduler
 # installed with HF_CACHE=/data/hf had 22 to 126 GB of weights and the 48 GB PLE file
 # neither listed nor given a reclaim command (found in review, 2026-09-24).
 unit_mount(){  # $1 = the container path; prints the host side of every -v mounting it
-  grep -hoE -- "-v [^ :]+:$1( |\$|:)" "$SYSTEMD_DIR/qwen38-sglang.service" "$CONFIG_DIR/launch-flash.sh" "$SYSTEMD_DIR/qwen38-kolibri.service" "$SYSTEMD_DIR/qwen38-nemotron.service" "$SYSTEMD_DIR/qwen38-nemotron-super.service" "$SYSTEMD_DIR/qwen38-flash-local.service" "$SYSTEMD_DIR/qwen38-ornith-122b.service" "$SYSTEMD_DIR/qwen38-nanbeige.service" "$SYSTEMD_DIR/qwen38-groot.service" 2>/dev/null \
+  grep -hoE -- "-v [^ :]+:$1( |\$|:)" "$SYSTEMD_DIR/qwen38-sglang.service" "$CONFIG_DIR/launch-flash.sh" "$SYSTEMD_DIR/qwen38-kolibri.service" "$SYSTEMD_DIR/qwen38-nemotron.service" "$SYSTEMD_DIR/qwen38-nemotron-super.service" "$SYSTEMD_DIR/qwen38-flash-local.service" "$SYSTEMD_DIR/qwen38-ornith-122b.service" "$SYSTEMD_DIR/qwen38-nanbeige.service" 2>/dev/null \
     | sed -e 's/^-v //' -e "s|:$1.*\$||" | tr -s / || true
 }
 # Each list one slash at a time before it keeps each once: what a unit wrote from a home with a trailing
@@ -120,7 +120,7 @@ rm_cmd() {
 }
 
 echo "── Inventory (everything any version of this repo may have left here) ──"
-for u in qwen38-sglang.service qwen38-flash.service qwen38-keepalive.service qwen38-dashboard.service qwen38-image.service qwen38-video.service qwen38-kolibri.service qwen38-nemotron.service qwen38-nemotron-super.service qwen38-flash-local.service qwen38-ornith-122b.service qwen38-nanbeige.service qwen38-groot.service qwen38-speech.service opencode-web.service; do
+for u in qwen38-sglang.service qwen38-flash.service qwen38-keepalive.service qwen38-dashboard.service qwen38-image.service qwen38-video.service qwen38-kolibri.service qwen38-nemotron.service qwen38-nemotron-super.service qwen38-flash-local.service qwen38-ornith-122b.service qwen38-nanbeige.service qwen38-speech.service opencode-web.service; do
   if [ -f "$SYSTEMD_DIR/$u" ]; then
     STATE="$(systemctl is-enabled "$u" 2>/dev/null || true)/$(systemctl is-active "$u" 2>/dev/null || true)"
     echo "  unit      $SYSTEMD_DIR/$u ($STATE)"
@@ -219,7 +219,7 @@ PRIV=0
 for f in "$SYSTEMD_DIR/qwen38-sglang.service" "$SYSTEMD_DIR/qwen38-flash.service" \
          "$SYSTEMD_DIR/qwen38-keepalive.service" "$SYSTEMD_DIR/qwen38-dashboard.service" \
          "$SYSTEMD_DIR/qwen38-image.service" "$SYSTEMD_DIR/qwen38-video.service" "$SYSTEMD_DIR/qwen38-kolibri.service" \
-         "$SYSTEMD_DIR/qwen38-nemotron.service" "$SYSTEMD_DIR/qwen38-nemotron-super.service" "$SYSTEMD_DIR/qwen38-flash-local.service" "$SYSTEMD_DIR/qwen38-ornith-122b.service" "$SYSTEMD_DIR/qwen38-nanbeige.service" "$SYSTEMD_DIR/qwen38-groot.service" "$SYSTEMD_DIR/qwen38-speech.service" "$SYSTEMD_DIR/opencode-web.service" \
+         "$SYSTEMD_DIR/qwen38-nemotron.service" "$SYSTEMD_DIR/qwen38-nemotron-super.service" "$SYSTEMD_DIR/qwen38-flash-local.service" "$SYSTEMD_DIR/qwen38-ornith-122b.service" "$SYSTEMD_DIR/qwen38-nanbeige.service" "$SYSTEMD_DIR/qwen38-speech.service" "$SYSTEMD_DIR/opencode-web.service" \
          "$SYSTEMD_DIR/qwen38-sglang.service.d" "$SYSTEMD_DIR/qwen38-dashboard.service.d" \
          "$SYSTEMD_DIR/qwen38-keepalive.service.d" "$SUDOERS_FILE" "$PYSPY_WRAPPER"; do
   [ -e "$f" ] && PRIV=1
@@ -232,11 +232,11 @@ done
 PRIV_DONE=0
 if [ "$PRIV" -eq 1 ]; then
   if sudo -v; then
-    for u in qwen38-sglang qwen38-flash qwen38-keepalive qwen38-dashboard qwen38-image qwen38-video qwen38-kolibri qwen38-nemotron qwen38-nemotron-super qwen38-flash-local qwen38-ornith-122b qwen38-nanbeige qwen38-groot qwen38-speech opencode-web; do
+    for u in qwen38-sglang qwen38-flash qwen38-keepalive qwen38-dashboard qwen38-image qwen38-video qwen38-kolibri qwen38-nemotron qwen38-nemotron-super qwen38-flash-local qwen38-ornith-122b qwen38-nanbeige qwen38-speech opencode-web; do
       sudo systemctl disable --now "$u.service" 2>/dev/null || true
     done
-    docker rm -f qwen38-sglang qwen38-sglang-run qwen38-flash qwen38-kolibri qwen38-nemotron qwen38-nemotron-super qwen38-flash-local qwen38-ornith-122b qwen38-nanbeige qwen38-groot 2>/dev/null || true
-    sudo rm -f "$SYSTEMD_DIR/qwen38-sglang.service" "$SYSTEMD_DIR/qwen38-flash.service" "$SYSTEMD_DIR/qwen38-keepalive.service" "$SYSTEMD_DIR/qwen38-dashboard.service" "$SYSTEMD_DIR/qwen38-image.service" "$SYSTEMD_DIR/qwen38-video.service" "$SYSTEMD_DIR/qwen38-kolibri.service" "$SYSTEMD_DIR/qwen38-nemotron.service" "$SYSTEMD_DIR/qwen38-nemotron-super.service" "$SYSTEMD_DIR/qwen38-flash-local.service" "$SYSTEMD_DIR/qwen38-ornith-122b.service" "$SYSTEMD_DIR/qwen38-nanbeige.service" "$SYSTEMD_DIR/qwen38-groot.service" "$SYSTEMD_DIR/qwen38-speech.service" "$SYSTEMD_DIR/opencode-web.service"
+    docker rm -f qwen38-sglang qwen38-sglang-run qwen38-flash qwen38-kolibri qwen38-nemotron qwen38-nemotron-super qwen38-flash-local qwen38-ornith-122b qwen38-nanbeige 2>/dev/null || true
+    sudo rm -f "$SYSTEMD_DIR/qwen38-sglang.service" "$SYSTEMD_DIR/qwen38-flash.service" "$SYSTEMD_DIR/qwen38-keepalive.service" "$SYSTEMD_DIR/qwen38-dashboard.service" "$SYSTEMD_DIR/qwen38-image.service" "$SYSTEMD_DIR/qwen38-video.service" "$SYSTEMD_DIR/qwen38-kolibri.service" "$SYSTEMD_DIR/qwen38-nemotron.service" "$SYSTEMD_DIR/qwen38-nemotron-super.service" "$SYSTEMD_DIR/qwen38-flash-local.service" "$SYSTEMD_DIR/qwen38-ornith-122b.service" "$SYSTEMD_DIR/qwen38-nanbeige.service" "$SYSTEMD_DIR/qwen38-speech.service" "$SYSTEMD_DIR/opencode-web.service"
     sudo rm -rf "$SYSTEMD_DIR/qwen38-sglang.service.d" "$SYSTEMD_DIR/qwen38-dashboard.service.d" "$SYSTEMD_DIR/qwen38-keepalive.service.d"
     # The cockpit's privileged surface goes with it: a NOPASSWD allowlist left behind
     # after an uninstall is the one leftover that is not merely clutter.
