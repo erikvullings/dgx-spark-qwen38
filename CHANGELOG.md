@@ -59,6 +59,13 @@ README gives.
 name the new release, which drops its open pages and the Agent tab's connection. Nothing else restarts, and get.sh
 updates the clone it updated before.
 
+**After the push.** The reference box updated with the public one-liner at f528ef5 on 2026-11-01, through the get.sh
+of this release, which took ~/dgx-spark-qwen38 as before, and the run ended whole in 91 s. The cockpit restarted once
+and names v1.40.8, the proxy and Flash FP4-Local, the lane that served, kept running, and no unit file changed. The 8
+real clients (Claude Code, opencode, Hermes, pi, the OpenAI and Anthropic SDKs, fetch under Node and Bun, LiteLLM)
+answered through the proxy on Flash FP4-Local, the production checks passed, and the cockpit showed no banner on any
+of its 5 views, with no JavaScript error. GitHub's CI passed its 7 jobs with no step skipped.
+
 ## v1.40.7 (2026-10-31): on the Ornith lane a long prompt no longer holds up the other requests, and the cockpit says while a prompt is computed (#61)
 
 **Why.** On 2026-10-30 a user of the Ornith lane on a 128 GB Lenovo box reported that requests stop answering once
