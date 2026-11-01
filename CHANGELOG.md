@@ -1,5 +1,46 @@
 # Changelog
 
+## v1.40.8 (2026-11-01): get.sh takes a clone of hasso5703/alzeo for this repo, before the repository is renamed
+
+**Why.** The repository is to be renamed hasso5703/alzeo. GitHub then sends the old address on to the new one, for
+git, for the raw files the one-liner fetches and for its API, as long as no other repository takes the old name. But
+get.sh takes a clone for this repo only if its origin names hasso5703/dgx-spark-qwen38. Once the repository has its
+new name, a clone made from the new address would have been refused in ~/dgx-spark-qwen38 at its first update ("not
+a clone of this repo"), and passed over anywhere else, for ~/dgx-spark-qwen38, cloned under the old name when
+missing, onto which the box moved.
+
+**get.sh.** A clone whose origin names hasso5703/dgx-spark-qwen38 or hasso5703/alzeo is this repo, for good: every box
+installed before keeps the old name in its origin, matched by the pattern it always had. The new name is matched as
+the last two parts of the path, by HTTPS or SSH, with or without .git, on any host as the old name always was (a
+mirror of this repository counts): hasso5703/alzeo-site, xhasso5703/alzeo or someone/alzeo is another repository,
+which get.sh neither updates nor installs from. Both are now matched whatever the case, as GitHub's names are (a clone
+of https://github.com/Hasso5703/Alzeo is this repo), which for the old name only takes more, and the rule is written
+once, for the two checks that read it. A refusal shows the origin without the user name, password or token an address
+can carry: a password holding an @, a / or a byte that is not UTF-8, the user of an scp-like address and a remote
+helper's address included. And under sudo get.sh names the one-liner as the README gives it, on
+raw.githubusercontent.com, which serves a renamed repository's files under its old name too, as long as no other
+repository takes that name (measured on 2026-11-01 on three repositories renamed before). Where get.sh looks for the
+clone does not change: DIR when given, else the clone it is run from, else ~/dgx-spark-qwen38. The folder
+~/dgx-spark-qwen38 and the qwen38 names on the box stay as they are.
+
+**Tests.** Two tests fail on v1.40.7 and pass on this release. get.sh run against a bare repository named
+hasso5703/alzeo, given as DIR and from inside the clone, goes through to the installer, and ones named someone/alzeo,
+hasso5703/alzeo-site and xhasso5703/alzeo are refused. Twenty-six origins as git keeps them, HTTPS or SSH, with
+credentials, .git, a final slash, a port, capitals or a .git folder, seven of them the old name as older boxes may
+carry it, are each taken or refused as they should be, given as DIR and from inside the clone, where a refused one
+leaves that clone alone and takes the default folder. A refusal shows no token, no password holding an @, a / or a
+byte that is not UTF-8 (under a UTF-8 locale), no user of an scp-like address, and no secret in a remote helper's
+address. get.sh is checked for the bash 4 constructs that bash 3.2, macOS's /bin/bash, lacks, ${x,,} among them. Six
+changes that each put one defect back fail the tests: v1.40.7's get.sh, the mask outside the C locale, without a
+remote helper's prefix or stopping at the first @, ${1,,} back in, and the old name matched with its case. git takes
+no network protocol but local paths, every run's home is a throwaway folder and git looks for no repository above it,
+so no test reaches the network, a real clone of this repo or a real installer. And the refusal under sudo names the
+one-liner the README gives.
+
+**What an update does.** get.sh and this changelog change, and the tests. The cockpit restarts once, to name the new
+release, which drops its open pages and the Agent tab's connection. Nothing else restarts, and get.sh updates the
+clone it updated before.
+
 ## v1.40.7 (2026-10-31): on the Ornith lane a long prompt no longer holds up the other requests, and the cockpit says while a prompt is computed (#61)
 
 **Why.** On 2026-10-30 a user of the Ornith lane on a 128 GB Lenovo box reported that requests stop answering once
