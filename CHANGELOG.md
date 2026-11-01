@@ -16,9 +16,10 @@ without .git, on any host as the old name always was (a mirror of this repositor
 xhasso5703/alzeo or someone/alzeo is another repository, which get.sh neither updates nor installs from. Both are now
 matched whatever the case, as GitHub's names are (a clone of https://github.com/Hasso5703/Alzeo is this repo), which
 for the old name only takes more, and the rule is written once, for the two checks that read it. A refusal shows the
-origin without the user name, password or token an address can carry: a password holding an @, a / or a byte that is
-not UTF-8, the user of an scp-like address and a remote helper's address included, and any form still holding an @
-shows only what follows its last @. And under sudo get.sh names the one-liner as the README gives it, on
+origin without the user name, password or token an address can carry: a password holding an @, a /, a line break or a
+byte that is not UTF-8, the user of an scp-like address, a remote helper's address and a token in the query string
+included, and any form still holding an @ shows only what follows its last @. An ext:: address, a command that can
+carry a password, is not shown at all. And under sudo get.sh names the one-liner as the README gives it, on
 raw.githubusercontent.com, which serves a renamed repository's files under its old name too, as long as no other
 repository takes that name (measured on 2026-11-01 on three repositories renamed before). Where get.sh looks for the
 clone does not change: DIR when given, else the clone it is run from, else ~/dgx-spark-qwen38, so a clone of the new
@@ -26,32 +27,37 @@ name kept elsewhere, ~/alzeo for one, is updated by running the command from ins
 command does. The folder ~/dgx-spark-qwen38 and the qwen38 names on the box stay as they are.
 
 **Updates that stopped in silence.** With thousands of untracked files in the clone (a .venv-mirror/, which MIRROR.md
-creates there and .gitignore does not list, holds that many), get.sh ended with code 141 and no word before the
-update, and the box stayed on its release: the list of the first five untracked files it prints closed its pipe early,
-and under pipefail the writer's SIGPIPE ended the script. With hundreds of modified tracked files, its refusal ended
-the same way before giving the way out. Both lists are now read to their end, and print what they printed before.
-Found in review of this release, in lines older than it.
+creates there and .gitignore did not list, holds that many), get.sh stopped after listing five of them, with code 141
+and no error, before the update, and the box stayed on its release: the list closed its pipe early, and under pipefail
+the writer's SIGPIPE ended the script. With hundreds of modified tracked files, its refusal ended the same way before
+giving the way out. Both lists are now read to their end and print what they printed before. A folder that is
+untracked whole is now named once in that list, and .gitignore leaves .venv-mirror/ out, beside .venv/. Found in
+review of this release, in lines older than it.
 
 **Tests.** Two tests fail on v1.40.7 and pass on this release. get.sh run against a bare repository named
 hasso5703/alzeo, given as DIR and from inside the clone, goes through to the installer, and ones named someone/alzeo,
 hasso5703/alzeo-site and xhasso5703/alzeo are refused. Twenty-six origins as git keeps them, HTTPS or SSH, with
 credentials, .git, a final slash, a port, capitals or a .git folder, seven of them the old name as older boxes may
-carry it, are each taken or refused as they should be, given as DIR and from inside the clone, and a refused clone
-keeps its origin, its commit and its files. A refusal shows no token, no password holding an @, a / or a byte that is
-not UTF-8 (under a UTF-8 locale, checked present), no user of an scp-like address, and no secret in a remote helper's
-address, around an scp-like one, behind two helpers or after a space. A clone holding 3,000 untracked files is
-updated, and one with 600 modified tracked files is refused with the whole advice. get.sh is checked for the bash 4
-and 5 constructs a script reaches for first, which bash 3.2, macOS's /bin/bash, lacks (${x,,}, ${x@L}, declare -l and
-the like). Eleven changes that each put one defect back fail the tests: v1.40.7's get.sh, a head back in either list,
-a refusal that touches the clone it refuses, the mask without its last step, then without its C locale, its remote
-helper's prefix or its last-@ rule, ${1,,} or ${1@L} back in, and the old name matched with its case. Every run gets
-PATH and nothing else of the shell's environment, a throwaway home, no network protocol but local paths, and no
-repository looked for above its folder, so no test reaches the network, a real clone of this repo or a real installer.
-And the refusal under sudo names the one-liner the README gives.
+carry it, are each taken or refused as they should be, given as DIR and from inside the clone, and a refused clone,
+given a local edit and an untracked file first, keeps its origin, its commit and every file as it was. A refusal shows
+no secret in any of the forms above, a byte that is not UTF-8 included (under a UTF-8 locale, where the machine has
+one). A clone holding 3,000 untracked files is updated and lists exactly the first five, a folder of 2,000 untracked
+files is listed as one line, and a clone with 1,500 modified tracked files is refused with its first ten listed and
+the whole advice: each list outgrows the 64 KiB pipe of a 4 KiB-page kernel more than twice, so a head put back fails
+every run. get.sh is checked for the bash 4 and 5 constructs a script reaches for first, which bash 3.2, macOS's
+/bin/bash, lacks (${x,,}, ${x@L}, [[ -v, declare -l and the like). Nineteen changes that each put one defect back fail
+the tests: v1.40.7's get.sh, a head back in either list, sed's p flag dropped, the list without --directory, a refusal
+that touches or empties the clone it refuses, the mask without its last-@ step, its line join, its query cut or its
+ext:: rule, and, that step removed too, without its C locale, its remote helper's prefix or its last-@ rule in sed,
+${1,,}, ${1@L} or [[ -v back in, and the old name matched with its case. Every run of get.sh gets PATH and nothing
+else of the shell's environment, a throwaway home, no network protocol but local paths, and no repository looked for
+above its folder, and the fixture's own git inherits none of the variables that point git at a repository, so no test
+reaches the network, a real clone of this repo or a real installer. And the refusal under sudo names the one-liner the
+README gives.
 
-**What an update does.** get.sh and this changelog change, and the tests. The cockpit restarts once, to name the new
-release, which drops its open pages and the Agent tab's connection. Nothing else restarts, and get.sh updates the
-clone it updated before.
+**What an update does.** get.sh, .gitignore and this changelog change, and the tests. The cockpit restarts once, to
+name the new release, which drops its open pages and the Agent tab's connection. Nothing else restarts, and get.sh
+updates the clone it updated before.
 
 ## v1.40.7 (2026-10-31): on the Ornith lane a long prompt no longer holds up the other requests, and the cockpit says while a prompt is computed (#61)
 
