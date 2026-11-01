@@ -92,13 +92,17 @@ main() {
     # after a remote helper's prefix if there is one (gcrypt::https://...), and the user of an
     # scp-like address: a password holding an @ or a / of its own goes too, and in the C locale one
     # holding a byte that is not UTF-8 (code review, 2026-11-01). An @ in a repository's own path,
-    # which GitHub's names never hold, shows cut.
-    SHOWN=$(printf '%s' "$DIR_ORIGIN" | LC_ALL=C sed -E -e 's#^(([A-Za-z0-9+.-]+::)?[A-Za-z][A-Za-z0-9+.-]*://).*@#\1#' \
-                                                     -e 's#^[^/:@]+@([^/:]+:)#\1#')
+    # which GitHub's names never hold, shows cut. Its lines are joined first: sed reads line by line, and a
+    # line break in a password left its first part shown (code review, 2026-11-01).
+    SHOWN=$(printf '%s' "$DIR_ORIGIN" | LC_ALL=C tr '\n\r' '  ' \
+              | LC_ALL=C sed -E -e 's#^(([A-Za-z0-9+.-]+::)?[A-Za-z][A-Za-z0-9+.-]*://).*@#\1#' \
+                                -e 's#^[^/:@]+@([^/:]+:)#\1#')
     # and any form left with an @ in it (a remote helper around an scp-like address, two helpers, a space before
-    # the scheme, a line break in a password, which sed reads line by line): only what follows its last @
-    # (code review, 2026-11-01)
+    # the scheme): only what follows its last @. A token in the query string goes too, and an ext:: address,
+    # a command that can carry a password, is not shown at all (code review, 2026-11-01).
     case "$SHOWN" in *@*) SHOWN="${SHOWN##*@}" ;; esac
+    SHOWN="${SHOWN%%\?*}"
+    case "$SHOWN" in ext::*) SHOWN="ext::(the command is not shown)" ;; esac
     echo "ERROR: $DIR is not a clone of this repo (origin: ${SHOWN:-none}). Refusing to touch it." >&2; exit 1
   fi
 
@@ -167,12 +171,13 @@ main() {
     fi
   fi
   # Untracked files are kept, but say so: if one of them is a path that origin/main
-  # now tracks, the reset below writes over it.
-  UNTRACKED=$(git -C "$DIR" ls-files --others --exclude-standard)
+  # now tracks, the reset below writes over it. A folder that is untracked whole is named once
+  # (--directory): a .venv-mirror/ in the clone, as MIRROR.md makes one, listed its thousands of files.
+  UNTRACKED=$(git -C "$DIR" ls-files --others --exclude-standard --directory)
   if [ -n "$UNTRACKED" ]; then
     echo "── Untracked files kept in place (not part of the update):"
-    # the first five, read to the end: with head, a long list (thousands of files, a .venv-mirror/ in the clone)
-    # took SIGPIPE under pipefail and get.sh ended with 141, silently, before the update (code review, 2026-11-01)
+    # the first five, read to the end: with head, a long list took SIGPIPE under pipefail and get.sh stopped
+    # with 141 after the five, no error, before the update (code review, 2026-11-01)
     printf '%s\n' "$UNTRACKED" | sed -n '1,5s/^/     /p'
   fi
   # Tree verified clean and no local commits (or backed up): hard sync is lossless

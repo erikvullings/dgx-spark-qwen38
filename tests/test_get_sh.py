@@ -20,7 +20,15 @@ STUB = '#!/usr/bin/env bash\necho "INSTALL_RAN args=$*"\n'
 
 # git here never inherits a GIT_DIR, GIT_WORK_TREE or GIT_INDEX_FILE (a git hook exports them), which would turn
 # the fixture's commands onto that repository (code review, 2026-11-01)
-CLEAN = {k: v for k, v in os.environ.items() if not k.startswith("GIT_")}
+# git here never inherits the variables that point it at a repository (GIT_DIR, GIT_WORK_TREE, GIT_INDEX_FILE, the
+# rest of `git rev-parse --local-env-vars`: a git hook or `rebase -x` exports them), which would turn the fixture's
+# commands onto that repository, and keeps the others, GIT_CONFIG_GLOBAL among them, which a caller may set to keep
+# a personal config out (code review, 2026-11-01)
+LOCAL_VARS = set(subprocess.run(["git", "rev-parse", "--local-env-vars"], capture_output=True, text=True).stdout.split()) or {
+    "GIT_ALTERNATE_OBJECT_DIRECTORIES", "GIT_CONFIG", "GIT_CONFIG_PARAMETERS", "GIT_CONFIG_COUNT", "GIT_OBJECT_DIRECTORY",
+    "GIT_DIR", "GIT_WORK_TREE", "GIT_IMPLICIT_WORK_TREE", "GIT_GRAFT_FILE", "GIT_INDEX_FILE", "GIT_NO_REPLACE_OBJECTS",
+    "GIT_REPLACE_REF_BASE", "GIT_PREFIX", "GIT_SHALLOW_FILE", "GIT_COMMON_DIR"}
+CLEAN = {k: v for k, v in os.environ.items() if k not in LOCAL_VARS}
 
 
 def git(*a, cwd, check=True):
@@ -185,14 +193,29 @@ def main() -> None:
                  "https://github.com/someone/alzeo": False, "https://github.com/someone/dgx-spark-qwen38": False,
                  "https://github.com/Hasso5703/Alzeo-Site": False}
         def state(clone):
-            """What a refused clone must keep: its origin, its commit, its files."""
+            """What a refused clone must keep: its origin, its commit, its files and what they hold."""
+            files = {}
+            for root, dirs, names in os.walk(clone):
+                dirs[:] = [d for d in dirs if d != ".git"]
+                for n in names:
+                    with open(os.path.join(root, n), "rb") as f:
+                        files[os.path.relpath(os.path.join(root, n), clone)] = f.read()
             return (git("remote", "get-url", "origin", cwd=clone).stdout, git("rev-parse", "HEAD", cwd=clone).stdout,
-                    git("status", "--porcelain", "--untracked-files=all", cwd=clone).stdout, sorted(os.listdir(clone)))
+                    git("status", "--porcelain", "--untracked-files=all", cwd=clone).stdout, files)
+
+        def as_a_user_keeps_it(clone):
+            """A refused clone as a user's own repository looks, with a local edit and an untracked file: a
+            refusal that stashed, cleaned or reset it would lose them (code review, 2026-11-01)."""
+            with open(os.path.join(clone, "install.sh"), "a") as f:
+                f.write("# a local edit\n")
+            with open(os.path.join(clone, "notes.txt"), "w") as f:
+                f.write("my notes")
+            return state(clone)
         for url, ok in forms.items():
             clone = os.path.join(base, "form-%d" % len(os.listdir(base)))
             git("clone", "-q", work, clone, cwd=base)
             git("remote", "set-url", "origin", url, cwd=clone)
-            before = state(clone)
+            before = None if ok else as_a_user_keeps_it(clone)
             r = run_get(clone)
             said = r.stdout + r.stderr
             assert r.returncode != 0, f"{url}: the network was refused, so get.sh cannot have gone through"
@@ -216,7 +239,13 @@ def main() -> None:
                 # the scheme (code review, 2026-11-01)
                 ("gcrypt::ghp_TOK7@github.com:someone/private.git", "ghp_TOK7", "github.com:someone/private.git"),
                 ("a::b::https://u:ghp_NEST@github.com/someone/fork.git", "ghp_NEST", "github.com/someone/fork.git"),
-                ("  https://u:ghp_LEAD@github.com/someone/fork.git", "ghp_LEAD", "github.com/someone/fork.git")):
+                ("  https://u:ghp_LEAD@github.com/someone/fork.git", "ghp_LEAD", "github.com/someone/fork.git"),
+                # a line break in a password, then a port or an scp-like host; a token in the query string; an
+                # ext:: address, a command that can carry a password (code review, 2026-11-01)
+                ("https://u:pa\nss@git.corp.example:8443/team/repo.git", "u:pa", "https://git.corp.example:8443/team/repo.git"),
+                ("ghp_A\nB@github.com:someone/fork.git", "ghp_A", "github.com:someone/fork.git"),
+                ("https://github.com/someone/fork.git?private_token=glpat-SECRET", "glpat-SECRET", "https://github.com/someone/fork.git"),
+                ("ext::sshpass -p hunter2 ssh -l git github.com %S someone/fork.git", "hunter2", "ext::(the command is not shown)")):
             clone = os.path.join(base, "form-%d" % len(os.listdir(base)))
             git("clone", "-q", work, clone, cwd=base)
             git("remote", "set-url", "origin", url, cwd=clone)
@@ -224,17 +253,24 @@ def main() -> None:
             assert secret not in r.stdout + r.stderr, f"{secret} was printed: {r.stderr[-300:]}"
             assert f"(origin: {shown})" in r.stderr, r.stderr[-300:]
         # and a password holding a byte that is not UTF-8, under a UTF-8 locale, where sed's . does not
-        # match it: the mask runs in the C locale. Without C.UTF-8 on this machine the check would prove nothing.
-        locales = subprocess.run(["locale", "-a"], capture_output=True, text=True).stdout.lower().split()
-        assert "c.utf8" in locales or "c.utf-8" in locales, "no C.UTF-8 locale here: the check below would prove nothing"
-        clone = os.path.join(base, "form-%d" % len(os.listdir(base)))
-        git("clone", "-q", work, clone, cwd=base)
-        subprocess.run(["git", "remote", "set-url", "origin", b"https://someone:p\xe4ss@github.com/someone/fork.git"],
-                       cwd=clone, check=True)
-        r = subprocess.run(["bash", GET], capture_output=True,
-                           env=isolated(base, {"LC_ALL": "C.UTF-8"}) | {"DIR": clone})
-        assert b"p\xe4ss" not in r.stdout + r.stderr, r.stderr[-300:]
-        assert b"(origin: https://github.com/someone/fork.git)" in r.stderr, r.stderr[-300:]
+        # match it: the mask runs in the C locale. Where there is no C.UTF-8 (macOS) this one check is skipped,
+        # as it would prove nothing there, and the others go on.
+        try:
+            locales = subprocess.run(["locale", "-a"], capture_output=True, text=True).stdout.lower().split()
+        except FileNotFoundError:
+            locales = []
+        if "c.utf8" in locales or "c.utf-8" in locales:
+            clone = os.path.join(base, "form-%d" % len(os.listdir(base)))
+            git("clone", "-q", work, clone, cwd=base)
+            # CLEAN, as every git command here: with a GIT_DIR exported this set-url went to that repository
+            subprocess.run(["git", "remote", "set-url", "origin", b"https://someone:p\xe4ss@github.com/someone/fork.git"],
+                           cwd=clone, check=True, env=CLEAN)
+            r = subprocess.run(["bash", GET], capture_output=True,
+                               env=isolated(base, {"LC_ALL": "C.UTF-8"}) | {"DIR": clone})
+            assert b"p\xe4ss" not in r.stdout + r.stderr, r.stderr[-300:]
+            assert b"(origin: https://github.com/someone/fork.git)" in r.stderr, r.stderr[-300:]
+        else:
+            print("test_get_sh: no C.UTF-8 locale here, the check of a byte that is not UTF-8 is skipped")
 
         # 12. The same rule from inside a clone, with no DIR (the one-liner run from the clone's folder): a
         #     clone of this repo under either name is the one used, any other repository is left alone and
@@ -244,7 +280,7 @@ def main() -> None:
             clone = os.path.join(base, "inside-%d" % len(os.listdir(base)))
             git("clone", "-q", work, clone, cwd=base)
             git("remote", "set-url", "origin", url, cwd=clone)
-            before = state(clone)
+            before = None if ok else as_a_user_keeps_it(clone)
             r = subprocess.run(["bash", GET], cwd=clone, capture_output=True, text=True, env=isolated(base))
             said = r.stdout + r.stderr
             assert r.returncode != 0, f"{url}: the network was refused, so get.sh cannot have gone through"
@@ -261,40 +297,55 @@ def main() -> None:
         code = "\n".join(l for l in open(GET, encoding="utf-8").read().splitlines() if not l.lstrip().startswith("#"))
         for construct in (",,}", "^^}", "declare -A", "declare -l", "declare -u", "typeset -A", "typeset -l",
                           "typeset -u", "mapfile", "readarray", "coproc", "|&", ";;&", ";&", "&>>", "globstar",
-                          "lastpipe"):
+                          "lastpipe", "[[ -v", "local -n", "declare -n", "declare -g", "EPOCHSECONDS",
+                          "EPOCHREALTIME", "wait -n", "BASH_ARGV0"):
             assert construct not in code, f"get.sh uses {construct!r}, which bash 3.2 does not have"
         assert not re.search(r"\$\{[A-Za-z_0-9]+[,^]\}", code), "get.sh uses a ${x,} or ${x^}, which bash 3.2 does not have"
         assert not re.search(r"\$\{[^}]*@[A-Za-z]\}", code), "get.sh uses a ${x@L} or the like, which bash 3.2 does not have"
+        assert not re.search(r"(?<!\$)\{[A-Za-z_][A-Za-z0-9_]*\}[<>]", code), "get.sh uses a {fd}> redirection, which bash 3.2 does not have"
 
-        # 14. Many untracked files, or many modified ones: under set -o pipefail a `| head` closed the pipe early,
-        #     its writer took SIGPIPE and get.sh ended with 141, silently, before the update or before its advice
-        #     (code review, 2026-11-01; a .venv-mirror/ in the clone, as MIRROR.md makes one, holds thousands).
-        #     A clone holding 3000 untracked files is updated, and one with 600 modified tracked files is refused
-        #     with the whole advice.
+        # 14. Many untracked files, or many modified ones: under set -o pipefail a `| head` closed the pipe early, its
+        #     writer took SIGPIPE and get.sh stopped with 141, no error, before the update or before its advice (code
+        #     review, 2026-11-01; a .venv-mirror/ in the clone, as MIRROR.md makes one, holds thousands of files).
+        #     The lists outgrow the 64 KiB pipe of a 4 KiB-page kernel several times over, so that a head put back
+        #     fails every run, and what they print is checked line by line.
         tail = "-with-a-name-long-enough-that-the-list-outgrows-the-pipe-buffer-of-the-kernel.py"
         bare = os.path.join(base, "hasso5703", "dgx-spark-qwen38.git")
         many = os.path.join(base, "many")
         git("clone", "-q", bare, many, cwd=base)
-        os.makedirs(os.path.join(many, "venv-like"))
         for i in range(3000):
-            open(os.path.join(many, "venv-like", f"f{i:05d}{tail}"), "w").close()
+            open(os.path.join(many, f"f{i:05d}{tail}"), "w").close()
+        kept = git("ls-files", "--others", "--exclude-standard", "--directory", cwd=many).stdout.splitlines()
         r = run_get(many)
         assert r.returncode == 0 and "INSTALL_RAN" in r.stdout, f"3000 untracked files: rc {r.returncode}: {r.stdout[-200:]}"
         assert "Untracked files kept in place" in r.stdout and "── At:" in r.stdout, r.stdout[-300:]
+        shown = [ln[5:] for ln in r.stdout.splitlines() if ln.startswith("     ")]
+        assert shown == kept[:5], f"the five listed are not the first five: {shown}"
+        # a folder untracked whole is named once (--directory), not file by file
+        folder = os.path.join(base, "folder")
+        git("clone", "-q", bare, folder, cwd=base)
+        os.makedirs(os.path.join(folder, ".venv-like", "lib"))
+        for i in range(2000):
+            open(os.path.join(folder, ".venv-like", "lib", f"m{i:04d}.py"), "w").close()
+        r = run_get(folder)
+        assert r.returncode == 0 and "INSTALL_RAN" in r.stdout, f"an untracked folder: rc {r.returncode}"
+        assert [ln for ln in r.stdout.splitlines() if ln.startswith("     ")] == ["     .venv-like/"], r.stdout[-300:]
         mod = os.path.join(base, "mod")
         git("clone", "-q", bare, mod, cwd=base)
         for k, v in (("user.email", "t@t"), ("user.name", "t")):
             git("config", k, v, cwd=mod)
         os.makedirs(os.path.join(mod, "tracked"))
-        for i in range(600):
+        for i in range(1500):
             open(os.path.join(mod, "tracked", f"f{i:04d}{tail}"), "w").close()
-        git("add", "-A", cwd=mod); git("commit", "-qm", "600 files", cwd=mod)
-        for i in range(600):
+        git("add", "-A", cwd=mod); git("commit", "-qm", "1500 files", cwd=mod)
+        for i in range(1500):
             with open(os.path.join(mod, "tracked", f"f{i:04d}{tail}"), "w") as f:
                 f.write("changed")
         r = run_get(mod)
-        assert r.returncode == 1, f"600 modified files: rc {r.returncode} (141 = cut by SIGPIPE): {r.stderr[-200:]}"
+        assert r.returncode == 1, f"1500 modified files: rc {r.returncode} (141 = cut by SIGPIPE): {r.stderr[-200:]}"
         assert "modified tracked files" in r.stderr and "Fix with ONE of" in r.stderr and "FORCE_UPDATE=1" in r.stderr, r.stderr[-300:]
+        listed = [ln for ln in r.stderr.splitlines() if ln.startswith(" M tracked/")]
+        assert len(listed) == 10, f"the first ten modified files are not all listed: {len(listed)}"
 
         print("test_get_sh: OK")
     finally:
